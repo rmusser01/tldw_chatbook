@@ -654,3 +654,51 @@ earlier malformed Canvas fixtures failed native guards and are not product RED.
 This snapshot precedes restriction-projection code and test changes. The exact
 C review BASE `d74175b0fd319aef9d17f94d697bbbfd7fdf0895`, full integrated gate,
 controller-only TASK-36766 metadata, and historical hook limitations are retained.
+
+
+### Captured normalized trace reconstruction and historical locators
+
+Private trace planning invokes native read-only reconstruction on the existing
+retained immutable source and canonical Chat connections. Its internal transaction
+adapter yields real cursors without BEGIN/COMMIT, authorizer relaxation or a new
+reader role. No caller SQL, path, connection, cursor, factory or callback escapes.
+Every retained member keeps its pre/post custody, named-object, hash, resource,
+scope, claim, journal and cancellation checks and original limits. Bounded,
+recursively immutable results bind the actual manifests and exact message/trace
+inputs; neither record construction nor sample tests establishes readability.
+
+Mapped preservation requires a closed field-specific isomorphism over every native
+reader input: graph incidence, ordering and lineage; selected message fields and
+sidecars; revisions and retired locators; frozen policies, bindings and masks;
+headers and their declared structural metadata; exact artifact bytes and digests.
+Native verification, omission, sanitizer-unavailable and uncertainty results retain
+their original associations and cannot be upgraded. Uncovered or changed semantic
+inputs refuse before effects. Disposable mapped native consumer tests qualify the
+transformation independently; they provide no per-input capture or authority proof.
+There is no production mapped SQL sink or staging writer. Later owning writes must
+still establish legal native lifecycle and trigger ordering.
+
+Message and conversation identity reservations also cover historical locators in
+actual semantic-revision source_message_id/source_conversation_id fields. A live
+identity and all its historical revisions share one reservation. Allocation checks
+canonical live and historical occupancy plus every source/reserved target, rejects
+ambiguous source ownership, and preserves predecessor, sequence and uniqueness
+relations. A retired live_message_id remains NULL with its original retirement
+stamp; no message, conversation, content or live authority is invented. Historical
+materialized-envelope BLOBs retain their bytes and audit identities. Only declared
+structural header references map; matching text inside content is not a reference.
+
+The retained scope may invoke native citation context, shared no-fingerprint-history
+and local-authority validators. Their bounded immutable result states the captured
+context and SQL invariant only. It does not prove credential UNUSED status, backend
+or key availability, readable fingerprints, namespace equivalence, or permission to
+adopt canonical identity. Credential coverage and actual source/canonical namespace
+and readability proof remain separate requirements. Missing proof produces exact
+dependency blockers; canonical identity is never overwritten, keys are not
+provisioned, and C-owned authority slots are discharged only with their full proof.
+
+These constraints avoid a second production reconstruction database while requiring
+complete input closure. An omitted native dependency could change history or expose
+content, and a mistaken historical identity or key assumption could misattribute
+ownership; any such gap must therefore refuse before effects. Plans remain private
+and noninsertable pending integrated, run-owner and owning-write qualification.
