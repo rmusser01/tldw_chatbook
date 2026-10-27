@@ -836,3 +836,28 @@ proofs after their entry rows disappear. Reserving only live IDs could associate
 an imported deletion with a different canonical entry. Actual native deletion,
 body privacy, retired/live collision, parent closure and no-effects retirement
 checks qualify this rule; payload samples alone do not.
+
+### Shared trace and sync proof materialization allowance
+
+The fixed S composition owns one existing 16 MiB trace-read allowance. Its
+private call into T passes that same object; subsequent fixed sync input,
+JSON/proof, serialization and result construction consume its remaining
+allowance. Standalone T with no supplied private allowance still creates its
+original one. Captured public entry points take no arguments and return only
+immutable proof values, never the mutable allowance.
+
+New sync raw-row aggregation, decoding, cloning, serialization and repeated
+reference expansion reserve before construction. A bounded raw page does not
+permit an uncharged aggregate. Exhaustion propagates as the existing distinct
+body-free resource refusal, never as uncertain or unavailable content. There is
+no second allowance, reset, cache, larger cap or unbudgeted fallback.
+
+This bounds the T and S representation work receiving the allowance; it does
+not measure Python heap or retroactively bound existing R/I/C allocations.
+Native six-member custody, scope, claim, journal, schema, cancellation, deadline,
+step and authorizer checks remain unchanged. Actual composed predecode and
+repeated-reference boundaries, standalone T behavior and no-effects retirement
+must be qualified with the real allowance. A smaller injected limit is not
+capacity evidence. This prevents disconnected proof phases from expanding the
+same operation outside its existing bound without introducing a new reader or
+capability.
