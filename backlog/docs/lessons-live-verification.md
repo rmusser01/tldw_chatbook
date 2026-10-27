@@ -83,6 +83,12 @@ worktree, and `launch.sh` runs it the same way (`APP_WT=<dir>`). Precompile
 it (`python -m compileall`, which imports nothing) so its first launch does
 not pay the compile that the other arm's cache already holds.
 
+## Two probe import hooks that each search the rest of `sys.meta_path` recurse into each other (TASK-35961, 2026-10-27)
+
+**Incident.** A live probe for the Console's Character check and poll tick added a `sys.meta_path` finder that, for four Console modules, searched the other finders for the real spec and wrapped its `exec_module`. It ran beside the pf2 kit, whose finder does the same. Each finder called the other for the same module name, and the app died at the splash with `RecursionError` raised in the probe's `find_spec` while `chat_screen` imported (`event=unhandled_exception ... raise_module=p35hooks` in the profile's `tldw_cli_app.log`). The tmux pane closed with the app, so the only trace was that log.
+
+**What to do.** Give a probe's finder a per-name re-entry guard (return None while it is already resolving that name), so a second finder that calls back into it falls through to the real one. When a probed launch's tmux server disappears, read the profile's `tldw_cli_app.log` before relaunching.
+
 ## On a quiet host, 4 ms stack samples cannot rank the parts of a 20 ms callback: time the suspects (TASK-33620.15.8, 2026-10-23)
 
 **Incident.** TASK-33620.15.8 was filed from samples taken at load averages of

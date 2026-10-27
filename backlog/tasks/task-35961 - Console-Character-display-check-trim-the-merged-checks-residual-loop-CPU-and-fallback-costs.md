@@ -3,9 +3,11 @@ id: TASK-35961
 title: >-
   Console Character display check: trim the merged check's residual loop-CPU and
   fallback costs
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-10-21 01:32'
+updated_date: '2026-10-27 17:09'
 labels:
   - console
   - performance
@@ -21,7 +23,47 @@ TASK-33620.15.6 merged the Console Character display check's scope probe and rel
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An unchanged stock display check costs no more UI-loop CPU than the original probe route did, shown by a paired in-process measurement
-- [ ] #2 A first scope read that does not settle starts no more helper processes than the original probe-then-refresh route
-- [ ] #3 A customized, replaced or borrowed reader is still refused (the existing Character source- and entry-control tests stay green)
+- [x] #1 An unchanged stock display check costs no more UI-loop CPU than the original probe route did, shown by a paired in-process measurement
+- [x] #2 A first scope read that does not settle starts no more helper processes than the original probe-then-refresh route
+- [x] #3 A customized, replaced or borrowed reader is still refused (the existing Character source- and entry-control tests stay green)
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure (paired, in-process, same host): loop-thread CPU of an unchanged stock display check on the merged route vs the original pre-15.6 probe route (pre-15.6 module loaded beside the current one), and attribute it (qualification passes per check on the loop).
+2. Tests first (red on dev): an unchanged settled check does no full reader qualification on the loop (count _character_reader_current calls on the loop thread <= the original route's); a first scope read that does not settle starts no more helpers than the original route needs after it (merged read reused as the probe).
+3. Settled checks: build the readers on the loop with only the checks the loop needs (structure, the readers it calls, captured callables), keep full reader provenance on the worker before every read; a refusal at the worker's entry opens no handle and takes the original route. The first pair's on-loop midpoint verifies the readers it runs; after it, the changed path keeps every original loop check.
+4. Reuse an unsettled/failed merged first read as the probe's outcome in both callers instead of probing again.
+5. Re-run the Character source/entry-control and one-helper suites (AC#3), paired loop-CPU measurement, live spot-check with pf2probe.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Summary.** A Console Character display check whose display shows a settled fingerprint (the common one, about once a second during a reply) no longer qualifies the whole stock reader set on the UI loop. It qualifies on the loop what runs there, and the worker qualifies every reader before and after each read, as before. A first scope read that does not settle, or fails, is now the probe's outcome: the check reloads without probing the scope again on a handle of its own.
+
+**Measured first (dev 3be493413a).** In process, paired: the pre-15.6 module (`715a0d7b49^1`) loaded beside the current one, both driving the same kind of settled display over their own real `CharactersRAGDB`, interleaved, 150 unchanged checks per arm, loop-thread CPU by `time.thread_time()`, GC paused while sampling.
+- Paired median, merged minus original probe route: run-time check +0.30 and +0.33 ms; idle check +0.34 and +0.45 ms (two runs).
+- Attribution, counted with `sys.setprofile` on the loop thread (Python 3.12's cProfile records every thread, see the lesson): 252 single-reader qualifications (`_character_reader_current`) per unchanged check against the probe route's 94. They came from one more presentation check (`refresh_if_scope_changed`'s gate), the selector's two passes (`_stock_character_refresh_readers` plus its own `require_current`), and two whole `require_current` calls in the pair's on-loop midpoint. Timed alone: presentation check 43 us, selector 109 us, `require_current` 54 us.
+
+**Change** (`UI/Console_Modules/character_context.py`).
+- A settled check selects its readers with `_settled_character_refresh_readers`: the owner's structure (as `_stock_character_presentation` checks it), the two identity readers the selection calls, and the four captured bound callbacks' identities. No whole-set pass on the loop. The construction is shared with the full selector (`_character_reader_sources`, `_build_character_refresh_readers`); the full selector's checks and order are unchanged and it still serves unsettled checks, `refresh()` and the known-changed test.
+- The finite callback qualifies every reader in the worker before its first read, as it did. For a settled check, a reader changed after the selection is refused there before anything is read (no handle opens) and the check takes the original route.
+- The first pair's on-loop midpoint runs `require_loop_readers` (the two identity readers and the captured accessors) through a new `_loop_check` argument of the pair; the worker's checks around each read are unchanged, and every later pair (and the changed path's post-pair owner check) keeps the full checks.
+- The run-time gate before `_check_recent_batch` qualifies that method alone for a settled check (`_stock_character_check`); an unsettled check keeps the whole-set gate.
+- `_character_reader_current` runs the same checks in the same order with plain loops instead of a generator per record.
+- AC#2: `_check_recent_batch` returns `_CharacterScopeProbed` for a first read that did not settle (or failed) for a current owner, and both callers take the original route's branch for that probe outcome (`invalidate_scope` + reload, or the read-error reload) instead of calling `_capture_scope` again.
+
+**After.** Loop qualifications per unchanged check: 96 (probe route 94). Paired median, branch minus original probe route, three runs of 150 checks per arm at host load 28-32: run-time -0.058, -0.074, -0.052 ms; idle -0.009, -0.017, -0.046 ms.
+
+**Live spot-check** (2026-10-27; real app, Anthropic claude-haiku-4-5 through the review proxy, isolated profile, null keyring, 160x45, caffeinate held; dev `bd21-base` a2b7104d1e vs this branch, one launch each, pf2 kit plus a `sys.monitoring` hook on the exact code objects, nothing wrapped). Unchanged checks that read the scope: dev median 1.12 ms loop CPU (p90 1.38, n=21), branch 0.79 ms (p90 1.07, n=25). Evidence: `tools/evidence/bd5/P35/`.
+
+**Tests.** New `Tests/Backup_Recovery/test_character_settled_check_loop_cost.py` (8 cases), all red on dev for the intended reason:
+- unchanged settled check, active/idle: dev runs the selector once and `require_current` 3 times on the loop, 136 single-reader checks outside the entry's presentation checks;
+- unsettled first read, active/idle: dev 3 helpers / 6 pairs / 3 callbacks (expected 2 / 5 / 2);
+- reader changed after selection, 2 methods x active/idle: dev ends the check after the refused callback (1 callback, no read); now it takes the original probe (2 callbacks, 1 pair, 1 helper) and runs neither body.
+Mutation checks: (a) skipping the worker's entry check for a settled check makes the changed body run (refusal test red); (b) passing the full `require_current` to the first midpoint again turns the loop-cost test red.
+
+**Not addressed (outside the ACs).** The two remaining fallback costs from the description: a refresh dispatch customized during the read (5 finite callbacks against 4) and a final pair that keeps failing (groups loaded 4 times against 3). Filed as TASK-35961.1. The new Backup_Recovery file, like 15.6's, runs only in the core suite, not a PR lane.
+<!-- SECTION:NOTES:END -->
