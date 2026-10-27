@@ -1412,3 +1412,6 @@ Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_curr
 Tests/UI/test_personas_lore_save_responsiveness.py::test_ordinary_save_reports_real_sqlite_result[True]
 Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[runtime-away-back-failure]
 Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[scope-away-back-success]
+
+# TASK-33162.1: both ingestion prompt editors survive a stale MouseMove after detach.
+Tests/UI/test_library_ingest_option_event_order.py::test_mouse_move_over_removed_ingest_prompt_keeps_replacement_editable
