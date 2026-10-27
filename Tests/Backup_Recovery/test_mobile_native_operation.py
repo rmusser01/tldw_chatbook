@@ -293,7 +293,10 @@ def test_native_preopen_refuses_replaced_cohorts_selectors_capture_and_cancel(
         pytest.fail("stale lifecycle admitted owner")
 
 
-def test_uncertain_reader_retirement_prevents_native_owner_until_process_exit(tmp_path):
+@pytest.mark.parametrize("resource", ("reader", "source_claim"))
+def test_uncertain_reader_retirement_prevents_native_owner_until_process_exit(
+    tmp_path, resource
+):
     import json
     import os
     import subprocess
@@ -301,6 +304,11 @@ def test_uncertain_reader_retirement_prevents_native_owner_until_process_exit(tm
     from pathlib import Path
 
     proof_path = tmp_path / "proof.json"
+    child_test = (
+        "test_uncertain_retirement_child"
+        if resource == "reader"
+        else "test_uncertain_source_claim_retirement_child"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -311,7 +319,7 @@ def test_uncertain_reader_retirement_prevents_native_owner_until_process_exit(tm
             "--show-capture=no",
             "--basetemp",
             str(tmp_path / "child"),
-            "Tests/Backup_Recovery/test_mobile_native_operation.py::test_uncertain_retirement_child",
+            "Tests/Backup_Recovery/test_mobile_native_operation.py::" + child_test,
         ],
         env=dict(os.environ, TLDW_NATIVE_RETIREMENT_PROOF=str(proof_path)),
         cwd=Path(__file__).resolve().parents[2],
@@ -335,8 +343,6 @@ def test_uncertain_reader_retirement_prevents_native_owner_until_process_exit(tm
 def test_uncertain_retirement_child(tmp_path, monkeypatch):
     import json
     import os
-    import subprocess
-    import sys
     from pathlib import Path
 
     proof_path = os.environ.get("TLDW_NATIVE_RETIREMENT_PROOF")
@@ -395,6 +401,27 @@ def test_uncertain_retirement_child(tmp_path, monkeypatch):
         with captured.journal._locked(exclusive=False) as parent:
             assert tuple(captured.journal._records(parent)) == before
     assert storage_admission._failed_capture_holds
+    control_root = str(captured.session._control.parent)
+    contender_returncode = _assert_retirement_quarantine(control_root)
+    Path(proof_path).write_text(
+        json.dumps(
+            {
+                "control_root": control_root,
+                "owner_refusals": 2,
+                "contender_returncode": contender_returncode,
+                "pin_fd": reached["fd"],
+                "pid": os.getpid(),
+            }
+        )
+    )
+    # Process exit, never retries or cleared flags, retires the quarantined pin.
+    os._exit(0)
+
+
+def _assert_retirement_quarantine(control_root):
+    import subprocess
+    import sys
+
     probe = """from Tests.real_profile_guard import install
 install()
 from Tests.network_guard import install
@@ -409,7 +436,6 @@ except AdmissionError:
  sys.exit(23)
 raise AssertionError('uncertain retirement released maintenance')
 """
-    control_root = str(captured.session._control.parent)
     result = subprocess.run(
         [sys.executable, "-c", probe, control_root],
         capture_output=True,
@@ -418,16 +444,111 @@ raise AssertionError('uncertain retirement released maintenance')
         check=False,
     )
     assert result.returncode == 23, result.stdout + result.stderr
+    return result.returncode
+
+
+def test_uncertain_source_claim_retirement_child(tmp_path, monkeypatch):
+    import json
+    import os
+    from pathlib import Path
+
+    proof_path = os.environ.get("TLDW_NATIVE_RETIREMENT_PROOF")
+    if proof_path is None:
+        pytest.skip("private source-claim retirement child only")
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Backup_Recovery.admission import AdmissionError
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation_apply import (
+        _captured_mobile,
+    )
+
+    reached = {}
+    native_close = storage_admission.os.close
+
+    def fail_exact_claim(fd):
+        if fd == reached.get("fd"):
+            reached["close_reached"] = True
+            raise OSError("injected source-claim descriptor close")
+        return native_close(fd)
+
+    admitted, refusals = [], []
+    with (
+        pytest.raises(AdmissionError, match="resources_not_retired"),
+        _capture_fixture(tmp_path, monkeypatch) as values,
+    ):
+        session, journal, _, _, preview, inventory, _ = values
+        output = tmp_path / "archives"
+        output.mkdir(mode=0o700)
+        with (
+            pytest.raises(RuntimeError, match="resources_not_retired"),
+            _captured_mobile(
+                session,
+                journal,
+                preview,
+                inventory.scope_digest,
+                destination=output,
+                password=b"test-private-mobile-rollback",
+                cancel=Event(),
+            ) as captured,
+        ):
+            reached["fd"] = captured.claim.descriptor
+            reached["identity"] = os.fstat(reached["fd"])
+            monkeypatch.setattr(storage_admission.os, "close", fail_exact_claim)
+        assert reached["close_reached"]
+        assert not captured.active and captured.claim.custody.close_failed
+        actual = os.fstat(reached["fd"])
+        assert (actual.st_dev, actual.st_ino) == (
+            reached["identity"].st_dev,
+            reached["identity"].st_ino,
+        )
+        with journal._locked(exclusive=False) as parent:
+            before = tuple(journal._records(parent))
+            before_bytes = _fingerprints(journal.root)
+        before_profile = _fingerprints(tmp_path / "profile")
+        for name, owner_scope in (
+            ("captured", captured.owner("db.agent_runs")),
+            ("direct", session.mobile_consolidation_owner(journal, "db.agent_runs")),
+        ):
+            try:
+                with owner_scope:
+                    admitted.append(name)
+            except (ValueError, RuntimeError) as error:
+                refusals.append((name, str(error)))
+        with journal._locked(exclusive=False) as parent:
+            after = tuple(journal._records(parent))
+            after_bytes = _fingerprints(journal.root)
+        after_profile = _fingerprints(tmp_path / "profile")
+    assert storage_admission._failed_capture_holds
+    assert not admitted
+    assert refusals == [
+        ("captured", "mobile_lifecycle_retired"),
+        ("direct", "mobile_native_readers_not_retired"),
+    ]
+    assert before == after and before_bytes == after_bytes
+    assert before_profile == after_profile
+    actual = os.fstat(reached["fd"])
+    assert (actual.st_dev, actual.st_ino) == (
+        reached["identity"].st_dev,
+        reached["identity"].st_ino,
+    )
+    control_root = str(session._control.parent)
+    contender_returncode = _assert_retirement_quarantine(control_root)
     Path(proof_path).write_text(
         json.dumps(
             {
                 "control_root": control_root,
-                "owner_refusals": 2,
-                "contender_returncode": result.returncode,
-                "pin_fd": reached["fd"],
+                "owner_refusals": len(refusals),
+                "refusals": refusals,
+                "contender_returncode": contender_returncode,
+                "claim_fd": reached["fd"],
+                "claim_close_failed": captured.claim.custody.close_failed,
+                "captured_active": captured.active,
+                "journal_records_before": len(before),
+                "journal_records_after": len(after),
+                "journal_bytes_unchanged": before_bytes == after_bytes,
+                "profile_unchanged": before_profile == after_profile,
                 "pid": os.getpid(),
             }
         )
     )
-    # Process exit, never retries or cleared flags, retires the quarantined pin.
+    # Actual process exit is the only retirement of this uncertain native claim.
     os._exit(0)

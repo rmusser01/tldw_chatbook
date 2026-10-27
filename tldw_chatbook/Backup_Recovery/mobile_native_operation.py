@@ -42,6 +42,8 @@ def _require_readers_retired(session):
             _CaptureFileDescriptors,
         ):
             raise ValueError("mobile_native_scope_unqualified")
+        if type(scope) is _SourceClaim and scope.custody.close_failed:
+            raise ValueError("mobile_native_readers_not_retired")
         if (
             getattr(scope, "close_failed", False)
             or getattr(scope, "resource_close_failed", False)
