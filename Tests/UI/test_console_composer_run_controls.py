@@ -33,6 +33,7 @@ from textual.events import Paste
 from textual.widgets import Button, OptionList, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI import pump_probe
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictation import FakeDictationSession
 from Tests.UI.test_console_native_chat_flow import (
@@ -110,29 +111,56 @@ async def _mounted(host, pilot):
     return console, composer
 
 
-async def _after_mount_focus_restore(console, pilot) -> None:
-    """Let the mount's own focus restore run before a case clears focus.
+async def _after_activation_focus_restores(console, pilot) -> None:
+    """Wait until every focus restore the Console's activation scheduled has run.
 
-    ``ChatScreen.on_mount`` arms ``set_timer(0.2, _restore_console_workbench_focus)``,
-    which may focus the draft when nothing owns focus. A case that clears focus
-    before that timer fires can get the draft refocused right after and read it
-    as "something focused the draft". Measured 2026-10-20 (TASK-33620.15.7), 20
-    interleaved runs each: the nothing-focused typing case failed 5 on dev and
-    12 once that task's cheaper mount made ``_mounted`` return before the timer
-    more often. Waits for the timer itself, whatever it decides.
+    The activation schedules ``_restore_console_workbench_focus`` three times,
+    all from the attach reconcile: after refresh and on a 0.2 s timer when the
+    view starts, and after refresh again when the reconcile replays the
+    screen's resume. One that runs after a case's ``set_focus(None)`` focuses
+    the draft again, and the case reads that as "the key focused the draft"
+    (TASK-33620.15.7 measured the timer's race; TASK-33620.15.23). Waiting
+    for the timer alone also missed the reconcile not having scheduled it yet.
+
+    So this waits, without a fixed sleep, until the reconcile has finished
+    (nothing more will be scheduled), one round trip through the screen's
+    queue has moved any queued after-refresh restore onto the screen's
+    callback list, and no restore is left on that list or on a live timer. A
+    ``focus()`` a restore made lands through ``App.call_later``; the final
+    pause lets it.
     """
     restore = console._restore_console_workbench_focus
 
-    def pending() -> bool:
-        return any(
-            timer._callback == restore
+    await _wait_for(
+        pilot,
+        lambda: (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        ),
+        "the Console's attach reconcile never finished",
+    )
+    assert await pump_probe.pump_runs(console), "the Console's pump never ran"
+
+    def pending() -> list[str]:
+        waiting = [
+            "after refresh"
+            for callback, _sender in list(console._callbacks)
+            if getattr(callback, "func", callback) == restore
+        ]
+        waiting += [
+            "0.2 s timer"
+            for timer in list(console._timers)
+            if timer._callback == restore
             and timer._task is not None
             and not timer._task.done()
-            for timer in list(console._timers)
-        )
+        ]
+        return waiting
 
-    await _wait_for(pilot, lambda: not pending(), "the mount's focus restore never ran")
-    # A focus() the restore made lands through App.call_later.
+    await _wait_for(
+        pilot,
+        lambda: not pending(),
+        lambda: f"activation focus restores still pending: {pending()}",
+    )
     await pilot.pause()
 
 
@@ -1322,7 +1350,7 @@ async def test_paste_with_nothing_focused_lands_in_a_focused_draft(request):
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
-        await _after_mount_focus_restore(console, pilot)
+        await _after_activation_focus_restores(console, pilot)
         composer.load_draft("hello")
         console.set_focus(None)
         await pilot.pause()
@@ -1354,7 +1382,7 @@ async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
-        await _after_mount_focus_restore(console, pilot)
+        await _after_activation_focus_restores(console, pilot)
         composer.load_draft("hello")
         console.set_focus(None)
         await pilot.pause()
