@@ -624,15 +624,6 @@ def handed_off_probe_failure(model_step: object) -> str:
     return classify_render(model_step, state, category)[1]  # as Model will (TASK-33008)
 
 
-#: Providers whose saved chat route is a native one discovery refuses to list
-#: from (``openai_compatible_model_discovery._NATIVE_ENDPOINT_PATHS_BY_PROVIDER``)
-#: while the server also serves the OpenAI listing the endpoint contract names
-#: as ``models_url``. KoboldCpp saves /api/v1/generate (review new-provider-02);
-#: listing from it made no request, so nothing answering had no named cause
-#: (TASK-34100.6 review round 1, live F11).
-_LISTS_FROM_MODELS_URL = frozenset({"koboldcpp"})
-
-
 def _resolves_through_hosted_engine(provider_key: str) -> bool:
     """Whether catalog discovery resolves ``provider_key`` like a hosted send."""
     from tldw_chatbook.provider_registry import RECORDS_BY_KEY
@@ -662,14 +653,6 @@ def _first_run_discovery_staged_settings(
         from tldw_chatbook.Chat.provider_setup_persistence import api_base_from_chat_url
 
         endpoint = api_base_from_chat_url(endpoint) or endpoint
-    if discovery_key.provider_key in _LISTS_FROM_MODELS_URL:
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-
-        endpoint = resolve_provider_endpoint(
-            discovery_key.provider_key, endpoint
-        ).models_url or endpoint
     settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
     credential = provider_draft.credential
     credential_value = wizard_state._credential_value_for_boundary(credential)

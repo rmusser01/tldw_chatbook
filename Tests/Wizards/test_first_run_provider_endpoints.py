@@ -193,16 +193,27 @@ async def test_every_local_rows_template_endpoint_resolves_in_the_wizard():
 
 
 def test_koboldcpp_saves_the_native_route_chat_with_kobold_posts_to():
-    """new-provider-02: chat_with_kobold POSTs its native payload to api_url."""
-    for entered in (
-        "http://localhost:5001",
-        "http://localhost:5001/api/v1/generate",
-        "http://localhost:5001/v1",
-    ):
+    """new-provider-02: chat_with_kobold POSTs its native payload to api_url.
+
+    Rebased onto dev (TASK-35010, owner ruling 2026-10-20): the endpoint
+    contract keeps koboldcpp's native route whole and lists at its root's
+    /v1/models, while a typed root still resolves as an OpenAI chat URL. So
+    the wizard's example for the row is the native route, and the template
+    and the example both save it.
+    """
+    from tldw_chatbook.Chat.provider_setup_facts import (
+        endpoint_example,
+        provider_setup_facts,
+    )
+
+    example = endpoint_example(provider_setup_facts("koboldcpp"))
+    assert example == "http://127.0.0.1:5001/api/v1/generate"
+    for entered in ("http://localhost:5001/api/v1/generate", example):
+        root = entered.removesuffix("/api/v1/generate")
         resolution = resolve_provider_endpoint("koboldcpp", entered)
         assert resolution.errors == (), entered
-        assert resolution.chat_url == "http://localhost:5001/api/v1/generate"
-        assert resolution.models_url == "http://localhost:5001/v1/models"
+        assert resolution.chat_url == f"{root}/api/v1/generate"
+        assert resolution.models_url == f"{root}/v1/models"
         mutation = build_provider_setup_mutation(
             ProviderSetupDraft(
                 provider="koboldcpp",
@@ -215,7 +226,7 @@ def test_koboldcpp_saves_the_native_route_chat_with_kobold_posts_to():
             {"api_settings": {}},
         )
         table = mutation.section_values["api_settings.koboldcpp"]
-        assert table["api_url"] == "http://localhost:5001/api/v1/generate"
+        assert table["api_url"] == f"{root}/api/v1/generate"
 
 
 @pytest.mark.asyncio
@@ -368,7 +379,10 @@ async def test_koboldcpp_discovery_asks_its_openai_listing_so_a_failure_is_named
     native /api/v1/generate route, which discovery refuses to list from, so no
     request was made and nothing answering read as a bare 'Couldn't discover
     models'. Discovery now asks the OpenAI listing KoboldCpp also serves, and a
-    refused connection is named like Ollama's."""
+    refused connection is named like Ollama's. Rebased onto dev: dev's
+    TASK-35832 lists that native route at the endpoint contract's models URL,
+    so the wizard stages the saved route and discovery asks /v1/models itself
+    (the wizard's own mapping went)."""
     import httpx
 
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
@@ -382,7 +396,7 @@ async def test_koboldcpp_discovery_asks_its_openai_listing_so_a_failure_is_named
     draft = state.resolve_first_run_provider_draft(
         state.FirstRunProviderDraft(
             provider="koboldcpp",
-            endpoint="http://127.0.0.1:5001",
+            endpoint="http://127.0.0.1:5001/api/v1/generate",
             credential=state.ProviderCredentialDraft("none", ""),
         ),
         {},
@@ -390,10 +404,11 @@ async def test_koboldcpp_discovery_asks_its_openai_listing_so_a_failure_is_named
     key = state.build_first_run_model_discovery_key(draft)
     table = _first_run_discovery_staged_settings(draft, key)["api_settings"]["koboldcpp"]
     endpoint = next(value for value in table.values() if str(value).startswith("http"))
-    assert endpoint == "http://127.0.0.1:5001/v1/models"
-    assert draft.endpoint.endswith("/api/v1/generate"), "what is saved is unchanged"
+    assert endpoint == draft.endpoint == "http://127.0.0.1:5001/api/v1/generate"
+    asked: list[str] = []
 
     def refused(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
         raise httpx.ConnectError("refused", request=request) from ConnectionRefusedError(
             61, "Connection refused"
         )
@@ -405,6 +420,7 @@ async def test_koboldcpp_discovery_asks_its_openai_listing_so_a_failure_is_named
         api_key=None,
         client=httpx.AsyncClient(transport=httpx.MockTransport(refused)),
     )
+    assert asked == ["http://127.0.0.1:5001/v1/models"]
     assert result.error is not None and result.error.category == "connection_refused"
 
 
