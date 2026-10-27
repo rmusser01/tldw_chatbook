@@ -2262,7 +2262,17 @@ def build_summary_rows(
         tools_summary_detail,
     )
 
-    posture = tools_posture(all_tool_gates(config=app_config))
+    # The two gate sections only, read like every other row's (``_section``):
+    # this mapping is the re-read TOML, never ``load_settings()``'s copy,
+    # which carries no [tools] table.
+    posture = tools_posture(
+        all_tool_gates(
+            config={
+                "tools": _section(app_config, "tools"),
+                "console": _section(app_config, "console"),
+            }
+        )
+    )
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
