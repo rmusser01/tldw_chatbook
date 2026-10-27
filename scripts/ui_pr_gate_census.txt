@@ -1427,3 +1427,8 @@ Tests/UI/test_library_ingest_option_event_order.py::test_mouse_move_over_removed
 # check (3 s and 11 s) in shard 14. Existing shard slots stay fixed.
 Tests/UI/test_console_first_send_preimport.py
 Tests/UI/test_console_first_send_import_cycles.py
+
+# TASK-37000: collapsed-Inspector pins, appended at the tail.
+Tests/UI/test_console_inspector_rail_deferral.py
+Tests/UI/test_console_collapsed_inspector_send_layout.py::test_a_send_asks_no_layout_of_the_collapsed_inspector
+Tests/UI/test_console_collapsed_inspector_send_layout.py::test_an_inspector_opened_after_a_send_matches_one_open_throughout
