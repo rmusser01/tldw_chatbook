@@ -351,8 +351,11 @@ class ConsoleSendAuthoritySummary(Static):
             copy = Text(f"{label}: {value}")
             # TASK-33620.15.7: an Inspector snapshot change rarely changes
             # every fact; an unchanged row must not request a screen layout.
+            # TASK-36012: nor does a changed one. Each fact row's box is fixed
+            # by `_row` and `.console-send-authority-row` (one row tall, full
+            # width, nowrap with an ellipsis), so its copy cannot resize it.
             if not (isinstance(row.content, Text) and row.content == copy):
-                row.update(copy)
+                row.update(copy, layout=False)
         self._sync_compact_tooltip()
         self.recompute_tooltips()
         self.refresh()

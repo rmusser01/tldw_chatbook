@@ -21983,3 +21983,30 @@ value is legal only as measured runtime geometry with a `# ds-runtime:` reason.
 When a required check is red on a pushed head, read its failed log
 (`gh run view <id> --log-failed`) before the next rebase or re-gate. A conflict
 eviction does not mean the check was green.
+
+
+## A layout-count A/B cannot see the cost of the check that saves the layout (TASK-36012 review, 2026-10-26)
+
+TASK-36012 gave the Console's Conversations tray an in-place patch: on each
+state sync it composed the tray twice off the DOM (the state shown and the next
+one), diffed the two, and patched the mounted rows when no box moved. Its
+evidence was a headless probe and live paired rounds that counted layout
+requests, full reflows and `Screen._refresh_layout` time per send window. All of
+them fell (warm sends 17 -> 14 reflows). The review then timed `sync_state` plus
+settle with `time.process_time()` on syncs the patch refuses: a conversation
+switch, a search, a rename. Each now composed three times instead of once, with
+both throwaway composes blocking inside `sync_state`. At 40 rows, with the app's
+stylesheets, a conversation switch took 203 ms of CPU on dev and 382 ms on the
+branch, 192 ms of it inside the call. The metrics in the A/B could not see this.
+The extra composes ran off the DOM, outside any layout pass, and on navigation
+paths a send window never takes. The fix was a state-level check: only a browser
+delta confined to run markers, attention facts, icons and colours, which leaves
+every row's activity line as it was, is worth the two composes. That brought
+refused syncs back to dev's 203 ms and kept the send's patch.
+
+**What to do.** When a fix adds work to decide whether it can skip work, measure
+the paths where the decision says no as well as the one it optimises. Measure
+CPU (`time.process_time()` around the call and its settle), not only the counter
+the fix targets. Put a cheap check in front of the expensive proof. Pin the
+refused path's cost structurally; here a test asserts that a refused sync
+composes the tray exactly once.

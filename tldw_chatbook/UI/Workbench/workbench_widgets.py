@@ -235,13 +235,22 @@ class DestinationHeader(Vertical):
         Console runs this on every printable keystroke.
         """
         self.state = state
-        if state == self._synced_state:
+        synced = self._synced_state
+        if state == synced:
             return
-        self.query_one("#workbench-header-title", Static).update(state.title)
-        self.query_one("#workbench-header-subtitle", Static).update(state.subtitle)
-        self.query_one("#workbench-header-status", Static).update(
-            state.status_label or _status_label(state.status)
-        )
+        # TASK-36012: and per Static -- a Console send changes the status and
+        # subtitle, never the title, so the title keeps its layout.
+        for widget_id, read in (
+            ("#workbench-header-title", lambda s: s.title),
+            ("#workbench-header-subtitle", lambda s: s.subtitle),
+            (
+                "#workbench-header-status",
+                lambda s: s.status_label or _status_label(s.status),
+            ),
+        ):
+            copy = read(state)
+            if synced is _UNSYNCED or copy != read(synced):
+                self.query_one(widget_id, Static).update(copy)
         self.set_class(not state.subtitle, "has-empty-subtitle")
         _sync_status_classes(self, state.status)
         _sync_density_classes(self, state.density)

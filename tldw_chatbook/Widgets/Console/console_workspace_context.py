@@ -11,6 +11,7 @@ from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.compose import compose
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static
@@ -44,6 +45,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
+from .compose_delta import ComposeReadView, plan_in_place_delta
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -432,6 +434,10 @@ _ROW_BOTTOM_MARGIN = 1
 # state-change recompose (observed as a collapse failing to render) and, in
 # any environment where the gutter CSS is absent, oscillate the relabel.
 _RELABEL_MIN_WIDTH_DELTA = 2
+#: Controls the screen mounts into the tray outside ``compose`` (the
+#: transitional legacy "New conversation" alias,
+#: ``ChatScreen._sync_console_legacy_workspace_context_aliases``).
+_OUT_OF_BAND_CHILD_IDS = frozenset({"console-new-workspace-conversation"})
 
 
 def _conversation_activity_text(row) -> str:
@@ -443,6 +449,51 @@ def _conversation_activity_text(row) -> str:
     if row.queued_count:
         parts.append(f"Queue {row.queued_count}")
     return " · ".join(dict.fromkeys(parts))
+
+
+#: Browser row, group and section fields a run's start or end changes
+#: without moving a box: its marker, attention facts, icon and colour.
+_PATCHABLE_BROWSER_FIELDS = frozenset(
+    {"attention", "run_marker", "capped_run_marker", "icon", "color"}
+)
+
+
+def _browser_delta_may_patch(old: Any, new: Any) -> bool:
+    """Return False when a browser delta is sure to need the tray rebuilt.
+
+    TASK-36012 review: ``plan_in_place_delta`` decides by diffing two off-DOM
+    composes, and a refused patch throws both away before the rebuild
+    composes a third time, synchronously on the UI thread. A conversation
+    switch at 40 rows went from 203 to 382 ms of CPU that way. This state
+    check runs first and admits only a delta confined to
+    ``_PATCHABLE_BROWSER_FIELDS`` that leaves every row's activity line as it
+    was (that line adds a row of height). The compose diff stays the
+    authority on whether the admitted delta really moves nothing.
+
+    Args:
+        old: The browser state (or a value inside it) the tray shows.
+        new: The incoming value at the same place.
+
+    Returns:
+        True when the two differ only in patchable fields.
+    """
+    if old == new:
+        return True
+    if type(old) is not type(new):
+        return False
+    if isinstance(old, tuple):
+        return len(old) == len(new) and all(map(_browser_delta_may_patch, old, new))
+    if not dataclasses.is_dataclass(old):
+        return False
+    if isinstance(old, ConsoleConversationBrowserRow) and (
+        _conversation_activity_text(old) != _conversation_activity_text(new)
+    ):
+        return False
+    return all(
+        field.name in _PATCHABLE_BROWSER_FIELDS
+        or _browser_delta_may_patch(getattr(old, field.name), getattr(new, field.name))
+        for field in dataclasses.fields(old)
+    )
 
 
 def _conversation_row_render_height(
@@ -590,46 +641,6 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class _ComposeReadView:
-    """Attribute-recording view of the tray state, live only during compose.
-
-    TASK-26836: ``_can_skip_recompose`` used whole-state value equality, so a
-    delta in a field this tray's ``content`` never renders (probe-observed:
-    ``conversation_browser`` pushed into the ``content="workspace"`` tray)
-    still forced a full recompose -- and its paint-blocking App batch. The
-    tray now records which top-level state fields ``compose`` actually reads,
-    exactly as it already records the row signature of what it builds, and
-    the guard skips when only unread fields changed.
-
-    The view delegates everything to the real state; reads observed while it
-    is live can only ADD fields to the recorded set, so interleaved readers
-    during a compose window bias toward recomposing more, never less.
-    """
-
-    __slots__ = ("_target", "_reads")
-
-    def __init__(self, target: object, reads: set) -> None:
-        object.__setattr__(self, "_target", target)
-        object.__setattr__(self, "_reads", reads)
-
-    def __getattr__(self, name: str):
-        if not name.startswith("_"):
-            self._reads.add(name)
-        return getattr(self._target, name)
-
-    def __eq__(self, other: object) -> bool:
-        return self._target == getattr(other, "_target", other)
-
-    def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
-
-    def __bool__(self) -> bool:
-        return self._target is not None
-
-    def __repr__(self) -> str:
-        return f"_ComposeReadView({self._target!r})"
-
-
 class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     """Render workspace selection, conversation scope, and recovery copy."""
 
@@ -754,7 +765,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         reads = self._state_field_reads
         if reads is None or self._state is None:
             return self._state
-        return _ComposeReadView(self._state, reads)
+        return ComposeReadView(self._state, reads)
 
     @state.setter
     def state(self, value: Any) -> None:
@@ -795,6 +806,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # the screen-side equality skip never re-arms.
             self.state = state
             return
+        if self._patch_in_place(state):
+            return
         self.state = state
         self.styles.min_height = 0
         scroll_parent = self._nearest_scroll_parent()
@@ -803,6 +816,100 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    def _patch_in_place(self, state: ConsoleWorkspaceContextState) -> bool:
+        """Apply a delta that moves no box to the mounted rows, without a rebuild.
+
+        TASK-36012. A send's start and end flip one row's "Running"
+        attention: its action icon (a fixed-width slot), a colour class and
+        two tooltips. The recompose that used to follow re-mounted every row,
+        and each mount cost a whole-screen layout (plus the legacy alias
+        re-mount and two section reconciles): three extra full reflows at a
+        send's start, two at its end. ``plan_in_place_delta`` patches only a
+        delta whose two composes have the same shape, styles and inputs, on a
+        tray whose DOM is proved to show its current state (the same proof
+        ``_can_skip_recompose`` uses); anything else rebuilds as before. The
+        two composes run only for a browser delta ``_browser_delta_may_patch``
+        admits, so every other sync composes once, as it did before.
+
+        Args:
+            state: The incoming display state.
+
+        Returns:
+            True when the mounted rows now show ``state``.
+        """
+        if (
+            not getattr(self, "_console_workspace_context_synced", False)
+            or self._composed_row_signature is None
+            or self._composed_fixed_signature is None
+            or getattr(self, "_recompose_required", False)
+            or self.recompose_in_flight
+            or not self.is_mounted
+            or not self.children
+        ):
+            return False
+        if self._mounted_signatures(self._composed_fixed_signature) != (
+            self._composed_row_signature,
+            self._composed_fixed_signature,
+        ):
+            return False
+        # Only a run-shaped browser delta is worth the two composes the diff
+        # costs. A delta that also moves a field this tray does not render
+        # (the screen's out-of-band alias reads `new_conversation_enabled`)
+        # keeps the rebuild that re-syncs those controls.
+        reads = self._composed_state_reads
+        changed = {
+            field.name
+            for field in dataclasses.fields(state)
+            if getattr(state, field.name) != getattr(self._state, field.name)
+        }
+        if (
+            reads is None
+            or "conversation_browser" not in reads
+            or changed != {"conversation_browser"}
+            or not _browser_delta_may_patch(
+                self._state.conversation_browser, state.conversation_browser
+            )
+        ):
+            return False
+        shown = self._state
+        record = (
+            self._composed_row_signature,
+            self._composed_fixed_signature,
+            self._composed_state_reads,
+            self._composed_publication_state,
+        )
+        writes = None
+        try:
+            before = compose(self)
+            self._state = state
+            # Composed last, so the recorded signatures and reads describe
+            # the state the patched tree shows.
+            after = compose(self)
+            writes = plan_in_place_delta(
+                [
+                    child
+                    for child in self.children
+                    if child.id not in _OUT_OF_BAND_CHILD_IDS
+                ],
+                before,
+                after,
+                patchable_types=(ConsoleBrowserSearchInput,),
+            )
+        finally:
+            if writes is None:
+                self._state = shown
+                (
+                    self._composed_row_signature,
+                    self._composed_fixed_signature,
+                    self._composed_state_reads,
+                    self._composed_publication_state,
+                ) = record
+        if writes is None:
+            return False
+        for write in writes:
+            write()
+        return True
 
     async def wait_for_publication(self) -> bool:
         """Await refresh and the existing mounted-DOM proof, not state assignment.

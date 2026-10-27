@@ -298,6 +298,15 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         No-ops when ``state`` equals the currently-applied snapshot
         (task-280: the Console 0.2s tick calls this unconditionally).
 
+        TASK-36012: a send's start and end change one or two facts, and every
+        row used to be re-written (each ``Static.update`` a whole-screen
+        layout) and the action button re-sized, whose ``height=None`` reset
+        lays out even when nothing changes. Unchanged rows keep their copy; a
+        changed row repaints without a layout, because ``.console-settings-row``
+        fixes its box (one row, fill width, nowrap with an ellipsis); and the
+        button is re-sized only when its label, the one input its size reads,
+        changes. A row shown or hidden still lays out through ``display``.
+
         Args:
             state: Latest settings-summary display state.
 
@@ -310,7 +319,8 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         try:
             for widget_id, value in self._body_row_values():
                 row = self.query_one(f"#{widget_id}", Static)
-                row.update(value)
+                if row.content != value:
+                    row.update(value, layout=False)
                 row.display = bool(value)
             button = self.query_one("#console-settings-open", Button)
         except NoMatches:
@@ -318,9 +328,11 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
             self.call_after_refresh(self._request_section_reconcile)
             return
 
-        button.label = self._action_label()
+        label = self._action_label()
+        if button.label.plain != label:
+            button.label = label
+            self._apply_button_sizing(button)
         button.tooltip = self._action_tooltip()
-        self._apply_button_sizing(button)
         self.call_after_refresh(self._request_section_reconcile)
 
     def _apply_button_sizing(self, button: Button) -> None:

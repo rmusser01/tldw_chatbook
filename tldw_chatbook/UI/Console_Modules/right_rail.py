@@ -758,7 +758,11 @@ class ConsoleInspectorRail(Vertical):
         # A local pass may have changed a fixed-height owner in this refresh.
         # Let Textual commit that physical geometry before measuring the outer
         # body; descendant Resize is not guaranteed for such changes.
-        self.refresh(layout=True)
+        # TASK-36012: a collapsed (display: none) rail has no geometry to
+        # commit, and the measure below reads an empty viewport and stops.
+        # Opening the rail resizes it, which requests this reconcile again.
+        if self.display:
+            self.refresh(layout=True)
         self.call_after_refresh(self._finish_scheduled_outer_reconcile)
 
     def _finish_scheduled_outer_reconcile(self) -> None:

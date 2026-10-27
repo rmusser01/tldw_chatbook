@@ -437,6 +437,8 @@ from ...Chat.console_rail_state import (
     ConsoleRailState,
     build_console_rail_preference_key,
     build_console_rail_state,
+    console_rail_handle_copy,
+    console_rail_handle_copy_only_changed,
     coerce_console_rail_preferences,
     collect_prunable_console_rail_keys,
     console_badge_inspector_rows,
@@ -12446,8 +12448,18 @@ class ChatScreen(BaseAppScreen):
         elif self._console_fleet_rows_present:
             self._console_fleet_inspector_dismissed = True
 
-    def _sync_console_rail_visibility(self, rail_state: ConsoleRailState) -> None:
-        """Apply Console rail visibility without recomposing the screen."""
+    def _sync_console_rail_visibility(
+        self, rail_state: ConsoleRailState, *, handles_only: bool = False
+    ) -> None:
+        """Apply rail visibility, or only the handles' copy (TASK-36012), in place."""
+        for selector, label, badge in console_rail_handle_copy(rail_state):
+            try:
+                handle = self.query_one(selector, ConsoleRailHandle)
+            except QueryError:
+                continue
+            handle.sync_state(label, badge)
+        if handles_only:
+            return
         try:
             left_rail = self.query_one("#console-left-rail", ConsoleLeftRail)
         except (NoMatches, QueryError):
@@ -12462,23 +12474,6 @@ class ChatScreen(BaseAppScreen):
             pass
         else:
             inspector.set_more_open(rail_state.inspector_more_open)
-        for selector, label, badge in (
-            (
-                "#console-context-rail-handle",
-                rail_state.left_label,
-                rail_state.left_badge,
-            ),
-            (
-                "#console-inspector-rail-handle",
-                rail_state.right_label,
-                rail_state.right_badge,
-            ),
-        ):
-            try:
-                handle = self.query_one(selector, ConsoleRailHandle)
-            except QueryError:
-                continue
-            handle.sync_state(label, badge)
 
         # TASK-2154.1: mirrors the compose-time rules -- below 84 both handles
         # hide and the main minimum is waived. The default layout gives the
@@ -12554,7 +12549,8 @@ class ChatScreen(BaseAppScreen):
         if rail_state == self._last_console_rail_state:
             return
         previous = self._last_console_rail_state
-        self._sync_console_rail_visibility(rail_state)
+        handles_only = console_rail_handle_copy_only_changed(previous, rail_state)
+        self._sync_console_rail_visibility(rail_state, handles_only=handles_only)
         self._last_console_rail_state = rail_state
         # task-13 (review M9): the ONE seam where the Inspect rail actually
         # becomes visible, whatever opened it -- the Alt+I action, the handle
