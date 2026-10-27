@@ -131,6 +131,26 @@ retaining truthful transport status.
 
 Auto-speak is fail-closed: unknown session, hands-free active, or a missing/differing destination fingerprint all suppress speech; per-conversation consent is stored as session metadata (destination SHA-256 fingerprint, consent version).
 
+## Speech Lab action scope
+
+`UI/Screens/stts_screen.py::STTSScreen` owns the Playground rail mirrors
+(`g/r/x/p/s`) and their custom `AppFooterStatus` hints. Both require the
+current view to be Playground and a target in the screen's attached
+`STTSWindow`. Availability checks only inspect UI ownership and never start
+synthesis, recording, playback or provider work. Focused text editors retain
+printable input; Lab mode and global hints remain available in other views.
+
+`STTSWindow.ContentChanged` identifies the exact window after native content
+removal and after replacement readiness. The screen rejects retired window
+notifications and re-derives the footer registration and native binding
+availability from its current live target. The existing current-view watcher
+also removes hints as navigation begins, so the absent-target interval on a
+return to Playground cannot advertise actions early. Screen recomposition
+revokes the old window owner and clears persisted hints before native removal;
+a refused native swap restores only its still-attached owner. The Lab mount-hook
+contract is unchanged: Speech does not define `on_mount` (TASK-37034;
+ADR-011/031/150/161).
+
 ## Foreground Speech Recognition capture
 
 The Speech Lab's `ImprovedDictationWindow` owns its lazy dictation service.

@@ -22,6 +22,7 @@ from textual.widgets import (
     Rule,
 )
 from textual.css.query import QueryError
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
@@ -1658,6 +1659,13 @@ class STTSWindow(Container):
     }
     """
 
+    class ContentChanged(Message):
+        """The exact window removed or finished replacing its active content."""
+
+        def __init__(self, window: "STTSWindow") -> None:
+            super().__init__()
+            self.window = window
+
     current_view = reactive("playground")
 
     def __init__(
@@ -1988,6 +1996,7 @@ class STTSWindow(Container):
         # Await both sides of the replacement so a rapid rail action cannot
         # prune nested controls while their Mount events are still queued.
         await content_container.remove_children()
+        self.post_message(self.ContentChanged(self))
 
         # Add new content based on view
         self._mounted_view = new_view
@@ -2106,6 +2115,8 @@ class STTSWindow(Container):
                     *(select._mounted_event.wait() for select in select_nodes)
                 )
                 break
+
+        self.post_message(self.ContentChanged(self))
 
         # Selection styling is the rail's job now. These lines used to
         # `query_one("#view-*-btn")` for the four view buttons; those live on
