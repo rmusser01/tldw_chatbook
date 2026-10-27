@@ -998,10 +998,13 @@ MINIMUM_FILES = 2028
 # - task 7: Tests/UI/test_library_notes_select_mode_counts_and_bulk.py (four
 #   real-Library boots, ~27 s) and its `_extended` sibling (three boots,
 #   ~25 s alone, so it is gated too -- the task 5 R2-1 precedent): 918 -> 920.
+# - task 7 fix round 1 (2026-10-27): Tests/UI/test_library_notes_deferred_
+#   visit_reload.py (one real-Library boot, ~6 s; review R0 M-1, ruling
+#   T7-f): 920 -> 921.
 # Rebased 2026-11-12 onto dev 4b90eb860b (2028 entries, floor 2028): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2028 + 4 = 2032.
-MINIMUM_FILES = 2032
+# moves; the floor is the measured entry count: 2028 + 5 = 2033.
+MINIMUM_FILES = 2033
 
 
 def read_census(path: Path) -> list[str]:

@@ -433,3 +433,155 @@ async def test_both_notes_selection_counts_move_together_on_one_toggle():
         await pilot.pause()
 
         assert counts() == ["0 selected", "0 selected — Export selected unavailable"]
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.29 (N-14), fix round 1 (review R0 M-2 / M-3): two canvas rules
+# the bulk-action focus repair rests on, pinned without a Library boot.
+# ---------------------------------------------------------------------------
+
+
+class _LoadingTreeNotesCanvasApp(ConsolidatedCSSApp):
+    """A Notes list with no rendered note rows, its tree loading or answered."""
+
+    def __init__(self, *, loading: bool):
+        super().__init__()
+        self._loading = loading
+
+    def compose(self):
+        rows = (
+            (
+                LibraryNotesTreeRow(
+                    "pager:root",
+                    "pager",
+                    "Loading notes…",
+                    0,
+                    loading=True,
+                    disabled=True,
+                    focus_id="library-notes-tree-pager-root",
+                ),
+            )
+            if self._loading
+            else ()
+        )
+        yield LibraryNotesCanvas(
+            list_state=LibraryNotesListState(
+                rows=(),
+                header_copy="Notes",
+                status_copy="",
+                empty_copy="No notes yet.",
+            ),
+            tree_projection=LibraryNotesTreeProjection(rows=rows),
+            id="library-notes-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_select_stays_enabled_while_the_tree_is_still_loading_rows():
+    """M-2: "nothing to select" only once the tree has answered.
+
+    A reload renders no note rows until its pages land. Select disabled in
+    that window refused every focus replay onto it, so focus fell to the
+    filter after each bulk action. The control arm (an answered, empty tree)
+    keeps the old rule: nothing to select, Select disabled.
+    """
+    async with _LoadingTreeNotesCanvasApp(loading=True).run_test() as pilot:
+        await pilot.pause()
+        select = pilot.app.query_one("#library-notes-select-toggle", Button)
+        assert select.disabled is False, str(select.label)
+
+    async with _LoadingTreeNotesCanvasApp(loading=False).run_test() as pilot:
+        await pilot.pause()
+        select = pilot.app.query_one("#library-notes-select-toggle", Button)
+        assert select.disabled is True, str(select.label)
+
+
+class _GripAndNotesCanvasApp(ConsolidatedCSSApp):
+    """A focusable stand-in for the Library grip, then a select-mode canvas.
+
+    The grip precedes the canvas in the focus chain, so it is where Textual's
+    reset parks focus when a canvas resync prunes Actions… -- the landing the
+    Library measured (``library-browse-library-grip``).
+    """
+
+    def compose(self):
+        yield Button("Library", id="grip")
+        yield LibraryNotesCanvas(
+            list_state=_select_mode_notes_state(1),
+            id="library-notes-canvas",
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_resync_refocus_yields_to_a_user_move_inside_the_window(
+    monkeypatch,
+):
+    """M-3: the same-id refocus hands Actions… back unless the user moved.
+
+    The screen advances ``focus_intent_generation`` for every focus change it
+    did not make itself (``on_descendant_focus``); that is the user's own
+    move. Here the move is the generation advancing inside the window while
+    focus ends on the landing (the user stepped off the grip and back, say),
+    so only the gate can tell it apart from Textual's reset. Control arm: no
+    move, and focus goes to Actions…' same-id replacement. Third arm: the
+    advance the screen traces to Textual's own landing (it counts it in
+    ``reset_landing_intents``) is not the user's, and the refocus still runs.
+    """
+    generation = [0]
+    app = _GripAndNotesCanvasApp()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesCanvas)
+        canvas._tree_focus_intent_generation = lambda: generation[0]
+        grip = app.query_one("#grip", Button)
+
+        async def resync(*, user_moves: bool, landing_moves: bool = False):
+            actions = app.query_one("#library-notes-select-actions", Button)
+            assert actions.disabled is False
+            app.screen.set_focus(actions)
+            await pilot.pause()
+            assert app.focused is actions
+            real_compose = canvas.compose
+            landings: list = []
+
+            def compose_in_the_window():
+                landings.append(app.focused)
+                if user_moves:
+                    generation[0] += 1
+                if landing_moves:
+                    # What the screen does for the reset landing's own focus
+                    # event: count it as intent, and tell the canvas.
+                    generation[0] += 1
+                    canvas.reset_landing_intents += 1
+                monkeypatch.setattr(canvas, "compose", real_compose)
+                yield from real_compose()
+
+            monkeypatch.setattr(canvas, "compose", compose_in_the_window)
+            canvas.refresh(recompose=True)
+            for _ in range(100):
+                await pilot.pause(0.02)
+                if (
+                    landings
+                    and not canvas.recompose_in_flight
+                    and canvas.focus_before_prune is None
+                    and app.query_one("#library-notes-select-actions") is not actions
+                ):
+                    break
+            assert landings and landings[0] is grip, landings
+            await pilot.pause()
+            return actions
+
+        replaced = await resync(user_moves=False)
+        assert app.focused is not replaced
+        assert getattr(app.focused, "id", None) == "library-notes-select-actions"
+
+        await resync(user_moves=True)
+        assert app.focused is grip, app.focused
+
+        replaced = await resync(user_moves=False, landing_moves=True)
+        assert app.focused is not replaced
+        assert getattr(app.focused, "id", None) == "library-notes-select-actions"
+
+        # A real key still moves focus off the grip stand-in.
+        await pilot.press("tab")
+        assert app.focused is not grip

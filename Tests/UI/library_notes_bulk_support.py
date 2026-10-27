@@ -122,6 +122,28 @@ class NotesSeed:
         folder_id = self.folder_ids[folder]
         return {note for folder_id_, note in self.memberships() if folder_id_ == folder_id}
 
+    def placement_rows(self, folder: str, title: str) -> list[tuple[int, int]]:
+        """Every ``(deleted, version)`` row placing ``title`` in ``folder``,
+        live or not, through a second connection."""
+        with sqlite3.connect(self.tmp_path / "notes.sqlite3") as connection:
+            return sorted(
+                connection.execute(
+                    "SELECT deleted, version FROM note_folder_memberships "
+                    "WHERE folder_id = ? AND note_id = ?",
+                    (self.folder_ids[folder], self.note_ids[title]),
+                ).fetchall()
+            )
+
+    def keyword_state(self) -> tuple[list[tuple], list[tuple]]:
+        """Every keyword row and every note-keyword link, live or not,
+        through a second connection -- equal before and after means nothing
+        was written."""
+        with sqlite3.connect(self.tmp_path / "notes.sqlite3") as connection:
+            return (
+                sorted(connection.execute("SELECT * FROM keywords").fetchall()),
+                sorted(connection.execute("SELECT * FROM note_keywords").fetchall()),
+            )
+
     def keyword_links(self, keyword: str) -> set[str]:
         """Note ids linked to ``keyword`` (case-insensitive), second connection."""
         with sqlite3.connect(self.tmp_path / "notes.sqlite3") as connection:
@@ -173,6 +195,13 @@ async def until(pilot, predicate, what) -> None:
 
 def note_rows(screen) -> list[Button]:
     return list(screen.query(".library-notes-tree-note-row").results(Button))
+
+
+def folder_row(screen, label: str) -> Button:
+    for row in screen.query(".library-notes-folder-row").results(Button):
+        if label in str(row.label):
+            return row
+    raise AssertionError(f"no folder row {label!r}")
 
 
 def row_for(screen, title: str) -> Button:
