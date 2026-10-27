@@ -1770,3 +1770,6 @@ Tests/UI/test_library_notes_folder_navigator.py::test_the_next_successful_folder
 
 # TASK-34975: mounted learning, retained repair, inert reopen and exclusion.
 Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console
+
+# TASK-34100.5.3: the Tools & MCP Tool gates pane (now led by Full agent tools) fits its content (about 3 s).
+Tests/UI/test_mcp_servers_mode.py::test_builtin_toggles_container_does_not_expand_past_content
