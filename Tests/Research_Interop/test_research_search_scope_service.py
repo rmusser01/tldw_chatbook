@@ -17,8 +17,8 @@ class FakeResearchSearchClient:
             "sub_query_dict": {"queries": ["sync"]},
         }
 
-    async def run_paper_search(self, request_data):
-        self.calls.append(("run_paper_search", request_data))
+    async def paper_search(self, request_data):
+        self.calls.append(("paper_search", request_data))
         return {
             "query_echo": {"query": request_data.params.get("query")},
             "items": [{"paperId": "abc", "title": "Agent Sync"}],
@@ -28,12 +28,12 @@ class FakeResearchSearchClient:
             "total_pages": 1,
         }
 
-    async def get_paper_search_detail(self, request_data):
-        self.calls.append(("get_paper_search_detail", request_data))
+    async def paper_search_detail(self, request_data):
+        self.calls.append(("paper_search_detail", request_data))
         return {"id": "1706.03762", "title": "Attention Is All You Need"}
 
-    async def run_paper_search_ingest(self, request_data):
-        self.calls.append(("run_paper_search_ingest", request_data))
+    async def paper_search_ingest(self, request_data):
+        self.calls.append(("paper_search_ingest", request_data))
         return {"data": {"db_id": 42, "status": "success"}}
 
 
@@ -100,11 +100,11 @@ async def test_server_research_search_service_wraps_paper_search_client():
     assert listing["items"][0]["paperId"] == "abc"
     assert detail["title"] == "Attention Is All You Need"
     assert ingest["data"]["db_id"] == 42
-    assert client.calls[0][0] == "run_paper_search"
+    assert client.calls[0][0] == "paper_search"
     assert client.calls[0][1].endpoint == "semantic-scholar"
-    assert client.calls[1][0] == "get_paper_search_detail"
+    assert client.calls[1][0] == "paper_search_detail"
     assert client.calls[1][1].params == {"id": "1706.03762"}
-    assert client.calls[2][0] == "run_paper_search_ingest"
+    assert client.calls[2][0] == "paper_search_ingest"
 
 
 @pytest.mark.asyncio
