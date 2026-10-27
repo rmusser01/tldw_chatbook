@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any
@@ -55,6 +56,8 @@ _STEP_ONE_LABELS = {
     "readiness_unknown": "Finish provider setup",
 }
 CONSOLE_SETUP_STEP_THREE_DETAIL = "Composer unlocks after setup"
+#: TASK-34100.6: a local server answered, so 'no key' would point the wrong way.
+CONSOLE_SETUP_NO_MODEL_CONNECTED = "No model connected"
 # task-32140: the numbered steps above are all provider setup -- a
 # local-first user who came for notes was told the only available action
 # needed an API key. This secondary action needs no provider and routes
@@ -221,6 +224,55 @@ def _ready_line_copy(
     return f"Setup complete — {provider} · {name}. {ready}"
 
 
+def env_keyed_provider_for_recovery(
+    app_config: Mapping[str, object],
+    current_provider: str,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """A provider whose key is exported, when the current one still needs one.
+
+    TASK-34100.6 (review new-coverage-power-03): with only ANTHROPIC_API_KEY
+    exported, 'Set up provider' opened Settings on the template OpenAI with
+    'API key source: missing'. Settings now opens on the provider whose key
+    is there. Only the variable's presence is read; nothing is written.
+
+    Args:
+        app_config: The loaded configuration.
+        current_provider: The Console's provider, in any saved spelling.
+        environ: The environment to read (the process environment by default).
+
+    Returns:
+        That provider's readiness key, or None when the current provider is
+        ready, needs no key, or no other provider's key is exported.
+    """
+    import os
+
+    from tldw_chatbook.Chat.console_provider_support import (
+        resolve_console_provider_identity,
+    )
+    from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.config import is_valid_provider_api_key
+
+    environ = os.environ if environ is None else environ
+    try:
+        current = resolve_console_provider_identity(current_provider).readiness_key
+        readiness = get_provider_readiness(  # review F8: never a sync Keychain read
+            current, app_config, environ=environ, background_credentials=True
+        )
+    except (TypeError, ValueError):
+        return None
+    if readiness.ready or not readiness.requires_api_key:
+        return None
+    for entry in settings_provider_catalog():
+        facts = entry.setup_facts
+        if entry.readiness_key == current or facts.legacy or not entry.requires_api_key:
+            continue
+        if facts.env_var and is_valid_provider_api_key(environ.get(facts.env_var)):
+            return entry.readiness_key
+    return None
+
+
 def build_console_setup_card_state(
     *,
     readiness: ConsoleSettingsReadiness,
@@ -230,6 +282,7 @@ def build_console_setup_card_state(
     has_messages: bool,
     guidance_dismissed: bool,
     model: str = "",
+    local_server_found: bool = False,
 ) -> ConsoleSetupCardState:
     """Derive the onboarding surface state from the readiness single source.
 
@@ -243,6 +296,8 @@ def build_console_setup_card_state(
         has_messages: Whether the active transcript has any messages.
         guidance_dismissed: In-session dismissal (user started composing).
         model: The selected model, named in the ready line (TASK-34100.5).
+        local_server_found: A local server answered the card's scan, so the
+            missing piece is connecting it, not a key (TASK-34100.6).
 
     Returns:
         Card state: full ``card`` while setup is incomplete, one ``ready_line``
@@ -268,6 +323,8 @@ def build_console_setup_card_state(
     provider_name = str(provider_label or "Provider").strip() or "Provider"
     # TASK-33005.3: the active step carries the one readiness word.
     word = readiness_words(readiness)
+    if local_server_found and readiness.blocker == "credential_missing":
+        word = CONSOLE_SETUP_NO_MODEL_CONNECTED  # entry-exit-handoff-21
     # Capture finding 12: the word is this chat's provider's, so the step
     # names it; beside "Use detected <server>" an unnamed "Not ready · no
     # key" read as the server's. "Provider" is the callers' fallback, no name.

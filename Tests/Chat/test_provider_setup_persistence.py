@@ -1294,6 +1294,8 @@ def test_setup_types_are_frozen_slotted_and_have_secret_free_repr():
         "section_values",
         "delete_keys",
         "semantic_identity",
+        # TASK-34100.6 AC#6: other exported keys, by variable name only.
+        "environment_records",
     ]
     assert not hasattr(draft, "__dict__")
     assert not hasattr(mutation, "__dict__")

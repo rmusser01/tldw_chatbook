@@ -2197,6 +2197,65 @@ that chat no longer shows, and post awaited answers with an explicit
 `session_id`. **Making a call asynchronous changes the contract of everything
 it calls: list each handler's awaits and what it re-reads after them.**
 
+## A `Collapsible` scrolls itself into view on every `collapsed` change -- programmatic ones too
+
+**TASK-34100.6, 2026-10-04.** Arrowing through the first-run Provider list from a
+keyed row (its Authentication section expanded) to a keyless one (collapsed) scrolled
+the step so far that the focused list left the screen (list at y=-11 in a viewport
+starting at y=9). Nothing in the app scrolled: Textual 8's `Collapsible._watch_collapsed`
+ends with `call_after_refresh(self.scroll_visible)`, whoever set `collapsed`. It only
+showed once the list grew taller than 7 rows. Fix without private API: a subclass whose
+`scroll_visible` is held while the step sets `collapsed` and released by a
+`call_after_refresh` queued after the Collapsible's own
+(`first_run_provider_key_entry.AuthCollapsible`). A focus that relied on that scroll then
+needs to wait a refresh too (`call_after_refresh(field.focus)`), so focusing scrolls to
+the field's expanded position. Pinned by
+`test_arrowing_between_keyed_and_local_rows_keeps_the_list_in_view`.
+
+**Correction (review round 1, 2026-10-05): one refresh is not a layout.** Live at
+120x40 a mouse click on OpenAI (a click highlights and picks in one go) focused the key
+field below the fold. Temporary logging showed the after-refresh focus ran while the
+field's `region` was still `Region(0, 0, 0, 0)`: the expanded section had not been laid
+out, and `scroll_to_widget` reads `virtual_region_with_margin` at call time, so the
+focus scroll aimed at nothing (no `scroll_y` change at all). Pilot always laid out
+first, so the pilot test passed on the broken code. The fix focuses with
+`scroll_visible=False` and calls `scroll_visible(animate=False)` only once
+`widget.region` is non-empty, re-queuing `call_after_refresh` until it is
+(`first_run_provider_key_entry._reveal_after_layout`). The test that reproduces it runs
+the pick's first scheduled callback synchronously -- the live frame order --
+(`test_a_clicked_keyed_row_brings_its_key_field_on_screen`, RED at the live region).
+
+## Overriding `watch_<name>` replaces the base class's watcher -- call `super()`
+
+**TASK-34100.6 review round 2, 2026-10-05.** Round 1 added
+`ProviderChoiceList.watch_highlighted` to keep the browsed row inside the step's
+viewport. It never called `super()`. Textual 8 resolves a reactive's watcher with
+`getattr(obj, "watch_highlighted")` (`reactive.py`, `_check_watchers`), so the override
+*replaced* `OptionList.watch_highlighted`, which is the code that calls
+`scroll_to_highlight()` and posts `OptionHighlighted`. Arrowing past the 14-row list
+viewport at 120x40 kept selecting providers while the highlighted row sat below the
+list's own fold (two reviewers, a probe and a live capture: `scroll_y=0`, highlighted
+line 26). No test arrowed past the viewport, and the tests that existed scrolled
+explicitly. A Textual watcher is not a hook that chains: an override that adds
+behaviour must call `super().watch_<name>(...)` first. Pin it with a test that drives
+the base behaviour you kept (here: Down past the viewport, then assert the row's line is
+inside the list's scroll window). Pinned by
+`test_arrowing_past_the_lists_viewport_scrolls_the_list`.
+
+## `text-wrap: wrap` on a RadioButton only moves the cut -- ToggleButton is one row tall
+
+**TASK-34100.6 pass 2, 2026-10-06.** At 80x24 the Provider step's exported-key option
+read 'Use ANTHROPIC_API_KEY from your environment (found; no…', clipping the words the
+AC requires. The obvious fix, `text-wrap: wrap; height: auto` on the button, removed the
+ellipsis and still showed one row ('… (found; not'): Textual 8's
+`ToggleButton.get_content_height` returns 1 whatever the style says, so the wrapped
+second line is laid out into no space. A test that checked only for the missing `…`
+would have passed. The fix is a subclass that measures the wrapped label
+(`Widget.get_content_height`) when the stylesheet wraps it
+(`first_run_provider_key_entry.KeySourceRadioButton`), with a test that reads the
+button's rendered lines for the whole phrase, not just for the absence of an ellipsis
+(`test_the_env_choice_label_is_never_cut_short[80x24]`).
+
 ---
 
 ## A handler that awaits the removal of its own ancestor never returns -- and `asyncio.wait_for` cannot get you out (TASK-34000.4, 2026-10-04)

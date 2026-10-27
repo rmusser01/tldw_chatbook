@@ -105,10 +105,11 @@ def test_discovery_candidates_still_target_the_wellknown_localhost_ports() -> No
     """
     candidates = [candidate.base_url for candidate in build_local_server_candidates({})]
 
-    assert candidates[:2] == [
-        DEFAULT_LLAMACPP_DISCOVERY_URL,
-        DEFAULT_OLLAMA_DISCOVERY_URL,
-    ]
+    # The 9099 llama.cpp convention and (TASK-34100.6) LM Studio/Jan/KoboldCpp
+    # ports also sit in the list; what matters here is that both are probed.
+    assert {DEFAULT_LLAMACPP_DISCOVERY_URL, DEFAULT_OLLAMA_DISCOVERY_URL} <= set(
+        candidates
+    )
     assert DEFAULT_LLAMACPP_DISCOVERY_URL == "http://127.0.0.1:8080"
 
 

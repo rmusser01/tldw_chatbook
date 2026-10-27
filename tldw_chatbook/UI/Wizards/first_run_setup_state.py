@@ -515,12 +515,19 @@ def build_first_run_provider_commit(
             shared_draft(source),
             config,
             preserve_credentials=readiness.subscription_status is not None,
+            record_environment_credentials=True,
         )
-    elif credential.source == "draft" and not credential_value:
-        mutation = build_provider_setup_mutation(shared_draft("none"), config)
     else:
+        # TASK-34100.6 AC#6 (coverage-08): every other exported key is recorded
+        # as credential_source = "environment" in the same write (no secret).
         mutation = build_provider_setup_mutation(
-            shared_draft(credential.source), config
+            shared_draft(
+                "none"
+                if credential.source == "draft" and not credential_value
+                else credential.source
+            ),
+            config,
+            record_environment_credentials=True,
         )
     if type(mutation) is not ProviderSetupMutation:
         raise ValueError("Provider setup mutation is invalid.")
@@ -538,6 +545,19 @@ PROVIDER_PROBE_CONNECTION = "connection"
 #: TASK-33008 (capture 06a): the server refused a check that carried no key.
 #: Nothing was rejected; the server wants a key and none was set.
 PROVIDER_PROBE_KEY_REQUIRED = "key_required"
+#: TASK-34100.6 review round 2 (R2-02): the server answered, with an HTTP
+#: error (429, 5xx, ...) -- a failure, but never 'couldn't be reached'.
+PROVIDER_PROBE_SERVER_ERROR = "server_error"
+#: Review round 2 (found live, g6-r2fix/41): the server answered, but over
+#: the wrong transport -- plain HTTP at an https:// address, or a
+#: certificate that isn't trusted. Failures, never 'couldn't be reached'.
+PROVIDER_PROBE_PLAIN_HTTP = "plain_http"
+PROVIDER_PROBE_CERTIFICATE = "certificate"
+#: Model's transport categories (first_run_model_discovery) -> the above.
+_TRANSPORT_PROBE_FAILURES = {
+    "plain HTTP": PROVIDER_PROBE_PLAIN_HTTP,
+    "untrusted certificate": PROVIDER_PROBE_CERTIFICATE,
+}
 
 
 def classify_discovery_failure(
@@ -556,6 +576,9 @@ def classify_discovery_failure(
     Returns:
         PROVIDER_PROBE_AUTH for a key the server refused,
         PROVIDER_PROBE_KEY_REQUIRED for a refusal when no key was sent,
+        PROVIDER_PROBE_SERVER_ERROR for an HTTP error answer ("HTTP 503"),
+        PROVIDER_PROBE_PLAIN_HTTP / PROVIDER_PROBE_CERTIFICATE for a server
+        that answered over the wrong transport,
         PROVIDER_PROBE_CONNECTION for any other failed probe, and
         PROVIDER_PROBE_NONE when discovery did not fail (including
         "listing_unavailable", which is a provider capability, not an
@@ -565,7 +588,9 @@ def classify_discovery_failure(
         return PROVIDER_PROBE_NONE
     if failure_category == "authentication":
         return PROVIDER_PROBE_AUTH if key_sent else PROVIDER_PROBE_KEY_REQUIRED
-    return PROVIDER_PROBE_CONNECTION
+    if failure_category.startswith("HTTP "):
+        return PROVIDER_PROBE_SERVER_ERROR
+    return _TRANSPORT_PROBE_FAILURES.get(failure_category, PROVIDER_PROBE_CONNECTION)
 
 
 def discovery_sends_a_key(provider_draft: object) -> bool:
@@ -625,6 +650,38 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
         "running, or continue anyway.",
         "saved, but the server couldn't be reached when models were checked",
     ),
+    # TASK-34100.6 review round 2 (R2-02, g6-r2fix/41): a server that answered
+    # is never 'couldn't be reached'; Model's line names it
+    # (first_run_model_discovery.connection_failed_text).
+    PROVIDER_PROBE_SERVER_ERROR: ProbeFailureCopy(
+        "",
+        "{display} answered with an error. Check the server, or continue anyway.",
+        "The server answered with an error, so this model setup is unverified. "
+        "Continue anyway?",
+        "The last connection check got an error answer from the server. Check "
+        "the server, or continue anyway.",
+        "saved, but the server answered with an error when models were checked",
+    ),
+    PROVIDER_PROBE_PLAIN_HTTP: ProbeFailureCopy(
+        "",
+        "{display} speaks plain HTTP — use http:// in its address, or continue "
+        "anyway.",
+        "The server speaks plain HTTP at an https:// address, so this model "
+        "setup is unverified. Continue anyway?",
+        "The last connection check found a plain-HTTP server — change the "
+        "address to http://, or continue anyway.",
+        "saved, but the server speaks plain HTTP — its address needs http://",
+    ),
+    PROVIDER_PROBE_CERTIFICATE: ProbeFailureCopy(
+        "",
+        "{display}'s certificate isn't trusted — add your CA in Settings ▸ "
+        "Network, or continue anyway.",
+        "The server's certificate isn't trusted, so this model setup is "
+        "unverified. Continue anyway?",
+        "The last connection check found a server whose certificate isn't "
+        "trusted — add your CA bundle in Settings ▸ Network, or continue anyway.",
+        "saved, but the server's certificate isn't trusted",
+    ),
 }
 
 
@@ -644,6 +701,15 @@ PROVIDER_LISTING_UNAVAILABLE_LINE = (
 #: Model has none, so the key is one step Back).
 PROVIDER_KEYLESS_REFUSAL_HINT = "If this server needs a key, add one under Authentication."
 MODEL_KEYLESS_REFUSAL_HINT = "If this server needs a key, go Back to add one."
+
+
+#: TASK-34100.6 (review provider-03): Back to a keyed provider whose key a
+#: definitive 401 rejected. Next refuses that key there, so the notice never
+#: offers to continue anyway as ``PROVIDER_PROBE_AUTH``'s does.
+PROVIDER_REFUSED_KEY_NOTICE = (
+    "The last connection check failed: this API key was rejected. Update it, "
+    "then continue."
+)
 
 
 def probe_failure_copy(probe_failure: str) -> ProbeFailureCopy:
@@ -666,6 +732,18 @@ def probe_failure_summary_detail(probe_failure: str) -> str:
 
     copy = PROBE_FAILURE_COPY.get(probe_failure)
     return copy.summary_detail if copy else ""
+
+
+def probe_failure_confirm_text(probe_failure: str) -> str:
+    """Model's 'Continue anyway?' question for a known failure, or ""."""
+    copy = PROBE_FAILURE_COPY.get(probe_failure)
+    return copy.confirm if copy else ""
+
+
+def probe_failure_return_notice(probe_failure: str) -> str:
+    """The notice Provider shows on Back after a failed check, or ""."""
+    copy = PROBE_FAILURE_COPY.get(probe_failure)
+    return copy.provider_notice if copy else ""
 
 
 def apply_probe_failure_to_summary_rows(
@@ -1045,15 +1123,20 @@ class SetupProgressItem:
 
     step_id: str
     title: str
-    state: Literal["active", "complete", "upcoming", "attention", "not_needed"]
+    state: Literal["active", "complete", "upcoming", "attention", "not_needed", "skipped"]
 
 
 #: A visited step that had nothing to do (TASK-34100.4: Protect with no key
 #: in config.toml). It renders '–', never the ✓ users read as "done and OK".
 PROGRESS_NOT_NEEDED = "not_needed"
 #: The states of a visited step; their connector draws as travelled.
-VISITED_PROGRESS_STATES = frozenset({"complete", "attention", PROGRESS_NOT_NEEDED})
-_PROGRESS_GLYPHS = {"complete": "✓", "attention": "!", PROGRESS_NOT_NEEDED: "–"}
+VISITED_PROGRESS_STATES = frozenset({"complete", "attention", PROGRESS_NOT_NEEDED, "skipped"})
+PROGRESS_GLYPHS: Mapping[str, str] = {
+    "complete": "✓",
+    "attention": "!",
+    PROGRESS_NOT_NEEDED: "–",
+    "skipped": "–",
+}
 
 
 def progress_glyph(state: str, index: int) -> str:
@@ -1069,7 +1152,7 @@ def progress_glyph(state: str, index: int) -> str:
     Returns:
         The glyph or step number to render.
     """
-    return _PROGRESS_GLYPHS.get(state, str(index + 1))
+    return PROGRESS_GLYPHS.get(state, str(index + 1))
 
 
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
@@ -1476,6 +1559,26 @@ def setup_not_needed_ids(
     return frozenset()
 
 
+def setup_skipped_ids(wizard_data: Mapping[str, object] | None) -> frozenset[str]:
+    """Steps the user deliberately skipped, shown as "–" rather than "!".
+
+    TASK-34100.6 (review new-provider-01): skipping Provider -- Enter in the
+    empty key field, Next with no key, or 'Skip — connect later' -- leaves
+    nothing for Model to save either, so both read as skipped.
+
+    Args:
+        wizard_data: Collected per-step values, keyed by step id.
+
+    Returns:
+        frozenset[str]: Provider and Model when Provider recorded a skip.
+    """
+    values = wizard_data if isinstance(wizard_data, Mapping) else {}
+    provider = values.get(STEP_PROVIDER)
+    if isinstance(provider, Mapping) and provider.get("skipped") is True:
+        return frozenset({STEP_PROVIDER, STEP_MODEL})
+    return frozenset()
+
+
 def setup_progress_items(
     active_ids: tuple[str, ...],
     current_index: int,
@@ -1499,6 +1602,7 @@ def setup_progress_items(
         current_index,
         attention_ids=setup_attention_ids(wizard_data, probe_failed=probe_failed),
         not_needed_ids=setup_not_needed_ids(wizard_data),
+        skipped_ids=setup_skipped_ids(wizard_data),
     )
 
 
@@ -1507,6 +1611,7 @@ def build_setup_progress(
     current_index: int,
     attention_ids: frozenset[str] | set[str] = frozenset(),
     not_needed_ids: frozenset[str] | set[str] = frozenset(),
+    skipped_ids: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[SetupProgressItem, ...]:
     """Project a resolved setup path into display-ready progress rows.
 
@@ -1528,6 +1633,8 @@ def build_setup_progress(
 
     def state_for(index: int, step_id: str) -> str:
         if index < active_index:
+            if step_id in skipped_ids:
+                return "skipped"
             if step_id in attention_ids:
                 return "attention"
             return PROGRESS_NOT_NEEDED if step_id in not_needed_ids else "complete"
@@ -1622,7 +1729,7 @@ def curated_models_for_provider(
         return []
     direct = catalog.get(provider_value)
     if direct:
-        return list(direct)
+        return _real_model_ids(direct)
     from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
     target_key = provider_config_key(provider_value)
@@ -1630,8 +1737,26 @@ def curated_models_for_provider(
         return []
     for name, models in catalog.items():
         if provider_config_key(str(name)) == target_key:
-            return list(models)
+            return _real_model_ids(models)
     return []
+
+
+#: Template placeholders the ``[providers]`` table ships for engines whose
+#: models the user names (``Llama_cpp = ["None"]``); never offered as models.
+_PLACEHOLDER_MODEL_IDS = frozenset({"none", "null"})
+
+
+def _real_model_ids(models: Any) -> list[str]:
+    """Drop blank and placeholder entries from a curated model list.
+
+    TASK-34100.6 folded defect (a): llama.cpp's shipped ``["None"]`` rendered
+    as a pickable 'None (recommended)' model on the Model step.
+    """
+    return [
+        str(model)
+        for model in models
+        if str(model).strip() and str(model).strip().casefold() not in _PLACEHOLDER_MODEL_IDS
+    ]
 
 
 def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:

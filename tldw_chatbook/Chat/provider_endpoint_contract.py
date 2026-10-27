@@ -12,6 +12,7 @@ from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
 from ..provider_registry import ALL_RECORDS, ProviderRecord
+from .provider_setup_facts import ROUTE_SUFFIXES
 
 EndpointForm = Literal[
     "origin",
@@ -80,6 +81,20 @@ _ENGINE_PRESETS = {
     for record in ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 }
+#: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
+#: already carries its API version owns its route suffix, so it resolves like
+#: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
+#: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
+#: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
+_ROUTE_OWNING_PRESETS = {
+    record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
+}
+#: ``htp:/x`` or ``http:/x``: a scheme-like word and a colon not followed by a
+#: port, typed without "//" (review provider-15).
+_SCHEME_TYPO = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
+_SCHEME_HINT = (
+    "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
+)
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
@@ -207,6 +222,8 @@ def _resolve_provider_endpoint(
         )
 
     has_explicit_scheme = "://" in raw_value
+    if not has_explicit_scheme and _SCHEME_TYPO.match(raw_value):
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
     candidate = raw_value if has_explicit_scheme else f"http://{raw_value}"
     try:
         parsed = urlsplit(candidate)
@@ -217,7 +234,7 @@ def _resolve_provider_endpoint(
 
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
-        return _invalid_resolution(provider_key, "Endpoint URL must use HTTP or HTTPS.")
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
     if (
         parsed.username is not None
         or parsed.password is not None
@@ -264,7 +281,9 @@ def _resolve_provider_endpoint(
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
     netloc = _normalized_netloc(canonical_host, port)
-    preset = _ENGINE_PRESETS.get(provider_key)
+    preset = _ENGINE_PRESETS.get(provider_key) or _ROUTE_OWNING_PRESETS.get(
+        provider_key
+    )
     if preset is not None:
         return _engine_preset_resolution(
             preset, provider_key, scheme, netloc, canonical_host, segments

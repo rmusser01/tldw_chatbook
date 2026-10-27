@@ -3,12 +3,14 @@
 > Verified against: fix/task-32959-summary-voice-line, 2026-09-27 (task-32959: the Summary gains a Voice line read back from the saved `[app_tts]` table). Previously: feat/wizard-omnivoice-tts, 2026-09-26 (task-32958: OmniVoice as a fourth Voice service).
 
 On your first launch, chatbook offers a guided setup. It is entirely optional —
-most steps can be skipped (Next moves on without configuring it; the one
-exception is a cloud provider you've picked, which needs its API key before
-Next continues — press **Enter** in the empty key field instead and the
-provider step is skipped outright, which the field's own hint says), Escape
+every step can be skipped (Next moves on without configuring it; on the
+Provider step, Next with an empty key field, **Enter** in that field, and the
+**Skip — connect later** button beside it all skip the step once), Escape
 asks before closing, and anything you configure (or
-don't) can be changed later in Settings.
+don't) can be changed later in Settings. A skipped provider stays picked:
+go Back, paste a key, and Next saves it for that provider. Provider and Model
+then show as skipped in the progress tracker, and the Model step asks you to
+pick a provider first.
 
 If a step can't save what you entered, the reason appears just above the
 navigation buttons — fix it and press Next again, or go Back. The same line
@@ -74,50 +76,153 @@ plain text instead:
 - "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected.
 - "*Provider* needs an API key and none was set. Go Back to add one, or enter a model ID below." when the server refused a check that carried no key (a llama.cpp server started with `--api-key`, say).
 
-  These two show no **Retry**, because retrying cannot fix a key. The Provider
-  step names the same cause, after its own model check and after **Test
-  connection** alike (a Test's line starts with ✗): "*Provider* rejected this
+  These two show no **Retry**, because retrying cannot fix a key. For a
+  provider that doesn't need a key (a local server, say), the Provider step
+  names the same cause, after its own model check and after **Test
+  connection** alike (the line starts with ✗): "*Provider* rejected this
   API key. Update it, or continue anyway." or "*Provider* needs an API key and
-  none was set. Add one under Authentication, or continue anyway." In both
+  none was set. Add one under Authentication, or continue anyway." (For a
+  provider that needs a key, a rejected key keeps you on the Provider step
+  instead; see *API keys and checks* below.) In both
   cases the section is
   titled "Authentication", not "Authentication (optional)", because a server
   that refuses a key, or asks for one, wants one. The title stays while that
   provider and address are selected, until a check of that address that sends
   no key gets through (the server was restarted without `--api-key`).
 
-  Under a key you typed, the line says what the last **Test connection** or
-  model check of that key found: "Key staged — the server rejected it; update
+  Under a key you typed for such a provider, the line says what the last
+  **Test connection** or model check of that key found: "Key staged — the server rejected it; update
   it above." after a 401, and "Key staged — the server did not refuse it." when
   the server answered. Before any check of that key, or when the check could
   not reach the server or got no usable model list (as after a 403 to **Test
   connection** or to the model check: that key may not list models, which
   says nothing about chatting), it reads "Key staged — it will be checked
-  when you continue."
+  when you continue." (For a provider that needs a key, the line reads "Key
+  staged. Press Check key to try it." and **Check key**'s answer is the
+  step's status line.)
 - "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
+- "*address* answered HTTP *code* — *what it means*. Retry, or enter a model ID below." when the server answered with an error (a 503 while llama.cpp still loads its model, say); "*address* answered, but its certificate isn't trusted — add your CA in Settings ▸ Network." for a certificate your computer doesn't trust; and "*address* speaks plain HTTP — go Back and use http:// instead of https://." for an `https://` address on a plain-HTTP server. These show **Retry** too, and none of them says the server couldn't be reached: it answered.
 
 The line is a message, not an option: it has no radio marker, and the arrow
 keys, Space and Enter cannot select it. Tab skips it (while models load it
 holds the list's place), so focus goes to the **Or enter a model name** field
 below, which always works.
 
-The Provider step lists the same providers as Settings ▸ Providers & Models:
-Popular first, then Cloud, Local and Other. Every row can be picked with the
-arrow keys and set up here, hosted presets included (Together, Fireworks,
-NVIDIA NIM, BytePlus, DeepInfra and the rest; see
-[Settings ▸ Inference clouds](settings.md#inference-clouds)). Setup saves each
+The Provider step lists the same providers as Settings ▸ Providers & Models,
+with a filter (matching names and IDs the way Settings' provider search does)
+and a count line above the list. **Ready on this machine** comes first: each
+local server setup found (see *Local servers* below) and each provider whose
+key is already exported or saved ("Anthropic · key in ANTHROPIC_API_KEY").
+Then Popular, Cloud, Local and Other; every row says whether it runs on
+**This computer** or needs a **Cloud · API key**. Legacy aliases and the
+"#2" custom slot sit behind **Show legacy entries (N)** at the end unless your
+config already uses one; the filter still finds them, and Settings lists them
+all. A filter that matches only a server setup found says so ("1 local
+server matches “studio”"). Every row can be picked with the arrow keys and set up here, hosted
+presets included (Together, Fireworks, NVIDIA NIM, BytePlus, DeepInfra and
+the rest; see [Settings ▸ Inference clouds](settings.md#inference-clouds)).
+Azure OpenAI, Databricks and Cloudflare Workers AI ask for their resource,
+workspace or account URL above the key, with an example. Setup saves each
 preset's key, model and documented base URL in its own
 `[api_settings.<provider>]` table. **Custom Hosted** is not listed: it is the
 internal engine route for custom endpoints, which you set up as **Custom
 OpenAI-compatible**.
 
+## Local servers
+
+Setup looks for model servers on this computer as soon as the Provider step
+opens: llama.cpp (127.0.0.1:8080 and :9099), Ollama (:11434), LM Studio
+(:1234), Jan (:1337), an OpenAI-compatible KoboldCpp (:5001), and any local
+address already in your config. Both `127.0.0.1` and `localhost` are checked,
+and one server shows as one row. A server it finds is the first row of the
+list, already highlighted — "llama.cpp on this computer · 127.0.0.1:9099 ·
+3 models" — so **Enter** uses it. LM Studio, Jan and KoboldCpp are set up
+through the **Custom OpenAI-compatible** row. Picking another provider never
+forgets the server, and picking that engine's own row later fills in the
+port that was found.
+
+When nothing answers, the step says which addresses it checked, offers
+**Check again**, and has a collapsed **Don't have a local server yet?** with
+a pointer to this section, the set-it-up-now path (pick your engine, press
+Next, and type the model you'll run), and **Use llama3.2 with Ollama — I'll
+start it later**, which picks Ollama and starts the Model step with
+`llama3.2` typed in (`ollama pull llama3.2` fetches it). While the step is
+open and nothing was found, it quietly looks again every 15 seconds, so a
+server you start meanwhile appears on its own. If the engine you picked
+doesn't answer, the line under it names the address: "Nothing is answering
+at http://localhost:11434 — start Ollama, then Check again."
+
+A server that answers over https with a certificate your computer doesn't
+trust (a self-signed server, or a company network that inspects secure
+connections) is reported as exactly that — "The server answered, but its
+certificate isn't trusted" — with a pointer to **Settings ▸ Network**, where
+you can add your company's CA bundle. Setup never offers to turn
+verification off. An `https://` address on a server that only speaks plain
+HTTP is pointed at `http://` instead. Either way the server answered, so
+neither the Model step nor the reminder you see after going Back says it
+couldn't be reached.
+
+## API keys and checks
+
+Paste a key into the key field; a pasted key is cleaned of invisible
+characters, wrapping quotes, a `Bearer ` or `NAME=` prefix and line breaks,
+and the line under the field says what it removed and echoes only the length
+and last four characters (cleared when you leave the field or press Next). A
+typed key is cleaned the same way when you press Next. **Show** reveals
+the key, and **Ctrl+U** clears the field. A key whose prefix belongs to
+another provider (`sk-ant-`, `sk-or-`, `gsk_`, `AIza`, `sk-proj-`) offers to
+switch to that provider; if you had already typed a key for that provider,
+the line under the field says the moved key replaced it. With the key
+already exported, the step offers
+"Use OPENAI_API_KEY from your environment (found; not stored)" or **Store a
+different key for this app**, which shows the key field; the line under it
+says the variable must be set in the shell that starts chatbook. A saved key
+is used instead of an exported one, and the step says so. If you move to
+another provider after typing a key, a line under the list says that key
+won't be saved unless you choose its provider. When setup saves your
+provider, every other provider whose key is exported, and that your config
+doesn't already decide, is saved as using that variable
+(`credential_source = "environment"` with the variable's name). The key
+itself is never written to `config.toml`.
+
+**Check key** beside the key lists the provider's models with that key — the
+same non-billable check Settings makes — and reads "✓ Key works — OpenAI
+returned 137 models.", or "✗ OpenAI rejected this key.". A provider the
+wizard has no model listing for (Azure OpenAI, Cloudflare Workers AI, MiniMax
+and a few other hosted presets) is sent nothing, and the line says only that
+its key isn't checked here (it is checked when you send your first message).
+A provider whose model-list route answers that it isn't there (HTTP 404 or
+405) can't be checked without a paid request, and the line says so. A
+provider that answered without a usable list says what it answered instead:
+that it won't list models for this key (HTTP 403, which never keeps you on
+the step: the key may still chat), an error with its status code, or an
+empty list. OpenRouter, Hugging Face and Novita list models
+without a valid key, so that list can't confirm one. A rejected key (a 401)
+keeps you on the Provider step, with the reason under the key field; for an
+exported key the fix is **Store a different key for this app** (or another
+provider), and **Skip — connect later** stays available. Any other failed
+check marks Provider with **!** in the tracker as soon as it is known,
+including one the Model step finds. The status line under the step uses ✓,
+✗ and ! with matching colours, nothing is reported as an error before you
+act, and **Test connection** (on local and custom rows) reports "✓ Connected
+— llama.cpp returned 3 models. Pick one on the next step." or names the HTTP
+status it got; a local server started with an API key that answers a keyless
+test says it needs one. A refusal that names the endpoint field goes away as
+soon as you edit that field.
+
 ## Keyboard
 
 - **Enter** continues to the next step (from a choice list or a text field;
-  in the API-key field it first tests a key you typed, and with the field
-  empty it skips the provider step). **Ctrl+N** / **Ctrl+B** also
-  move next/back, and **Escape** asks before leaving setup.
+  in the API-key field it first checks a key you typed — the same check as
+  **Check key** — and with the field empty it skips the provider step).
+  **Ctrl+N** / **Ctrl+B** also move next/back, and **Escape** asks before
+  leaving setup.
 - **Arrow keys select** as they move through a choice list — what you land on
-  is what you get; no extra keypress needed.
+  is what you get; no extra keypress needed. Picking a provider that needs a
+  key with **Enter**, **Space** or a click moves you into its key field.
+- **Typing on the provider list filters it**: letters go to the "Filter
+  providers — name or ID" field above the list while the list keeps the
+  keyboard, **Backspace** edits the filter, and **Space** still picks.
 - **Tab** moves from a step's content to **Next** first; the footer runs
   progress · Back · Next · Skip/Exit, left to right.
 
@@ -361,8 +466,9 @@ Console opening, a single notice names the model Console is using instead.
 The Summary also asks — once, default off — whether chatbook may check your
 configured providers' model lists online at startup. Whatever you choose is
 final until you change it in Settings; finishing setup never hands you a
-separate consent pop-up afterwards. Local servers (Ollama, llama.cpp) are auto-detected on localhost; no
-probe traffic leaves your machine without your action.
+separate consent pop-up afterwards. Local servers (see *Local servers*) are
+auto-detected on localhost only; no probe traffic leaves your machine without
+your action.
 
 ## Starting chatbook when your keys are encrypted
 
