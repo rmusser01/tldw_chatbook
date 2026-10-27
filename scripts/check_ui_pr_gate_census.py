@@ -571,6 +571,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.1.6 (2026-10-27) appends 1 whole-file entry at the tail: the
 # Environment panel's worker root reads through the real registry (one
 # private-profile journey), so no existing entry changes shard: 964 -> 965.
+# Environment panel's worker root reads through the real registry (two
+# private-profile journeys), so no existing entry changes shard: 964 -> 965.
 MINIMUM_FILES = 971
 
 
