@@ -565,6 +565,7 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
+    hidden_by_console_rail,
     set_display_under_console_rail,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
@@ -14241,7 +14242,8 @@ class ChatScreen(BaseAppScreen):
                 continue
             if str(widget.renderable) == row.text:
                 continue
-            widget.update(row.text)
+            # TASK-37000: in a collapsed rail, the rail's opening lays it out.
+            widget.update(row.text, layout=not hidden_by_console_rail(widget))
             widget.set_classes(row.classes)
 
     def _build_console_library_search_region(self) -> Container:

@@ -175,7 +175,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: lives in Widgets/Console/console_inspector_section.py and
     #: console_run_inspector.py. Dev 3be493413a measured 24319/736; with the
     #: fix, 24322/736, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24322, 736),
+    #: Raised 24322 -> 24324 (methods unchanged) 2026-10-27 by TASK-37000,
+    #: same owner rule: the readiness card's MCP row, written by a chat's
+    #: first agent run, re-writes its copy without a layout inside the
+    #: collapsed rail (+1 comment, +1 import; the call stays one line).
+    #: Rebased onto dev 0923ec0ca2 (24319/736); with the fix, 24324/736.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24324, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
