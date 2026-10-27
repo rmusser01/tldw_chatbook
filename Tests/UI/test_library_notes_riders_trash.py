@@ -9,6 +9,7 @@ through the SAME seam Undo does (``_undo_library_note_delete`` ->
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from types import MethodType, SimpleNamespace
 
@@ -935,12 +936,23 @@ async def test_a_failed_page_read_leaves_the_view_on_the_page_it_paints() -> Non
     assert fake._library_notes_trash.page == 1
     assert fake._library_notes_trash_page == 1
     assert not fake._library_notes_trash.pager.next_disabled
+    # Fix round 2 (ruling T8-i): the painted page stays, and says the read
+    # failed (the canvas paints that line above it -- pinned below).
+    assert fake._library_notes_trash.failed
+    assert fake._library_notes_trash.rows[0].title == "Deleted 01"
 
     # Next still works: the second press asks for page 2 again.
     LibraryNotesController.handle_library_notes_trash_next(fake, press)
     assert len(requests) == 2
     await LibraryNotesController._load_library_notes_trash(fake, **requests[-1])
     assert service.offsets == [0, 20, 20]
+
+    # A read that succeeds clears the line.
+    service.fail_offset = None
+    LibraryNotesController.handle_library_notes_trash_next(fake, press)
+    await LibraryNotesController._load_library_notes_trash(fake, **requests[-1])
+    assert fake._library_notes_trash.page == 2
+    assert not fake._library_notes_trash.failed
 
 
 def test_reopening_the_trash_never_paints_the_page_left_from_the_last_visit(
@@ -986,3 +998,111 @@ async def test_a_loading_trash_says_so_instead_of_claiming_it_is_empty() -> None
         await _until_painted(pilot, app, "Loading recently deleted notes")
         assert "Nothing deleted recently" not in _painted(app)
         assert app.query_one("#library-notes-trash-back", Button)
+
+
+
+# -- Task 8 fix round 2 (review R1; rulings T8-h, T8-i) -------------------
+
+_FAILURE = "Couldn't load recently deleted notes."
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reopen_says_so_and_retry_reads_the_page_again() -> None:
+    """N-2 (ruling T8-i): no read leaves the view on "Loading…" forever.
+
+    The reopen's page-1 loading state, then a read that fails at offset 0:
+    the failure line and Retry replace the loading state (never "Nothing
+    deleted recently", which nothing was read to support). Retry re-runs the
+    same read; once it lands the page paints and the line is gone, with
+    focus owed to the first row. Base (739adc11c8): the state has no
+    failure to carry, and the view stayed on "Loading recently deleted
+    notes…".
+    """
+    service = _FailingPagedTrashService(total=25, fail_offset=0)
+    fake = _trash_loader_fake(service)
+    fake._library_notes_trash = LibraryNotesTrashState(total=25, page=1, loading=True)
+    await LibraryNotesController._load_library_notes_trash(fake)
+
+    failed = fake._library_notes_trash
+    assert failed.failed and not failed.loading and failed.rows == ()
+    assert failed.total == 25
+    app = _CanvasApp(pane_width=100, mode="trash", trash=failed)
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, _FAILURE)
+        assert "Loading recently deleted notes" not in text
+        assert "Nothing deleted recently" not in text
+        retry = app.query_one("#library-notes-trash-retry", Button)
+        assert str(retry.label) == "Retry"
+        # Its portable role, both halves.
+        assert _role(app, "#library-notes-trash-retry") == "trash-retry"
+        assert _target(app, "trash-retry") is retry
+
+    service.fail_offset = None
+    requests: list[dict] = []
+    fake._refresh_library_notes_trash = lambda **kwargs: requests.append(kwargs)
+    fake._library_notes_mutation_fenced = lambda: False
+    LibraryNotesController.handle_library_notes_trash_retry(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert requests == [{"focus_role": "trash-restore:0"}]
+    assert fake._trash_focus_role == "trash-restore:0"
+    await LibraryNotesController._load_library_notes_trash(fake, **requests[-1])
+
+    fixed = fake._library_notes_trash
+    assert not fixed.failed and fixed.pager.range_copy == "1–20 of 25"
+    app = _CanvasApp(pane_width=100, mode="trash", trash=fixed)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "1–20 of 25 · Page 1 of 2")
+        assert _FAILURE not in _painted(app)
+        assert not app.query("#library-notes-trash-retry")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_page_change_shows_the_line_above_the_painted_page() -> None:
+    """N-2: a failed Next keeps page 1 on screen and says so above it."""
+    shown = build_library_notes_trash_state(
+        _deleted_records(1, 21), total=25, page=1, now=NOW
+    )
+    app = _CanvasApp(
+        pane_width=100,
+        mode="trash",
+        # Next to page 2 failed: page 1 stays, Retry asks for page 2.
+        trash=dataclasses.replace(shown, retry_page=2),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, _FAILURE)
+        assert "Deleted 01" in text and "1–20 of 25 · Page 1 of 2" in text
+        line = app.query_one("#library-notes-trash-error", Static)
+        first_row = list(app.query(".library-notes-trash-row"))[0]
+        assert line.region.bottom <= first_row.region.y
+        assert app.query_one("#library-notes-trash-retry", Button)
+
+
+class _ShrunkThenFailingService(_PagedTrashService):
+    """The total shrank under page 2, and the re-read of the last page fails."""
+
+    async def list_deleted_notes(self, *, scope, user_id, limit, offset):
+        self.offsets.append(offset)
+        if offset == 0:
+            raise RuntimeError("database is locked")
+        return {"items": [], "total": self.total}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_clamp_re_read_keeps_the_painted_page_and_says_so() -> None:
+    """N-3: the clamp's re-read failing keeps page 2 painted, with the line."""
+    service = _ShrunkThenFailingService(total=20)
+    fake = _trash_loader_fake(service, page=2)
+    fake._library_notes_trash = build_library_notes_trash_state(
+        _deleted_records(21, 26), total=25, page=2, now=NOW
+    )
+
+    await LibraryNotesController._load_library_notes_trash(fake)
+
+    assert service.offsets == [20, 0]
+    shown = fake._library_notes_trash
+    assert shown.page == 2 and fake._library_notes_trash_page == 2
+    assert [row.title for row in shown.rows] == [
+        f"Deleted {index:02d}" for index in range(21, 26)
+    ]
+    assert shown.failed
