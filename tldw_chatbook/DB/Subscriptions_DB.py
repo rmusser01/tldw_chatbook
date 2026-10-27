@@ -2108,7 +2108,11 @@ class SubscriptionsDB(BaseDB):
                 conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
-        except Exception:
+        # BaseException, not Exception: KeyboardInterrupt/SystemExit/
+        # GeneratorExit must also roll back, or the thread-local connection
+        # stays inside the transaction after the depth counter resets and
+        # the next caller commits (or trips over) the abandoned writes.
+        except BaseException:
             conn.rollback()
             raise
         finally:
