@@ -46,11 +46,13 @@ ENGINE_NAMES: Mapping[str, str] = {
 #: Each local engine's own default model, mirroring
 #: ``TranscriptionService``'s per-provider defaults. ``[transcription]
 #: default_model`` is not provider-scoped, so an engine change writes its own
-#: model too: parakeet-mlx asked for the template's "distil-large-v3" 404s.
+#: model too: parakeet-mlx asked for a Whisper model id 404s. faster-whisper
+#: takes ``base``, the shipped template's model since TASK-32755.4 and the
+#: service's own fallback, so a fresh profile's pick writes nothing.
 ENGINE_DEFAULT_MODELS: Mapping[str, str] = {
     "parakeet-mlx": "mlx-community/parakeet-tdt-0.6b-v2",
     "lightning-whisper-mlx": "distil-large-v3",
-    "faster-whisper": "distil-large-v3",
+    "faster-whisper": "base",
     "qwen2audio": "Qwen2-Audio-7B-Instruct",
     "parakeet": "nvidia/parakeet-tdt-0.6b-v2",
     "canary": "nvidia/canary-1b-flash",
