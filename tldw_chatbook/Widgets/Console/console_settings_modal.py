@@ -2932,7 +2932,7 @@ class ConsoleSettingsModal(
         self._sync_action_copy((modal_width or self.size.width) < 100)
         apply_button.display = not needs_endpoint_persistence and not recovery_active
         apply_button.disabled = (
-            not can_finish or readiness.operability != "ready_to_send"
+            not can_finish or readiness.refuses_turn  # a past 401/404 never does
         )
         provider = readiness.provider_display_name or provider_display_name(
             settings.provider

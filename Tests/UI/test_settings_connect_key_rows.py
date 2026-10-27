@@ -112,7 +112,8 @@ async def test_api_key_row_says_where_the_key_comes_from(
         pytest.param(
             dict(_SAVED_KEY),
             "Ready · not tested",
-            "Ready · verified",
+            # TASK-34100.2 AC#2: a listing proves the key, not a reply.
+            "Key verified",
             id="key-accepted",
         ),
     ],
@@ -122,7 +123,7 @@ async def test_key_check_row_ends_connect_and_its_detail_lives_in_the_inspector(
 ):
     """AC#6, AC#7, AC#8: the verdict and a t action on one row, the last of
     Connect; t runs the check and the row then says its verdict (a saved key
-    the provider's model listing accepts reads "Ready · verified"); the
+    the provider's model listing accepts reads "Key verified"); the
     labelled rows go to the Inspector's Key block, so Default model does not
     move."""
     import httpx

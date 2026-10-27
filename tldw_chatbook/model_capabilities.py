@@ -64,6 +64,8 @@ DEFAULT_MODEL_PATTERNS = {
     ],
     "Google": [
         {"pattern": r"gemini.*vision", "vision": True},
+        # TASK-34100.2: the rolling aliases the Google catalog now ships.
+        {"pattern": r"gemini-(pro|flash|flash-lite)-latest", "vision": True},
         {
             "pattern": r"gemini-[0-9.]+-(pro|flash)",
             "vision": True,
@@ -1245,10 +1247,21 @@ def get_context_window(provider: str, model: str) -> Optional[int]:
     return get_model_capabilities().get_context_window(provider, model)
 
 
+#: Bumped by every reload, so memos of catalog lookups (Console readiness's
+#: capacity check, TASK-34100.2) can tell a reloaded catalog from the old one.
+_capabilities_reloads = 0
+
+
+def capabilities_reload_count() -> int:
+    """How many times the capabilities were reloaded in this process."""
+    return _capabilities_reloads
+
+
 def reload_capabilities():
     """Reload model capabilities from configuration."""
-    global _global_capabilities
+    global _global_capabilities, _capabilities_reloads
     _global_capabilities = None
+    _capabilities_reloads += 1
     logger.info("Model capabilities reloaded from configuration")
 
 

@@ -53,8 +53,10 @@ _SAVED_COPY = {
         "generation is not yet verified.",
     ),
 }
-#: The Key check word for a cloud key the provider's listing accepted.
-VERIFIED_PREFIX = "Ready · verified"
+#: The Key check words for a key the provider accepted: TASK-34100.2 AC#2
+#: names a listing's acceptance "Key verified HH:MM" (it proves the key, not a
+#: reply); a paid generation test still reads "Ready · verified HH:MM".
+VERIFIED_PREFIX = ("Key verified", "Ready · verified")
 #: A Console return's credential line once the Key check reads verified.
 KEY_ACCEPTED_COPY = "the provider accepted the key."
 

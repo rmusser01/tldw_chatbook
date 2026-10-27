@@ -31,8 +31,10 @@ from textual.widgets import (
     Static,
 )
 
+from tldw_chatbook.UI.Wizards import first_run_key_check as key_check
 from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
 from tldw_chatbook.UI.Wizards import first_run_provider_skip as provider_skip
+from tldw_chatbook.UI.Wizards.first_run_model_notes import analysis_note_widget
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
     _first_run_discovery_staged_settings,
@@ -152,7 +154,8 @@ class ModelStep(SetupStep):
     def confirm_before_advance(self) -> Optional[str]:
         """UAT M-2: a known-failed probe must not be Next-ed past silently."""
 
-        return wizard_state.probe_failure_confirm_text(self.current_probe_failure()) or None
+        failure = self.current_probe_failure()  # TASK-34100.2 AC#3: key_check
+        return key_check.confirm_prompt(self.wizard, self._rendered_discovery_key, failure)
 
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
@@ -193,6 +196,7 @@ class ModelStep(SetupStep):
                 yield _status_line("(loading models…)", "setup-model-loading")
             yield Label("Or enter a model name", classes="setup-field-label")
             yield Input(id="setup-model-custom", placeholder="model-id")
+            yield analysis_note_widget(self.wizard)  # TASK-34100.2 AC#8
             yield Button(
                 "Retry", id="setup-model-retry", variant="default", classes="hidden"
             )
@@ -584,15 +588,10 @@ class ModelStep(SetupStep):
             # key lives one step Back — Retry cannot succeed there);
             # connection failures name the server the user has to start.
             # TASK-33008: a refusal with no key sent asks for one instead.
+            # TASK-34100.2 AC#3: a rejected key's reason, in its own words.
             provider_key = getattr(discovery_key, "provider_key", "")
-            failed_text = wizard_state.probe_failure_copy(probe_failure).model_line
-            if failed_text:
-                from tldw_chatbook.Chat.provider_catalog import provider_display_name
-
-                failed_text = failed_text.format(
-                    display=provider_display_name(provider_key)
-                )
-            else:  # TASK-34100.6: the server, its certificate or its HTTP status
+            failed_text = key_check.model_failure_line(self.wizard, discovery_key, probe_failure)
+            if not failed_text:  # TASK-34100.6: the server, its certificate or its HTTP status
                 identity = getattr(discovery_key, "connection_identity", ())
                 failed_text = model_discovery.connection_failed_text(
                     provider_key,
