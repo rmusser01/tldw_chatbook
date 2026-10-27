@@ -47,10 +47,20 @@ _POLICY_JARGON = (
 )
 
 
+#: TASK-34100.2 AC#1 (rewritten on purpose): an assumed window now caps the
+#: reply reservation (min(max_tokens, window // 4)), so a 4,096-token
+#: reservation no longer leaves the assumed 4,096-token window without input
+#: capacity -- the shipped OpenAI-default failure these tests reproduced is
+#: gone. A message that outgrows what the capped reservation leaves is still
+#: refused before dispatch, with the same copy and recovery under test here.
+_OVERFLOWING_DRAFT = "hello there " * 3000
+
+
 class _UnknownWindowGateway(_LiveProviderGateway):
     """The selected model has no catalog window: the provider fallback (4,096
-    tokens, unverified) applies, and a 4,096-token reply reservation leaves
-    no input capacity -- the shipped OpenAI-default failure, reproduced."""
+    tokens, unverified) applies, with a 4,096-token reply maximum (capped for
+    the assumed window, TASK-34100.2 AC#1); ``_OVERFLOWING_DRAFT`` fills
+    what is left."""
 
     async def resolve_for_send(self, selection):
         resolution = await super().resolve_for_send(selection)
@@ -73,7 +83,7 @@ async def test_unknown_window_refusal_names_the_model_and_the_fix(
         overrides=ConsoleContextPolicyOverrides(),
     )
 
-    result = await controller.submit_draft("hello there", session_id="session-1")
+    result = await controller.submit_draft(_OVERFLOWING_DRAFT, session_id="session-1")
 
     assert gateway.stream_calls == 0, "the refusal must happen before dispatch"
     assert result.accepted is False and result.should_clear_draft is False
@@ -155,7 +165,7 @@ async def test_a_refused_send_reads_not_sent_and_names_the_working_path(
     # composer, as a buddy-conversation send does) is refused by the context
     # preflight after it was accepted, so it has a recovery owner.
     await controller.submit_draft(
-        "hello there", session_id="session-1", preserve_composer=True
+        _OVERFLOWING_DRAFT, session_id="session-1", preserve_composer=True
     )
 
     def shown_actions():
@@ -211,7 +221,7 @@ async def test_the_controller_itself_refuses_retry_for_a_refused_send(
         overrides=ConsoleContextPolicyOverrides(),
     )
     await controller.submit_draft(
-        "hello there", session_id="session-1", preserve_composer=True
+        _OVERFLOWING_DRAFT, session_id="session-1", preserve_composer=True
     )
     rows_before = list(_system_rows(store))
 
