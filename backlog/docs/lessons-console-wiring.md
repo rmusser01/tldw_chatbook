@@ -11,6 +11,30 @@ bring the incident.
 
 ---
 
+## Moving a stale-scope check onto the worker leaves the hop to the UI loop open (TASK-33620.15.1.6, 2026-10-27)
+
+**Incident.** The Console Environment panel's `_land` used to read the
+workspace root on the UI loop and drop a landing gathered for another root.
+To take that consent read (a registry SELECT) off the loop, the gather worker
+re-read the root after gathering and passed it along. Review reproduced the
+gap on the head in two probes: the root changed from `/w/A` to `/w/B`, or
+consent was revoked, after the worker's re-read and before the landing ran
+on the UI loop. The old root painted, and its deferred `gh` fetch was issued
+for a folder that was no longer the conversation's. Both probes passed on
+origin/dev, whose read was in `_land` itself. The task's own notes conceded
+the edge; the AC that promised the guard still held was ticked anyway.
+
+**What to do.** A check made on a worker and an action taken on the UI loop
+are not atomic, however late the worker checks. Carry a cheap in-memory
+stamp of the check's inputs (here the session's workspace, the registry's
+`mutation_generation` and the consent service's `admission_revision`), take
+it on the worker *before* the re-read, and compare it at the action on the
+loop. Test the hop itself: block the worker inside `marshal_to_ui`, change
+the state on the loop, then release, and assert both that nothing stale
+painted and that the loop made no database read.
+
+---
+
 ## A warning-free batch can still retain worker-owned database files
 
 **TASK-31245 / TASK-33620.9, 2026-10-04.** After explicit Console fixture
