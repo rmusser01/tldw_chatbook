@@ -7725,7 +7725,9 @@ class LibraryNotesController:
         self._library_notes_view = "trash"
         # TASK-34000.29 (N-29): the view opens on the newest deletions.
         self._library_notes_trash_page = 1
-        self._trash_focus_role = ""
+        # Review R2-1: the open owes focus to the first row (or, if its read
+        # fails, to Retry) until the user's own input moves it.
+        self._trash_focus_role = "trash-restore:0"
         trash = self._library_notes_trash
         if trash is not None and trash.page != 1:
             # Review R0 m-7: never paint the page the last visit left behind.
@@ -7733,10 +7735,11 @@ class LibraryNotesController:
             # Trash's own entry (a fresh state, then ``request``). The total
             # stays, so the opener's count does not move; focus is owed to
             # the first row once the page lands.
+            # Review R2-3: and no failure left from the last visit -- its
+            # line would sit over "Loading…" and Retry re-read its page.
             self._library_notes_trash = dataclasses.replace(
-                trash, rows=(), page=1, loading=True
+                trash, rows=(), page=1, loading=True, retry_page=0
             )
-            self._trash_focus_role = "trash-restore:0"
             self._refresh_library_notes_trash(focus_role="trash-restore:0")
         else:
             self._refresh_library_notes_trash()
@@ -7907,6 +7910,30 @@ class LibraryNotesController:
                 stage="notes", region="trash", note_id=None, semantic_role=role
             )
         )
+        # Review R2-2: a sync that lands while this read's recompose mounts
+        # finds the new list as the scroll owner and replays its offset (0)
+        # from ``call_after_refresh`` -- over a control this landing has
+        # already focused, so nothing scrolled it back. The one place it is
+        # settled: after those re-applies, the landed control is scrolled in.
+        # Class-forwarded: the landing tests run it on a fake.
+        self.call_after_refresh(
+            partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
+            role,
+        )
+
+    def _keep_landed_trash_control_in_view(self, role: str) -> None:
+        """Scroll a landed Trash control into view, if it still has focus.
+
+        Only while the landing still stands: the owed role unchanged (a real
+        input since clears it) and its control the focused widget -- a user's
+        own move is never scrolled after.
+        """
+        if self._library_notes_view != "trash" or self._trash_focus_role != role:
+            return
+        target = self._library_notes_trash_focus_target(role)
+        if target is None or self.focused is not target:
+            return
+        target.scroll_visible(animate=False, force=True, immediate=True)
 
     def _refresh_library_notes_trash(self, *, focus_role: str = "") -> None:
         """Reload the soft-deleted snapshot the row and the view both read.
@@ -7992,7 +8019,15 @@ class LibraryNotesController:
                 shown, loading=False, retry_page=tried
             )
             if self.is_mounted and self._library_notes_view == "trash":
-                _sync_library_canvas(self, "notes")
+                # Review R2-1: focus goes to Retry, the Media Trash's rule --
+                # through the owed record, so it only moves a landing still
+                # owed by the press, open or Restore (a real input since
+                # cleared it, and then focus stays where the user put it).
+                land = None
+                if self._trash_focus_role:
+                    self._trash_focus_role = "trash-retry"
+                    land = partial(self._land_library_notes_trash_focus, "trash-retry")
+                _sync_library_canvas(self, "notes", then=land)
 
         # Class-forwarded: the loader's clamp tests run it on a fake.
         read_page = LibraryNotesController._read_library_notes_trash_page

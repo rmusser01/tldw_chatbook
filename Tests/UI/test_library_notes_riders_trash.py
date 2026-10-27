@@ -812,16 +812,22 @@ def test_the_trash_landing_yields_to_the_users_own_input() -> None:
     role is cleared instead from the screen's one real-input withdrawal.
     """
     landed: list[str] = []
+    deferred: list[tuple] = []
     fake = SimpleNamespace(
         _library_notes_view="trash",
         _trash_focus_role="trash-restore:4",
         _restore_library_notes_focus_identity=lambda identity: landed.append(
             identity.semantic_role
         ),
+        call_after_refresh=lambda *args: deferred.append(args),
     )
 
     LibraryNotesController._land_library_notes_trash_focus(fake, "trash-restore:4")
     assert landed == ["trash-restore:4"]
+    # Review R2-2: a landing that ran also scrolls its control in once the
+    # deferred offset re-applies have run; a vetoed one schedules nothing.
+    assert [args[1:] for args in deferred] == [("trash-restore:4",)]
+    assert deferred[0][0].func is LibraryNotesController._keep_landed_trash_control_in_view
 
     screen = SimpleNamespace(
         _library_notes_filter_row_handoff=None,
@@ -839,6 +845,7 @@ def test_the_trash_landing_yields_to_the_users_own_input() -> None:
     fake._library_notes_view = "list"
     LibraryNotesController._land_library_notes_trash_focus(fake, "trash-next")
     assert landed == ["trash-restore:4"]
+    assert len(deferred) == 1
 
 
 @pytest.mark.asyncio
@@ -1106,3 +1113,66 @@ async def test_a_failed_clamp_re_read_keeps_the_painted_page_and_says_so() -> No
         f"Deleted {index:02d}" for index in range(21, 26)
     ]
     assert shown.failed
+
+
+# -- Task 8 fix round 3 (review R2) ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reopening_after_a_failed_read_paints_loading_without_the_failure(
+    monkeypatch,
+) -> None:
+    """R2-3: a reopen starts clean -- "Loading…", no failure line, no Retry.
+
+    A failed read, then Back, then Recently deleted again: the reopen's page-1
+    loading state must not carry the old visit's failure, or Retry would
+    re-read that visit's failed page. Base (db6910e4f6): the replace kept
+    ``retry_page``, so the view painted the failure line over "Loading…".
+    """
+    fake = _view_fake(monkeypatch, view="trash")
+    shown = build_library_notes_trash_state(
+        _deleted_records(21, 26), total=25, page=2, now=NOW
+    )
+    fake._library_notes_trash = dataclasses.replace(shown, retry_page=2)
+    fake._library_notes_trash_page = 2
+    fake._library_notes_mutation_fenced = lambda: False
+    fake._refresh_library_notes_trash = lambda **_kwargs: None
+    press = SimpleNamespace(stop=lambda: None)
+
+    LibraryNotesController.handle_library_notes_trash_back(fake, press)
+    LibraryNotesController.handle_library_notes_trash_open(fake, press)
+
+    reopened = fake._library_notes_trash
+    assert reopened.loading and not reopened.failed and reopened.retry_page == 0
+    app = _CanvasApp(pane_width=100, mode="trash", trash=reopened)
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, "Loading recently deleted notes")
+        assert _FAILURE not in text
+        assert not app.query("#library-notes-trash-retry")
+
+
+
+def test_the_landed_control_is_scrolled_in_only_while_it_still_has_focus() -> None:
+    """R2-2's constraint: never scroll after the user's own move."""
+    scrolled: list[str] = []
+    control = SimpleNamespace(
+        scroll_visible=lambda **_kwargs: scrolled.append("next"),
+    )
+    fake = SimpleNamespace(
+        _library_notes_view="trash",
+        _trash_focus_role="trash-next",
+        _library_notes_trash_focus_target=lambda _role: control,
+        focused=control,
+    )
+
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-next")
+    assert scrolled == ["next"]
+
+    fake.focused = SimpleNamespace()  # the user moved focus elsewhere
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-next")
+    assert scrolled == ["next"]
+
+    fake.focused = control
+    fake._trash_focus_role = ""  # a real input withdrew the landing
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-next")
+    assert scrolled == ["next"]

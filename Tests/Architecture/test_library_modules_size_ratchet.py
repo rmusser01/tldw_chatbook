@@ -647,7 +647,11 @@ _BUDGETS: dict[str, int] = {
     # page change replays no old offset (the Trash scroll owner matches the
     # page it shows), a failed read marks the snapshot and the Retry handler
     # re-runs it: 8305 -> 8358 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8358,
+    # 2026-10-27, Task 8 fix round 3 (review R2-1..R2-3; same decision): a
+    # failed read lands focus on Retry, a landed control is scrolled in after
+    # the deferred offset re-applies (``_keep_landed_trash_control_in_view``),
+    # a reopen clears the old failure: 8358 -> 8393 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8393,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
