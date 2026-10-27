@@ -40,11 +40,11 @@ class _StepHost(ConsolidatedCSSApp):
         yield self._step
 
 
-def _step(app_config, *, environ=None):
+def _step(app_config, *, environ=None, rerun=False):
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config=app_config),
         commit_config=AsyncMock(return_value=True),
-        rerun=False,
+        rerun=rerun,
     )
     step = AppearanceStep(
         wizard=wizard,
@@ -168,13 +168,62 @@ async def test_a_saved_ascii_choice_beats_the_terminal_preset(environ) -> None:
     """Review F2 (TASK-34100.13): the preset only stands in for a choice never
     made. A deliberately saved ``ascii_glyphs = false`` showed ticked under
     NO_COLOR, and Next without touching it wrote ``true``."""
-    wizard, step = _step(_raw(appearance={"ascii_glyphs": False}), environ=environ)
+    wizard, step = _step(
+        _raw(appearance={"ascii_glyphs": False}), environ=environ, rerun=True
+    )
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         ticked = step.query_one("#setup-appearance-ascii", Checkbox).value
         ok, _ = await step.commit()
     assert ticked is False
     assert ok
+    wizard.commit_config.assert_not_awaited()
+
+
+def _template_appearance() -> dict:
+    """The [appearance] table every fresh profile gets from the shipped template."""
+    import tomllib
+
+    from tldw_chatbook import config as config_module
+
+    return dict(tomllib.loads(config_module.CONFIG_TOML_CONTENT)["appearance"])
+
+
+@pytest.mark.parametrize("environ", [{"NO_COLOR": "1"}, {"TERM": "linux"}])
+@pytest.mark.asyncio
+async def test_a_fresh_profile_gets_the_terminal_preset_despite_the_template_default(
+    environ,
+) -> None:
+    """Resume pass (TASK-34100.13): the shipped template writes
+    ``ascii_glyphs = false`` into every new config.toml, so after the F2 fix
+    ("a saved choice beats the preset") the preset never applied on a real
+    first run. On a first run that value is the template's, not a choice."""
+    appearance = _template_appearance()
+    assert appearance.get("ascii_glyphs") is False  # the premise
+    wizard, step = _step(_raw(appearance=appearance), environ=environ)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ticked = step.query_one("#setup-appearance-ascii", Checkbox).value
+        ok, _ = await step.commit()
+    assert ticked is True
+    assert ok
+    assert wizard.commit_config.await_args.args[0] == {
+        "appearance": {"ascii_glyphs": True}
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_over_the_template_default_keeps_the_saved_value() -> None:
+    """On a re-run the saved value stands, template-written or not: the user
+    has run setup before and Settings ▸ Appearance shows it."""
+    wizard, step = _step(
+        _raw(appearance=_template_appearance()), environ={"NO_COLOR": "1"}, rerun=True
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        ticked = step.query_one("#setup-appearance-ascii", Checkbox).value
+        ok, _ = await step.commit()
+    assert ticked is False and ok
     wizard.commit_config.assert_not_awaited()
 
 
