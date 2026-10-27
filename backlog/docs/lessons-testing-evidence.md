@@ -20405,8 +20405,10 @@ must reach the actual protected boundary to count as evidence.
 
 ## Seed legacy fixtures before their final schema downgrade
 
-During TASK-36766 C2a qualification, a workflow fixture reopened CharactersRAGDB
-after the shared fixture had finalized legacy schema81. The native constructor
+During TASK-36766 C2a qualification, the workflow seed in
+`Tests/Backup_Recovery/test_mobile_content_settings.py` reopened CharactersRAGDB
+after `Tests/Backup_Recovery/mobile_consolidation_fixture.py::_seed` had finalized
+legacy schema81. The native constructor
 migrated it back to82, and authenticated capture correctly refused the member
 (expected81, manifest82). Seed linked metadata with actual returned IDs while the
 native owner is still open, before legacy finalization; preserve the admission
