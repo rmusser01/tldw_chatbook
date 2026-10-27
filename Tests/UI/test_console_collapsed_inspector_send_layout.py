@@ -34,6 +34,7 @@ import re
 import time
 
 import pytest
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -241,9 +242,32 @@ async def test_a_send_asks_no_layout_of_the_collapsed_inspector(
         )
 
 
-async def _rail_after_first_send(tmp_path, *, open_first: bool) -> list[tuple]:
+def _frame_facts(screen) -> tuple:
+    """What a painted frame of the opened rail says about this send's rows."""
+    attach = screen.query("#console-inspector-dictionaries-attach")
+    fleet = screen.query("#console-inspector-section-agent-fleet-summary")
+    return (
+        tuple(bool(button.disabled) for button in attach),
+        tuple(str(summary.render()) for summary in fleet if _shown(summary, screen)),
+    )
+
+
+async def _rail_after_first_send(
+    monkeypatch, tmp_path, *, open_first: bool
+) -> tuple[list[tuple], list[tuple]]:
+    """The rail's witness after a first send, and each frame the opening painted."""
     from Tests.UI.test_console_composer_run_controls import _mounted
 
+    frames: list[tuple] = []
+    recording = [False]
+    paint = Screen._compositor_refresh
+
+    def painted(screen) -> None:
+        if recording[0] and screen.query("#console-right-rail").first().display:
+            frames.append(_frame_facts(screen))
+        return paint(screen)
+
+    monkeypatch.setattr(Screen, "_compositor_refresh", painted)
     gateway, host = _console_host(tmp_path)
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
@@ -254,14 +278,16 @@ async def _rail_after_first_send(tmp_path, *, open_first: bool) -> list[tuple]:
             await _open_inspector(console, pilot)
         await _send(console, composer, pilot, gateway, "stream and hold 0")
         if not open_first:
+            recording[0] = True
             await _open_inspector(console, pilot)
         await pilot.pause(0.5)
+        recording[0] = False
         witness = _witness(rail)
         # Leave the stored rail preference collapsed for the next arm.
         await console.action_toggle_console_inspector_rail()
         await _wait_for(pilot, lambda: not rail.display, "the Inspector never closed")
         await pilot.pause(0.3)
-        return witness
+        return witness, frames
 
 
 @private_profile_test
@@ -272,12 +298,18 @@ async def test_an_inspector_opened_after_a_send_matches_one_open_throughout(
 
     Fails on the base build: the late-opened rail has no Agents section
     ("Run history" / "View all runs"), and everything below it sits three
-    rows higher.
+    rows higher. Also pins every frame the opening paints, so a rebuild that
+    landed after the first paint (one frame of the rows from before the send,
+    TASK-35970's lesson) would fail too.
     """
     (tmp_path / "open").mkdir()
     (tmp_path / "late").mkdir()
-    open_throughout = await _rail_after_first_send(tmp_path / "open", open_first=True)
-    opened_late = await _rail_after_first_send(tmp_path / "late", open_first=False)
+    open_throughout, _ = await _rail_after_first_send(
+        monkeypatch, tmp_path / "open", open_first=True
+    )
+    opened_late, frames = await _rail_after_first_send(
+        monkeypatch, tmp_path / "late", open_first=False
+    )
     ids = {row[1] for row in open_throughout}
     # The open rail shows the rows this transition changes, so the witness
     # covers them.
@@ -288,3 +320,8 @@ async def test_an_inspector_opened_after_a_send_matches_one_open_throughout(
         "console-agent-section-subagents",
     } <= ids
     assert opened_late == open_throughout
+    # Not one painted frame of the opening showed the held rows: the rebuild
+    # lands before the opened rail's first paint (Attach enabled, the Agents
+    # section's "Run history" shown).
+    assert frames, "the opening painted no frame"
+    assert set(frames) == {((False,), ("Run history",))}, frames
