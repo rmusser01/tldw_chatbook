@@ -558,6 +558,10 @@ async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
     config = _with_shipped("local_mlx_lm")
     if owned:
         config["api_settings"]["local_mlx_lm"]["model"] = "my-mlx-model"
+        # TASK-34100.2 AC#9 (rewritten on purpose): the template marks MLX-LM
+        # a sample, and a marked sample stays out of Ready until the user
+        # saves it, which writes the marker false.
+        config["api_settings"]["local_mlx_lm"]["template_sample"] = False
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
@@ -645,7 +649,9 @@ async def test_the_not_running_line_wraps_so_every_name_shows_whole(
     assert not any(line.endswith("…") for line in lines), lines
 
 
-async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(servers):
+async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(
+    servers, monkeypatch
+):
     """Capture findings 5 (1): one fresh launch of 05d's profile at 211x44 drew
     a blank row under "MLX-LM (Apple silicon) (not checked)", gone after a
     resize. Each probe answer rebuilds the rows, and a server that leaves READY
@@ -660,6 +666,11 @@ async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(ser
     and the scrollbar's own layout refresh happens to clear the stale box:
     the shrinking steps are the case.)"""
     servers.hold = threading.Event()
+    # TASK-34100.2 AC#9 keeps a marked template sample out of READY until a
+    # probe answers, so the "behind" rows below would never be READY rows.
+    # This test is about the list's cached box, not that grouping: it reads
+    # the samples as unmarked, the grouping it was written against.
+    monkeypatch.setattr(popover_module, "provider_is_template_sample", lambda *_: False)
     app = _harness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = build(
