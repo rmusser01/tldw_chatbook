@@ -56,6 +56,9 @@ from pathlib import Path
 
 import pytest
 
+from .test_library_modules_size_ratchet import _BUDGETS as _LIBRARY_BUDGETS
+from .test_screen_size_ratchet import _BUDGETS as _SCREEN_BUDGETS
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> max line count. LOWER these when a module shrinks. Never raise
@@ -518,6 +521,55 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 990,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
+    # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
+    # 4,000+ lines that had no row in any of the three size ratchets, each
+    # pinned at its measured size on dev 2b296e60b3. The review filed 40
+    # modules at dev 7a5e2513c5; the count held at 40 and five sizes drifted
+    # upward (ChaChaNotes_DB 25,565 -> 25,693, Console_Modules/workspace
+    # 8,522 -> 8,747, console_composer_bar 6,958 -> 7,024,
+    # unified_control_plane_service 5,917 -> 5,920, library_notes_canvas
+    # 4,463 -> 4,646). Later phases lower these rows;
+    # `test_every_module_of_the_guard_size_has_a_row` keeps new gaps from opening.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25693,
+    "tldw_chatbook/config.py": 12258,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12093,
+    "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
+    "tldw_chatbook/Agents/agent_service.py": 9629,
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8184,
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7024,
+    "tldw_chatbook/UI/Console_Modules/session.py": 7000,
+    "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
+    "tldw_chatbook/Media/local_media_reading_service.py": 6911,
+    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    "tldw_chatbook/Chat/console_trace_service.py": 6674,
+    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
+    "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
+    "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
+    "tldw_chatbook/Agents/local_tool_provider.py": 5749,
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5536,
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5186,
+    "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
+    "tldw_chatbook/Personal_Context/repository.py": 4997,
+    "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,
+    "tldw_chatbook/Model_Artifacts/service.py": 4853,
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
+    "tldw_chatbook/DB/Prompts_DB.py": 4760,
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
+    "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
+    "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
+    "tldw_chatbook/UI/Screens/evals_screen.py": 4236,
+    "tldw_chatbook/Workspaces/registry_service.py": 4232,
+    "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,
+    "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
+    "tldw_chatbook/Dreams/track_service.py": 4061,
+    "tldw_chatbook/DB/private_sqlite.py": 4030,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
@@ -569,4 +621,28 @@ def test_budget_is_not_left_slack(rel_path: str) -> None:
         f"{rel_path} is {max_lines - lines} lines under its budget "
         f"({lines} vs {max_lines}). Set it to {lines} so the real "
         f"measurement is what's pinned."
+    )
+
+
+#: A module this long needs a row in one of the three size ratchets.
+_ROW_REQUIRED_AT_LINES = 4000
+
+
+@pytest.mark.unit
+def test_every_module_of_the_guard_size_has_a_row() -> None:
+    """No tldw_chatbook module reaches 4,000 lines without a budget row."""
+    rowed = set(_BUDGETS) | set(_SCREEN_BUDGETS) | set(_LIBRARY_BUDGETS)
+    package = _REPO_ROOT / "tldw_chatbook"
+    unbudgeted = sorted(
+        rel
+        for path in package.rglob("*.py")
+        if (rel := path.relative_to(_REPO_ROOT).as_posix()) not in rowed
+        and len(path.read_text(encoding="utf-8").splitlines())
+        >= _ROW_REQUIRED_AT_LINES
+    )
+    assert not unbudgeted, (
+        f"Module(s) of {_ROW_REQUIRED_AT_LINES}+ lines with no size ratchet "
+        f"row: {unbudgeted}. Add a row to _BUDGETS in "
+        f"Tests/Architecture/test_module_size_ratchet.py pinned at the "
+        f"measured size, or split the module below the line."
     )
