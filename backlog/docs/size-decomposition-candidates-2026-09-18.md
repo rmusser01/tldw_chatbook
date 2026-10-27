@@ -17,7 +17,7 @@ the back of a review finding:
 
 Line ranges are the review's, measured at the review commit; re-measure before
 acting (the files have grown since — see the ratchet re-pins in
-TASK-32809.1/.2). Size ratchets now guard all of these: screens in
+TASK-32809.1/.2). Size ratchets now guard all of these (except `ChaChaNotes_DB.py`, see below): screens in
 `Tests/Architecture/test_screen_size_ratchet.py`, `Library_Modules/*_controller.py`
 in `test_library_modules_size_ratchet.py`, and the rest in
 `test_module_size_ratchet.py`. `settings_screen.py` (31,781 lines) is **not**
