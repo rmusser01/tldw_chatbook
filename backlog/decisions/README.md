@@ -192,16 +192,6 @@ Do not require an ADR for routine bug fixes, small UI polish, copy-only changes,
 
 Accepted ADRs are immutable except for typo fixes, link repairs, or metadata that does not alter the decision. If a decision changes, create a new ADR and mark the old one as `Superseded by ADR-NNN`.
 
-## Naming
-
-Use numeric filenames:
-
-- `000-template.md`
-- `001-short-title.md`
-- `002-short-title.md`
-
-Do not reuse numbers.
-
 ## Numbering rule
 
 One number per decision. A new ADR takes the next free number, which is the
@@ -216,6 +206,17 @@ required `derived-artifacts.yml` job) fails on any collision outside the frozen
 list in `scripts/adr_shared_numbers_frozen.txt`, and names the next free number.
 The frozen list can only shrink; TASK-36943.3 renumbers the existing
 collisions and empties it.
+
+## Naming
+
+Use numeric filenames:
+
+- `000-template.md`
+- `001-short-title.md`
+- `002-short-title.md`
+
+Do not reuse numbers.
+
 
 | [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
 | [ADR-206](206-shared-ssrf-address-classification.md) | Accepted | One shared `Utils.egress.address_is_fetchable` predicate classifies resolved addresses for every fetch-side SSRF guard (egress pipeline and skill remote fetch); NAT64 `64:ff9b::/96` reconciled to rejected on both layers. |
