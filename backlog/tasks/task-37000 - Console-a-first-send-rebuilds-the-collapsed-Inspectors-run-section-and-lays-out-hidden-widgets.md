@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-26 12:30'
-updated_date: '2026-10-27 21:31'
+updated_date: '2026-10-27 23:02'
 labels:
   - console
   - performance
@@ -56,7 +56,7 @@ Approach
 
 Measured (AC #1)
 - Headless, 160x45: on origin/dev 3be493413a, a first send's start window made 56 in-rail layout requests (the run inspector's and Agents section's recomposes). Every send made 2 more (the "Live work" row). On origin/dev 0923ec0ca2 the count is 62, now that the test's first send also publishes an MCP catalog. The branch makes 0.
-- Live, real app with Anthropic claude-haiku-4-5 through the review proxy, pf2probe, 160x45, Inspector collapsed, B F F B, 4 sends per launch. Evidence is in tools/evidence/bd5/P37/runs/.
+- Live, real app with Anthropic claude-haiku-4-5 through the review proxy, pf2probe, 160x45, Inspector collapsed, B F F B, 4 sends per launch. The run logs (tools/evidence/bd5/P37/runs/ and the files named below) were kept with the verifying session's local tooling, not in this repository.
   - r4: base origin/dev 0923ec0ca2 against the final head. First send in-rail requests: base 107 and 59, fix 0 and 0. Later sends: base 2 each, fix 0. Base had 4 and 5 reflows per first-send window that included rail requesters; the fix had 0. The MCP-row write about 2-4 s after the first send appears in both base launches and in neither fix launch (mcp-row-timing.txt).
   - r3 (load 42-57) is consistent: every launch lost send 0 to a late render, so send 1 was the first send. In-rail requests: base 107 and 59, fix 0 and 0.
   - r1 and r2 (pre-rebase head, base 3be493413a) are also consistent, except for the MCP row, which this branch then fixed.
@@ -72,7 +72,14 @@ Tests (AC #3)
 Trade-offs
 - A child's mark does not cover a widget mounted into the rail after the collapse. Such a widget is still treated as visible. It is correct, but it can still lay out (see TASK-37000.1 for other display writes that bypass the cascade).
 - The first draft's eleven settings-row writes (ConsoleSettingsSummary) happen before Send, on base and branch alike. They were filed as TASK-37000.2.
-- ChatScreen's size row was raised 24319 -> 24324 under the owner rule, with a dated comment. The UI PR census floor rose by this task's 3 tail entries (dev's 965 -> 968 after the rebase onto 773cc9729c).
+- ChatScreen's size row was raised 24319 -> 24324 under the owner rule, with a dated comment, and to 24325 by the review's marker-constant tidy-up (one import line). The UI PR census floor rose by this task's 3 tail entries (dev's 965 -> 968 after the rebase onto 773cc9729c).
 
 Files: Widgets/Console/console_inspector_section.py, Widgets/Console/console_run_inspector.py, UI/Screens/chat_screen.py, the two new test files, four adjusted pending-facts tests, Tests/Architecture/test_screen_size_ratchet.py, scripts/check_ui_pr_gate_census.py + ui_pr_gate_census.txt, Docs/User_Guide/console/agent-runs-and-tools.md, backlog/docs/lessons-testing-evidence.md (two entries), TASK-37000.1 and TASK-37000.2.
+
+Review follow-ups (2026-10-27, review verdict ship, no blocking findings)
+- Focus: the review held that a responsive collapse leaves focus on a hidden Inspector control, which the held rebuild would then drop. A headless probe on base and branch refuted it: Textual's Hide event blurs the control at the collapse's first layout, and focus ends in the same place on both. The comment now says so, and test_a_control_focused_at_the_collapse_leaves_no_focus_to_carry pins it, for a change made later and in the same tick as the collapse.
+- The cascade and the run inspector name the marker through CONSOLE_RAIL_PRIOR_DISPLAY (ChatScreen row 24324 -> 24325, dated comment).
+- The pending-facts helper reads mounted rows unless a rebuild is actually held, and then projects with the inspector's own ownership, not STRICT.
+- New full-app case test_an_inspector_opened_after_chat_switches_matches_one_open_throughout: after a collapsed first send, a new tab, a temporary tab and the saved chat again, each met collapsed, match a rail open throughout. It leaves the outer fold hint out, because a rail opened late after a switch drops that hint on dev as well (TASK-37000.5). It is not in the UI PR census: it took 170 s here at host load about 70, too slow for that lane.
+- Filed: TASK-37000.1 widened to the Context rail's agent-section display writes; TASK-37000.3 (one rail module for the cascade and helpers); TASK-37000.4 (a larger paired sample of first-send full reflows; r4 had two launches per arm); TASK-37000.5 (fold hint after a switch).
 <!-- SECTION:NOTES:END -->

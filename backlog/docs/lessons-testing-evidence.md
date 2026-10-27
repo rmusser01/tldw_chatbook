@@ -15,6 +15,12 @@
 - A double that resolves unknown names off the real class needs instance answers for class-default data fields too, not only for the owners `__init__` sets.
 - To claim a double's answer is exercised, remove it and watch a case go red. If a broad `except` swallows its absence, assert on the state the swallowed path skips.
 
+## Probe a review's claim about Textual on the base build before coding its fix (TASK-37000 review, 2026-10-27)
+
+**Incident.** The TASK-37000 review flagged that the collapsed Inspector's held rebuild drops the focus recovery an immediate rebuild sets up. Its premise was that Textual 8.2.8 blurs a focused widget only when it is disabled, so a responsive collapse leaves focus on a hidden Inspector control until the rail opens. The suggested fix was to carry the focus snapshot into the held rebuild. A headless probe of about 60 lines (focus the dictionary Attach button, run the production collapse cascade, change the state, open the rail) ran on base and on the branch. Focus left the rail at the collapse's first layout on both, and ended in the same place after the opening. The compositor posts `Hide` to every widget that leaves its map, and `Widget._on_hide` blurs a focused one. Coding the suggested fix would have added state for a case that does not occur. The real defect was a comment that claimed more than it knew. It now cites the probe, which became a test.
+
+**What to do.** When a finding rests on how the framework behaves, check that behaviour first with a probe on base and on the branch. Then fix what the probe shows.
+
 ## A harness with the agent runtime off cannot see what a first agent run publishes (TASK-37000, 2026-10-27)
 
 **Incident.** TASK-37000's mounted send test counted layout requests from inside the collapsed Inspector rail and read zero on the branch. Its harness sets `[console] agent_runtime = false`, as most Console send harnesses do. The live paired spot-check (pf2probe, 160x45) still found one in-rail request per launch, on base and branch alike: a chat's first agent run calls `_publish_mcp_inspector_counts`, and the sync tick then re-wrote the readiness card's MCP row with a layout. The harness never ran `_compose_mcp_provider`, so the test could not see the write it was meant to forbid.
