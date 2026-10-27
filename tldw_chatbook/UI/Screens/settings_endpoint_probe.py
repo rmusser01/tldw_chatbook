@@ -311,7 +311,13 @@ def key_check_probe_result(
         model_ids = model_ids_from_payload(listed) or ()
         if not model_ids:  # An empty list proves nothing about the key.
             return ProviderProbeResult("model_listing_unavailable", ())
-        return ProviderProbeResult("reachable", model_ids, key_accepted=key_sent)
+        accepted = key_sent and _listing_proves_key(result)
+        return ProviderProbeResult(
+            "reachable",
+            model_ids,
+            key_accepted=accepted,
+            key_check_passed=accepted and getattr(result, "key_verified", False) is True,
+        )
     if kind == "missing_credentials":
         if not key_sent:
             return ProviderProbeResult("model_listing_unavailable", ())
@@ -333,6 +339,25 @@ def key_check_probe_result(
             "http_status" if category == "http_status" else None,
         )
     return None
+
+
+def _listing_proves_key(result: object) -> bool:
+    """Whether a successful listing proves the key it was sent (TASK-34100.2).
+
+    An authenticated listing does. A public one (the provider record's
+    ``public_model_listing``: OpenRouter, Hugging Face, NVIDIA NIM, Novita)
+    answers any key, so it proves the key only when discovery's
+    authenticated key check passed (``ModelDiscoveryResult.key_verified``).
+    """
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
+    )
+
+    provider = provider_config_key(str(getattr(result, "provider", "") or ""))
+    if provider not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS:
+        return True
+    return getattr(result, "key_verified", False) is True
 
 
 def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:

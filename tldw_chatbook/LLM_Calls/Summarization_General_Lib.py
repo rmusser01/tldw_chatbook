@@ -33,6 +33,7 @@ from loguru import logger
 # Import Local
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import (
+    DEFAULT_GOOGLE_CHAT_MODEL,
     ProviderSettingsError,
     get_cli_setting,
     load_settings,
@@ -888,7 +889,8 @@ _SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
     "google": _SummarizerChatSpec(
         endpoint="google",
         legacy_section="google_api",
-        default_model="gemini-1.5-pro",
+        # TASK-34100.2 AC#6: the retired gemini-1.5-pro fallback is gone.
+        default_model=DEFAULT_GOOGLE_CHAT_MODEL,
         default_temp=0.2,
         missing_key_message=(
             "Google: API Key Not Provided/Found in Config file or is empty"

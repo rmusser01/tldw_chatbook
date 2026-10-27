@@ -37,10 +37,12 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_SUBTITLE,
     CONSOLE_SETUP_CARD_TITLE,
+    CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT,
     CONSOLE_SETUP_NOTES_ACTION_LABEL,
     CONSOLE_SETUP_NOTES_ACTION_TOOLTIP,
     CONSOLE_SETUP_STEP_DETAIL_INDENT,
     ConsoleDetectedServerAction,
+    ConsoleEnvKeyAction,
     ConsoleSetupCardState,
     ConsoleSetupStep,
 )
@@ -59,6 +61,8 @@ CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION = "look-again-local-server"
 # server one -- same "extra affordance while blocking" shape.
 CONSOLE_SETUP_MODAL_NOTES_ACTION_ID = "console-setup-modal-notes-action"
 CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION = "write-note-library"
+#: TASK-34100.2 AC#12: one button per env-found provider key (index suffix).
+CONSOLE_SETUP_MODAL_ENV_KEY_ACTION_ID = "console-setup-modal-env-key-action"
 _DEFAULT_ACTION_LABEL = "Choose model"
 _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console session."
 
@@ -97,6 +101,7 @@ class ConsoleSetupModal(Vertical):
         self._action_label = _DEFAULT_ACTION_LABEL
         self._action_tooltip = _DEFAULT_ACTION_TOOLTIP
         self._detected_action: ConsoleDetectedServerAction | None = None
+        self._env_key_actions: tuple[ConsoleEnvKeyAction, ...] = ()
         #: TASK-33008.4: a newly offered detected action takes focus once.
         self._detected_focus_pending = False
         # Task-2852: a receipt line for a pending "Use in Console" handoff
@@ -113,6 +118,11 @@ class ConsoleSetupModal(Vertical):
     def detected_server_action(self) -> ConsoleDetectedServerAction | None:
         """Return the currently offered detected-local-server action."""
         return self._detected_action
+
+    @property
+    def env_key_actions(self) -> tuple[ConsoleEnvKeyAction, ...]:
+        """The env-found provider offers currently on the card (AC#12)."""
+        return self._env_key_actions
 
     @property
     def is_blocking(self) -> bool:
@@ -210,6 +220,15 @@ class ConsoleSetupModal(Vertical):
             look_again.tooltip = "Checks this computer for a running model server."
             look_again.display = blocking and self._detected_action is None
             yield look_again
+            # TASK-34100.2 AC#12: "Found ANTHROPIC_API_KEY · Use Anthropic".
+            for index in range(CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT):
+                env_key = Button(
+                    "",
+                    id=f"{CONSOLE_SETUP_MODAL_ENV_KEY_ACTION_ID}-{index}",
+                    classes="console-setup-modal-action console-setup-modal-detected-action",
+                )
+                env_key.display = False
+                yield env_key
 
     def sync_card_state(
         self,
@@ -277,6 +296,7 @@ class ConsoleSetupModal(Vertical):
                 staged_widget.update(self._staged_evidence_notice)
             staged_widget.display = blocking and bool(self._staged_evidence_notice)
         self._sync_detected_action_button()
+        self._sync_env_key_buttons()
         try:
             notes_action = self.query_one(
                 f"#{CONSOLE_SETUP_MODAL_NOTES_ACTION_ID}", Button
@@ -309,6 +329,39 @@ class ConsoleSetupModal(Vertical):
         self._detected_action = action
         if self.is_mounted:
             self._sync_detected_action_button()
+
+    def sync_env_key_actions(self, actions: tuple[ConsoleEnvKeyAction, ...]) -> None:
+        """Offer (or withdraw) the env-found provider actions (AC#12).
+
+        Args:
+            actions: Offers built by ``build_console_env_key_actions``.
+        """
+        self._env_key_actions = tuple(
+            action for action in actions if isinstance(action, ConsoleEnvKeyAction)
+        )[:CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT]
+        if self.is_mounted:
+            self._sync_env_key_buttons()
+
+    def _sync_env_key_buttons(self) -> None:
+        """Refresh the env-key offer buttons in place."""
+        for index in range(CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT):
+            try:
+                button = self.query_one(
+                    f"#{CONSOLE_SETUP_MODAL_ENV_KEY_ACTION_ID}-{index}", Button
+                )
+            except Exception:
+                continue
+            action = (
+                self._env_key_actions[index]
+                if index < len(self._env_key_actions)
+                else None
+            )
+            # Env var and provider names are literal text, never markup.
+            button.label = escape_markup(
+                f"{action.detail} · {action.label}" if action else ""
+            )
+            button.tooltip = escape_markup(action.tooltip) if action else None
+            button.display = self.is_blocking and action is not None
 
     def _sync_detected_action_button(self) -> None:
         """Refresh the secondary detected-server button in place."""
@@ -439,6 +492,17 @@ class ConsoleSetupModal(Vertical):
             self.post_message(
                 WorkbenchActionRequested(CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION)
             )
+            return
+        button_id = event.button.id or ""
+        if button_id.startswith(f"{CONSOLE_SETUP_MODAL_ENV_KEY_ACTION_ID}-"):
+            event.stop()
+            index = int(button_id.rsplit("-", 1)[1])
+            if index < len(self._env_key_actions):
+                self.post_message(
+                    WorkbenchActionRequested(
+                        self._env_key_actions[index].workbench_action
+                    )
+                )
             return
         if event.button.id == CONSOLE_SETUP_MODAL_NOTES_ACTION_ID:
             event.stop()

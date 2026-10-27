@@ -170,6 +170,16 @@ class ProviderRecord:
             engine reads for per-call fallbacks under the legacy handler's
             exact key spellings, or ``None`` to read the ``key``-named
             table.
+        public_model_listing: Whether the provider's model listing answers
+            without a valid key, so a listing proves nothing about the key
+            it was sent (TASK-34100.2, gap-01; measured with a random key
+            2026-10-02). The single source of
+            ``Chat.provider_test_evidence.PUBLIC_MODEL_LISTING_PROVIDER_KEYS``.
+        key_check_url: An authenticated, non-billable endpoint that rejects
+            a bad key with the provider's own reason (OpenRouter
+            ``/api/v1/key``, Hugging Face ``whoami-v2``). Discovery calls it
+            after a public listing, so that key IS checked; ``None`` when
+            the provider has none.
     """
 
     key: str
@@ -280,6 +290,10 @@ class ProviderRecord:
     # continuations (moonshot, zai, deepseek); engine records qualify by
     # ``continuation_protocol`` alone.
     checkpoints_continuations: bool = False
+    # TASK-34100.2 (gap-01): see the class docstring. Data only -- discovery
+    # and the evidence record act on them.
+    public_model_listing: bool = False
+    key_check_url: str | None = None
 
 
 # --- Databricks (first engine-driven preset; AI Gateway external models) ---
@@ -531,6 +545,7 @@ NVIDIA = ProviderRecord(
     stream_usage_optional=True,
     reasoning_disposition="proprietary",
     auth_scheme="bearer",
+    public_model_listing=True,  # /v1/models answers a random key (2026-10-02)
 )
 # DeepInfra -- docs.deepinfra.com/chat/overview: base ``/v1/openai``,
 # top-level ``service_tier``, extra ``usage.estimated_cost`` (usage is only
@@ -621,6 +636,7 @@ NOVITA = ProviderRecord(
     stream_include_usage=True,
     reasoning_disposition="proprietary",
     auth_scheme="bearer",
+    public_model_listing=True,  # /openai/v1/models answers a random key (2026-10-02)
 )
 # MiniMax (international platform) -- platform.minimax.io/docs/
 # api-reference/text-chat-openai: top-level ``base_resp`` plus the
@@ -1595,6 +1611,8 @@ OPENROUTER = ProviderRecord(
     api_key_env_candidates=("OPENROUTER_API_KEY",),
     default_base_url="https://openrouter.ai/api/v1",
     native_tools=True, reasoning_effort=False, auto_refresh=True,
+    # ADR-020: /models is public; /api/v1/key rejects a bad key with a reason.
+    public_model_listing=True, key_check_url="https://openrouter.ai/api/v1/key",
 )
 DEEPSEEK = ProviderRecord(
     key="deepseek", config_key="DeepSeek", display_name="DeepSeek", classification=_CLOUD,
@@ -1625,6 +1643,9 @@ HUGGINGFACE = ProviderRecord(
     api_key_env_candidates=("HUGGINGFACE_API_KEY",),
     default_base_url="https://router.huggingface.co/v1",  # [api_settings.huggingface].api_base_url
     native_tools=False, reasoning_effort=False, auto_refresh=False,
+    # The router's /v1/models answers any key; whoami-v2 (a different host)
+    # rejects a bad one.
+    public_model_listing=True, key_check_url="https://huggingface.co/api/whoami-v2",
 )
 MOONSHOT = ProviderRecord(
     key="moonshot", config_key="Moonshot", display_name="Moonshot", classification=_CLOUD,
@@ -1785,6 +1806,17 @@ AUTO_REFRESH_KEYS: frozenset[str] = frozenset(
 )
 NATIVE_TOOLS_KEYS: frozenset[str] = frozenset(
     record.key for record in ALL_RECORDS if record.native_tools
+)
+#: TASK-34100.2 (gap-01): providers whose model listing answers any key.
+PUBLIC_MODEL_LISTING_KEYS: frozenset[str] = frozenset(
+    record.key for record in ALL_RECORDS if record.public_model_listing
+)
+#: ...and of those, the ones with no authenticated key check, whose listing
+#: therefore never proves the key ("models listed; key not checked").
+UNCHECKED_KEY_LISTING_KEYS: frozenset[str] = frozenset(
+    record.key
+    for record in ALL_RECORDS
+    if record.public_model_listing and record.key_check_url is None
 )
 #: Every dispatch key (canonical + aliases) — the sensitive-audit universe.
 AUDITED_ENDPOINT_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) | frozenset(ALIASES)

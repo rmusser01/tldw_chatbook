@@ -702,10 +702,15 @@ def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None
     # accepted ends the line's doubt, for a saved key only. Chat settings'
     # line and a local server's "reachable" (it may ignore the key) keep it.
     verified = "Ready · verified 21:24"
-    assert continuation_copy(_settings(console, SAVED, store, key_check=verified)) == (
-        "Credential saved. New chats use OpenAI · gpt-5. Return to Console to "
-        "continue in “Refactor plan for the g…”; the provider accepted the key."
-    )
+    # TASK-34100.2 AC#2: a listing's acceptance reads "Key verified", a paid
+    # generation test "Ready · verified"; both mean the provider took the key.
+    for accepted in ("Key verified 21:24", verified):
+        assert continuation_copy(
+            _settings(console, SAVED, store, key_check=accepted)
+        ) == (
+            "Credential saved. New chats use OpenAI · gpt-5. Return to Console to "
+            "continue in “Refactor plan for the g…”; the provider accepted the key."
+        )
     for unchanged in (
         _settings(console, SAVED, store, key_check="Ready · reachable 21:24"),
         _settings(console, other, store, key_check=verified),
@@ -964,7 +969,8 @@ async def test_a_key_check_after_the_save_updates_the_return_line(
     """Capture finding 1 (03e): after s, t lists models with the saved key.
     Key check then read "Ready · verified" while the line above Return to
     Console still said the key was not verified. The check redraws the line,
-    and focus stays on the return. Only the listing is stubbed."""
+    and focus stays on the return. Only the listing is stubbed. (TASK-34100.2
+    AC#2: a listing's acceptance now reads "Key verified".)"""
     listed: list[httpx.Request] = []
 
     def listing(request: httpx.Request) -> httpx.Response:
@@ -1005,7 +1011,7 @@ async def test_a_key_check_after_the_save_updates_the_return_line(
         verdict = settings.query_one("#settings-provider-readiness", Static)
         await _until(
             pilot,
-            lambda: str(verdict.renderable).startswith("Ready · verified"),
+            lambda: str(verdict.renderable).startswith("Key verified"),
             "the key check to read verified",
         )
         assert len(listed) == 1 and listed[0].url.path.endswith("/models")

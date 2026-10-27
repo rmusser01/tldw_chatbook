@@ -1330,10 +1330,14 @@ def chat_api_call(
                     retry_after_header = float(str(raw_retry_after).strip())
             except (TypeError, ValueError):
                 retry_after_header = None
+            from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
+
             raise ChatRateLimitError(
                 provider=endpoint_lower,
                 message=f"Rate limit exceeded for {endpoint_lower}. Detail: {error_text[:200]}",
                 retry_after=retry_after_header,
+                # TASK-34100.2 AC#18: the provider's own reason, for Console.
+                provider_reason=rate_limit_reason(error_text, secrets=(api_key,)),
             )
         elif 400 <= status_code < 500:
             # Carry the REAL status: 402/403 mean the money or quota is gone,
@@ -1357,6 +1361,40 @@ def chat_api_call(
                 status_code=status_code,
             )
     except requests.exceptions.RequestException as e:
+        # TASK-34100.2 AC#18: every shipped requests-based chat handler now
+        # mounts chat_transport_retry (no 429 retry; the last 5xx is
+        # returned), so none raises RetryError for a status. A handler added
+        # later with its own urllib3 retry would, when the provider kept
+        # answering one status -- that is the provider's answer, not a
+        # network failure: a 429 is a rate limit, a 5xx keeps its status.
+        from tldw_chatbook.LLM_Calls.chat_transport_retry import (
+            exhausted_retry_status,
+        )
+
+        exhausted_status = exhausted_retry_status(e)
+        if exhausted_status == 429:
+            logger.error(
+                "{} API call failed; status=429; reason=retries_exhausted",
+                endpoint_lower,
+            )
+            raise ChatRateLimitError(
+                provider=endpoint_lower,
+                message=f"Rate limit exceeded for {endpoint_lower} (Status 429).",
+            )
+        if exhausted_status is not None and 500 <= exhausted_status < 600:
+            logger.error(
+                "{} API call failed; status={}; reason=retries_exhausted",
+                endpoint_lower,
+                exhausted_status,
+            )
+            raise ChatProviderError(
+                provider=endpoint_lower,
+                message=(
+                    f"Error from {endpoint_lower} server (Status "
+                    f"{exhausted_status}) after retries."
+                ),
+                status_code=exhausted_status,
+            )
         logger.error(
             "Network error connecting to {}; error_type={}",
             endpoint_lower,
