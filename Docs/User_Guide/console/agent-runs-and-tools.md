@@ -67,6 +67,13 @@ whether or not Full agent tools is on.
 A small local model whose context window cannot hold even the light set (a
 server the app has not sized yet is planned as 4,096 tokens) gets a plain
 request with no tools.
+Full agent tools needs a much larger window than the light set. On a model
+with about 8,000 tokens (for example a llama.cpp server started with
+`-c 8192`) neither its tools nor its find-tools fallback fit, so a send
+carries none of them, only the reader for sub-agent reports: fewer tools
+than the light set it gets with the switch off. Leave Full agent tools off
+for such a model; the setup Summary says "gets fewer tools, or none" when it
+is on.
 
 The tools a send carries count toward the context meter: the status strip's
 **Context N%**, the model tab's **Request estimate**, and **Next request** and
