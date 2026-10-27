@@ -702,9 +702,15 @@ class LibraryNotesController:
     _trash_reload_owed: str = ""
 
     #: TASK-34000.29 (ruling T8-d): the Trash role focus belongs on after the
-    #: last Previous/Next/Restore press -- until the user's own input moves
-    #: it (``LibraryScreen._withdraw_library_notes_pending_focus_handoffs``
-    #: clears it from every real-input site) or the view closes. Not the
+    #: last Previous/Next/Restore press (or a reopen over another page). Its
+    #: lifetime (ruling T8-f, review R0 m-3): from that press until the next
+    #: real input (``LibraryScreen._withdraw_library_notes_pending_focus_
+    #: handoffs`` clears it from every real-input site), the next open, or
+    #: leaving the view -- it is NOT consumed when it lands. Every follow-up
+    #: sync in that window that captures a roleless landing falls back to it,
+    #: while the explicit landing (``_land_library_notes_trash_focus``) fires
+    #: at most once per press: only from the ``then=`` of the one read the
+    #: press starts, which a newer read cancels before it runs. Not the
     #: focus-intent generation: every reload prunes the focused control and
     #: Textual's reset of focus onto a pane grip bumps that generation too,
     #: which vetoed every landing (traced). It is also what a capture that
@@ -2017,6 +2023,9 @@ class LibraryNotesController:
             "lasting_add": "#notes-sync-body",
             "lasting_roots": "#notes-sync-roots-body",
             "import": "#library-note-import-canvas",
+            # TASK-34000.29 fix round 1 (review R0 m-6): the Trash list
+            # scrolls now, so a sync keeps its offset like every other region.
+            "trash": "#library-notes-trash-list",
         }.get(region)
         if selector is None:
             return None
@@ -7699,7 +7708,20 @@ class LibraryNotesController:
         # TASK-34000.29 (N-29): the view opens on the newest deletions.
         self._library_notes_trash_page = 1
         self._trash_focus_role = ""
-        self._refresh_library_notes_trash()
+        trash = self._library_notes_trash
+        if trash is not None and trash.page != 1:
+            # Review R0 m-7: never paint the page the last visit left behind.
+            # Page 1's loading state first, then the read -- the Media
+            # Trash's own entry (a fresh state, then ``request``). The total
+            # stays, so the opener's count does not move; focus is owed to
+            # the first row once the page lands.
+            self._library_notes_trash = dataclasses.replace(
+                trash, rows=(), page=1, loading=True
+            )
+            self._trash_focus_role = "trash-restore:0"
+            self._refresh_library_notes_trash(focus_role="trash-restore:0")
+        else:
+            self._refresh_library_notes_trash()
         self._apply_library_notes_footer_context()
         if self.is_mounted:
             _sync_library_canvas(
@@ -7724,6 +7746,9 @@ class LibraryNotesController:
         """The single exit from the Trash view -- Back and Escape share it."""
         self._library_notes_view = "list"
         self._trash_focus_role = ""
+        # Review R0 m-7: the next visit starts on page 1, and the list view's
+        # own reloads (a delete, a visit) read page 1 meanwhile.
+        self._library_notes_trash_page = 1
         self._apply_library_notes_footer_context()
         if self.is_mounted:
             _sync_library_canvas(
@@ -7909,10 +7934,18 @@ class LibraryNotesController:
         requested = max(
             int(page if page is not None else self._library_notes_trash_page or 1), 1
         )
+        def keep_the_painted_page() -> None:
+            # Review R0 m-1: a failed read keeps the painted snapshot, so the
+            # page the view asks for goes back to the one it shows -- left on
+            # the target, the next Next counted from it and did nothing.
+            shown = self._library_notes_trash
+            self._library_notes_trash_page = shown.page if shown is not None else 1
+
         # Class-forwarded: the loader's clamp tests run it on a fake.
         read_page = LibraryNotesController._read_library_notes_trash_page
         result = await read_page(self, list_deleted_notes, requested)
         if result is None:
+            keep_the_painted_page()
             return
         total = result.get("total")
         if isinstance(total, int):
@@ -7921,6 +7954,7 @@ class LibraryNotesController:
                 requested = last
                 result = await read_page(self, list_deleted_notes, requested)
                 if result is None:
+                    keep_the_painted_page()
                     return
                 total = result.get("total")
         self._library_notes_trash_page = requested

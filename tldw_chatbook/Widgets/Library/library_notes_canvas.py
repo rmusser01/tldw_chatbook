@@ -3150,6 +3150,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             classes="library-canvas-action",
             compact=True,
         )
+        if not trash.rows and trash.loading:
+            # Review R0 m-7: reopening over another page's snapshot paints
+            # page 1's loading state, never the old page or "Nothing deleted".
+            yield Static(
+                "Loading recently deleted notes…",
+                id="library-notes-trash-loading",
+                markup=False,
+            )
+            return
         if not trash.rows:
             yield Static(
                 "Nothing deleted recently. Deleted notes appear here — press "
@@ -3204,12 +3213,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ``library_pager_layout``'s: while every tombstone fits one page only
         the range stays ("1–12 of 12"), with no dead Previous/Next.
         """
-        # Imported where composed (ADR-097): this canvas adds no module-level
-        # import, and the module is already loaded by the Media canvases.
-        from tldw_chatbook.Library.library_pager_state import library_pager_layout
-
         display = trash.pager
-        layout = library_pager_layout(display)
+        layout = trash.pager_layout
         pager = Vertical(id="library-notes-trash-pager")
         pager.add_class("h-1" if layout.controls_hidden else "h-2")
         pager.styles.min_height = 1 if layout.controls_hidden else 2

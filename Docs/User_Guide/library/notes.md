@@ -1524,8 +1524,10 @@ and not yet restored; it is absent while that count is zero.
 The list pages 20 at a time with the exact total — for example
 "1–20 of 37 · Page 1 of 2" — and **Previous** / **Next** under it move
 between pages; while every deleted note fits one page, only the range is
-shown. Restore keeps focus in the list, on the row that took the restored
-one's place, and restoring the last row of a page shows the page before it.
+shown. Restoring a row keeps you on the same page: the rows below it move up,
+and focus lands on the row now in its place — or on the new last row when you
+restored the bottom one. Restoring the only row left on the last page shows
+the page before it, with focus on its first row.
 Nothing here deletes anything for good: the Trash offers **Restore** and no
 permanent delete.
 

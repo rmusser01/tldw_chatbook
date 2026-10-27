@@ -1370,3 +1370,4 @@ Tests/UI/test_library_notes_select_mode_counts_and_bulk.py
 Tests/UI/test_library_notes_select_mode_counts_and_bulk_extended.py
 Tests/UI/test_library_notes_deferred_visit_reload.py
 Tests/UI/test_library_notes_trash_pages_and_purges.py
+Tests/UI/test_library_notes_riders_trash.py
