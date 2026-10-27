@@ -475,6 +475,11 @@ _BUDGETS: dict[str, int] = {
     # expand limits, don't contort code): the analysis form's Save body moved
     # into ``_save_library_media_analysis_from_form`` so the press and Ctrl+S
     # share it: 5281 -> 5286 (measured with ``_measure``).
+    # 2026-10-27, Task 9 fix round 1 (review I-3; same owner decision): the
+    # analysis save's in-flight guard -- a second press says "Already
+    # saving." and writes nothing; the worker clears the flag in a
+    # ``finally`` (``_run_library_media_analysis_form_save``): 5286 -> 5313
+    # (measured with ``_measure``).
     "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5275,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
@@ -680,6 +685,9 @@ _BUDGETS: dict[str, int] = {
     # -- expand limits, don't contort code): the Save press's body as
     # ``_begin_library_note_explicit_save``, which Ctrl+S runs too:
     # 8421 -> 8425 (measured).
+    # 2026-10-27, Task 9 fix round 1 (ruling T9-g; same owner decision): a
+    # clean note's commit answers "Saved — no changes." on the status line
+    # for the key and the button alike: 8425 -> 8432 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
@@ -795,6 +803,10 @@ _BUDGETS: dict[str, int] = {
     # (``_save_library_prompt_from_key``: a held Save says why, a conflict
     # shows its banner, a clean editor says nothing was pending) and the
     # canvas-backed refusal reading: 5100 -> 5161 (measured with ``_measure``).
+    # 2026-10-27, Task 9 fix round 1 (ruling T9-j; same owner decision): the
+    # footer re-registers when a write starts and ends, so the Ctrl+S chip
+    # never shows while Save is held: 5161 -> 5164 (measured with
+    # ``_measure``).
     "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5068,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its

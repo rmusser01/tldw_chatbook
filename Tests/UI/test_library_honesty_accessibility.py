@@ -436,7 +436,9 @@ def test_search_rag_shortcuts_include_f6_like_every_sibling_set():
     assert ("F6", "next pane") in LibraryScreen.LIBRARY_SHORTCUTS
 
 
-def _f1_fake(footer_shortcuts, binding_extras, row_id=""):
+def _f1_fake(
+    footer_shortcuts, binding_extras, row_id="", *, save_target=None, ctrl_s_chip=()
+):
     from types import MethodType
 
     pushed = []
@@ -445,6 +447,9 @@ def _f1_fake(footer_shortcuts, binding_extras, row_id=""):
         _active_library_binding_shortcuts=lambda: binding_extras,
         _library_selected_row_id=row_id,
         app=SimpleNamespace(push_screen=pushed.append),
+        # TASK-34000.40 ruling T9-h: F1's ctrl+s row asks the chip seam.
+        _library_editor_save_target=lambda: save_target,
+        _library_ctrl_s_chip=lambda _target: ctrl_s_chip,
     )
     # The real surface-label method (the mapping under test), bound to the
     # fake -- the types.MethodType idiom the multiselect fakes use.
@@ -639,11 +644,12 @@ def _binding_parts(entry) -> tuple[str, str, str]:
     return str(entry[0]), str(entry[1]), str(entry[2])
 
 
-def _ctrl_s_fake(target, *, refusal="", compact=False, prompt_id=7):
+def _ctrl_s_fake(target, *, refusal="", pending=True, compact=False, prompt_id=7):
     """The state ``_library_ctrl_s_chip`` reads, with the target stubbed."""
     return SimpleNamespace(
         _library_editor_save_target=lambda: target,
         _library_editor_save_refusal=lambda _target: refusal,
+        _library_editor_save_pending=lambda _target: pending,
         _notes_state=SimpleNamespace(compact=compact),
         _prompts_state=SimpleNamespace(selected_prompt_id=prompt_id),
     )
@@ -683,6 +689,9 @@ def test_ctrl_s_chip_appears_in_every_editor_tier_and_nowhere_else():
                 assert chip(_ctrl_s_fake(target), other) == (), (target, other)
         # Where the key refuses (it still says why, at the editor), no chip.
         assert chip(_ctrl_s_fake(target, refusal="Save locked"), target) == ()
+        # Ruling T9-j (2026-10-27): nor where it has nothing to write -- a
+        # clean editor answers "Saved — no changes." but is not chipped.
+        assert chip(_ctrl_s_fake(target, pending=False), target) == ()
         # Outside every editor -- the Notes list, the landing -- none at all.
         assert chip(_ctrl_s_fake(None), target) == ()
     assert chip(_ctrl_s_fake("notes", compact=True), "notes") == (("ctrl+s", "save"),)
@@ -690,20 +699,36 @@ def test_ctrl_s_chip_appears_in_every_editor_tier_and_nowhere_else():
         ("ctrl+s", "save prompt"),
     )
 
-    # F1: the binding is active exactly where a target exists.
+    # The binding stays active wherever a target exists -- a clean or
+    # refusing editor still answers the key (rule (c)) ...
     assert LibraryScreen.check_action(_ctrl_s_fake("notes"), "library_editor_save", ())
     assert not LibraryScreen.check_action(
         _ctrl_s_fake(None), "library_editor_save", ()
     )
+    # ... but F1 lists it exactly where the footer chips it (ruling T9-h),
+    # and never a keyless status row ("- : typing in field").
     in_editor = _f1_fake(
-        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS
-        + (("ctrl+s", "save now"),),
+        footer_shortcuts=(("", "typing in field"),)
+        + LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
         binding_extras=(("ctrl+s", "Save"),),
         row_id="browse-notes",
+        save_target="notes",
+        ctrl_s_chip=(("ctrl+s", "save now"),),
     )
     LibraryScreen.action_show_workbench_help(in_editor)
     (panel,) = in_editor._pushed
     assert [key for key, _label in panel.state.shortcuts].count("ctrl+s") == 1
+    assert all(key for key, _label in panel.state.shortcuts), panel.state.shortcuts
+    refusing = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
+        binding_extras=(("ctrl+s", "Save"),),
+        row_id="browse-notes",
+        save_target="notes",
+        ctrl_s_chip=(),
+    )
+    LibraryScreen.action_show_workbench_help(refusing)
+    (panel,) = refusing._pushed
+    assert all(key != "ctrl+s" for key, _label in panel.state.shortcuts)
     outside = _f1_fake(
         footer_shortcuts=LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
         binding_extras=(),
