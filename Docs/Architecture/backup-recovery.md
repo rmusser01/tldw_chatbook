@@ -878,6 +878,9 @@ and semantic discharges retain only accepted owners. Final qualified history,
 its owner/segment dependencies, operational mapped references and row duties close
 against those same accepted owners. Separate historical observations retain source
 facts with mapped associations cleared; global and passive retention duties stay.
+Shallow observation/operational replacements admit their expanded field and
+constructor dictionaries, result fields, and surrounding closure collections before
+construction. Historical bodies remain shared references during this accounting.
 All native holds, passive
 history, current binding/authority/advertising gates, file access and atomic
 rows/maps/receipts remain explicit pending duties. `require_complete()` always

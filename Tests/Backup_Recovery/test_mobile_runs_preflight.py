@@ -423,3 +423,91 @@ def test_actual_runs24_preflight_preserves_authenticated_receipt_absence(
         with pytest.raises(ValueError, match="pending"):
             plan.require_complete()
     assert not reads.active
+
+
+def test_actual_final_history_copies_admit_shallow_native_expansion(
+    tmp_path, monkeypatch
+):
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from tldw_chatbook.Backup_Recovery import mobile_runs_preflight
+    from tldw_chatbook.Backup_Recovery.mobile_identity_plan import _rows
+    from tldw_chatbook.Backup_Recovery.mobile_runs_history import _qualify_history
+    from tldw_chatbook.Backup_Recovery.mobile_trace_inputs import _check_trace_members
+    from tldw_chatbook.Chat.console_trace_read_budget import (
+        _TraceReadBudget,
+        _TraceReadLimit,
+    )
+
+    seed = mobile_consolidation_fixture._seed
+
+    def native(db, legacy, ids):
+        original = ids["artifact_file"]
+        parent = original.parent.with_name(ids["parent_run_id"])
+        original.parent.rename(parent)
+        (parent / original.name).unlink()
+        for number in range(2):
+            (parent / f"logs.{number}.txt").write_bytes(b"")
+
+    monkeypatch.setattr(
+        mobile_consolidation_fixture,
+        "_seed",
+        lambda stores, **kwargs: seed(stores, **kwargs, runs_seed=native),
+    )
+    replace = mobile_runs_preflight.replace
+    entries = []
+    shallow = []
+    with content_reads(
+        tmp_path, monkeypatch, lambda c, p: None, native_seed=_version_default
+    ) as reads:
+        identities = reads.identity_plan()
+        budget = _TraceReadBudget()
+        rows = _rows(reads, "legacy", "runs", "agent_runs", _read_budget=budget)
+        budget.container(len(rows))
+        runs = {row["id"]: row for row in rows}
+        history, blockers = _qualify_history(
+            reads, runs, identities, _read_budget=budget
+        )
+        assert not blockers and len(history) == 2
+        assert budget._remaining < 16 * 1024 * 1024
+        initial = budget._remaining
+        starting = initial
+
+        def copied(value, **changes):
+            entries.append(starting - budget._remaining)
+            result = replace(value, **changes)
+            shallow.append(
+                result.run_ids is value.run_ids
+                and result.segment_ids is value.segment_ids
+                and result.relative_path is value.relative_path
+                and result.associations == ()
+                and result.owner_association is None
+            )
+            return result
+
+        monkeypatch.setattr(mobile_runs_preflight, "replace", copied)
+        completed = 0
+        with pytest.raises(_TraceReadLimit):
+            for _ in range(20_000):
+                entries.clear()
+                shallow.clear()
+                starting = budget._remaining
+                observed = mobile_runs_preflight._history_observations(
+                    history, _read_budget=budget
+                )
+                # Credit all real history admission since entry, including any
+                # bulk charge; do not demand a particular per-copy implementation.
+                assert len(entries) == 2 and all(
+                    charged >= ordinal * 3 * (64 + 32 * 12)
+                    for ordinal, charged in enumerate(entries, 1)
+                ), "native shallow history replacement preceded its full admission"
+                assert all(shallow) and len(observed) == len(history)
+                assert all(p.owner_association for p in history)
+                completed += 1
+        assert all(
+            charged >= ordinal * 3 * (64 + 32 * 12)
+            for ordinal, charged in enumerate(entries, 1)
+        )
+        assert all(shallow)
+        assert completed > 1 and budget._remaining < initial
+        _check_trace_members(reads)
+    assert not reads.active and not reads.roots

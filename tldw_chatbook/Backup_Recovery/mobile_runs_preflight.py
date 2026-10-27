@@ -112,6 +112,21 @@ class _RunsPreflight:
         raise ValueError("mobile_runs_native_owners_pending")
 
 
+def _history_observations(history, *, _read_budget):
+    """Admit fixed shallow native replacements without traversing source bodies."""
+    budget = _read_budget
+    budget.container(len(history))
+    observations = []
+    for proof in history:
+        count = len(proof.__dataclass_fields__)
+        budget.container(count)  # replace expands its changes dictionary.
+        budget.container(count)  # Constructor keyword dictionary.
+        budget.container(count)  # New shallow result fields.
+        observations.append(replace(proof, associations=(), owner_association=None))
+    budget.container(len(observations))
+    return tuple(observations)
+
+
 def _plan_runs(reads):
     from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
     from tldw_chatbook.DB.console_command_receipts import (
@@ -535,12 +550,18 @@ def _plan_runs(reads):
     discharges = tuple(
         p for p in integrated.semantic_discharges if (p.table, p.original) in accepted
     )
-    budget.container((len(history) + len(historical) + len(duties)) * 4)
-    history_observations = tuple(
-        replace(p, associations=(), owner_association=None) for p in history
-    )
+    history_observations = _history_observations(history, _read_budget=budget)
+    budget.container(len(history))
     qualified_history = []
     for proof in history:
+        for _ in range(
+            len(proof.run_ids)
+            + len(proof.historical_run_ids)
+            + (proof.owner_run_id is not None)
+        ):
+            budget.container(1)  # Original Run identity tuple.
+            budget.container(2)  # Accepted-owner lookup key.
+        budget.container(2)  # Framed/historical reference groups.
         if (
             proof.owner_run_id is not None
             and ("agent_runs", (proof.owner_run_id,)) not in accepted
@@ -549,6 +570,9 @@ def _plan_runs(reads):
             for group in (proof.run_ids, proof.historical_run_ids)
             for run in group
         ):
+            budget.container(1)
+            budget.container(5)
+            budget.reserve(32)  # New blocker list entry.
             blockers.append(
                 _ContentBlocker(
                     "agents.history",
@@ -558,12 +582,15 @@ def _plan_runs(reads):
             )
         else:
             qualified_history.append(proof)
-    budget.container(len(qualified_history) * 2)
+    budget.container(len(qualified_history))
     qualified_members = {proof.logical_id for proof in qualified_history}
+    budget.container(len(qualified_history))
     retained_history = []
     for proof in qualified_history:
         if any(segment not in qualified_members for segment in proof.segment_ids):
-            budget.container(3)
+            budget.container(1)
+            budget.container(5)
+            budget.reserve(32)
             blockers.append(
                 _ContentBlocker(
                     "agents.history",
@@ -573,15 +600,22 @@ def _plan_runs(reads):
             )
         else:
             retained_history.append(proof)
+    budget.container(len(retained_history))
     history = tuple(retained_history)
+    budget.container(len(historical))
     closed_history = []
     for fact in historical:
+        budget.container(len(fact.associations))
         associations = []
-        budget.container(len(fact.associations) * 3)
         for domain, original, mapped in fact.associations:
+            budget.container(1)
+            budget.container(2)
             if ("agent_runs", (original,)) in accepted:
+                budget.container(3)
                 associations.append((domain, original, mapped))
             else:
+                budget.container(5)
+                budget.reserve(32)
                 blockers.append(
                     _ContentBlocker(
                         fact.table,
@@ -591,16 +625,29 @@ def _plan_runs(reads):
                         original,
                     )
                 )
+        budget.container(len(associations))
+        count = len(fact.__dataclass_fields__)
+        budget.container(count)  # Expanded replace changes; values stay shared.
+        budget.container(count)  # Constructor keywords.
+        budget.container(count)  # Shallow result fields.
         closed_history.append(replace(fact, associations=tuple(associations)))
     historical = closed_history
-    historical_owners = {(h.table, h.original) for h in historical}
-    duties = [
-        d
-        for d in duties
-        if not d.original
-        or (d.table, d.original) in accepted
-        or (d.table, d.original) in historical_owners
-    ]
+    budget.container(len(historical))
+    historical_owners = set()
+    for fact in historical:
+        budget.container(2)
+        historical_owners.add((fact.table, fact.original))
+    budget.container(len(duties))
+    retained_duties = []
+    for duty in duties:
+        if not duty.original:
+            retained_duties.append(duty)
+        else:
+            budget.container(2)
+            owner = (duty.table, duty.original)
+            if owner in accepted or owner in historical_owners:
+                retained_duties.append(duty)
+    duties = retained_duties
     for frontier in integrated.sync.frontiers:
         if frontier.owner not in accepted:
             blockers.append(
