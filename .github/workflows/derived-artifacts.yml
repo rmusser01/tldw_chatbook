@@ -331,6 +331,8 @@ jobs:
             Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release \
             Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session \
             Tests/Chat/test_console_session_workspace_roots.py \
+            Tests/Backup_Recovery/test_prompt_history_path_memo.py \
+            Tests/MCP/test_server_manifest_parse_reuse.py \
             --timeout=180 \
             --tb=short
 

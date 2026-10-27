@@ -556,7 +556,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # drops the dead 906 assignment that stood above dev's effective 905.
 # PR #3251 retains all 908 live dev slots plus 56 exact controls.
 # TASK-33162.1 gates both ingestion prompt MouseMove cases in one node entry.
-MINIMUM_FILES = 965
+# TASK-33620.15.15 (2026-10-27) raised it to 966 (dev's 964 + 2): the
+# run-start yield node becomes its whole file in the node's own slot (net
+# zero), and the first-send import-cycle and warm-up files join at the tail.
+MINIMUM_FILES = 967
 
 
 def read_census(path: Path) -> list[str]:

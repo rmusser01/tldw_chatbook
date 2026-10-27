@@ -1342,8 +1342,11 @@ Tests/UI/test_library_notes_keep_synced_without_a_root.py
 
 # TASK-33620.15.8: the composer state-restyle file and the catalog fingerprint's
 # first-read yield node, appended at the tail; existing shard slots stay fixed.
+# TASK-33620.15.15 (2026-10-27) gates the node's whole file (three run-start
+# yield pins, about 12 s in the lane's install set) in the node's own slot, so
+# no entry changes shard (a node may not sit beside its own file, ADR-103).
 Tests/UI/test_console_composer_state_restyle.py
-Tests/UI/test_console_run_start_yields.py::test_the_fingerprint_reads_its_first_store_in_a_loop_turn_of_its_own
+Tests/UI/test_console_run_start_yields.py
 # TASK-33620.15.7: run-tick layout-request pins (ten widget pins, ~3 s, and one
 # private-profile held-run journey, ~12 s locally).
 Tests/UI/test_console_run_tick_layout_requests.py
@@ -1415,3 +1418,9 @@ Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_curr
 
 # TASK-33162.1: both ingestion prompt editors survive a stale MouseMove after detach.
 Tests/UI/test_library_ingest_option_event_order.py::test_mouse_move_over_removed_ingest_prompt_keeps_replacement_editable
+# TASK-33620.15.15 (2026-10-27): TASK-33620.15.5's first-send warm-up pins,
+# appended at the tail in the order a replay of five green 17-shard runs
+# preferred (the import-cycle check, about 7 s, in shard 8; the warm-up's
+# own file, about 9 s, in shard 9); existing shard slots stay fixed.
+Tests/UI/test_console_first_send_import_cycles.py
+Tests/UI/test_console_first_send_preimport.py

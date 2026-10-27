@@ -377,6 +377,13 @@ FAST_LANE_TARGETS = (
     # TASK-33620.15.1.3: the Environment panel's root is the session's
     # consent-admitted roots, read without building a turn snapshot (pure).
     "Tests/Chat/test_console_session_workspace_roots.py",
+    # TASK-33620.15.15: TASK-33620.15.5's two non-UI run-start pins ran in no
+    # PR lane. A warm prompt-history append resolves its path from a memo, not
+    # a config operation, and the MCP server module's manifest source is
+    # parsed once while unchanged (sandboxed, about 3 s together, lane
+    # install set). Their three UI siblings are in the UI census.
+    "Tests/Backup_Recovery/test_prompt_history_path_memo.py",
+    "Tests/MCP/test_server_manifest_parse_reuse.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
