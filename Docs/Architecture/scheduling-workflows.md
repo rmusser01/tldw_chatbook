@@ -68,6 +68,25 @@ admission. Service ownership, transfer guards and offline outcomes remain under
 ADR-018; this screen-local guard does not establish physical cancellation of a
 remote request or extend the batch lifetime beyond the workbench.
 
+Full reminder-form Saves admit independent named, non-exclusive mutation workers
+(TASK-37032). Each callback captures its service, reminder ID, selected owner and
+copied form payload before dispatch. A later dismissed form cannot cancel an
+already admitted Save, including another create. The form's existing dismissal
+still prevents repeated Enter from submitting it twice. Successful acknowledgements
+refresh the Queue; a deleted or newly transfer-locked row's `None` service result
+uses the existing failure feedback and refresh instead of a success toast. Worker
+cancellation is never evidence of remote rollback; screen lifetime is unchanged.
+
+Offline full-form updates project queued fields onto the existing server-write
+allowlist and serialize datetimes as ISO strings. The computed local `next_run_at`
+remains in SQLite rather than being replayed to the strict server update method.
+Partial payloads and explicit nulls retain their shape. The pending mutation's
+top-level idempotency metadata still belongs to `ScheduledTasksDB` and is stripped
+only by the existing client seam, as ADR-018 requires. Private mounted controls
+exercise durable offline queues and reminder sync replay through the real
+`SchedulingServerClient` and `ServerNotificationsService` request schema with a
+controlled API transport; retry, schema and conflict policies are unchanged.
+
 ## What can be scheduled
 
 - **Reminders** — one-time or cron-recurring; notification dispatch.

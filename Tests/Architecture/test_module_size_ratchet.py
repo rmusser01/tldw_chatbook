@@ -550,7 +550,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
     "tldw_chatbook/Agents/local_tool_provider.py": 5749,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
-    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5536,
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5186,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,

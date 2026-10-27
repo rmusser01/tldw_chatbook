@@ -2967,14 +2967,10 @@ class SchedulesWorkbench(BaseAppScreen):
         # not a ReminderTask field. Defaults to the service's current owner
         # so a form built before this selector existed (or a caller that
         # omits it) behaves exactly as before.
+        form_data = dict(form_data)
         target_owner = form_data.pop("owner_id", None) or service.owner_id
-        # Name the owner it was created for (label, not raw id: same
-        # vocabulary as the "Runs on" selector the owner was picked from).
-        # The old copy also told the user to "switch to that owner to see
-        # it" -- true when this list was owner-scoped, wrong since Task 1
-        # made it span owners (final review F7, spec §4: the cross-owner
-        # list "dissolves" that wart). The row appears here immediately
-        # whatever owner it was created under.
+        # Name the selected owner using the form's vocabulary. The Queue
+        # spans owners, so the saved row appears without switching owners.
         owner_label = {value: label for label, value in self._runs_on_options()[0]}.get(
             target_owner, target_owner
         )
@@ -2995,9 +2991,11 @@ class SchedulesWorkbench(BaseAppScreen):
                     await service.create_reminder(form_data, owner_id=target_owner)
                     self.app_instance.notify(created_message, severity="information")
                 else:
-                    await service.update_reminder(
+                    saved = await service.update_reminder(
                         task_id, form_data, owner_id=target_owner
                     )
+                    if saved is None:
+                        raise ValueError("Reminder was deleted or locked by a transfer")
                     self.app_instance.notify(
                         "Scheduled task updated.", severity="information"
                     )
@@ -3011,7 +3009,9 @@ class SchedulesWorkbench(BaseAppScreen):
 
         self.run_worker(
             _save_and_refresh,
-            exclusive=True,
+            # Each dismissed form has admitted a write, including creates.
+            # Cancelling its response waiter cannot roll back that write.
+            exclusive=False,
             group="schedules-save-reminder",
         )  # type: ignore[arg-type]
 
@@ -3832,6 +3832,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
+
         async def _mark() -> None:
             # task-34931: the unread read (count + list) runs off the loop.
             unread_ids = await asyncio.to_thread(
@@ -4533,15 +4534,12 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
+
         async def _mark_all() -> None:
             # task-34931: the unread read (count + list) runs off the loop.
-            unread_ids = await asyncio.to_thread(
-                self._unread_result_ids, service
-            )
+            unread_ids = await asyncio.to_thread(self._unread_result_ids, service)
             if not unread_ids:
-                self.app_instance.notify(
-                    "Nothing unread.", severity="information"
-                )
+                self.app_instance.notify("Nothing unread.", severity="information")
                 return
             await self._dispatch_mark_all_results_read(service, unread_ids)
 
@@ -5152,9 +5150,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     # it, so the toast never claims a delete that the
                     # facade declined. `owner_id` is the ROW's own (final
                     # review F4), same as the single-row delete.
-                    if not await service.delete_reminder(
-                        task_id, owner_id=owner_id
-                    ):
+                    if not await service.delete_reminder(task_id, owner_id=owner_id):
                         errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to delete reminder {}", task_id)

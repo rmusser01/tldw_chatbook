@@ -22127,3 +22127,17 @@ Evidence: [post-merge audit](../../Docs/superpowers/qa/2026-10-25-textual-book-a
 **Incident.** TASK-33620.15.24 moved the scheduler's storage admission (`execution_scope`, a lease that makes another process's native maintenance wait) off the UI loop by entering and releasing it in two separate worker hops around the awaited body. Six new tests pinned that admission resolves off the loop, that nothing dispatches before it resolves, that a refusal refuses, and that every lease is released rather than garbage-collected. The independent review then mutated the seam to enter, release, and only then run the body. All six new tests and all 53 existing loop tests still passed: the job ran with 0 open scopes and 0 live leases. Ordering ("entered before the body") and cleanup ("closed eventually") were both pinned; the contract that matters, "held while the body runs", was not. One assertion recorded from inside the dispatched handler (open scopes and live leases at that instant) went red under the mutation and green on the head.
 
 **What to do.** When a `with` block becomes separate enter/exit steps (offloaded hops, callbacks, `asynccontextmanager` plumbing), add an observation taken *inside* the body that the resource is live at that moment, and run the release-before-body mutation against it. "Resolved before" and "released after" together do not imply "held during".
+
+## Replay the full offline form payload through the real client method (TASK-37032)
+
+**2026-10-27 incident.** Title-only reminder offline controls passed, but a real
+ReminderForm Save updated SQLite and then failed `json.dumps`: schedule recomputation
+had added a `datetime` `next_run_at` to the queued fields. ISO conversion alone
+would still replay that local-only field to `ServerNotificationsService.update_reminder`,
+whose strict signature rejects it. The bounded fix projects the existing server
+write fields and ISO-encodes datetimes while preserving partial updates and nulls.
+Mounted recurring and one-time controls now persist the queue and replay it through
+the real sync/client/API-method chain before asserting queue removal. The one-time
+control also verifies stable stored top-level idempotency metadata and its absence
+from the API request. Test the actual full form and replay seam; JSON encodability
+and a title-only update do not establish a replayable schedule mutation.

@@ -1,7 +1,7 @@
 ---
 id: TASK-37032
 title: Keep full reminder-form saves independent across submissions
-status: To Do
+status: In Progress
 created_date: 2026-10-27 18:00
 labels:
 - textual-patterns
@@ -12,6 +12,9 @@ references:
 - tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py
 - tldw_chatbook/Scheduling/services/scheduling_service.py
 - Docs/superpowers/qa/2026-10-27-textual-book-after-pr3251.md
+assignee:
+- '@codex'
+updated_date: 2026-10-27 21:02
 ---
 
 ## Description
@@ -30,12 +33,23 @@ Evidence, source pins, book pages, controls and limitations: [post-merge Textual
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Two distinct full reminder forms saved while the first response is pending cannot silently cancel one accepted mutation; each accepted submission retains its captured reminder ID, service owner and payload, or a later submission is explicitly refused before acceptance.
-- [ ] #2 Every accepted save has truthful acknowledgement or failure handling; its local mirror and visible Queue reflect the acknowledged outcome, and cancellation is never represented as proof of remote rollback.
-- [ ] #3 Serial full-form edits continue to persist and repaint both rows; preserve validation, transfer guards, existing recoverable failure feedback and offline queued behavior affected by the repair.
-- [ ] #4 Mounted private-profile tests drive actual full-form keys and Save callbacks over the real SchedulingService and SQLite, with ordinary and cross-reminder overlap controls, visible outcome assertions, bounded gate release and drained native work.
+- [x] #1 Two distinct full reminder forms saved while the first response is pending cannot silently cancel one accepted mutation; each accepted submission retains its captured reminder ID, service owner and payload, or a later submission is explicitly refused before acceptance.
+- [x] #2 Every accepted save has truthful acknowledgement or failure handling; its local mirror and visible Queue reflect the acknowledged outcome, and cancellation is never represented as proof of remote rollback.
+- [x] #3 Serial full-form edits continue to persist and repaint both rows; preserve validation, transfer guards, existing recoverable failure feedback and offline queued behavior affected by the repair.
+- [x] #4 Mounted private-profile tests drive actual full-form keys and Save callbacks over the real SchedulingService and SQLite, with ordinary and cross-reminder overlap controls, visible outcome assertions, bounded gate release and drained native work.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace full-form callback and service ownership using committed audit controls. 2. Promote real Queue serial/held-response overlap tests and witness RED. 3. Apply minimal native independent submission fix preserving captured identity/service/payload and existing error/refresh behavior. 4. In tldw_chatbook/Scheduling/services/scheduling_service.py, repair full-form offline update queue serialization using the existing ISO datetime and server-field contract; prove durable queued full schedule replay through existing SyncEngine and real SchedulingServerClient/ServerNotificationsService seams. 5. Verify focused form/identity/offline/transfer/bulk and worker/source/import controls; update architecture, implementation notes and evidence. ADR required: no. ADR path: N/A. Reason: bounded bug fixes directly implement backlog/decisions/018-local-server-hybrid-scheduled-tasks.md queue/wire contract, backlog/decisions/033-application-session-state-ownership.md, backlog/decisions/036-application-service-composition-lifecycle.md and backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; no schema, retry, idempotency or sync policy change.
+<!-- SECTION:PLAN:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented independent native full reminder-form Save workers with captured service/ID/owner and copied scalar/datetime form payloads. Creates retain separate admitted writes; real repeated Enter controls prove the form still submits once. Refused deleted/transfer-locked updates now use existing failure feedback and Queue refresh. A real offline form exposed inherited datetime JSON failure; the authorized bounded scheduling_service.py repair projects existing server-write fields and ISO datetimes, preserving nulls/partial payloads, local next-run clocks and top-level idempotency metadata. Real recurring/one-time replay traverses SyncEngine, SchedulingServerClient and ServerNotificationsService with controlled API transport and verifies durable queue settlement. Docs/Architecture/scheduling-workflows.md and incident-backed testing lesson updated. No new ADR: existing backlog/decisions/018-local-server-hybrid-scheduled-tasks.md, 033-application-session-state-ownership.md, 036-application-service-composition-lifecycle.md and 031-tui-keybinding-and-footer-hint-conventions.md apply. Targeted evidence: expected cross-reminder/create/refusal RED, all nine new scenario behaviors qualified through passing private-child receipts, 14 existing identity/bulk private cases and 12 focused legacy/service controls pass; two exact legacy UI modules use approved existing bootstrap-profile fixture. Six Python files format clean; seven inherited E402 violations remain. Size5532 and both import guards pass; unchanged worker inventory reports three inherited failures with exact-base detector output equality. Five unchanged native visual/path guard baselines are source-qualified from Task1. No full suite or policy/budget increase. Full commands, hashes, actual parent/child XML counts and qualifications: .superpowers/sdd/2026-10-27-textual-37031-37034/task-2-report.md. Status remains In Progress pending controller review and current-head CI.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

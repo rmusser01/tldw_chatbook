@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 import pytest
+
 from textual.app import App
 from textual.widgets import Input, Select
 
@@ -18,6 +19,11 @@ from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import (
 
 
 # --- task-23102: forgiving datetime parsing (pure unit tests) --------------
+
+
+# TASK-37032: the UI fixture imports app against collection-bound config.
+# Retain the existing private bootstrap source and its per-test reset.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class TestParseForgivingDatetime:
@@ -645,9 +651,9 @@ async def test_all_recurring_fields_painted_at_235x52():
             "#reminder-cancel",
         ):
             widget = form.query_one(selector)
-            assert _painted_at_own_center(app, widget), (
-                f"{selector} is not painted at 235x52"
-            )
+            assert _painted_at_own_center(
+                app, widget
+            ), f"{selector} is not painted at 235x52"
         frame = app.export_screenshot()
         assert "Runs:" in frame
 
@@ -692,9 +698,9 @@ async def test_footer_survives_wrapped_error_lines_at_45x24():
         assert errors.display and errors.region.height >= 2
 
         save = form.query_one("#reminder-save")
-        assert _painted_at_own_center(app, save), (
-            "wrapped validation lines pushed Save out of the modal"
-        )
+        assert _painted_at_own_center(
+            app, save
+        ), "wrapped validation lines pushed Save out of the modal"
 
         # And a focused field is still painted above the docked footer.
         run_at = form.query_one("#reminder-run-at", Input)
