@@ -573,7 +573,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # - task 7 fix round 1 (2026-10-27): Tests/UI/test_library_notes_deferred_
 #   visit_reload.py (one real-Library boot, ~6 s; review R0 M-1, ruling
 #   T7-f): 920 -> 921.
-MINIMUM_FILES = 921
+# - task 8 (2026-10-27, part 8a, ruling T8-b): Tests/UI/test_library_notes_
+#   trash_pages_and_purges.py (one real-Library boot, ~9 s alone): 921 -> 922.
+MINIMUM_FILES = 922
 
 
 def read_census(path: Path) -> list[str]:

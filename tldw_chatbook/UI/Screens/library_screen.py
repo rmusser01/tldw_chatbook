@@ -5360,9 +5360,19 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-select-all": "select-all",
             "library-notes-select-clear": "select-clear",
             "library-notes-select-actions": "select-actions",
+            # TASK-34000.29 (N-29): the Trash pager and Back keep focus across
+            # the reload a page or a Restore runs; the controller resolves
+            # each to where focus belongs on the new page
+            # (``_library_notes_trash_focus_target``).
+            "library-notes-trash-previous": "trash-previous",
+            "library-notes-trash-next": "trash-next",
+            "library-notes-trash-back": "trash-back",
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
+        trash_restore = "library-notes-trash-restore-"
+        if widget_id.startswith(trash_restore):
+            return f"trash-restore:{widget_id.removeprefix(trash_restore)}"
         sort_choice = "library-notes-sort-"
         if widget_id.startswith(sort_choice):
             return f"sort-choice:{widget_id.removeprefix(sort_choice)}"
@@ -25749,6 +25759,11 @@ class LibraryScreen(BaseAppScreen):
         """
         if handoff := self._library_notes_filter_row_handoff:
             self._library_notes_filter_row_handoff = (handoff[0], False)
+        # TASK-34000.29 (ruling T8-d): the Trash view's landing after a page
+        # or a Restore (``LibraryNotesController._trash_focus_role``).
+        controller = getattr(self, "_notes_controller", None)
+        if controller is not None:
+            controller._trash_focus_role = ""
         if self._notes_state.pending_focus_identity is not None:
             self._notes_state.pending_focus_identity = None
             self._notes_state.pending_focus_waits_for_snapshot = False
@@ -32606,14 +32621,32 @@ class LibraryScreen(BaseAppScreen):
         """
         return self._notes_controller.handle_library_notes_trash_restore(event)
 
+    @on(Button.Pressed, "#library-notes-trash-previous")
+    def handle_library_notes_trash_previous(self, event: Button.Pressed) -> None:
+        """Read the Trash page before this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press of the Trash pager's Previous.
+        """
+        return self._notes_controller.handle_library_notes_trash_previous(event)
+
+    @on(Button.Pressed, "#library-notes-trash-next")
+    def handle_library_notes_trash_next(self, event: Button.Pressed) -> None:
+        """Read the Trash page after this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press of the Trash pager's Next.
+        """
+        return self._notes_controller.handle_library_notes_trash_next(event)
+
     def _leave_library_notes_trash(self) -> None:
         return self._notes_controller._leave_library_notes_trash()
 
     def _refresh_library_notes_trash(self) -> None:
         return self._notes_controller._refresh_library_notes_trash()
 
-    async def _load_library_notes_trash(self) -> None:
-        return await self._notes_controller._load_library_notes_trash()
+    async def _load_library_notes_trash(self, *, page: int | None = None) -> None:
+        return await self._notes_controller._load_library_notes_trash(page=page)
 
     def action_library_notes_trash_restore(self) -> None:
         """Keyboard "r": restore the focused Trash row (task-32144).

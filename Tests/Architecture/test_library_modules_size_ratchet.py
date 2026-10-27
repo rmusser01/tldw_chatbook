@@ -632,7 +632,14 @@ _BUDGETS: dict[str, int] = {
     # owed visit reload (``_tree_reload_owed``, ``_release_library_notes_
     # mutation``, ``_run_owed_library_notes_tree_reload``) and the empty
     # keyword toast: 8008 -> 8044 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8044,
+    # 2026-10-27, TASK-34000.29 (polish-1b Task 8, part 8a, N-29; same owner
+    # decision): Recently deleted pages -- the page read with its read-side
+    # clamp (``_load_library_notes_trash(page=)``, ``_read_library_notes_
+    # trash_page``), the Previous/Next handlers queued behind a running
+    # Restore (``_trash_reload_owed``), the Trash focus roles and their
+    # resolution (``_library_notes_trash_focus_target``) and the owed landing
+    # (``_trash_focus_role``): 8044 -> 8271 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8271,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

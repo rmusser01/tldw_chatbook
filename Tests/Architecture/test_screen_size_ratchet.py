@@ -1172,7 +1172,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: reconcile's detach window read through to its outgoing control, and
     #: ``_ROW_SELECT_KEY``: 38386 -> 38441 lines, 1379 -> 1381 methods
     #: (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38441, 1381),
+    #: 2026-10-27, TASK-34000.29 polish-1b Task 8, part 8a (N-29; same owner
+    #: decision -- expand limits, don't contort code): the Recently deleted
+    #: pager's two delegators, the Trash controls' portable focus roles
+    #: (Previous, Next, Back, each Restore) and the real-input withdrawal of
+    #: the Trash landing: 38441 -> 38474 lines, 1381 -> 1383 methods
+    #: (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38474, 1383),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

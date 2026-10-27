@@ -1786,6 +1786,19 @@ Pilot pins were green.
     the user leaving the list and disarmed the landing (1 of 10 runs under
     CPU load; certain once the attempt is held). Landing at once, while the
     rows are known to be mounted, takes the race away.
+- **A third, the same week (TASK-34000.29 polish-1b Task 8, 2026-10-27).**
+  The Notes Trash's landing after a page or a Restore was first guarded by
+  a `_LibraryNotesRestoreGuard(focus_generation=...)` taken at the press.
+  Every reload recomposes the trash list, prunes the focused control, and
+  Textual's reset onto the Library grip bumped the generation, so the
+  `then=` landing was vetoed on EVERY run -- a `set_focus` + capture trace
+  showed `LAND ... gen=10` against a guard of 9 each time. It looked fine
+  unloaded only because the automatic role replay did the work; under
+  8-way load a later sync captured the grip and replaced that replay, and
+  18 of 24 runs ended on the first row. The owed landing is now a role that
+  the real-input withdrawal clears, and the Trash region's fallback resolves
+  that role. If a landing has to survive its own reload, no generation the
+  reset can move may veto it.
 
 ## A focus identity captured during a prune, or after a running action disabled its button, names the wrong control (TASK-34000.29, 2026-10-26)
 

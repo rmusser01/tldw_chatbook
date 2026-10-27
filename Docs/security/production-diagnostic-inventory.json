@@ -3201,7 +3201,7 @@
     },
     {
       "call_count": 17,
-      "diagnostic_digest": "4b1125ffa34383808172",
+      "diagnostic_digest": "3d20b5ffa68f3dd7a0c7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
       "reason": "remaining Chatbook production diagnostic owner"

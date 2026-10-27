@@ -545,6 +545,7 @@ from ...Library.library_notes_session import (
 )
 from ...Library.library_notes_state import (
     LIBRARY_NOTES_TRASH_PAGE_SIZE,
+    library_notes_trash_last_page,
     LibraryNoteDeleteReceipt,
     LibraryNoteEditorState,
     LibraryNotesFocusIdentity,
@@ -693,6 +694,24 @@ class LibraryNotesController:
     #: mutation owned the interlock. The interlock's release runs it once
     #: (``_release_library_notes_mutation``); any full reload clears it.
     _tree_reload_owed: bool = False
+
+    #: TASK-34000.29 (N-29, ruling T8-d): a Trash page read a Previous/Next
+    #: press asked for while a Restore held the interlock -- the pressed
+    #: control's role, run once by the release. Queued, never dropped: the
+    #: press already moved ``trash_page``.
+    _trash_reload_owed: str = ""
+
+    #: TASK-34000.29 (ruling T8-d): the Trash role focus belongs on after the
+    #: last Previous/Next/Restore press -- until the user's own input moves
+    #: it (``LibraryScreen._withdraw_library_notes_pending_focus_handoffs``
+    #: clears it from every real-input site) or the view closes. Not the
+    #: focus-intent generation: every reload prunes the focused control and
+    #: Textual's reset of focus onto a pane grip bumps that generation too,
+    #: which vetoed every landing (traced). It is also what a capture that
+    #: read that grip falls back to in the Trash region, so a replay a later
+    #: sync replaced still lands on the right row (with the generation as the
+    #: veto, 18 of 24 runs under 8-way load ended on the first row).
+    _trash_focus_role: str = ""
 
     def __init__(
         self,
@@ -1652,6 +1671,7 @@ class LibraryNotesController:
         """
         self._library_notes_mutation_in_flight = False
         LibraryNotesController._run_owed_library_notes_tree_reload(self)
+        LibraryNotesController._run_owed_library_notes_trash_reload(self)
     def _run_owed_library_notes_tree_reload(self) -> None:
         """Run the full tree reload a held-back visit refresh still owes."""
         if not getattr(self, "_tree_reload_owed", False):
@@ -1665,6 +1685,13 @@ class LibraryNotesController:
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
         ):
             self._request_library_notes_tree_initial_load()
+    def _run_owed_library_notes_trash_reload(self) -> None:
+        """Run the Trash page read a press made under the interlock (T8-d)."""
+        role = getattr(self, "_trash_reload_owed", "")
+        if not role or self._library_notes_mutation_fenced():
+            return
+        self._trash_reload_owed = ""
+        self._refresh_library_notes_trash(focus_role=role)
     def _library_notes_operation_is_current_and_active(
         self, operation: LibraryNotesOperationState
     ) -> bool:
@@ -2092,6 +2119,11 @@ class LibraryNotesController:
             "select-clear": "#library-notes-select-clear",
             "select-actions": "#library-notes-select-actions",
         }.get(role)
+        if role.startswith("trash-"):
+            # TASK-34000.29 (N-29, ruling T8-d): a Trash role names where focus
+            # BELONGS once the page it was captured on has changed, not one
+            # fixed widget -- see ``_library_notes_trash_focus_target``.
+            return self._library_notes_trash_focus_target(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
         elif role.startswith("select-action-choice:"):
@@ -2192,6 +2224,55 @@ class LibraryNotesController:
                 if str(getattr(row, "template_key", "") or "") == template_key:
                     return row
         return None
+    def _library_notes_trash_focus_target(self, role: str) -> Widget | None:
+        """Resolve a Trash view role against the page now mounted (T8-d).
+
+        - ``trash-previous``/``trash-next``: the pressed control, else the
+          other pager control when the pressed one is now disabled (Next on
+          the last page) -- a disabled button cannot take focus, and Textual
+          would otherwise reset it to a pane grip;
+        - ``trash-restore:<i>``: the Restore at index ``i``, clamped to the
+          last row, so a Restore leaves focus on the row that took its place;
+        - ``trash-back``: Back.
+
+        Whatever has no target falls to the first row, then to Back (the one
+        control an empty Trash still has).
+
+        Args:
+            role: A ``trash-`` semantic role.
+
+        Returns:
+            The control focus belongs on, or ``None`` outside the Trash view.
+        """
+        pager_order = {
+            "trash-previous": (
+                "#library-notes-trash-previous",
+                "#library-notes-trash-next",
+            ),
+            "trash-next": (
+                "#library-notes-trash-next",
+                "#library-notes-trash-previous",
+            ),
+        }.get(role, ())
+        for selector in pager_order:
+            for button in self.query(selector).results(Button):
+                if not button.disabled:
+                    return button
+        if role == "trash-back":
+            for back in self.query("#library-notes-trash-back").results(Button):
+                return back
+        rows = list(self.query(".library-notes-trash-restore").results(Button))
+        if rows:
+            index = 0
+            if role.startswith("trash-restore:"):
+                try:
+                    index = int(role.removeprefix("trash-restore:"))
+                except ValueError:
+                    index = 0
+            return rows[min(max(index, 0), len(rows) - 1)]
+        for back in self.query("#library-notes-trash-back").results(Button):
+            return back
+        return None
     def _library_notes_fallback_focus_target(
         self, identity: LibraryNotesFocusIdentity
     ) -> Widget | None:
@@ -2240,6 +2321,10 @@ class LibraryNotesController:
         if region == "create":
             return self._library_notes_role_target(
                 dataclasses.replace(identity, semantic_role="create-template:blank")
+            )
+        if region == "trash":
+            return self._library_notes_trash_focus_target(
+                getattr(self, "_trash_focus_role", "") or "trash-restore:0"
             )
         if region == "lasting_add":
             return self._library_notes_role_target(
@@ -7611,6 +7696,9 @@ class LibraryNotesController:
         if self._library_notes_mutation_fenced():
             return
         self._library_notes_view = "trash"
+        # TASK-34000.29 (N-29): the view opens on the newest deletions.
+        self._library_notes_trash_page = 1
+        self._trash_focus_role = ""
         self._refresh_library_notes_trash()
         self._apply_library_notes_footer_context()
         if self.is_mounted:
@@ -7635,6 +7723,7 @@ class LibraryNotesController:
     def _leave_library_notes_trash(self) -> None:
         """The single exit from the Trash view -- Back and Escape share it."""
         self._library_notes_view = "list"
+        self._trash_focus_role = ""
         self._apply_library_notes_footer_context()
         if self.is_mounted:
             _sync_library_canvas(
@@ -7672,14 +7761,88 @@ class LibraryNotesController:
             title=getattr(button, "note_title", "") or "Untitled",
             expected_version=int(getattr(button, "note_version", 0) or 0),
         )
+        # TASK-34000.29 (ruling T8-d): where focus goes once the row is gone
+        # -- the row now at this index, clamped -- unless the user's own
+        # input moves it first (``_trash_focus_role``).
+        prefix = "library-notes-trash-restore-"
+        button_id = str(getattr(button, "id", "") or "")
+        trash_focus = ""
+        if button_id.startswith(prefix):
+            trash_focus = f"trash-restore:{button_id.removeprefix(prefix)}"
+            self._trash_focus_role = trash_focus
         self._library_notes_mutation_in_flight = True
         self.run_worker(
-            self._undo_library_note_delete(receipt),
+            self._undo_library_note_delete(receipt, trash_focus=trash_focus),
             exclusive=True,
             group="library_note_mutation",
         )
 
-    def _refresh_library_notes_trash(self) -> None:
+    @on(Button.Pressed, "#library-notes-trash-previous")
+    def handle_library_notes_trash_previous(self, event: Button.Pressed) -> None:
+        """Read the Trash page before this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press event emitted by the Trash pager's Previous.
+        """
+        event.stop()
+        self._page_library_notes_trash(-1, role="trash-previous")
+
+    @on(Button.Pressed, "#library-notes-trash-next")
+    def handle_library_notes_trash_next(self, event: Button.Pressed) -> None:
+        """Read the Trash page after this one (TASK-34000.29, N-29).
+
+        Args:
+            event: Press event emitted by the Trash pager's Next.
+        """
+        event.stop()
+        self._page_library_notes_trash(1, role="trash-next")
+
+    def _page_library_notes_trash(self, step: int, *, role: str) -> None:
+        """Move the Trash view one page and read it; focus follows the press.
+
+        Paging is a read, so it never takes the Notes interlock. It does not
+        START under one either: a press while a Restore holds it moves
+        ``trash_page`` and is queued (``_trash_reload_owed``) for the
+        release, which reads that page once -- the press is never dropped.
+        The target is counted from the page last ASKED for, so a second
+        Next before the first page lands still moves on.
+
+        Args:
+            step: ``-1`` for Previous, ``1`` for Next.
+            role: The pressed control's portable focus role.
+        """
+        trash = self._library_notes_trash
+        if trash is None:
+            return
+        current = max(int(self._library_notes_trash_page or 1), 1)
+        last = library_notes_trash_last_page(trash.total, trash.page_size)
+        target = min(max(current + step, 1), last)
+        if target == current:
+            return
+        self._library_notes_trash_page = target
+        self._trash_focus_role = role
+        if self._library_notes_mutation_fenced():
+            self._trash_reload_owed = role
+            return
+        self._refresh_library_notes_trash(focus_role=role)
+
+    def _land_library_notes_trash_focus(self, role: str) -> None:
+        """Put focus on a Trash role's control after its reload (T8-d).
+
+        Through ``_restore_library_notes_focus_identity``, so the landing is
+        marked programmatic (never read as the user's move). Skipped once the
+        user's own input has moved focus since the press (it cleared
+        ``_trash_focus_role``) or the Trash view has closed.
+        """
+        if self._library_notes_view != "trash" or self._trash_focus_role != role:
+            return
+        self._restore_library_notes_focus_identity(
+            LibraryNotesFocusIdentity(
+                stage="notes", region="trash", note_id=None, semantic_role=role
+            )
+        )
+
+    def _refresh_library_notes_trash(self, *, focus_role: str = "") -> None:
         """Reload the soft-deleted snapshot the row and the view both read.
 
         Always starts a read. An in-flight one is SUPERSEDED, not a reason to
@@ -7687,51 +7850,111 @@ class LibraryNotesController:
         worker, so a read that began before a delete or restore committed can
         neither finish into the snapshot nor swallow the refresh that mutation
         asked for.
-        """
-        self.run_worker(
-            self._load_library_notes_trash(),
-            exclusive=True,
-            group="library_notes_trash",
-        )
 
-    async def _load_library_notes_trash(self) -> None:
-        """Read one bounded page of soft-deleted notes, degrading quietly.
+        Args:
+            focus_role: A Trash role to land focus on once the page is
+                painted (a Previous/Next press), or ``""`` for none.
+        """
+        loader = (
+            self._load_library_notes_trash(focus_role=focus_role)
+            if focus_role
+            else self._load_library_notes_trash()
+        )
+        self.run_worker(loader, exclusive=True, group="library_notes_trash")
+
+    async def _read_library_notes_trash_page(
+        self, list_deleted_notes: Any, page: int
+    ) -> Mapping[str, Any] | None:
+        """One ``list_deleted_notes`` read of ``page``; ``None`` on failure."""
+        try:
+            result = await self._run_library_service_call(
+                list_deleted_notes,
+                scope="local_note",
+                user_id=self._library_notes_user_id(),
+                limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
+                offset=(page - 1) * LIBRARY_NOTES_TRASH_PAGE_SIZE,
+                isolate_in_worker=True,
+            )
+        except Exception:
+            logger.opt(exception=True).warning("Failed to read the Library notes trash")
+            return None
+        return result if isinstance(result, Mapping) else None
+
+    async def _load_library_notes_trash(
+        self,
+        *,
+        page: int | None = None,
+        focus_role: str = "",
+    ) -> None:
+        """Read one page of soft-deleted notes, degrading quietly.
 
         A failed or absent seam leaves the previous snapshot in place rather
         than publishing an empty one: hiding the "Recently deleted" row
         because a read failed would claim there is nothing to recover.
+
+        TASK-34000.29 (N-29, ruling T8-d): ``page`` (default: the page the
+        view is on) is read at ``offset=(page-1)*size`` and clamped READ-SIDE:
+        when the total no longer reaches it -- a Restore emptied the last
+        page, or notes were restored elsewhere -- the last page is read
+        instead, once. The view is never left on an empty page.
+
+        Args:
+            page: The 1-based page to read; ``None`` re-reads ``trash_page``.
+            focus_role: A Trash role to land focus on after the paint.
         """
-        page: Any = None
         service = getattr(self.app_instance, "notes_scope_service", None)
         list_deleted_notes = getattr(service, "list_deleted_notes", None)
-        if callable(list_deleted_notes):
-            try:
-                page = await self._run_library_service_call(
-                    list_deleted_notes,
-                    scope="local_note",
-                    user_id=self._library_notes_user_id(),
-                    limit=LIBRARY_NOTES_TRASH_PAGE_SIZE,
-                    isolate_in_worker=True,
-                )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Failed to read the Library notes trash"
-                )
-                page = None
-        if not isinstance(page, Mapping):
+        if not callable(list_deleted_notes):
             return
-        total = page.get("total")
+        requested = max(
+            int(page if page is not None else self._library_notes_trash_page or 1), 1
+        )
+        # Class-forwarded: the loader's clamp tests run it on a fake.
+        read_page = LibraryNotesController._read_library_notes_trash_page
+        result = await read_page(self, list_deleted_notes, requested)
+        if result is None:
+            return
+        total = result.get("total")
+        if isinstance(total, int):
+            last = library_notes_trash_last_page(total)
+            if requested > last:
+                requested = last
+                result = await read_page(self, list_deleted_notes, requested)
+                if result is None:
+                    return
+                total = result.get("total")
+        self._library_notes_trash_page = requested
         self._library_notes_trash = build_library_notes_trash_state(
-            page.get("items") or (),
+            result.get("items") or (),
             total=total if isinstance(total, int) else None,
+            page=requested,
         )
         if self.is_mounted:
-            _sync_library_canvas(self, "notes")
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=(
+                    partial(self._land_library_notes_trash_focus, focus_role)
+                    if focus_role
+                    else None
+                ),
+            )
 
     async def _undo_library_note_delete(
-        self, receipt: LibraryNoteDeleteReceipt
+        self,
+        receipt: LibraryNoteDeleteReceipt,
+        *,
+        trash_focus: str = "",
     ) -> None:
-        """Undo one delete through ``NotesScopeService.restore_note``."""
+        """Undo one delete through ``NotesScopeService.restore_note``.
+
+        Args:
+            receipt: The deleted note's recovery identity.
+            trash_focus: The pressed Restore's role when the Trash view's
+                Restore asked: focus stays on the trash list (ruling T8-d), on
+                the row now at the restored index, instead of seeking the
+                note's tree row in the list pane beside it.
+        """
         restored_record: Mapping[str, Any] | None = None
         failure_message = ""
         try:
@@ -7829,6 +8052,10 @@ class LibraryNotesController:
                     finish = partial(
                         self._restore_library_notes_focus_identity, identity
                     )
+                    if trash_focus and self._library_notes_view == "trash":
+                        finish = partial(
+                            self._land_library_notes_trash_focus, trash_focus
+                        )
                 else:
                     finish = partial(
                         self._focus_library_note_control,

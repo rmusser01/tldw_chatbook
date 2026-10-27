@@ -3158,7 +3158,19 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             return
-        with Vertical(id="library-notes-trash-list"):
+        trash_list = Vertical(id="library-notes-trash-list")
+        # TASK-34000.29 (N-29): the list is the page's scroll owner. A plain
+        # Vertical is ``overflow: hidden``, so below ~120x36 the last rows of
+        # a 20-row page were clipped -- focusable, never painted (the folder
+        # tree's TASK-34000.7 shape). Not focusable itself: the rows' own
+        # focus scrolls it. The pager is its LAST ROW, as the tree's "More
+        # notes" pager is (``_compose_trash_opener``): the list is ``1fr``,
+        # so a pager after it sat at the foot of the pane with blank rows
+        # between it and a short page (measured live at 160x45).
+        trash_list.styles.overflow_y = "auto"
+        trash_list.styles.overflow_x = "hidden"
+        trash_list.styles.scrollbar_size_vertical = 1
+        with trash_list:
             for index, row in enumerate(trash.rows):
                 trash_row = Horizontal(classes="library-notes-trash-row")
                 trash_row.add_class("h-auto")
@@ -3180,13 +3192,78 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     button.note_title = row.title
                     button.note_version = row.version
                     yield button
-        if trash.total > len(trash.rows):
-            yield Static(
-                f"Showing the {len(trash.rows)} most recently deleted of "
-                f"{trash.total}. Restore one to see the rest.",
-                id="library-notes-trash-more",
-                markup=False,
+            yield from self._compose_trash_pager(trash)
+
+    def _compose_trash_pager(self, trash: LibraryNotesTrashState) -> ComposeResult:
+        """Page through every deleted note with the exact total (N-29).
+
+        TASK-34000.29: this was "Showing the 20 most recently deleted of N.
+        Restore one to see the rest." -- the 21st deletion was reachable only
+        by restoring one of the newest 20. The block is the Media Trash
+        pager's (``library_media_trash_canvas.py``), and the one-page rule is
+        ``library_pager_layout``'s: while every tombstone fits one page only
+        the range stays ("1–12 of 12"), with no dead Previous/Next.
+        """
+        # Imported where composed (ADR-097): this canvas adds no module-level
+        # import, and the module is already loaded by the Media canvases.
+        from tldw_chatbook.Library.library_pager_state import library_pager_layout
+
+        display = trash.pager
+        layout = library_pager_layout(display)
+        pager = Vertical(id="library-notes-trash-pager")
+        pager.add_class("h-1" if layout.controls_hidden else "h-2")
+        pager.styles.min_height = 1 if layout.controls_hidden else 2
+        pager.styles.overflow = ("hidden", "hidden")
+        with pager:
+            copy = Horizontal(id="library-notes-trash-pager-copy")
+            copy.add_class("h-1")
+            copy.styles.overflow = ("hidden", "hidden")
+            with copy:
+                range_copy = Static(
+                    display.range_copy, id="library-notes-trash-range", markup=False
+                )
+                range_copy.add_class("w-auto")
+                yield range_copy
+                if not layout.controls_hidden:
+                    page_copy = Static(
+                        f" · {display.page_copy}",
+                        id="library-notes-trash-page",
+                        markup=False,
+                    )
+                    page_copy.add_class("w-auto")
+                    yield page_copy
+            if layout.controls_hidden:
+                return
+            controls = Horizontal(
+                classes="ds-toolbar", id="library-notes-trash-pager-controls"
             )
+            controls.add_class("h-1")
+            controls.styles.overflow = ("hidden", "hidden")
+            with controls:
+                for control_id, label, disabled, reason in (
+                    (
+                        "library-notes-trash-previous",
+                        "Previous",
+                        display.previous_disabled,
+                        display.previous_reason,
+                    ),
+                    (
+                        "library-notes-trash-next",
+                        "Next",
+                        display.next_disabled,
+                        display.next_reason,
+                    ),
+                ):
+                    button = Button(
+                        library_disabled_action_label(label, disabled),
+                        id=control_id,
+                        classes="library-canvas-action",
+                        compact=True,
+                        disabled=disabled,
+                        tooltip=reason or None,
+                    )
+                    button.add_class("p-0")
+                    yield button
 
     def _compose_tree_rows(self, list_state: LibraryNotesListState) -> ComposeResult:
         """Render placement-aware rows while retaining legacy note handlers."""

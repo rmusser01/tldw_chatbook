@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.   │
+│   a  │ Library notes · Ready · Next: Create a note or add     │  o  Recently deleted                                 │
+│   v  │ from files.                                            │  t  Deleted notes stay here until you restore them.  │
+│      │ Notes (97)                                             │  e  Restore puts a note back where it was; nothing   │
+│      │ These notes live in the Library's own database — for   │  s  is removed for good from here.                   │
+│      │ notes that live in a folder on disk, switch to Folder  │       ‹ Notes                                        │
+│      │ files. To copy or keep a folder synced, choose Add     │     Daily log 2026-09-01 · now         ┃ Restore ┃   │
+│      │ from files.                                            │     Daily log 2026-09-02 · now           Restore     │
+│      │                                                        │     Daily log 2026-09-03 · now           Restore     │
+│ ---> │ Filter                                                 │     Daily log 2026-09-04 · now           Restore     │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Daily log 2026-09-05 · now           Restore     │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     Daily log 2026-09-06 · now           Restore     │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     Daily log 2026-09-07 · now           Restore     │
+│      │                                                        │<--- Daily log 2026-09-08 · now           Restore     │
+│      │    New     Sort: Newest     Select                     │     Daily log 2026-09-09 · now           Restore     │
+│      │    Add from files…     Export                          │     Daily log 2026-09-10 · now           Restore     │
+│      │ Folders & placement                                    │     Daily log 2026-09-11 · now           Restore     │
+│      │    New folder     ○ Add to folder     ○ Move note      │     Daily log 2026-09-12 · now           Restore     │
+│ ---> │    ○ Remove placement                                  │     Daily log 2026-09-13 · now           Restore     │
+│      │ Note actions unavailable — select a note in the list   │     Daily log 2026-09-14 · now           Restore     │
+│      │                                                        │     Daily log 2026-09-15 · now           Restore     │
+│      │                                                        │     Daily log 2026-09-16 · now           Restore     │
+│      │  ▸ Agent_Lessons                                       │     Daily log 2026-09-17 · now           Restore     │
+│      │  ▸ Journal                                           ▅ │     Daily log 2026-09-18 · now           Restore     │
+│      │  ▸ Meetings                                            │     Daily log 2026-09-19 · now           Restore     │
+│      │  ▸ Projects                                            │     Daily log 2026-09-20 · now           Restore     │
+│      │  ▸ Recipes                                             │     1–20 of 25 · Page 1 of 2                         │
+│      └────────────────────────────────────────────────────────┘       ○ Previous   Next                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  r restore note | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

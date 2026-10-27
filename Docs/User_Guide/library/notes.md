@@ -1521,7 +1521,11 @@ and not yet restored; it is absent while that count is zero.
    return exactly as **Undo** returns them; it is the same restore.
 3. Press **Escape** (or **‹ Notes**) to go back to the list.
 
-The view holds the 20 most recent deletions and says so when there are more.
+The list pages 20 at a time with the exact total — for example
+"1–20 of 37 · Page 1 of 2" — and **Previous** / **Next** under it move
+between pages; while every deleted note fits one page, only the range is
+shown. Restore keeps focus in the list, on the row that took the restored
+one's place, and restoring the last row of a page shows the page before it.
 Nothing here deletes anything for good: the Trash offers **Restore** and no
 permanent delete.
 

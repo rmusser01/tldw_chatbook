@@ -130,7 +130,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: polish-1b task 7 (2026-10-26) -- ``select_actions_visible``, whether the
 #: select strip's Actions… chooser is open; state rather than canvas-local
 #: because Escape, the footer and the pick all read it (117 + 1 = 118).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 118
+#: **119**: TASK-34000.29 polish-1b task 8 (2026-10-27) -- ``trash_page``,
+#: the Recently deleted page the view asked for, which every Trash reload
+#: re-reads (clamped read-side to the last page) (118 + 1 = 119).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 119
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
