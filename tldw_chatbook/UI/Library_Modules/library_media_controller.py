@@ -3171,6 +3171,7 @@ class LibraryMediaController:
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = False  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -3193,6 +3194,7 @@ class LibraryMediaController:
         self._library_media_editing = False
         self._library_media_edit_draft = None
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = False  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -5123,6 +5125,7 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = False  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._sync_library_media_viewer_or_recompose()
 

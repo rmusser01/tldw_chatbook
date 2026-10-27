@@ -6,16 +6,33 @@ every_editor*.py``) drive the common paths on the real app; these pin the
 branches a real boot reaches only slowly or by racing -- the prompt and skill
 conflict banners, the skill's armed-delete and busy refusals, the Folder files
 error and folder-change answers, the Media forms' busy answers, and the Prompt
-block editor's own Ctrl+S, which the Library target must not claim. Each one
-binds the REAL method to a fake that holds only the state it reads.
+block editor's own Ctrl+S, which the Library target must not claim -- and,
+from review R1, the Notes conflict reveal (N-4), the refusal line's release
+(N-2), the explicit-only clean answer (N-3) and the analysis guard's reset
+(N-6). Each one binds the REAL method to a fake that holds only the state it
+reads.
 """
 
 from __future__ import annotations
 
+import asyncio
 from types import MethodType, SimpleNamespace
 
+# Stubs first: they register the optional modules the app imports below probe.
+import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+from tldw_chatbook.Library.library_notes_session import (
+    NoteSaveOutcome,
+    NoteSaveOutcomeKind,
+)
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
+from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+    LibraryMediaController,
+)
+from tldw_chatbook.UI.Library_Modules.library_media_state import LibraryMediaState
+from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+    LibraryNotesController,
+)
 from tldw_chatbook.UI.Library_Modules.library_prompts_controller import (
     LibraryPromptsController,
 )
@@ -189,3 +206,155 @@ def test_the_media_forms_refuse_out_loud_and_drop_the_chip():
     fake._media_state.saving_analysis = False
     assert refusal(fake, "media_edit") == ""
     assert refusal(fake, "media_analysis") == ""
+
+
+class _Recorder(list):
+    """Calls, in order; a callable stand-in for one screen seam."""
+
+    def __call__(self, *args, **kwargs):
+        self.append((args, kwargs))
+
+
+def test_a_notes_conflict_refusal_reveals_the_callout_in_place():
+    """Review R1 N-4 (M-3): Ctrl+S in a conflicted note says why on the
+    status line, scrolls the conflict callout into view, moves no focus and
+    raises no toast; the Delete confirm's refusal reveals nothing."""
+    for in_conflict, refusal in (
+        (True, "Save locked — resolve the note conflict below."),
+        (False, "Save locked — finish or cancel the destructive action."),
+    ):
+        banner = _Banner()
+        focused = object()
+        toasts, presented = _Recorder(), _Recorder()
+        fake = SimpleNamespace(
+            focused=focused,
+            _library_note_save_refusal=lambda refusal=refusal: refusal,
+            _notes_state=SimpleNamespace(shortcut_status=""),
+            _apply_library_note_presentation_state=presented,
+            _library_note_session=SimpleNamespace(
+                snapshot=SimpleNamespace(in_conflict=in_conflict)
+            ),
+            query=lambda selector, banner=banner: [banner]
+            if selector == "#library-note-conflict-copy"
+            else [],
+            notify=toasts,
+            _show_library_note_shortcut_refusal=toasts,
+        )
+        asyncio.run(LibraryScreen.action_library_notes_save(fake))
+        assert fake._notes_state.shortcut_status == refusal
+        assert len(presented) == 1
+        assert banner.reveals == ([{"animate": False}] if in_conflict else [])
+        assert fake.focused is focused
+        assert toasts == [], toasts
+
+
+def test_the_media_change_refusal_line_clears_when_the_interlock_releases():
+    """Review R1 N-2: "Media change in progress." under the metadata form
+    goes when the interlock it named is released -- and the form's Ctrl+S
+    is no longer refused."""
+    shown: list[tuple[str, str]] = []
+    viewer = SimpleNamespace(show_form_status=lambda form, text: shown.append((form, text)))
+    state = SimpleNamespace(
+        mutation_scope=None,
+        mutation_authority=None,
+        lifecycle_generation=0,
+        bulk_delete_in_flight=True,
+        saving_analysis=False,
+    )
+    fake = SimpleNamespace(
+        _media_state=state,
+        _mounted_library_media_viewer=lambda: viewer,
+        _sync_library_media_browse_state=lambda *_args: None,
+    )
+    assert LibraryScreen._library_editor_save_refusal(fake, "media_edit")
+    LibraryScreen._complete_library_media_mutation(fake)
+    assert state.bulk_delete_in_flight is False
+    assert shown == [("edit", "")], shown
+    assert LibraryScreen._library_editor_save_refusal(fake, "media_edit") == ""
+
+
+def _note_outcome_fake():
+    presented: list[str] = []
+    fake = SimpleNamespace(
+        _library_note_session=SimpleNamespace(snapshot=SimpleNamespace(note_id="n-1")),
+        _selected_note_id="n-1",
+        _library_note_shortcut_status="",
+        _apply_library_note_saved_presentation=lambda _outcome: None,
+        is_mounted=True,
+    )
+    fake._apply_library_note_presentation_state = lambda: presented.append(
+        fake._library_note_shortcut_status
+    )
+    return fake, presented
+
+
+def test_only_an_explicit_note_save_answers_no_changes():
+    """Review R1 N-3: an autosave can reach ACKNOWLEDGED only by racing a
+    save that already landed (``mutate`` marks every change dirty, so a
+    type-then-undo is a new revision and autosave writes it); that autosave
+    says nothing. A Save press or Ctrl+S on a clean note answers."""
+    ack = NoteSaveOutcome(
+        NoteSaveOutcomeKind.ACKNOWLEDGED, note_id="n-1", message=NO_CHANGES
+    )
+    fake, presented = _note_outcome_fake()
+    LibraryNotesController._apply_library_note_save_outcome(fake, ack)
+    assert (fake._library_note_shortcut_status, presented) == ("", [])
+    fake, presented = _note_outcome_fake()
+    LibraryNotesController._apply_library_note_save_outcome(fake, ack, explicit=True)
+    assert (fake._library_note_shortcut_status, presented) == (NO_CHANGES, [NO_CHANGES])
+
+
+async def test_the_note_save_worker_tells_the_outcome_who_asked():
+    """Review R1 N-3: the one save worker passes ``explicit`` through, so
+    the autosave's clean outcome is presented without the clean answer."""
+    ack = NoteSaveOutcome(NoteSaveOutcomeKind.ACKNOWLEDGED, note_id="n-1")
+    asked: list[object] = []
+
+    async def request_save(*, explicit):
+        return ack
+
+    fake = SimpleNamespace(
+        _notes_state=SimpleNamespace(
+            autosave_generation=3,
+            view="editor",
+            selected_note_id="n-1",
+            shortcut_status="",
+            autosave_state="idle",
+            autosave_burst=None,
+        ),
+        _library_note_session=SimpleNamespace(
+            snapshot=SimpleNamespace(note_id="n-1", body="b"),
+            request_save=request_save,
+        ),
+        _update_library_note_meta_static=lambda content: None,
+        _apply_library_note_save_outcome=lambda _outcome, **kw: asked.append(
+            kw.get("explicit")
+        ),
+    )
+    await LibraryScreen._save_library_note(fake, explicit=False, autosave_generation=3)
+    await LibraryScreen._save_library_note(fake, explicit=True)
+    assert asked == [False, True]
+
+
+def test_a_reader_reset_never_strands_the_analysis_save_guard():
+    """Review R1 N-6: a save worker cancelled before its first step never
+    runs its ``finally``; every reset of the analysis form resets the guard
+    too, so later analysis Saves are not all refused "Already saving."."""
+    state = LibraryMediaState()
+    state.editing_analysis = True
+    state.saving_analysis = True
+    fake = SimpleNamespace(_media_state=state, _close_library_media_find=lambda: None)
+    LibraryScreen._reset_library_media_reader_to_no_selection(fake)
+    assert state.saving_analysis is False
+    assert LibraryScreen._library_editor_save_refusal(fake, "media_analysis") == ""
+
+    discard = SimpleNamespace(
+        _library_media_editing_analysis=True,
+        _library_media_analysis_draft="draft",
+        _library_media_saving_analysis=True,
+        _sync_library_media_viewer_or_recompose=lambda: None,
+    )
+    LibraryMediaController.handle_library_media_analysis_cancel(
+        discard, SimpleNamespace(stop=lambda: None)
+    )
+    assert discard._library_media_saving_analysis is False
