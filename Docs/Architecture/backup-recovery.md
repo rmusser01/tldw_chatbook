@@ -124,7 +124,7 @@ parents. No mobile import, profile cutover or authority activation occurs here.
 
 Installed consolidation support qualifies exact Chat82/Workspace9/AgentRuns26
 catalogs and their file-backed native migrations. Read-only validation still
-accepts qualified Chat81/Workspace8/AgentRuns25 sources, including every
+accepts qualified Chat81/Workspace8/AgentRuns24 or25 sources, including every
 previously admitted AgentRuns25 physical layout; migration creates a separately
 qualified successor. The Task7 mobile fixture deliberately retains those legacy
 source heads while canonical fixtures use installed heads. Candidate migration
@@ -254,8 +254,8 @@ retain the normal pending refusal.
 Legacy source history/artifacts and complete canonical rollback are fixed native
 partitions captured under that same exclusive session, without intervening owner
 writes. This preserves the native archive's one-version-per-owner contract:
-legacy81/8/25 and canonical82/9/26 have the same actual owner IDs. Generic mixed
-owner versions still refuse. Each archive uses native encrypted publication and
+legacy81/8/(24 or25) and canonical82/9/26 have the same actual owner IDs.
+Generic mixed owner versions still refuse. Each archive uses native encrypted publication and
 verification, with typed intended/staged/verified identities. Interrupted
 publication can finish only the durable verified ciphertext inode at its exact
 temporary or final name. After authentication and the verified record, recovery
@@ -381,8 +381,8 @@ terminal recovery remain separate B qualification gates.
 `mobile_captured_sqlite._CapturedSQLite` context from the actual live maintenance
 operation. It requalifies fixed native partition declarations and exact logical
 members, authenticates the encrypted captures, and extracts only Chat, Workspace
-and AgentRuns snapshots. Legacy 81/8/25 and canonical 82/9/26 remain distinct. Native
-installed catalog, version, integrity, foreign-key and domain checks run on
+and AgentRuns snapshots. Legacy 81/8/(24 or25) and canonical 82/9/26 remain
+distinct. Native installed catalog, version, integrity, foreign-key and domain checks run on
 restricted disposable descriptor-bound connections before row access; no live
 repository constructor, migration or destination connection participates.
 
@@ -434,6 +434,17 @@ complete source order after the canonical allocator frontier. Profile-qualified
 citation composites remain original typed dependencies pending T's native
 namespace proof. Authenticated optional canonical AgentRuns absence supplies
 empty occupancy, without creating a target.
+
+Legacy AgentRuns24 has exactly one native version-bound absence:
+`console_command_receipts`. The private `_runs24_receipts_absent` predicate uses
+the actual active scope's native-validated version/member plus retained-candidate
+resource/hash checks. Manifest coverage excludes only that exact absent table;
+typed identity and A-runs history enumeration consume it as absent. Physical
+`schema_catalog()` metadata remains unchanged and public `page()` still refuses
+the nonexistent table. AgentRuns25 receipts remain required real history. Unknown
+catalogs, unexpected24 tables, missing25 tables and declared/observed version
+mismatches still refuse. No source bytes/schema/version are migrated or repaired,
+no table/row is synthesized, and whole optional-member absence stays separate.
 
 `workspace_plan()` preserves original rows and projects named Workspace IDs,
 collision-safe names, memberships, RAG note references, settings and exact folder

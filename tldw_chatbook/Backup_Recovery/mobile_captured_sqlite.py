@@ -19,9 +19,9 @@ from .storage_admission import MaintenanceSession, _CaptureFileDescriptors, _loc
 
 # These are selectors within an authenticated native declaration, never grants.
 _FAMILIES = (
-    ("chat", "db.chachanotes.primary", "chat.db", 81, 82),
-    ("workspaces", "db.workspaces", "workspaces.db", 8, 9),
-    ("runs", "db.agent_runs", "runs.db", 25, 26),
+    ("chat", "db.chachanotes.primary", "chat.db", (81,), 82),
+    ("workspaces", "db.workspaces", "workspaces.db", (8,), 9),
+    ("runs", "db.agent_runs", "runs.db", (24, 25), 26),
 )
 _PAGE_ROWS = 1000
 _PAGE_BYTES = 16 * 1024**2
@@ -428,6 +428,25 @@ def _retire_staging(scope, root, identity):
         custody.retire()
 
 
+def _runs24_receipts_absent(reads, purpose, family, table):
+    """Consume only the one absence proven by this active native member."""
+    if (purpose, family, table) != ("legacy", "runs", "console_command_receipts"):
+        return False
+    if type(reads) is not _CapturedSQLite:
+        raise ValueError("mobile_plan_native_snapshot_required")
+    reads.check()
+    if (purpose, family, 24) not in reads.versions:
+        return False
+    _, restrictions, tables, candidate, digest = reads._connections[purpose, family]
+    if table in tables:
+        raise ValueError("mobile_sqlite_schema_changed")
+    if restrictions.expired():
+        raise ValueError("sqlite_resource_limit")
+    _verify_candidate(reads, restrictions, candidate, digest)
+    reads.check()
+    return True
+
+
 def _members(scope, partition, document):
     """Requalify the actual partition's installed, admitted fixed declarations."""
     partition.check()
@@ -462,7 +481,8 @@ def _members(scope, partition, document):
         if not declarations:
             raise ValueError("mobile_sqlite_declaration_changed")
         selected = []
-        expected = legacy if partition.purpose == "legacy" else canonical
+        expected = owner_versions.get(owner)
+        supported = legacy if partition.purpose == "legacy" else (canonical,)
         for declared in declarations:
             producer = producers.get(declared.logical_id)
             if producer is None or (
@@ -484,7 +504,7 @@ def _members(scope, partition, document):
                 declared.status != "included"
                 or payload is None
                 or payload.owner_id != owner
-                or owner_versions.get(owner) != expected
+                or expected not in supported
             ):
                 raise ValueError("mobile_sqlite_member_changed")
             selected.append(payload)

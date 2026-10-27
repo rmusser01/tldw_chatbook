@@ -306,6 +306,10 @@ def _ordered(reads, domain, table):
 
 
 def _rows(reads, purpose, family, table, *, _read_budget=None):
+    from .mobile_captured_sqlite import _runs24_receipts_absent
+
+    if _runs24_receipts_absent(reads, purpose, family, table):
+        return ()
     if not any(p == purpose and f == family for p, f, _ in reads.versions):
         return ()
     if _read_budget is not None:

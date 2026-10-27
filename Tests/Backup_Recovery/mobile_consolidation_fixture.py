@@ -31,6 +31,7 @@ def _seed(
     artifact_root: Path | None = None,
     chat_seed=None,
     linked_chat_seed=None,
+    legacy_runs_version=25,
 ) -> dict:
     for path in stores.paths:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -210,8 +211,13 @@ def _seed(
         return result
     finally:
         if legacy:
-            # Qualified legacy 81/8/25 layouts differ only by these new empty tables.
-            for database, version in ((chat, 81), (workspace_db, 8), (runs, 25)):
+            # Produce the installed legacy layout before preview or capture.
+            assert legacy_runs_version in (24, 25)
+            for database, version in (
+                (chat, 81),
+                (workspace_db, 8),
+                (runs, legacy_runs_version),
+            ):
                 with database.transaction() as cursor:
                     cursor.execute("DROP TABLE mobile_consolidation_batches")
                     if database is chat:
@@ -220,6 +226,8 @@ def _seed(
                         )
                     else:
                         cursor.execute("DROP TABLE mobile_import_authority_holds")
+                        if database is runs and version == 24:
+                            cursor.execute("DROP TABLE console_command_receipts")
                         cursor.execute(
                             "DELETE FROM schema_version WHERE version>?", (version,)
                         )

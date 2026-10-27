@@ -3335,7 +3335,7 @@ def _disposition(family, table, columns, canonical):
 
 
 def _plan_manifest(reads):
-    from .mobile_captured_sqlite import _CapturedSQLite
+    from .mobile_captured_sqlite import _CapturedSQLite, _runs24_receipts_absent
     from .mobile_identity_plan import _rows
 
     if type(reads) is not _CapturedSQLite:
@@ -3351,7 +3351,9 @@ def _plan_manifest(reads):
         expected = {
             row.table
             for row in _TABLES
-            if row.family == family and (canonical or not row.canonical_only)
+            if row.family == family
+            and (canonical or not row.canonical_only)
+            and not _runs24_receipts_absent(reads, purpose, family, row.table)
         }
         if expected != tables:
             raise ValueError("mobile_plan_table_disposition_missing:" + family)
