@@ -688,6 +688,12 @@ class LibraryNotesController:
     #: ``test_a_whitespace_only_title_then_escape_shows_the_discard_receipt``.
     _library_note_location: tuple[str, str, bool] = ("", "", False)
 
+    #: TASK-34000.29 (review R0 M-1, ruling T7-f): a visit's full tree reload
+    #: that ``_refresh_library_visit_surfaces`` held back because a Notes
+    #: mutation owned the interlock. The interlock's release runs it once
+    #: (``_release_library_notes_mutation``); any full reload clears it.
+    _tree_reload_owed: bool = False
+
     def __init__(
         self,
         screen: "LibraryScreen",
@@ -1636,6 +1642,29 @@ class LibraryNotesController:
             getattr(self, "_library_notes_mutation_in_flight", False)
             or self._library_note_import_execution_active()
         )
+    def _release_library_notes_mutation(self) -> None:
+        """Release the Notes single-writer interlock (ruling T7-f).
+
+        A visit reload the interlock held back runs here, once, now that no
+        mutation can land under it. Class-forwarded at every release site
+        (``LibraryNotesController._release_library_notes_mutation(self)``):
+        the delete/undo orchestration tests run those methods on a fake.
+        """
+        self._library_notes_mutation_in_flight = False
+        LibraryNotesController._run_owed_library_notes_tree_reload(self)
+    def _run_owed_library_notes_tree_reload(self) -> None:
+        """Run the full tree reload a held-back visit refresh still owes."""
+        if not getattr(self, "_tree_reload_owed", False):
+            return
+        if self._library_notes_mutation_fenced():
+            return
+        self._tree_reload_owed = False
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+            and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+        ):
+            self._request_library_notes_tree_initial_load()
     def _library_notes_operation_is_current_and_active(
         self, operation: LibraryNotesOperationState
     ) -> bool:
@@ -4969,7 +4998,7 @@ class LibraryNotesController:
         service = getattr(self.app_instance, "notes_scope_service", None)
         delete_note = getattr(service, "delete_note", None)
         if not callable(delete_note):
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
             return
         try:
             deleted = await self._run_library_service_call(
@@ -5002,7 +5031,7 @@ class LibraryNotesController:
             )
             return
         finally:
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
     async def _resolve_library_note_conflict(self, *, overwrite: bool) -> None:
         """Resolve a conflict through the coordinator's token-gated action.
 
@@ -6790,9 +6819,8 @@ class LibraryNotesController:
         The Notes twin of ``action_library_media_toggle_row_selection``, and
         the same as pressing the row in select mode: memory only, nothing is
         written. The binding is priority, and ``check_action`` claims only a
-        focused Notes row or a Notes pane grip in select mode -- on a grip
-        this is a deliberate no-op, so Space never collapses a pane under a
-        footer promising "space toggle".
+        focused Notes row in select mode (ruling T7-c), so every other
+        control -- the pane grips included -- keeps its own Space.
 
         Ruling T7-b: a priority binding never reaches ``on_key``, so the
         user's own key withdraws a pending programmatic focus landing (Back's
@@ -7068,10 +7096,14 @@ class LibraryNotesController:
         parsed = self._library_note_keywords_from_input(keyword) or []
         if len(parsed) != 1:
             notify = getattr(self.app_instance, "notify", None)
-            if parsed and callable(notify):
-                # A toast: select mode hides the status line a notice uses.
+            if callable(notify):
+                # A toast: select mode hides the status line a notice uses,
+                # and the dialog has closed (review R0 M-8: a lone comma
+                # used to close it with no word at all).
                 notify(
-                    "Enter one keyword at a time — a comma separates keywords.",
+                    "Enter one keyword at a time — a comma separates keywords."
+                    if parsed
+                    else "No keywords entered — nothing changed.",
                     severity="warning",
                     markup=False,
                 )
@@ -7243,6 +7275,10 @@ class LibraryNotesController:
         """
         screen = self._screen
         state = self._notes_state
+        # Every loaded slice is the set a fresh visit requests (the roots and
+        # the open folders), so this refresh is the reload a held-back visit
+        # refresh owed (ruling T7-f) -- without clearing the rows first.
+        self._tree_reload_owed = False
         screen._fence_library_notes_tree_mutation()
         lifecycle = state.tree_lifecycle_generation
         filter_state = state.tree_filter_state
@@ -7494,7 +7530,7 @@ class LibraryNotesController:
         try:
             await self._delete_library_note_claimed(admission)
         finally:
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
             if (
                 self.is_mounted
                 and self._library_notes_view == "list"
@@ -7759,7 +7795,7 @@ class LibraryNotesController:
                     failure_message or "Could not restore this note."
                 )
         finally:
-            self._library_notes_mutation_in_flight = False
+            LibraryNotesController._release_library_notes_mutation(self)
             if self.is_mounted:
                 if restored_record is not None:
                     # task-32124: the folder tree is projected from paged
@@ -7887,7 +7923,7 @@ class LibraryNotesController:
         if create_token != self._library_note_create_token:
             return False
         self._library_note_create_running = False
-        self._library_notes_mutation_in_flight = False
+        LibraryNotesController._release_library_notes_mutation(self)
         self._library_note_create_status = status
         return True
     @on(Button.Pressed, "#library-note-discard-new")

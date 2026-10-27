@@ -1164,7 +1164,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (``_library_notes_rows_reloading``), and the visit reload standing
     #: down under a running Notes mutation: 38257 -> 38386 lines, 1374 -> 1379
     #: methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38386, 1379),
+    #: 2026-10-27, Task 7 fix round 1 (review R0 I-1, M-1, M-3, M-10; same
+    #: owner decision): the Space gate narrowed to a note row, the deferred
+    #: visit reload (``_release_library_notes_mutation`` and every release
+    #: site through it), Textual's reset landing reported to the canvas whose
+    #: prune caused it (``_library_notes_reset_landing_canvas``), the entry
+    #: reconcile's detach window read through to its outgoing control, and
+    #: ``_ROW_SELECT_KEY``: 38386 -> 38441 lines, 1379 -> 1381 methods
+    #: (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38441, 1381),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

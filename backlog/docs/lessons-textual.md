@@ -1865,6 +1865,24 @@ no fix at all always left it on Delete.
     marked programmatic, before `push_screen`.
   - After the fixes: 10 runs out of 10, and every later run. Keeping the bulk action's own button
     enabled while it runs was the Task 6 transfer-origin fix again.
+- **Textual's reset landing is counted as user intent, and other code leans
+  on that (Task 7 fix round 1, 2026-10-27).** Review R0 M-3 gated the list
+  canvas's same-id refocus on `focus_intent_generation` ("only if the user did
+  not move"). With the gate on, the bulk Move picker's Escape failed on the
+  first looped run: a silent in-memory log (no prints, which hid the race)
+  showed `SET library-browse-library-grip` from `_reset_focus`, then `BUMP
+  library-browse-library-grip` -- `on_descendant_focus` took the framework's
+  landing for a user move, and the gate vetoed the very refocus it guards.
+  Taking the landing out of intent in `on_descendant_focus` fixed that run and
+  broke another: leaving a blank note then left focus in the filter 4 runs in
+  8 (`test_a_refused_escape_names_the_field…`), because that landing's bump
+  was what vetoed an older deferred restore. The fix keeps the bump and tells
+  the pruning canvas (`reset_landing_intents`), which discounts it in its own
+  gate only. A second race in the same arm, 1 in 24: the entry reconcile
+  detaches focus on purpose (`_capture_library_entry_focus`'s
+  `set_focus(None)`), and a tree slice landing inside that window captured an
+  empty role and replayed to the filter. Before narrowing who counts as "the
+  user", grep for every reader of the generation you are changing.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 

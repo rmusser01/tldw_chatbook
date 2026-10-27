@@ -1368,3 +1368,4 @@ Tests/UI/test_library_note_editor_feedback_is_honest.py
 Tests/UI/test_library_notes_focus_capture_and_export_outcomes.py
 Tests/UI/test_library_notes_select_mode_counts_and_bulk.py
 Tests/UI/test_library_notes_select_mode_counts_and_bulk_extended.py
+Tests/UI/test_library_notes_deferred_visit_reload.py

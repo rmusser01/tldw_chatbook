@@ -628,7 +628,11 @@ _BUDGETS: dict[str, int] = {
     # reload after a keyword change, the chooser's focus roles, the
     # synchronous focus hand-offs and the in-place tree refresh
     # (``_refresh_library_notes_tree_in_place``): 7478 -> 8008 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8008,
+    # 2026-10-27, Task 7 fix round 1 (review R0 M-1, M-8; same decision): the
+    # owed visit reload (``_tree_reload_owed``, ``_release_library_notes_
+    # mutation``, ``_run_owed_library_notes_tree_reload``) and the empty
+    # keyword toast: 8008 -> 8044 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8044,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

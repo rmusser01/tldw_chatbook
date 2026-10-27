@@ -695,7 +695,9 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # (dev commit 53d1789a6 -- new since PR 0a's base, kept inline here rather
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
-_MEDIA_ROW_SELECT_KEY = "space"
+#: TASK-34000.29 (N-14, review R0 M-10): the select-mode row toggle key, one
+#: name for the Media and Notes bindings and their footer chips.
+_ROW_SELECT_KEY = "space"
 #: TASK-34000.25: how many LAYOUT-SIGNAL continuations (``LibraryMediaContent
 #: Body.run_when_laid_out`` -- the Raw view's index build, the Markdown's last
 #: mounted batch, or the next refresh once something is laid out) the
@@ -1225,7 +1227,7 @@ class LibraryScreen(BaseAppScreen):
             show=False,
         ),
         Binding(
-            _MEDIA_ROW_SELECT_KEY,
+            _ROW_SELECT_KEY,
             "library_media_toggle_row_selection",
             "Toggle selection",
             show=False,
@@ -1237,10 +1239,10 @@ class LibraryScreen(BaseAppScreen):
         ),
         # TASK-34000.29 (N-14): the Notes twin. Priority for the same reason
         # (a focused row Button would otherwise see the key first); the
-        # ``check_action`` gate claims ONLY a focused Notes row (and the Notes
-        # pane grips) in select mode, so every other control keeps its key.
+        # ``check_action`` gate claims ONLY a focused Notes row in select
+        # mode (ruling T7-c), so every other control keeps its key.
         Binding(
-            _MEDIA_ROW_SELECT_KEY,
+            _ROW_SELECT_KEY,
             "library_notes_toggle_row_selection",
             "Toggle selection",
             show=False,
@@ -1447,7 +1449,7 @@ class LibraryScreen(BaseAppScreen):
     LIBRARY_MEDIA_SELECT_SHORTCUTS = (
         ("/", "focus search"),
         ("F6", "next pane"),
-        (_MEDIA_ROW_SELECT_KEY, "toggle selection"),
+        (_ROW_SELECT_KEY, "toggle selection"),
         (_MEDIA_SELECT_MODE_KEY, "done selecting"),
         ("esc", "focus rail"),
     )
@@ -5149,6 +5151,18 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_mutation_fenced(self) -> bool:
         return self._notes_controller._library_notes_mutation_fenced()
 
+    def _release_library_notes_mutation(self) -> None:
+        """Release the Notes interlock; run a visit reload it held back.
+
+        Class-forwarded (``LibraryScreen._release_library_notes_mutation(
+        self)``) from the tree mutation, whose orchestration tests run it on
+        a fake that carries a notes state and no controller.
+        """
+        self._notes_state.mutation_in_flight = False
+        controller = getattr(self, "_notes_controller", None)
+        if controller is not None:
+            controller._run_owed_library_notes_tree_reload()
+
     def _begin_library_notes_operation(
         self, kind: Literal["import", "export", "copy", "console"]
     ) -> LibraryNotesOperationState | None:
@@ -5438,6 +5452,21 @@ class LibraryScreen(BaseAppScreen):
                 if pruned is not None and (focused is None or focused is pruned[1]):
                     focused = pruned[0]
                     break
+            # TASK-34000.29 (N-14, fix round 1): the same rule for the entry
+            # reconcile's own window. ``_capture_library_entry_focus``
+            # detaches focus on purpose until its restore; a tree slice that
+            # lands inside it read nothing, and its replay fell back to the
+            # filter, which the entry restore then took for a user move
+            # (measured 1 in ~8: Escape in the bulk Move picker, focus in the
+            # filter, not on Actions…).
+            entry = self._library_entry_focus_capture
+            if (
+                focused is None
+                and entry is not None
+                and entry.notes_identity is not None
+                and entry.route_key == self._library_entry_route_key()
+            ):
+                focused = entry.outgoing_focus
         region = self._library_notes_focus_region()
         stage = (
             self._library_notes_focus_stage(focused)
@@ -8727,7 +8756,7 @@ class LibraryScreen(BaseAppScreen):
                 # TASK-34000.29 (N-14): "space toggle" only where Space
                 # toggles -- a focused note row, never a grip or a button.
                 toggle = (
-                    (("space", "toggle"),)
+                    ((_ROW_SELECT_KEY, "toggle"),)
                     if self.focused is not None
                     and self.focused.has_class("library-notes-row")
                     and self.check_action("library_notes_toggle_row_selection", ())
@@ -9975,15 +10004,18 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
-            # TASK-34000.29 (N-14): not under a running Notes mutation. A
-            # dialog's choice starts one as the dialog closes, and this
-            # resume reload then cleared the tree under it -- every row gone
-            # until the pages landed, Select disabled meanwhile, so focus
-            # replays onto it were refused and fell to the filter. The
-            # mutation refreshes the tree itself when it lands.
-            and not self._library_notes_mutation_fenced()
         ):
-            self._request_library_notes_tree_initial_load()
+            if self._library_notes_mutation_fenced():
+                # TASK-34000.29 (N-14, ruling T7-f): deferred, never skipped.
+                # A dialog's choice starts a Notes mutation as the dialog
+                # closes, and this reload would clear the tree under it. So
+                # the reload is recorded as owed, and the interlock's release
+                # (``_release_library_notes_mutation``) runs it exactly once.
+                # A bulk action's in-place refresh reloads every loaded slice
+                # itself, and that settles the debt.
+                self._notes_controller._tree_reload_owed = True
+            else:
+                self._request_library_notes_tree_initial_load()
         if (
             self._library_selected_row_id
             in (LIBRARY_ROW_BROWSE_PROMPTS, LIBRARY_ROW_CREATE_PROMPT)
@@ -11205,6 +11237,29 @@ class LibraryScreen(BaseAppScreen):
     def _disarm_library_media_return_for_route_change(self) -> None:
         return self._media_controller._disarm_library_media_return_for_route_change()
 
+    def _library_notes_reset_landing_canvas(self, focused: Widget | None) -> Any:
+        """The Notes canvas whose prune put Textual's reset landing on ``focused``.
+
+        TASK-34000.29 (N-14, fix round 1, review R0 M-3): while a Notes canvas
+        prunes its focused child, Textual's reset parks focus on a landing
+        (the canvas records it in ``focus_before_prune``). That focus change
+        still counts as intent here -- older deferred restores rely on its
+        veto (measured: without it, leaving a blank note left focus in the
+        filter) -- but the canvas is told, so its own same-id refocus gate
+        does not read the framework's move as the user's (measured: Escape in
+        the bulk Move picker, then focus left on the Library grip).
+        """
+        if focused is None or not self._library_notes_workflow_active():
+            return None
+        for canvas in (
+            self._library_compose_scoped_ref("#library-note-work-pane"),
+            self._library_layout_ref("#library-notes-canvas"),
+        ):
+            pruned = getattr(canvas, "focus_before_prune", None)
+            if pruned is not None and focused is pruned[1]:
+                return canvas
+        return None
+
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Record Notes focus intent and disarm foreign list-entry focus.
 
@@ -11308,6 +11363,9 @@ class LibraryScreen(BaseAppScreen):
                 # Veto every older deferred restore before its next turn can
                 # steal the control the user just chose.
                 self._notes_state.focus_intent_generation += 1
+                landing_canvas = self._library_notes_reset_landing_canvas(focused)
+                if landing_canvas is not None:
+                    landing_canvas.reset_landing_intents += 1
                 # PR #2571 review, finding 4: the supersede below does four
                 # more things -- it clears the pending focus handoff, the
                 # navigation status and the branch navigation requests. None
@@ -18059,6 +18117,10 @@ class LibraryScreen(BaseAppScreen):
         was already reachable from the import/editor-return refreshes.
         """
         expanded = sorted(getattr(self._notes_state, "tree_expanded_ids", set()))
+        # TASK-34000.29 (ruling T7-f): any full reload settles an owed one.
+        controller = getattr(self, "_notes_controller", None)
+        if controller is not None:
+            controller._tree_reload_owed = False
         LibraryScreen._begin_library_notes_tree_visit(self)
         # task-32144: and the tombstones behind them, so the "Recently
         # deleted (N)" row is truthful on the visit's first paint.
@@ -19565,14 +19627,14 @@ class LibraryScreen(BaseAppScreen):
         fenced_epoch = payload.pop("_fenced_epoch", None)
         if self._library_note_import_execution_active():
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             return False
         if payload.get("protected"):
             self._notes_state.notice = (
                 "This item is managed by sync; change its sync root instead."
             )
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             return False
         if self._notes_state.mutation_in_flight and not preclaimed:
             return False
@@ -19597,7 +19659,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._notes_state.notice = "That folder action is unavailable."
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             return False
 
         if fenced_epoch is None:
@@ -19639,7 +19701,7 @@ class LibraryScreen(BaseAppScreen):
                 "Could not verify affected folders — no changes were made."
             )
             if preclaimed:
-                self._notes_state.mutation_in_flight = False
+                LibraryScreen._release_library_notes_mutation(self)
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
             return False
 
@@ -19786,7 +19848,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return False
         finally:
-            self._notes_state.mutation_in_flight = False
+            LibraryScreen._release_library_notes_mutation(self)
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
     def _schedule_library_notes_tree_mutation(
@@ -24331,19 +24393,13 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_space_claims(focused: Widget | None) -> bool:
         """Whether select-mode Space belongs to ``focused`` (TASK-34000.29 N-14).
 
-        A Notes row (toggle it) or one of the Notes route's pane grips --
-        chrome whose own Space would collapse a pane under a footer promising
-        "space toggle", the Media precedent (task-31271 seam (b)). The grip
-        class is shared by every destination's shell, so the Notes route's
-        own marker on an ancestor is what scopes it.
+        Only a focused Notes row (ruling T7-c; T7-e over the brief's "grips"
+        line). A pane grip keeps its own Space -- it collapses or expands its
+        pane in select mode exactly as outside it -- and the footer never
+        promises "space toggle" there: its chip shows only while a note row
+        has focus. Media claims its grips because its footer does promise it.
         """
-        if focused is None:
-            return False
-        if focused.has_class("library-notes-row"):
-            return True
-        return focused.has_class("library-adaptive-reader-pane-grip") and any(
-            ancestor.has_class("library-notes-route") for ancestor in focused.ancestors
-        )
+        return focused is not None and focused.has_class("library-notes-row")
 
     def action_library_notes_toggle_row_selection(self) -> None:
         return self._notes_controller.action_library_notes_toggle_row_selection()
@@ -26829,11 +26885,10 @@ class LibraryScreen(BaseAppScreen):
         if action == "library_notes_toggle_row_selection":
             # TASK-34000.29 (N-14): the Notes Space. The binding is priority,
             # so this gate is the whole safety: it claims a focused Notes row
-            # (toggle it) and the Notes pane grips (chrome; swallowed, the
-            # Media precedent below) in select mode, and nothing else -- Done,
-            # Select all, Clear, Export selected and Actions… keep their own
-            # keys, and a focused Input still types its space first (Textual
-            # filters a consumed key out of the binding chain).
+            # in select mode and nothing else (ruling T7-c) -- Done, Select
+            # all, Clear, Export selected, Actions… and the pane grips keep
+            # their own keys, and a focused Input still types its space first
+            # (Textual filters a consumed key out of the binding chain).
             return bool(
                 self._notes_state.select_mode
                 and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
@@ -32904,7 +32959,7 @@ class LibraryScreen(BaseAppScreen):
         try:
             await self._discard_new_library_note_claimed(create_token)
         finally:
-            self._notes_state.mutation_in_flight = False
+            LibraryScreen._release_library_notes_mutation(self)
             # task-16480: the claimed coroutine's list reconcile runs while
             # the interlock is still held, so the rebuilt canvas freezes
             # operation_running=True into the browse action toolbar
