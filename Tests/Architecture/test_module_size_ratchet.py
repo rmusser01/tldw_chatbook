@@ -540,7 +540,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8184,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.4 +21 (the
+    # stranded-key custom-endpoint readiness and keyless-probe guard).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8205,
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7024,
     "tldw_chatbook/UI/Console_Modules/session.py": 7000,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
@@ -564,7 +566,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
+    # Whisper never sends an enc: key).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
     "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4232,
