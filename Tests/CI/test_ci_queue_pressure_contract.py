@@ -508,19 +508,6 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word",
     "Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule",
     "Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once",
-    # TASK-34100.5.3 (plain chat's light tool surface): its suites and the
-    # wizard/owner-binding nodes it changed. All bootstrap_profile (they read
-    # and write the gates through the profile's config), so they run here, in
-    # this order, the light-surface files last.
-    "Tests/Wizards/test_first_run_setup_wizard.py::test_summary_quick_track_shows_defaults_note",
-    "Tests/Wizards/test_first_run_setup_wizard.py::test_tools_step_copy_comes_from_the_shared_gate_table",
-    "Tests/Chat/test_console_owner_live_bindings.py::test_compaction_reads_replaced_services_globals_and_accounting",
-    "Tests/Chat/test_console_light_tool_surface.py",
-    "Tests/Chat/test_console_light_surface_context_meter.py",
-    "Tests/Chat/test_console_light_surface_voice.py",
-    "Tests/Chat/test_console_light_surface_goal_runs.py",
-    "Tests/UI/test_mcp_full_agent_tools_gate.py",
-    "Tests/Wizards/test_first_run_tool_surface_summary.py",
 )
 
 #: The second admission-sensitive job's invocation, exactly, in order
@@ -678,6 +665,20 @@ ADMISSION_2_TARGETS = (
     # own control, never the rail's subtree (the mounted Console;
     # bootstrap_profile, two tests, ~18 s).
     "Tests/UI/test_console_edge_focus_restyle_scope.py",
+    # TASK-34100.5.3 (plain chat's light tool surface): its suites and the
+    # wizard/owner-binding nodes it changed. All bootstrap_profile (they read
+    # and write the gates through the profile's config). Here, not in
+    # pr-fast-lane-admission, which keeps dev's targets under its cap
+    # (TASK-35575); this job had about 25 min of its 35 spare.
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_summary_quick_track_shows_defaults_note",
+    "Tests/Wizards/test_first_run_setup_wizard.py::test_tools_step_copy_comes_from_the_shared_gate_table",
+    "Tests/Chat/test_console_owner_live_bindings.py::test_compaction_reads_replaced_services_globals_and_accounting",
+    "Tests/Chat/test_console_light_tool_surface.py",
+    "Tests/Chat/test_console_light_surface_context_meter.py",
+    "Tests/Chat/test_console_light_surface_voice.py",
+    "Tests/Chat/test_console_light_surface_goal_runs.py",
+    "Tests/UI/test_mcp_full_agent_tools_gate.py",
+    "Tests/Wizards/test_first_run_tool_surface_summary.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
