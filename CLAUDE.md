@@ -57,7 +57,7 @@ Each tab is a `Screen` registered in `UI/Navigation/screen_registry.py`. Note: `
 
 ### Business Logic
 
-- **`Chat/`** - `Chat_Functions.py` (conversation CRUD), `document_generator.py` (export formats)
+- **`Chat/`** - ~250 modules, not one bounded context: `console_*` files (the Console controller, store, bridge, gateway) are ~79% of the lines. `Chat_Functions.py` (`chat_api_call()` dispatcher, `API_CALL_HANDLERS`, `PROVIDER_PARAM_MAP`), `Chat_Deps.py` (`ChatAPIError` hierarchy), `chat_persistence_service.py` / `chat_conversation_service.py` (conversation persistence), `document_generator.py` (export formats). Chat imports the DB layer (42 files; see `Docs/Architecture/console.md`).
 - **`Character_Chat/`** - `Character_Chat_Lib.py`, `ccv3_parser.py` (card formats)
 - **`Notes/`** - `sync_engine.py` (bidirectional sync), template system
 - **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`
@@ -116,9 +116,11 @@ def _heavy_task(self):
 ### Adding Features
 
 **New LLM Provider**:
-1. Add a `chat_with_<provider>()` function in `LLM_Calls/LLM_API_Calls.py`
-2. Register it in `API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP` (dispatched by `chat_api_call()` in `Chat/Chat_Functions.py`)
-3. Add the provider's config section
+Every provider starts with a `ProviderRecord` in `provider_registry.py` (package root, stdlib-only; ADR-179) added to `ALL_RECORDS`. Then, by kind:
+- **OpenAI-compatible hosted provider (preset, preferred):** make the record `engine_driven` (base URL, env candidates, payload flags, `settings_defaults`) and add one `_LazyHostedChatHandler(<RECORD>)` line to `API_CALL_HANDLERS` plus `"<key>": ENGINE_PROVIDER_PARAM_MAP` in `PROVIDER_PARAM_MAP` (both in `Chat/Chat_Functions.py`). The shared engine, `LLM_Calls/hosted_provider_engine.py::build_hosted_chat_handler`, supplies the handler; no `chat_with_*` function is written. Copy the newest preset (`commandcode`) as a template.
+- **Bespoke provider:** add a `chat_with_<provider>()` in `LLM_Calls/LLM_API_Calls.py` (or a module such as `moonshot.py`), register it in `API_CALL_HANDLERS` / `PROVIDER_PARAM_MAP`, and add its `[api_settings.<provider>]` config section.
+- Registry parity tests (`Tests/test_provider_registry.py`) fail where a hand-kept list (config key lists, readiness sets, endpoint maps, `NATIVE_TOOLS_PROVIDERS`, `AUTO_REFRESH_PROVIDER_LIST_KEYS`) disagrees with the record. Registry-derived lists need no edit, but some sites still repeat record data by hand (the newest preset, `commandcode`, touched 13 sites in 9 files), so grep an existing preset's key before calling the provider done.
+- Credential order differs between provider families; see "Credential precedence" in `Docs/Architecture/llm-providers.md` before relying on the Configuration section's stored-key-first rule.
 
 **New Tab**:
 1. Create a `Screen` subclass in `UI/Screens/`
