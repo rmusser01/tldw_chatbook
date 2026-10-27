@@ -565,6 +565,7 @@ from ...Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
+    set_display_under_console_rail,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_transcript import (
@@ -8675,10 +8676,9 @@ class ChatScreen(BaseAppScreen):
             fleet_previous_rows = fleet_section.rows
             fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
-            fleet_section.styles.display = (
-                "block"
-                if fleet_section_state.rows or fleet_section_state.summary
-                else "none"
+            set_display_under_console_rail(
+                fleet_section,
+                bool(fleet_section_state.rows or fleet_section_state.summary),
             )
             if fleet_focus_row_id is not None and (
                 tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
@@ -12579,6 +12579,9 @@ class ChatScreen(BaseAppScreen):
                 child.display = bool(prior_display)
                 child.styles.display = "block" if prior_display else "none"
                 delattr(child, "_console_rail_prior_display")
+                # TASK-37000: the rebuild a hidden child held for this opening.
+                if callable(getattr(child, "rebuild_if_deferred", None)):
+                    child.rebuild_if_deferred()
                 continue
 
             if not hasattr(child, "_console_rail_prior_display"):
