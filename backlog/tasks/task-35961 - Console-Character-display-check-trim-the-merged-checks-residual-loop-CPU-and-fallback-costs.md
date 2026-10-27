@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-21 01:32'
-updated_date: '2026-10-27 18:38'
+updated_date: '2026-10-27 20:39'
 labels:
   - console
   - performance
@@ -80,4 +80,6 @@ Mutation checks: (a) skipping the worker's entry check for a settled check makes
 - Paired in-process loop CPU, final head minus the original probe route, 2 runs x 150 checks per arm: run-time -0.012 and -0.026 ms, idle -0.044 and -0.045 ms (AC#1 still holds with the added qualification).
 - Live round 2 (real app, Anthropic claude-haiku-4-5 via the review proxy, isolated profile, null keyring, 160x45, caffeinate held; dev 416feb50ee vs this head, same scenario): unchanged checks that read the scope, median loop CPU 1.31 ms on dev (n=29) vs 0.64 ms here (n=24). Changed checks: max 12.7 ms on dev, 13.0 ms here, medians 6.7 vs 7.3 ms (n=10/12). Round 1's two branch outliers (57.9 and 35.5 ms at host load about 30) did not recur, which fits host noise; this diff does not change the changed path's loop work beyond the selection.
 - ./scripts/preflight.sh passes on the final head.
+
+**Re-rebased 2026-10-27 onto dev 0923ec0ca2** (dev's two new commits touch only tests and CI; the app code is byte-identical to the head the live rounds ran). Re-run on the rebased head, one file per plain command, against a detached origin/dev worktree, compared by test id: test_character_settled_check_loop_cost.py 16 passed (dev: 10 failed, 6 pass by design); the Character Backup_Recovery and UI suites, inventories and module-size ratchet show no test failing on the branch that passes on dev (identical red ids on both arms: RecoveryRequired setup errors, inventory and ratchet rows naming other files). ./scripts/preflight.sh passes on the final head.
 <!-- SECTION:NOTES:END -->
