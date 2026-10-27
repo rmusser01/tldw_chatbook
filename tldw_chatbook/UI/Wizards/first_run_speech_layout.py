@@ -60,6 +60,42 @@ class EngineRadioSet(SetupRadioSet):
             self._selected = nodes.index(self._pressed_button)
 
 
+def focus_inside(step: "SpeechSetupStep") -> str | None:
+    """The id to give focus back to after a rebuild, or None to leave it.
+
+    Returns:
+        The focused widget's id (``""`` when it has none) while the focus is
+        in the step or the step is still arriving (its first-show reload
+        runs before the wizard's own focus call lands); None otherwise, so a
+        rebuild never takes the focus from somewhere the user put it.
+    """
+    focused = step.app.focused if step.is_attached else None
+    if focused is not None and step in focused.ancestors_with_self:
+        step._arriving = False  # the keyboard reached the step: arrival is over
+        return focused.id or ""
+    return "" if getattr(step, "_arriving", False) else None
+
+
+def restore_focus(step: "SpeechSetupStep", focused_id: str | None) -> None:
+    """Give the keyboard back after the step rebuilt its own widgets.
+
+    Live (TASK-34100.13 resume): the wizard focused the engine radio on
+    arrival, then the first-show reload rebuilt the step and the focus fell
+    to Next, so Down and Space did nothing on the step's one choice. The
+    rebuilt widget with the same id gets it back, else the engine radio.
+    """
+    if focused_id is None or not step.display or step.has_class("hidden"):
+        return
+    focused = step.app.focused
+    if focused is not None and step in focused.ancestors_with_self:
+        return
+    for selector in (f"#{focused_id}" if focused_id else "", "#setup-speech-engine"):
+        target = next(iter(step.query(selector)), None) if selector else None
+        if target is not None and target.focusable and target.display:
+            target.focus()
+            return
+
+
 def engine_locked(step: "SpeechSetupStep") -> bool:
     """Whether the engine may not change now: an install, an activation or a
     from-disk check is under way (its Cancel lives under Parakeet)."""
