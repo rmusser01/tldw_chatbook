@@ -362,10 +362,17 @@ def read_protect_state(
     # only after Model saves the new one over it, so it does not count.
     unsaved = _unsaved(stored_keys)
     if still_encrypted:
-        labels: list[str] = []
+        # A provider's key first: encrypting also encrypts template values
+        # (the tldw_api token, embedding models' keys), which strand with it.
+        owned: list[str] = []
+        unowned: list[str] = []
         for path in still_encrypted:
             owner_key, owner_name = _secret_owner(path, config)
-            labels.append(f"{owner_name} key" if owner_key else ".".join(path))
+            if owner_key:
+                owned.append(f"{owner_name} key")
+            else:
+                unowned.append(".".join(path))
+        labels = owned + unowned
         return ProtectState(
             PROTECT_STRANDED,
             providers=tuple(dict.fromkeys(stored)),
@@ -498,8 +505,14 @@ def protect_copy(
     if state.kind == PROTECT_STRANDED:
         many = len(state.stranded) > 1
         it = "them" if many else "it"
+        named = state.stranded[:_NAMED_OTHER_SECRETS]
+        if len(state.stranded) > len(named):
+            more = len(state.stranded) - len(named)
+            names = f"{', '.join(named)} and {more} more"
+        else:
+            names = _join(named)
         body = (
-            f"! Your saved {_join(state.stranded)} {'are' if many else 'is'} "
+            f"! Your saved {names} {'are' if many else 'is'} "
             "still encrypted with an earlier master password, and encryption "
             f"is now off, so chatbook can't read {it}. Re-enter or clear {it} "
             f"in {state.stranded_where}."

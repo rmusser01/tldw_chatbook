@@ -133,6 +133,38 @@ def test_a_stranded_key_beside_a_plain_one_names_both_and_offers_nothing():
     assert copy.primary_label == ""
 
 
+def test_a_stranded_file_names_provider_keys_first_and_caps_the_list():
+    # Seen live (g4bv5-r1local): encrypting also encrypts the template's
+    # tldw_api token and the embedding models' keys, so a stranded file holds
+    # five `enc:` values. The copy names the provider's key first and at most
+    # three in all.
+    enc = ConfigEncryption().encrypt_value("x", "earlier-pw")
+    state = read_protect_state(
+        {
+            "tldw_api": {"auth_token": enc},
+            "api_settings": {"llama_cpp": {"api_key": enc}},
+            "embedding_config": {
+                "models": {
+                    "openai-ada-002": {"api_key": enc},
+                    "openai-text-embedding-3-small": {"api_key": enc},
+                    "openai-text-embedding-3-large": {"api_key": enc},
+                }
+            },
+        },
+        {},
+    )
+    body = protect_copy(state, config_path="/p/config.toml").body
+
+    assert state.stranded[0] == "llama.cpp key"
+    assert len(state.stranded) == 5
+    assert state.stranded_where == _ADVANCED_PAGE
+    assert (
+        "Your saved llama.cpp key, tldw_api.auth_token, "
+        "embedding_config.models.openai-ada-002.api_key and 2 more are still "
+        "encrypted" in body
+    )
+
+
 def test_a_stranded_key_for_the_provider_just_typed_is_called_unsaved_too():
     # Saving the typed key on Model replaces the stranded value, so say so.
     ciphertext = ConfigEncryption().encrypt_value("sk-real", "earlier-pw")
