@@ -66,7 +66,9 @@ class _OffLoopExecutionScope:
     control records. Entered on the app's event loop, the 30-second tick's two
     admissions held keyboard input for up to ~60 ms. The lease itself has no
     thread affinity, so it is acquired and closed on worker threads and only
-    held across the awaited body.
+    held across the awaited body. That is what this seam relies on: if a
+    storage lease ever gains thread affinity, this must change (guarded by
+    ``test_scope_lease_acquired_on_one_thread_closes_on_another``).
 
     A release that overtakes an entry still in flight (its waiter was
     cancelled) marks the scope released; the entry then closes the lease it
@@ -561,6 +563,11 @@ class SchedulerLoop:
                 async with self._admitted() as allowed:
                     if not allowed:
                         return
+                    if self._maintenance_closed or not self.running:
+                        # Admission resolves off the loop, so a pause or stop()
+                        # can land while it does. This tick had not begun:
+                        # skip it, and let the loop top hold or exit.
+                        continue
                     if (
                         self._tick_count > 0
                         and self._tick_count % self.queue_reload_interval_ticks == 0
@@ -715,7 +722,12 @@ class SchedulerLoop:
             return True
 
     def _read_emergency_stop(self) -> bool:
-        """Resolve the stop path and read its state (worker thread)."""
+        """Resolve the stop path and read its state (worker thread).
+
+        The deferred import sits inside this guarded hop too, so a failure to
+        import the stop module also reads as stopped (it used to raise out of
+        the tick): the fail-safe direction, holding work on doubt.
+        """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook.emergency_stop import (
             default_emergency_stop_path,

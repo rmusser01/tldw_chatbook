@@ -10,8 +10,10 @@ on a ``threading.Event`` and releases it from the event loop itself. A build
 that resolves admission on the loop cannot do that: its hold can only time out
 while the loop is blocked, and ``outcomes`` records the timeout. That is the
 RED. Each test then pins one semantic the move must keep: no job before
-admission resolves, a refusal still refuses, ticks never overlap or pile up,
-and cancellation with admission in flight neither hangs nor leaks a lease.
+admission resolves and its lease held while it runs, a refusal still refuses,
+ticks never overlap or pile up, cancellation with admission in flight neither
+hangs nor leaks a lease, and a pause or stop() that lands mid-admission skips
+that tick.
 """
 
 from __future__ import annotations
@@ -147,9 +149,17 @@ async def test_tick_admission_resolves_off_the_loop_before_any_dispatch(
 ):
     task_id = _due_reminder(db)
     ran = []
+    held_while_running = []
+    leases_before = _scope_leases()
 
     async def handler(row):
         ran.append(row["id"])
+        # The lease is the point of admission: another process's native
+        # maintenance waits on it, so it must be HELD while the job runs --
+        # tick()'s scope and dispatch_reminder()'s, not merely resolved.
+        held_while_running.append(
+            (held.entries - held.exits, len(_scope_leases() - leases_before))
+        )
 
     held = _hold(monkeypatch)
     scheduler = SchedulerLoop(db, {"reminder": handler}, handler_timeout_seconds=0)
@@ -170,6 +180,11 @@ async def test_tick_admission_resolves_off_the_loop_before_any_dispatch(
 
     assert held.outcomes and all(held.outcomes), _BLOCKED
     assert ran == [task_id]
+    (open_scopes, live_leases), = held_while_running
+    assert open_scopes >= 2 and live_leases >= 1, (
+        "the job ran without its storage admission held: "
+        f"{open_scopes} open scopes, {live_leases} live scope leases"
+    )
     assert db.get_reminder_task(task_id)["last_status"] == "completed"
     # Entry AND release stayed off the loop: no admission syscall ran on it.
     assert loop_thread not in held.enter_threads
@@ -297,6 +312,123 @@ async def test_cancelled_scheduler_with_admission_in_flight_releases_its_lease(
     assert held.finalized == 0, "an admission was never released, only garbage-collected"
     assert held.exits == held.entries
     assert _scope_leases() <= leases_before, "a scope lease outlived its admission"
+
+
+def test_scope_lease_acquired_on_one_thread_closes_on_another(db):
+    """Guard: the off-loop seam relies on storage leases having no thread affinity.
+
+    ``_OffLoopExecutionScope`` enters admission on one ``to_thread`` worker and
+    releases it on whichever worker the release hop lands on. If a storage lease
+    ever gains thread affinity (a close that refuses, or silently skips, a
+    foreign thread), that seam must change -- this fails first.
+    """
+    leases_before = _scope_leases()
+    scope = loop_module._OffLoopExecutionScope(("db.scheduled_tasks",), db.db_path)
+    outcome = {}
+
+    def enter():
+        outcome["allowed"] = scope.enter()
+        outcome["live"] = len(_scope_leases() - leases_before)
+
+    def release():
+        try:
+            scope.release()
+        except BaseException as exc:  # noqa: BLE001 -- reported below
+            outcome["error"] = exc
+
+    for target, name in ((enter, "admission-enter"), (release, "admission-release")):
+        worker = threading.Thread(target=target, name=name)
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive(), f"{name} did not finish"
+
+    assert outcome["allowed"] is True, "the real admission was refused"
+    assert outcome["live"] >= 1, "admission held no storage lease"
+    assert "error" not in outcome, f"cross-thread release raised: {outcome.get('error')!r}"
+    assert _scope_leases() <= leases_before, "a lease closed from another thread stayed live"
+
+
+# --- A pause or stop() that lands while the tick's admission is resolving ---
+#
+# Synchronous admission made "fence open" and "storage admitted" one instant.
+# Off the loop they are two, and a capture pause (or stop()) can land between
+# them (review of TASK-33620.15.24: median ~10 ms live, max 129 ms). The drain
+# would still wait for such a tick, but a tick the fence closed on before it was
+# admitted has not begun: it must not dispatch, and the loop must not end.
+
+
+async def _run_until_tick_admission_held(db, monkeypatch):
+    held = _hold(monkeypatch, armed=False)
+    scheduler = SchedulerLoop(db, {}, poll_interval=0.001)
+    # Startup is admitted at once; the first tick's admission is held.
+    scheduler.report_configuration = lambda: setattr(held, "armed", True)
+    dispatched = []
+
+    async def dispatch_due(now):
+        dispatched.append(now)
+
+    scheduler._dispatch_due = dispatch_due
+    runner = asyncio.create_task(scheduler.run())
+    await _observe_hold(held)
+    assert held.outcomes == [], _BLOCKED
+    held.armed = False
+    return held, scheduler, dispatched, runner
+
+
+@pytest.mark.asyncio
+async def test_pause_landing_while_tick_admission_resolves_skips_that_tick(
+    db, monkeypatch
+):
+    held, scheduler, dispatched, runner = await _run_until_tick_admission_held(
+        db, monkeypatch
+    )
+    try:
+        scheduler._maintenance_close_admission()
+        held.release.set()
+        # The drain completes without the paused tick ever dispatching.
+        assert await scheduler._maintenance_drain(time.monotonic() + 5)
+        await asyncio.sleep(0.05)
+        assert dispatched == [], "a tick dispatched after the fence closed on it"
+        assert not runner.done(), "a pause must hold the scheduler, not end it"
+        assert scheduler.running
+        scheduler._maintenance_resume()
+        deadline = time.monotonic() + 5
+        while not dispatched:
+            assert time.monotonic() < deadline, "ticks did not resume after the pause"
+            await asyncio.sleep(0.005)
+    finally:
+        held.release.set()
+        scheduler.stop()
+        await asyncio.wait_for(runner, 5)
+
+    assert held.outcomes == [True], _BLOCKED
+    gc.collect()
+    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.exits == held.entries
+
+
+@pytest.mark.asyncio
+async def test_stop_landing_while_tick_admission_resolves_skips_that_tick(
+    db, monkeypatch
+):
+    held, scheduler, dispatched, runner = await _run_until_tick_admission_held(
+        db, monkeypatch
+    )
+    try:
+        scheduler.stop()
+        held.release.set()
+        await asyncio.wait_for(runner, 5)
+    finally:
+        held.release.set()
+        scheduler.stop()
+        await asyncio.gather(runner, return_exceptions=True)
+
+    assert held.outcomes == [True], _BLOCKED
+    assert dispatched == [], "a tick dispatched after stop() landed before its admission"
+    assert not scheduler.running
+    gc.collect()
+    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.exits == held.entries
 
 
 # --- The tick's emergency-stop check: its default path is a guarded config read ---
