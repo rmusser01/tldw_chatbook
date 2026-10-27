@@ -363,9 +363,9 @@ async def test_at_100x30_tab_reaches_next_and_a_resync_keeps_the_scroll(
 
     - m-5: Tab from the last row of page 1 lands on Next (Previous is
       disabled there), and Next is scrolled into the list's visible region.
-    - Page change (the choice this round pins): Enter on Next reads page 2
-      and keeps the list's offset, clamped to the new page, so the pressed
-      control -- the list's last row -- is still on screen and focused.
+    - Page change (ruling T8-h, fix round 2): Enter on Next reads page 2,
+      replays no old offset, and scrolls the landed control -- the pressed
+      Next, the list's last row -- into view, still focused.
     - m-6: a reload that is not a page change keeps the offset the user
       scrolled to. Base (c677c8a89a): the list had no scroll owner, so the
       reload put it back at the top under the focused first row.
@@ -460,3 +460,67 @@ async def test_at_100x30_tab_reaches_next_and_a_resync_keeps_the_scroll(
         assert listing.scroll_y == scrolled, (listing.scroll_y, scrolled)
         assert _visible_in(listing, _one(screen, "#library-notes-trash-restore-17"))
         assert "Deleted 38" in _painted(host)
+
+
+async def test_at_100x30_previous_back_to_a_full_page_keeps_the_pager_in_view(
+    tmp_path,
+) -> None:
+    """Review R1 N-1, ruling T8-h: a page change scrolls the landed control in.
+
+    25 deleted notes at 100x30: page 1 overflows the 15-row list, page 2
+    (five rows) fits it. Tab to Next, Enter (page 2, focus on Previous at
+    offset 0), Enter on Previous: page 1 again, where Previous is disabled,
+    so focus is on Next -- the list's last row, which must be scrolled into
+    view. Base (739adc11c8): the old page's offset (0) was replayed, so the
+    focused Next and the exact total sat below the fold.
+    """
+    host, _seed = _mounted(tmp_path, count=25)
+    async with host.run_test(size=COMPACT) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes", Button).press()
+        await _notes_tree_settled(host, pilot, screen, count=25)
+        await pilot.click("#library-notes-trash-open")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: "Deleted 01" in _painted(host)
+            and _focused_id(screen) == "library-notes-trash-restore-0",
+            lambda: f"page 1 (focus: {_focused_id(screen)!r})",
+        )
+
+        await pilot.press(*(["tab"] * 20))
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: _focused_id(screen) == "library-notes-trash-next",
+            lambda: f"Tab to Next (focus: {_focused_id(screen)!r})",
+        )
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: "21–25 of 25 · Page 2 of 2" in _painted(host)
+            and _focused_id(screen) == "library-notes-trash-previous",
+            lambda: f"page 2 on Previous (focus: {_focused_id(screen)!r})",
+        )
+
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: _focused_id(screen) == "library-notes-trash-next"
+            and _one(screen, "#library-notes-trash-restore-19") is not None,
+            lambda: f"page 1 on Next (focus: {_focused_id(screen)!r})",
+        )
+        listing = screen.query_one("#library-notes-trash-list")
+        assert _visible_in(listing, screen.focused), (
+            listing.scroll_y,
+            tuple(listing.region),
+            tuple(screen.focused.region),
+        )
+        assert "1–20 of 25 · Page 1 of 2" in _painted(host)
