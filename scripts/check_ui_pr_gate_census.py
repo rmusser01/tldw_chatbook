@@ -567,7 +567,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #   160x45 boots, ~26 s): 916 -> 917.
 # - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
 #   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
-MINIMUM_FILES = 918
+# - task 7: Tests/UI/test_library_notes_select_mode_counts_and_bulk.py (four
+#   real-Library boots, ~27 s) and its `_extended` sibling (three boots,
+#   ~25 s alone, so it is gated too -- the task 5 R2-1 precedent): 918 -> 920.
+MINIMUM_FILES = 920
 
 
 def read_census(path: Path) -> list[str]:

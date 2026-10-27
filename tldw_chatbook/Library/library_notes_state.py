@@ -529,6 +529,9 @@ class LibraryNotesListState:
         sync_attention: Whether any lasting-sync folder is held for attention
             (TASK-34000.2). The list's idle status says so instead of "Ready".
         notice_refresh_offered: The folder-conflict notice offers Refresh.
+        select_actions_visible: Whether the select strip's Actions… chooser
+            (Move to folder / Add keyword / Remove keyword) is open
+            (TASK-34000.29 N-14).
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -547,6 +550,7 @@ class LibraryNotesListState:
     note_open: bool = False
     sync_attention: bool = False
     notice_refresh_offered: bool = False
+    select_actions_visible: bool = False
 
 
 @dataclass(frozen=True)

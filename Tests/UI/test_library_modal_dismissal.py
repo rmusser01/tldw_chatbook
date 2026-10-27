@@ -81,6 +81,7 @@ from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderNameDialog,
     LibraryNoteFolderTargetDialog,
+    LibraryNoteKeywordDialog,
 )
 from tldw_chatbook.Widgets.Library.library_review_set_picker import (
     LibraryReviewSetPickerDialog,
@@ -396,6 +397,20 @@ LIBRARY_MODAL_CONTRACTS = (
         _assert_none,
         str,
         _assert_exact("Folder"),
+        None,
+        _FOCUS_POSTCONDITION,
+        None,
+    ),
+    # TASK-34000.29 (N-14): the bulk keyword dialog (the folder-name dialog's
+    # chrome, so the same content id and Cancel).
+    LibraryModalContract(
+        LibraryNoteKeywordDialog,
+        lambda: LibraryNoteKeywordDialog(title="Add a keyword to 2 notes"),
+        "#library-note-folder-name-dialog",
+        "#library-note-folder-dialog-cancel",
+        _assert_none,
+        str,
+        _assert_exact("travel"),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -771,6 +786,20 @@ LIBRARY_MODAL_LAUNCH_EDGES = (
         "_choose_library_notes_placement_target",
         LibraryNoteFolderTargetDialog,
     ),
+    # TASK-34000.29 (N-14): the select strip's Actions… -- bulk Move and the
+    # bulk keyword pair.
+    _edge(
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
+        "_choose_library_notes_bulk_move_target",
+        LibraryNoteFolderTargetDialog,
+    ),
+    _edge(
+        _NOTES_CONTROLLER_FILE,
+        "LibraryNotesController",
+        "_ask_library_notes_bulk_keyword",
+        LibraryNoteKeywordDialog,
+    ),
     _edge(
         _COLLECTIONS_FILE,
         "LibraryPromptCollectionsController",
@@ -954,6 +983,7 @@ ORDINARY_LIBRARY_MODAL_CONTRACTS = (
     (ModelInstallModal, ".model-install-modal"),
     (PromptDeleteConfirmationModal, "#prompt-delete-modal"),
     (LibraryNoteFolderNameDialog, "#library-note-folder-name-dialog"),
+    (LibraryNoteKeywordDialog, "#library-note-folder-name-dialog"),
     (LibraryNoteFolderTargetDialog, "#library-note-folder-target-dialog"),
     (WorkspaceCreateModal, "#workspace-create-modal"),
 )
@@ -1207,7 +1237,8 @@ async def test_authorization_endpoint_details_nested_modal_dismissal_restores_fo
 
 
 def test_library_modal_contract_ordinary_modals_adopt_safe_dismissal() -> None:
-    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 7
+    # 7 -> 8 (2026-10-26, TASK-34000.29 N-14): LibraryNoteKeywordDialog.
+    assert len(ORDINARY_LIBRARY_MODAL_CONTRACTS) == 8
     for modal_type, content_selector in ORDINARY_LIBRARY_MODAL_CONTRACTS:
         assert issubclass(modal_type, SafeModalDismissMixin)
         assert modal_type.SAFE_MODAL_CONTENT == content_selector
@@ -1628,7 +1659,8 @@ def test_library_modal_contract_table_covers_every_discovered_concrete_type() ->
     contract_types = [row.concrete_type for row in LIBRARY_MODAL_CONTRACTS]
     edge_types = {edge.concrete_type for edge in LIBRARY_MODAL_LAUNCH_EDGES}
 
-    assert len(contract_types) == len(set(contract_types)) == 21
+    # 21 -> 22 (2026-10-26, TASK-34000.29 N-14): LibraryNoteKeywordDialog.
+    assert len(contract_types) == len(set(contract_types)) == 22
     assert edge_types == set(contract_types)
     assert set(ENHANCED_PICKER_COMPATIBILITY_TYPES).isdisjoint(contract_types)
     assert {SessionGitTrustDialog}.issubset(contract_types)
@@ -1686,7 +1718,8 @@ def test_library_modal_inventory_matches_declared_edges_bidirectionally() -> Non
     declared = set(LIBRARY_MODAL_LAUNCH_EDGES)
 
     _assert_exact_library_modal_inventory(discovered, declared)
-    assert len(discovered) == len(declared) == 35
+    # 35 -> 37 (2026-10-26, TASK-34000.29 N-14): bulk Move and bulk keyword.
+    assert len(discovered) == len(declared) == 37
 
 
 @pytest.mark.parametrize(
@@ -1906,6 +1939,10 @@ async def _drive_public_positive(modal: ModalScreen[Any], pilot: Any) -> None:
         await pilot.click("#select")
     elif isinstance(modal, PromptDeleteConfirmationModal):
         await pilot.click("#prompt-delete-confirm")
+    elif isinstance(modal, LibraryNoteKeywordDialog):
+        # Before its base class's branch: the keyword dialog IS one.
+        modal.query_one("#library-note-folder-name", Input).value = " travel "
+        await pilot.click("#library-note-folder-dialog-confirm")
     elif isinstance(modal, LibraryNoteFolderNameDialog):
         modal.query_one("#library-note-folder-name", Input).value = "Folder"
         await pilot.click("#library-note-folder-dialog-confirm")

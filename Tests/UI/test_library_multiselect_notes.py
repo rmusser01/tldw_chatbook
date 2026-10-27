@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 from textual.app import App
+from textual.css.query import NoMatches
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -166,6 +167,14 @@ def test_notes_select_all_uses_unique_note_ids_visible_in_folder_tree():
         )
     )
     fake.refresh = lambda **kwargs: None
+
+    # TASK-34000.29 (N-14): the handler asks the mounted list canvas first
+    # (its ``rendered_note_ids``); with none mounted it falls back to the
+    # projection this test pins.
+    def _no_canvas(*_args, **_kwargs):
+        raise NoMatches("no #library-notes-canvas")
+
+    fake.query_one = _no_canvas
 
     LibraryScreen.handle_library_notes_select_all(
         fake, SimpleNamespace(stop=lambda: None)

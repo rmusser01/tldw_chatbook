@@ -71,6 +71,9 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConsoleRenameSessionModal": "inventory #82: tiny single-input rename",
     "ConsoleFeedbackCommentModal": "inventory #83: tiny comment box",
     "LibraryNoteFolderNameDialog": "inventory #84: tiny name dialog",
+    "LibraryNoteKeywordDialog": (
+        "TASK-34000.29: the folder-name dialog's chrome reused for one keyword"
+    ),
     "ConsoleWorkspaceRenameModal": "inventory #85: tiny rename dialog",
     "TagFilterPicker": "inventory #86: tiny tag list",
     # -- inventory section B (special surfaces) + rollout exclusions --------

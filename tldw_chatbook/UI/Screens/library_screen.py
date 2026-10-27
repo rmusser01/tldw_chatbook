@@ -1235,6 +1235,17 @@ class LibraryScreen(BaseAppScreen):
             # keeps this inert outside select mode.
             priority=True,
         ),
+        # TASK-34000.29 (N-14): the Notes twin. Priority for the same reason
+        # (a focused row Button would otherwise see the key first); the
+        # ``check_action`` gate claims ONLY a focused Notes row (and the Notes
+        # pane grips) in select mode, so every other control keeps its key.
+        Binding(
+            _MEDIA_ROW_SELECT_KEY,
+            "library_notes_toggle_row_selection",
+            "Toggle selection",
+            show=False,
+            priority=True,
+        ),
         # task-28027: Reader action-row accelerators. check_action gates them
         # to a plain media Reader (l/t are local-only, c works for server
         # items too); a focused Input consumes the printable key first, so
@@ -5330,12 +5341,20 @@ class LibraryScreen(BaseAppScreen):
             "library-note-link-back": "link-back",  # TASK-34000.28 N-21
             # TASK-34000.29 (N-12): focus returns here after Use in Console.
             "library-note-use-in-console": "use-in-console",
+            # TASK-34000.29 (N-14): the select strip's controls hold focus
+            # across the canvas sync their own press (or a slice page) runs.
+            "library-notes-select-all": "select-all",
+            "library-notes-select-clear": "select-clear",
+            "library-notes-select-actions": "select-actions",
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
         sort_choice = "library-notes-sort-"
         if widget_id.startswith(sort_choice):
             return f"sort-choice:{widget_id.removeprefix(sort_choice)}"
+        select_action = "library-notes-select-action-"
+        if widget_id.startswith(select_action):
+            return f"select-action-choice:{widget_id.removeprefix(select_action)}"
         if widget_id in {
             "library-note-back",
             "library-note-context-back",
@@ -8698,9 +8717,25 @@ class LibraryScreen(BaseAppScreen):
                     else ()
                 )
                 export_compact = () if not export else (("e", "export"),)
+                if self._notes_state.select_actions_visible:
+                    # TASK-34000.29 (N-14): the open Actions… chooser, the
+                    # Sort chooser's grammar below.
+                    return self._notes_footer_tier(
+                        (("enter", "choose action"), ("esc", "cancel")),
+                        (("enter", "choose"), ("esc", "cancel")),
+                    )
+                # TASK-34000.29 (N-14): "space toggle" only where Space
+                # toggles -- a focused note row, never a grip or a button.
+                toggle = (
+                    (("space", "toggle"),)
+                    if self.focused is not None
+                    and self.focused.has_class("library-notes-row")
+                    and self.check_action("library_notes_toggle_row_selection", ())
+                    else ()
+                )
                 return self._notes_footer_tier(
-                    (("enter", "select note"),) + export + (("esc", "done"),),
-                    (("enter", "select"),) + export_compact + (("esc", "done"),),
+                    toggle + (("enter", "select note"),) + export + (("esc", "done"),),
+                    toggle + (("enter", "select"),) + export_compact + (("esc", "done"),),
                 )
             if self._notes_state.sort_choices_visible:
                 return self._notes_footer_tier(
@@ -9329,7 +9364,10 @@ class LibraryScreen(BaseAppScreen):
         if (
             event.key in ("right", "left")
             and self.focused is not None
-            and self.focused.has_class("library-notes-sort-choice")
+            and (
+                self.focused.has_class("library-notes-sort-choice")
+                or self.focused.has_class("library-notes-select-action-choice")
+            )
         ):
             # TASK-34000.28 fix round 1 (I-2): the open Sort strip is one row
             # of choices; Left/Right move between them (no wrap, never a
@@ -9937,6 +9975,13 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
             and self._notes_state.source == LIBRARY_NOTES_SOURCE_DATABASE
+            # TASK-34000.29 (N-14): not under a running Notes mutation. A
+            # dialog's choice starts one as the dialog closes, and this
+            # resume reload then cleared the tree under it -- every row gone
+            # until the pages landed, Select disabled meanwhile, so focus
+            # replays onto it were refused and fell to the filter. The
+            # mutation refreshes the tree itself when it lands.
+            and not self._library_notes_mutation_fenced()
         ):
             self._request_library_notes_tree_initial_load()
         if (
@@ -17889,13 +17934,21 @@ class LibraryScreen(BaseAppScreen):
                 and self._notes_state.notice_refresh_offered
                 and self._notes_state.notice in FOLDER_CONFLICT_COPY.values()
             ),
+            # TASK-34000.29 (N-14): the Actions… chooser, open only inside
+            # select mode (a stale flag can never reopen it on re-entry).
+            select_actions_visible=bool(
+                self._notes_state.select_mode
+                and self._notes_state.select_actions_visible
+            ),
             status_copy=(
                 self._notes_state.notice
                 if operation is None and self._notes_state.notice
                 else state.status_copy
             ),
         )
-        if self._notes_state.select_mode:
+        if self._notes_state.select_mode and not LibraryScreen._library_notes_rows_reloading(
+            self._notes_state
+        ):
             projection = self._build_library_notes_tree_projection()
             if projection is None:
                 visible_note_ids = (row.note_id for row in state.rows)
@@ -17907,6 +17960,27 @@ class LibraryScreen(BaseAppScreen):
                 )
             self._notes_state.row_selection.reconcile(visible_note_ids)
         return state
+
+    @staticmethod
+    def _library_notes_rows_reloading(state: Any) -> bool:
+        """Whether the rendered Notes rows are mid-reload (TASK-34000.29 N-14).
+
+        Select mode drops a checked id once its row is no longer rendered.
+        A reload renders NO rows until its pages land -- and every return to
+        Library reloads the tree (``_refresh_library_visit_surfaces``), so a
+        dialog opened from select mode, or a partial bulk failure's "still
+        checked" retry, came back to an empty selection. Measured: the bulk
+        Move picker's Escape reconciled 3 checked notes against 0 rows.
+        Pruning waits for the reload to land instead.
+        """
+        filter_state = getattr(state, "tree_filter_state", None)
+        if getattr(state, "filter", "").strip() and filter_state is not None:
+            return bool(filter_state.loading)
+        branches = getattr(state, "tree_branches", {}) or {}
+        if not branches:
+            return False
+        root = branches.get(NotesBranchKey(None, "placements"))
+        return root is None or any(branch.loading for branch in branches.values())
 
     def _build_library_notes_tree_projection(
         self,
@@ -24253,6 +24327,27 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.row_selection.toggle(media_id)
         _apply_library_row_toggle(self, "media", focused, media_id)
 
+    @staticmethod
+    def _library_notes_space_claims(focused: Widget | None) -> bool:
+        """Whether select-mode Space belongs to ``focused`` (TASK-34000.29 N-14).
+
+        A Notes row (toggle it) or one of the Notes route's pane grips --
+        chrome whose own Space would collapse a pane under a footer promising
+        "space toggle", the Media precedent (task-31271 seam (b)). The grip
+        class is shared by every destination's shell, so the Notes route's
+        own marker on an ancestor is what scopes it.
+        """
+        if focused is None:
+            return False
+        if focused.has_class("library-notes-row"):
+            return True
+        return focused.has_class("library-adaptive-reader-pane-grip") and any(
+            ancestor.has_class("library-notes-route") for ancestor in focused.ancestors
+        )
+
+    def action_library_notes_toggle_row_selection(self) -> None:
+        return self._notes_controller.action_library_notes_toggle_row_selection()
+
     def _exit_library_media_select_mode(self, *, announce_discard: bool) -> None:
         """Leave media Select mode: clear the selection and any pending
         bulk-delete confirmation (task-2853 AC4).
@@ -26730,6 +26825,19 @@ class LibraryScreen(BaseAppScreen):
             return not (
                 self._library_emergency_stage == "canvas-only"
                 and self._library_emergency_restore_receipt is not None
+            )
+        if action == "library_notes_toggle_row_selection":
+            # TASK-34000.29 (N-14): the Notes Space. The binding is priority,
+            # so this gate is the whole safety: it claims a focused Notes row
+            # (toggle it) and the Notes pane grips (chrome; swallowed, the
+            # Media precedent below) in select mode, and nothing else -- Done,
+            # Select all, Clear, Export selected and Actions… keep their own
+            # keys, and a focused Input still types its space first (Textual
+            # filters a consumed key out of the binding chain).
+            return bool(
+                self._notes_state.select_mode
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_notes_space_claims(self.focused)
             )
         if action in {
             "library_notes_new",
@@ -31955,26 +32063,47 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_notes_select_all(self, event: Button.Pressed) -> None:
         """Select every note row currently rendered by the canvas.
 
+        TASK-34000.29 (N-14): the mounted list canvas is asked which notes it
+        renders -- the same ``rendered_note_ids`` its "Select all N shown"
+        label counts -- so the press selects exactly the N it names. A fresh
+        projection is the fallback only when no list canvas is mounted.
         Rebuilds only the mounted Notes canvas.
         """
         event.stop()
         if self._library_notes_mutation_fenced():
             return
-        projection = self._build_library_notes_tree_projection()
-        if projection is None:
-            note_ids = (row.note_id for row in self._build_library_notes_state().rows)
+        try:
+            canvas = self.query_one("#library-notes-canvas", LibraryNotesCanvas)
+        except (NoMatches, QueryError):
+            canvas = None
+        if canvas is not None and canvas.mode == "list":
+            note_ids = canvas.rendered_note_ids()
         else:
-            note_ids = (
-                row.note_id
-                for row in projection.rows
-                if row.kind == "note" and row.note_id
-            )
+            projection = self._build_library_notes_tree_projection()
+            if projection is None:
+                note_ids = frozenset(
+                    row.note_id for row in self._build_library_notes_state().rows
+                )
+            else:
+                note_ids = frozenset(
+                    row.note_id
+                    for row in projection.rows
+                    if row.kind == "note" and row.note_id
+                )
         self._notes_state.row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
 
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_select_clear(event)
+
+    @on(Button.Pressed, "#library-notes-select-actions")
+    def handle_library_notes_select_actions(self, event: Button.Pressed) -> None:
+        return self._notes_controller.handle_library_notes_select_actions(event)
+
+    @on(Button.Pressed, ".library-notes-select-action-choice")
+    def handle_library_notes_select_action_choice(self, event: Button.Pressed) -> None:
+        return self._notes_controller.handle_library_notes_select_action_choice(event)
 
     @on(Button.Pressed, "#library-notes-export-selected")
     async def handle_library_notes_export_selected(self, event: Button.Pressed) -> None:

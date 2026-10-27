@@ -621,7 +621,14 @@ _BUDGETS: dict[str, int] = {
     # deferred focus return is one programmatic, region-checked retry, and
     # the presentation state names the transfer's origin control:
     # 7470 -> 7478 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7478,
+    # 2026-10-26, TASK-34000.29 (polish-1b Task 7, N-14; same owner
+    # decision): select mode's Space action, the Actions… chooser and its
+    # Escape, the bulk Move and bulk keyword seams with their receipts and
+    # the one shared finish (``_finish_library_notes_bulk``), the open note's
+    # reload after a keyword change, the chooser's focus roles, the
+    # synchronous focus hand-offs and the in-place tree refresh
+    # (``_refresh_library_notes_tree_in_place``): 7478 -> 8008 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8008,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

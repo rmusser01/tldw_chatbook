@@ -405,7 +405,7 @@ both stay closed until you choose to reopen one.
 | "Manage sync folders" | Appears only when roots or paused migration candidates exist; opens root status and contextual controls. |
 | "Last import" | Reopens the latest import receipt from this app session after you return to the Notes list. |
 | "Export…" | Opens the "Export bundle (.zip)" canvas scoped to notes — bundle notes into a .zip. |
-| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", and "Export selected". The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. On a compact terminal the row shortens to "Done", "All N", "Clear" and "Export" and drops its own copy of the count, keeping the line below it — all four actions stay on the pane. With nothing checked, "Export selected" is blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
+| "Select" / "Done" | Toggles select mode: rows grow ☑/☐ checkboxes, and a row appears with "N selected", "Select all N shown", "Clear", "Export selected" and "Actions…". **Space** checks or unchecks the focused row, as Enter does. "Select all N shown" selects exactly the N notes on screen — the rows the tree has loaded — so the number it names is the number it selects, with a filter applied or after coming back from Export. The count is also repeated on its own line below the row, and the two always read the same number. "Export…" hides while selecting. The row fits the list pane it sits in, not the terminal: when the pane cannot hold it on one line, Export selected and Actions… move to a second row; when even that does not fit (a compact terminal, or the narrower list pane a 120-column terminal gives) the row shortens to "Done", "All N", "Clear", "Export" and "Actions…" and drops its own copy of the count, keeping the line below it — every action stays on the pane. With nothing checked, "Export selected" and "Actions…" are blocked, and the count line under the row names it: "0 selected — Export selected unavailable" (task-32549). **Actions…** opens a strip of Move to folder… / Add keyword… / Remove keyword… under the row (Escape closes it and returns to Actions…). Move to folder… opens the same all-folders picker as Move note, titled "Move N notes to…", and puts every checked note in the folder you choose, taking it out of the folders it was filed in by hand (a placement a sync root manages stays). Add keyword… and Remove keyword… ask for one keyword and add it to, or remove it from, every checked note. Nothing changes until you choose a folder or press Apply; Escape or Cancel leaves every note as it was. A receipt then names the count — "Moved 3 of 3 notes to Projects / Thesis", "Added 'travel' to 2 notes · 1 already had it", "Removed 'travel' from 3 notes" — and select mode ends. If some notes could not be changed the receipt says how many, select mode stays, and only those notes stay checked, so the same action retries just them. Notes cannot be deleted in bulk. The reason is on that line rather than in the button, because this row is measured to the cell and a line of its own would cost the list a row; it reverts to the plain count the moment you check something. A note open beside the list turns into a labelled read-only preview for as long as select mode lasts — its header reads "Read-only preview · Included / Not included in bulk selection", and Save, Delete, "Use in Console", Copy and the exports are disabled — so a bulk action cannot be issued from a pane that still looks editable. Pressing "Done" hands the editor straight back. |
 
 **Keyboard on this toolbar (the Notes list only).** `/` focuses the filter
 and selects whatever is already in it, so the next thing you type replaces
@@ -1399,8 +1399,8 @@ not carry your edits either way for them. To put an already-imported vault
 under lasting sync, delete the notes Import once made from it first and then
 run **Check changes** again — each file is then created once and kept synced.
 **Know the cost before you start:** Chatbook has no bulk delete for notes, so
-that is one note at a time, each with its own confirmation — select mode
-offers Export selected and nothing else. For a vault of any size it is worth
+that is one note at a time, each with its own confirmation — select mode can
+export, move and re-keyword notes in bulk, but not delete them. For a vault of any size it is worth
 setting the sync up on a folder you have not imported, rather than undoing an
 import of fifty notes by hand.
 
@@ -1438,8 +1438,9 @@ skipped · 0 folder moves" with every imported file "Already imported by
 Import once — left as it is", and activating applied 0 — the database still
 holds 64 notes. The other order is untested and unprotected, as this section
 now says. The "no bulk delete" clause is read from source, not driven: select
-mode yields Done / Select all / Clear / Export selected and nothing else
-(`Widgets/Library/library_notes_canvas.py:1636-1683`), and no bulk-delete
+mode yielded Done / Select all / Clear / Export selected and nothing else
+(`Widgets/Library/library_notes_canvas.py:1636-1683`; TASK-34000.29 later
+added Actions… — move and keyword only), and no bulk-delete
 handler exists — deletion is per note through the editor's confirm).*
 
 Existing legacy evidence appears as a paused candidate. Open **Manage sync
@@ -1532,6 +1533,7 @@ permanent delete.
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". The footer drops the "/ find note" chip while a text field has focus, for that reason. |
 | **g** | Go to the folder tree beside the list — focus lands on the selected placement when there is one, otherwise on the first folder row. |
 | **e** (in select mode) | Export the checked notes. Advertised only once at least one row is checked, which is also when the **Export selected** button stops being disabled. |
+| **Space** (in select mode) | Toggle the focused note — check it or uncheck it, as Enter on its row does. Only on a note row: on Done, Select all, Clear, Export selected, Actions… or a pane grip it does nothing, and in the filter box it types a space. |
 | **↑ / ↓** (Notes tree) | Move through folder rows, note rows and the "more" pager in the order shown — one list, top to bottom. Enter on a "more" pager loads the next page and puts focus on the first row it added. |
 | **→ / ←** (on a folder row) | Expand the folder; collapse it, or jump to its parent folder when it is already collapsed. Selecting a folder (Enter) stays separate from these. |
 | **Enter** (on **Sort**) | Opens the chooser with the current choice focused. **← / →** (or ↹ Tab) move between the choices without choosing, and Enter picks the focused one; Enter on a choice or Escape returns focus to **Sort**. |
@@ -1555,8 +1557,10 @@ Title, Keywords and body announce themselves the same way — `typing in field
 | esc back to notes`, plus `ctrl+end end of note` in the body. Below 64
 columns the Escape chip comes first, because the footer may have room for
 only one chip there. In select mode the tier becomes
-`enter select note | e export selected | esc done`, with the **e** chip
-present only while something is checked. Notes does not register **Ctrl+S** and does not replace it with
+`space toggle | enter select note | e export selected | esc done`, with the
+**space** chip present only while a note row has focus and the **e** chip only
+while something is checked; with the Actions… strip open it reads
+`enter choose action | esc cancel`. Notes does not register **Ctrl+S** and does not replace it with
 another save shortcut. Use the visible
 Library notes **Save** button for an immediate save; Folder files saves
 automatically. Global navigation keys live in the [guide index](../index.md).

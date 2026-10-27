@@ -1840,6 +1840,31 @@ no fix at all always left it on Delete.
   record every capture and every focus write before changing any timing.
   The replay that wins is usually one captured in a window you did not know
   about.
+- **The same shape in the LIST canvas, three more ways (TASK-34000.29 N-14,
+  polish-1b Task 7, 2026-10-27).** Select mode's bulk Move/keyword dialogs
+  left focus in the filter after both Escape and a successful move, from 1 to
+  4 runs in 8, and Escape wiped the whole selection.
+  - **A dialog closing over Library reloads the whole Notes tree**
+    (`_refresh_library_visit_surfaces` on every `ScreenResume`). For a moment
+    no row is rendered. Select mode's reconcile pruned the selection against
+    that empty projection: 3 checked notes, 0 visible, all gone. The reconcile
+    now waits for the reload (`_library_notes_rows_reloading`).
+  - **The toolbar's Select is disabled while no row is rendered**, so every
+    replay onto it was refused. The `set_focus` wrapper printed
+    `disabled= True focusable= False` four times, then `FALLBACK role='' ->
+    library-notes-filter`. Four fixes: Select is now blocked only once the
+    tree has answered; a bulk action refreshes its loaded slices in place
+    with the rows kept; the resume reload does not start while a Notes
+    mutation holds the interlock; and the same-id refocus also covers
+    list-to-list resyncs for non-row controls. Rows have positional ids, so
+    their own replay is left alone.
+  - **`Widget.focus()` is deferred (`call_later`).** Focusing the opener and
+    pushing a modal in the same callback let the modal's
+    `SafeModalDismissMixin` record the stale focus as the opener. Dismissing
+    the modal then returned focus there. Use the public `screen.set_focus`,
+    marked programmatic, before `push_screen`.
+  - After the fixes: 10 runs out of 10, and every later run. Keeping the bulk action's own button
+    enabled while it runs was the Task 6 transfer-origin fix again.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 

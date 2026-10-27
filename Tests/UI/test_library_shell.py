@@ -24622,12 +24622,17 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
         ),
         (
             "selection",
+            # TASK-34000.29 (N-14) / .82: the strip holds five actions now
+            # (Actions… joined Export). "Done All 2 Clear Export Actions…"
+            # needs 57 cells and this pane has 48, so the bulk pair takes a
+            # second row -- the guide's narrow-pane rule, never a clip -- and
+            # the tree pays that one row (8 -> 7).
             {
                 "#library-notes-header": 1,
                 "#library-notes-filter-row": 1,
-                "#library-notes-selection-actions": 1,
+                "#library-notes-selection-actions": 2,
                 "#library-notes-selection-status": 1,
-                "#library-notes-list": 8,
+                "#library-notes-list": 7,
             },
             "#library-notes-select-toggle",
         ),

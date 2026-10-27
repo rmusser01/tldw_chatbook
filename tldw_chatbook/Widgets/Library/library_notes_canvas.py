@@ -47,6 +47,8 @@ from tldw_chatbook.Library.library_notes_tree_state import (
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP,
+    LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP,
     LIBRARY_NOTES_SORT_FILTERED_TOOLTIP,
     LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP,
     back_cue_label,
@@ -503,6 +505,111 @@ def toolbar_action_rows(
         used += cost
     rows.append(tuple(current))
     return tuple(rows)
+
+
+#: TASK-34000.29 (N-14): the select strip's bulk-action chooser, and the three
+#: choices it opens -- ``(option_id, value, label)`` for
+#: ``compose_library_choice_strip``. Bulk delete stays with TASK-32635.
+NOTES_SELECT_ACTIONS_LABEL = "Actions…"
+NOTES_SELECT_ACTION_CHOICES = (
+    ("library-notes-select-action-move", "move", "Move to folder…"),
+    ("library-notes-select-action-add-keyword", "add_keyword", "Add keyword…"),
+    (
+        "library-notes-select-action-remove-keyword",
+        "remove_keyword",
+        "Remove keyword…",
+    ),
+)
+
+
+def select_strip_labels(
+    rendered_count: int, *, long: bool, export_disabled: bool, actions_disabled: bool
+) -> tuple[str, str, str, str, str]:
+    """The select strip's five button labels, in composed order.
+
+    ``long`` is the full spelling ("Select all 20 shown", "Export selected");
+    the short one is the compact rule's ("All 20", "Export"). Done, Clear and
+    Actions… read the same in both. Both bulk actions reserve the disabled
+    marker's width (``align``), so a selection never changes a label's size.
+
+    Args:
+        rendered_count: The note rows the list renders (Select all's count).
+        long: Whether the strip uses the long spelling.
+        export_disabled: Whether Export selected renders blocked.
+        actions_disabled: Whether Actions… renders blocked.
+
+    Returns:
+        ``(done, select_all, clear, export, actions)``.
+    """
+    return (
+        "Done",
+        f"Select all {rendered_count} shown" if long else f"All {rendered_count}",
+        "Clear",
+        library_disabled_action_label(
+            "Export selected" if long else "Export", export_disabled, align=True
+        ),
+        library_disabled_action_label(
+            NOTES_SELECT_ACTIONS_LABEL, actions_disabled, align=True
+        ),
+    )
+
+
+def select_strip_shape(
+    width: int, *, compact: bool, rendered_count: int
+) -> tuple[bool, bool]:
+    """Decide the select strip's spelling and rows from the pane it lives in.
+
+    TASK-34000.82: the compact rule used to follow the TERMINAL width. At
+    160x45 with a note open the list pane is 60 columns, and the strip
+    painted " 0 selected   Done     Select all 27 shown     Clear     ○  "
+    -- Export selected cut off at the pane edge, and at 120x36 gone entirely.
+    The rule now reads the pane's own width. In order of preference: the
+    long labels on one row; the long labels on two rows (the selection
+    controls, then the two bulk actions); the short labels on one row; the
+    short labels on two rows. A compact shell always takes the short labels
+    (its sheet pins these rows to one line each).
+
+    Costs are measured from the labels with the tree toolbar's chrome
+    (``_TREE_ACTION_CHROME`` per button, ``_TREE_TOOLBAR_PADDING`` per row),
+    and the in-row counter is costed at the widest count this strip can show
+    (every rendered row checked), so a toggle can never outgrow the shape.
+
+    Args:
+        width: The strip's usable width (``_tree_toolbar_width``), or 0 when
+            unmeasured -- which keeps the single row this strip always had.
+        compact: Whether the compact shell is in force.
+        rendered_count: The note rows the list renders.
+
+    Returns:
+        ``(long, two_rows)``.
+    """
+    if width <= 0:
+        return (not compact, False)
+    budget = width - _TREE_TOOLBAR_PADDING
+    counter = cell_len(f"{rendered_count} selected") + 2
+
+    def row_cost(labels: Sequence[str]) -> int:
+        return sum(cell_len(label) + _TREE_ACTION_CHROME for label in labels)
+
+    for long in (False,) if compact else (True, False):
+        done, select_all, clear, export, actions = select_strip_labels(
+            rendered_count, long=long, export_disabled=True, actions_disabled=True
+        )
+        controls = row_cost((done, select_all, clear)) + (counter if long else 0)
+        bulk = row_cost((export, actions))
+        if controls + bulk <= budget:
+            return (long, False)
+        if long and max(controls, bulk) <= budget:
+            return (True, True)
+    return (False, True)
+
+
+def choice_strip_fits(labels: Sequence[str], width: int) -> bool:
+    """Whether one row of choice buttons fits ``width`` (0 = unmeasured)."""
+    if width <= 0:
+        return True
+    needed = sum(cell_len(label) + _TREE_ACTION_CHROME for label in labels)
+    return needed <= width - _TREE_TOOLBAR_PADDING
 
 
 def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -> bool:
@@ -1565,14 +1672,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         identity replays) have run, and only while focus still sits exactly on
         the landing Textual's reset picked. A replay, a hand-off or the user's
         own move wins. Only a control with the same id takes it (no stand-in),
-        and only for an editor resync (the mode was and is ``"editor"``): a
-        transition (opening a note, Create, a delete) owns its own landing.
+        and only for a resync that stays in one mode (``"editor"`` or, since
+        TASK-34000.29 N-14, ``"list"``): a transition (opening a note,
+        Create, a delete) owns its own landing.
         Without this, a replay that was vetoed or replaced left focus on the
         Library grip, and the next sync captured the grip.
         """
-        if mode != "editor" or self.mode != "editor":
+        if mode != self.mode or mode not in {"editor", "list"}:
             return
         if not pruned.id or not self.is_attached:
+            return
+        # TASK-34000.29 (N-14): a LIST resync too -- the select strip's
+        # controls (Done, Select all, Clear, Actions…) and the toolbar keep
+        # their ids across a tree reload, and a replay a later sync replaced
+        # left focus on the Library grip there as well (measured: Escape in
+        # the bulk Move picker, then focus in the filter). Rows are left to
+        # their own replay: their ids are positions, not identities.
+        if mode == "list" and (
+            pruned.has_class("library-notes-row")
+            or pruned.has_class("library-notes-folder-row")
+            or pruned.has_class("library-notes-tree-pager")
+        ):
             return
         try:
             screen = self.screen
@@ -1844,6 +1964,134 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         return self.pane_width or self._measured_width
 
+    def rendered_note_ids(self) -> frozenset[str]:
+        """The notes this list renders -- exactly what Select all selects.
+
+        TASK-34000.29 (N-14): compose counted the tree's rendered rows, the
+        in-place responsive path counted the flat list (every note the rail
+        snapshot holds), and the screen's handler selected from a freshly
+        built projection -- the review saw "Select all 100 shown" over 20
+        rows and "26 selected" after pressing it. All three read this.
+
+        Returns:
+            The unique note ids of the rendered tree rows, or of the flat list
+            when no tree projection exists.
+        """
+        if self.tree_projection is not None:
+            return frozenset(
+                row.note_id
+                for row in self.tree_projection.rows
+                if row.kind == "note" and row.note_id
+            )
+        if self.list_state is None:
+            return frozenset()
+        return frozenset(row.note_id for row in self.list_state.rows)
+
+    def _tree_rows_loading(self) -> bool:
+        """Whether the tree is still loading rows (a pending page row shows)."""
+        return self.tree_projection is not None and any(
+            row.loading for row in self.tree_projection.rows
+        )
+
+    def _select_strip_shape(self) -> tuple[bool, bool]:
+        """``(long, two_rows)`` for the select strip at this pane's width."""
+        return select_strip_shape(
+            self._tree_toolbar_width(self._effective_pane_width()),
+            compact=self.compact,
+            rendered_count=len(self.rendered_note_ids()),
+        )
+
+    @staticmethod
+    def _shape_select_strip_rows(
+        strip: Horizontal, controls: Horizontal, bulk: Horizontal, two_rows: bool
+    ) -> None:
+        """Lay the strip's two groups side by side, or one above the other.
+
+        Inline styles on purpose: the compact sheet pins
+        ``#library-notes-selection-actions`` to one line (``max-height: 1``)
+        and inline styles outrank it -- the editor header's in-place shapes
+        (TASK-34000.8) use the same mechanism.
+        """
+        rows = 2 if two_rows else 1
+        strip.styles.layout = "vertical" if two_rows else "horizontal"
+        strip.styles.height = rows
+        strip.styles.min_height = rows
+        strip.styles.max_height = rows
+        for group in (controls, bulk):
+            group.set_class(not two_rows, "w-auto")
+            group.set_class(two_rows, "w-full")
+            group.styles.height = 1
+
+    def _apply_select_strip_shape(self) -> None:
+        """Re-shape a mounted select strip in place for the current width.
+
+        TASK-34000.82: the labels, the counter and the row count follow the
+        pane's measured width; nothing is recomposed, so a breakpoint
+        crossing keeps every control and its focus
+        (``test_library_note_compact_labels_round_trip_without_recompose``).
+        The open Actions… chooser stacks its options when one row would
+        not fit.
+        """
+        if self.mode != "list" or self.list_state is None:
+            return
+        if not self.list_state.select_mode:
+            return
+        if not self.is_mounted or not self._children_ready or self._pruning:
+            return
+        try:
+            strip = self.query_one("#library-notes-selection-actions", Horizontal)
+            controls = self.query_one("#library-notes-selection-controls", Horizontal)
+            bulk = self.query_one("#library-notes-selection-bulk", Horizontal)
+            select_all = self.query_one("#library-notes-select-all", Button)
+            export = self.query_one("#library-notes-export-selected", Button)
+            actions = self.query_one("#library-notes-select-actions", Button)
+        except NoMatches:
+            return
+        long_labels, two_rows = self._select_strip_shape()
+        self._shape_select_strip_rows(strip, controls, bulk, two_rows)
+        for counter in self.query("#library-notes-selected-count"):
+            counter.display = long_labels
+        _done, select_all_label, _clear, export_label, actions_label = (
+            select_strip_labels(
+                len(self.rendered_note_ids()),
+                long=long_labels,
+                export_disabled=export.disabled,
+                actions_disabled=actions.disabled,
+            )
+        )
+        select_all.label = select_all_label
+        # Whole-branch review IMPORTANT-1: compose through the same marker
+        # helper as compose() and the screen's
+        # `_patch_library_disabled_marker_label`, and re-tier the stashed
+        # base -- a plain rewrite stripped the "○" marker on every crossing
+        # while disabled, and left the stash at the wrong-tier spelling for
+        # the next in-place patch.
+        export._library_disabled_marker_base = (
+            "Export selected" if long_labels else "Export"
+        )
+        export.label = export_label
+        actions.label = actions_label
+        if export.disabled:
+            # Nothing checked (the toggle patcher keeps ``disabled`` true to
+            # the selection): the line under the strip names the blocked
+            # action in the spelling the strip now uses.
+            for status_line in self.query(
+                "#library-notes-selection-status"
+            ).results(Static):
+                status_line.update(
+                    library_selection_count_line(
+                        0, export._library_disabled_marker_base
+                    )
+                )
+        width = self._tree_toolbar_width(self._effective_pane_width())
+        for choices in self.query("#library-notes-select-action-choices"):
+            stacked = not choice_strip_fits(
+                tuple(label for _, _, label in NOTES_SELECT_ACTION_CHOICES), width
+            )
+            count = len(NOTES_SELECT_ACTION_CHOICES)
+            choices.styles.layout = "vertical" if stacked else "horizontal"
+            choices.styles.height = count if stacked else 1
+
     def _toolbar_decisions(self, width: int) -> tuple[bool, bool, bool]:
         """The three width-driven shape answers for one pane width."""
         merged, stacked = _toolbar_shape(width, self.compact)
@@ -1907,6 +2155,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+            return
+        self._apply_select_strip_shape()
 
     def _keep_delete_prompt_in_view(self) -> None:
         """Keep an open delete prompt inside Info's viewport across a resize.
@@ -1967,6 +2217,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         if self.pane_width and pane_width >= self.pane_width:
             self.pane_width = pane_width
+            # TASK-34000.82: the select strip re-shapes in place either way.
+            self._apply_select_strip_shape()
             return
         before = self._toolbar_decisions(self._effective_pane_width())
         self.pane_width = pane_width
@@ -1975,6 +2227,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+            return
+        self._apply_select_strip_shape()
 
     def _effective_work_width(self) -> int:
         """The width the editor header shapes itself to.
@@ -2352,103 +2606,137 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
         # rendered rows are selectable, matching the media/conversations
-        # canvases' ``len(rows)`` convention.
-        rendered_note_ids = (
-            {
-                row.note_id
-                for row in self.tree_projection.rows
-                if row.kind == "note" and row.note_id
-            }
-            if self.tree_projection is not None
-            else {row.note_id for row in list_state.rows}
-        )
-        rendered_count = len(rendered_note_ids)
+        # canvases' ``len(rows)`` convention. TASK-34000.29 (N-14): one
+        # method, read by this compose, the in-place responsive path and the
+        # screen's Select all handler alike.
+        rendered_count = len(self.rendered_note_ids())
         if select_mode:
+            long_labels, two_rows = self._select_strip_shape()
+            export_disabled = list_state.selected_count == 0
+            # Not blocked by a running operation: Actions… is the control a
+            # bulk action starts from and holds focus while it runs, and a
+            # disabled focused control drops focus -- measured as focus
+            # landing in the filter after every bulk Move. Its handler refuses
+            # a second press while the Notes interlock is held (the Task 6
+            # transfer-origin precedent).
+            actions_disabled = export_disabled
+            done_label, select_all_label, clear_label, export_label, actions_label = (
+                select_strip_labels(
+                    rendered_count,
+                    long=long_labels,
+                    export_disabled=export_disabled,
+                    actions_disabled=actions_disabled,
+                )
+            )
             action_row = Horizontal(
                 id="library-notes-selection-actions", classes="ds-toolbar"
             )
             action_row.add_class("h-auto")
+            # TASK-34000.82: two groups -- the selection controls, then the
+            # bulk actions -- side by side when the pane holds them, stacked
+            # when it does not. ``_apply_select_strip_shape`` flips the
+            # shape IN PLACE on a resize, so every widget (and its focus)
+            # survives instead of recomposing.
+            controls = Horizontal(id="library-notes-selection-controls")
+            bulk = Horizontal(id="library-notes-selection-bulk")
+            self._shape_select_strip_rows(action_row, controls, bulk, two_rows)
             with action_row:
-                # task-2853 review round 2: the SAME unbounded-width defect
-                # proved live in the Media canvas's identical counter (see
-                # library_media_canvas.py's compose()) also affects this
-                # canvas's counter -- fixed generally via the shared
-                # ``library-toolbar-count`` class (css/components/
-                # _agentic_terminal.tcss's ``width: auto``) rather than a
-                # per-canvas one-off.
-                in_row_count = Static(
-                    f"{list_state.selected_count} selected",
-                    id="library-notes-selected-count",
-                    classes="library-toolbar-count library-notes-selection-count",
-                    markup=False,
+                with controls:
+                    # task-2853 review round 2: the SAME unbounded-width
+                    # defect proved live in the Media canvas's identical
+                    # counter (see library_media_canvas.py's compose()) also
+                    # affects this canvas's counter -- fixed generally via
+                    # the shared ``library-toolbar-count`` class (css/
+                    # components/_agentic_terminal.tcss's ``width: auto``)
+                    # rather than a per-canvas one-off.
+                    in_row_count = Static(
+                        f"{list_state.selected_count} selected",
+                        id="library-notes-selected-count",
+                        classes="library-toolbar-count library-notes-selection-count",
+                        markup=False,
+                    )
+                    # task-32261 AC#1: this counter costs 11 of the 42
+                    # columns a 100x30 terminal gives the list pane, which is
+                    # what pushed "Export selected" off the right edge.
+                    #
+                    # Hiding it is only safe because task-32272 made the
+                    # count a CLASS the patcher writes to (``library-notes-
+                    # selection-count``, above): ``_apply_library_row_toggle``
+                    # updates every renderer wearing it, hidden ones
+                    # included, so the line below this strip tracks the
+                    # selection -- pinned by ``test_the_compact_select_strip_
+                    # counts_the_row_the_reader_just_checked``. TASK-34000.82:
+                    # it hides with the long labels, wherever the PANE is too
+                    # narrow for them, not only in the compact shell.
+                    in_row_count.display = long_labels
+                    yield in_row_count
+                    yield Button(
+                        done_label,
+                        id="library-notes-select-toggle",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        select_all_label,
+                        id="library-notes-select-all",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    yield Button(
+                        clear_label,
+                        id="library-notes-select-clear",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                with bulk:
+                    export_base = "Export selected" if long_labels else "Export"
+                    export_selected = Button(
+                        # task-4023 AC#1 (RC-07): "○" disabled marker; base
+                        # label stashed for `_apply_library_row_toggle`'s
+                        # in-place patch (compact and full spellings differ,
+                        # so the patcher must not hard-code either).
+                        # task-31959: the enabled spelling reserves the
+                        # marker's own width, so the word holds its column
+                        # when the first selection enables this in place.
+                        export_label,
+                        id="library-notes-export-selected",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    export_selected._library_disabled_marker_base = export_base
+                    export_selected._library_disabled_marker_align = True
+                    export_selected.disabled = export_disabled
+                    # F-018: a disabled action says why.
+                    export_selected.tooltip = (
+                        LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
+                        if export_selected.disabled
+                        else LIBRARY_EXPORT_SELECTED_TOOLTIP
+                    )
+                    yield export_selected
+                    # TASK-34000.29 (N-14), owner question 4: Move to folder,
+                    # Add keyword and Remove keyword for every checked note.
+                    actions = Button(
+                        actions_label,
+                        id="library-notes-select-actions",
+                        classes="library-canvas-action",
+                        compact=True,
+                    )
+                    actions._library_disabled_marker_base = NOTES_SELECT_ACTIONS_LABEL
+                    actions._library_disabled_marker_align = True
+                    actions.disabled = actions_disabled
+                    actions.tooltip = (
+                        LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP
+                        if actions_disabled
+                        else LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP
+                    )
+                    yield actions
+            if list_state.select_actions_visible and not actions_disabled:
+                yield from compose_library_choice_strip(
+                    strip_id="library-notes-select-action-choices",
+                    choice_class="library-notes-select-action-choice",
+                    options=NOTES_SELECT_ACTION_CHOICES,
+                    active_value="",
                 )
-                # task-32261 AC#1: this counter costs 11 of the 42 columns a
-                # 100x30 terminal gives the list pane, which is what pushed
-                # "Export selected" off the right edge -- the strip painted
-                # "0 selected  Done  All 10  Clear" and the guide's fifth
-                # action was unreachable.
-                #
-                # Hiding it is only safe because task-32272 made the count a
-                # CLASS the patcher writes to (``library-notes-selection-
-                # count``, above): ``_apply_library_row_toggle`` now updates
-                # every renderer wearing it, hidden ones included, so the
-                # line below this strip tracks the selection instead of
-                # keeping the compose-time number. The first round of this
-                # branch hid the only patched widget and shipped a stale
-                # "0 selected" over a checked row -- pinned now by
-                # ``test_the_compact_select_strip_counts_the_row_the_reader_
-                # just_checked``.
-                in_row_count.display = not self.compact
-                yield in_row_count
-                yield Button(
-                    "Done",
-                    id="library-notes-select-toggle",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    (
-                        f"All {rendered_count}"
-                        if self.compact
-                        else f"Select all {rendered_count} shown"
-                    ),
-                    id="library-notes-select-all",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                yield Button(
-                    "Clear",
-                    id="library-notes-select-clear",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                export_base = "Export" if self.compact else "Export selected"
-                export_disabled = list_state.selected_count == 0
-                export_selected = Button(
-                    # task-4023 AC#1 (RC-07): "○" disabled marker; base
-                    # label stashed for `_apply_library_row_toggle`'s
-                    # in-place patch (compact and full spellings differ,
-                    # so the patcher must not hard-code either).
-                    # task-31959: the enabled spelling reserves the
-                    # marker's own width, so the word holds its column
-                    # when the first selection enables this in place.
-                    library_disabled_action_label(
-                        export_base, export_disabled, align=True
-                    ),
-                    id="library-notes-export-selected",
-                    classes="library-canvas-action",
-                    compact=True,
-                )
-                export_selected._library_disabled_marker_base = export_base
-                export_selected._library_disabled_marker_align = True
-                export_selected.disabled = export_disabled
-                # F-018: a disabled action says why.
-                export_selected.tooltip = (
-                    LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP
-                    if export_selected.disabled
-                    else LIBRARY_EXPORT_SELECTED_TOOLTIP
-                )
-                yield export_selected
             yield Static(
                 # task-32549: "○ Export selected" said that exporting was
                 # off and nothing about why -- the reason was on a tooltip,
@@ -2512,7 +2800,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 sort_base = f"Sort: {_SORT_LABELS.get(self.sort_mode, 'Newest')}"
                 sort_disabled = running or sort_blocked
                 sort_label = library_disabled_action_label(sort_base, sort_disabled)
-                select_disabled = rendered_count == 0 or running
+                # TASK-34000.29 (N-14): "nothing to select" only once the
+                # tree has answered -- not while its rows are still loading.
+                # A reload renders no rows until its pages land, and a Select
+                # disabled meanwhile refused every focus replay onto it, so
+                # focus fell to the filter after each bulk action.
+                select_disabled = running or (
+                    rendered_count == 0 and not self._tree_rows_loading()
+                )
                 select_label = library_disabled_action_label(
                     "Select", select_disabled
                 )
@@ -3953,41 +4248,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 ).display = not compact
             except NoMatches:
                 pass
-            rendered_count = len(self.list_state.rows)
-            # task-32261 AC#1: the in-strip counter's compact hide flips on a
-            # breakpoint crossing, like the two labels below -- this method
-            # is the canvas's whole in-place responsive path.
-            try:
-                self.query_one(
-                    "#library-notes-selected-count", Static
-                ).display = not compact
-            except NoMatches:
-                pass
-            try:
-                self.query_one("#library-notes-select-all", Button).label = (
-                    f"All {rendered_count}"
-                    if compact
-                    else f"Select all {rendered_count} shown"
-                )
-            except NoMatches:
-                pass
-            try:
-                button = self.query_one("#library-notes-export-selected", Button)
-            except NoMatches:
-                button = None
-            if button is not None:
-                # Whole-branch review IMPORTANT-1: this in-place rewrite must
-                # compose through the same marker helper as compose() and the
-                # screen's `_patch_library_disabled_marker_label`, and re-tier
-                # the stashed base -- a plain rewrite stripped the AC#1 "○"
-                # marker on every compact-boundary crossing while disabled,
-                # and left the stash at the wrong-tier spelling for the next
-                # in-place patch.
-                export_base = "Export" if compact else "Export selected"
-                button._library_disabled_marker_base = export_base
-                button.label = library_disabled_action_label(
-                    export_base, button.disabled, align=True
-                )
+            # task-32261 AC#1 / TASK-34000.82: the select strip's counter,
+            # labels and rows -- now decided by the PANE's width, not the
+            # breakpoint alone, through the one shape method.
+            self._apply_select_strip_shape()
             return
         try:
             second_row = self.query_one("#library-note-header-second-row", Horizontal)

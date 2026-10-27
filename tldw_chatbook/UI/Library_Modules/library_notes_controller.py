@@ -611,7 +611,11 @@ from ...Notes.note_import_plan_models import (
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
-from .canvas_sync import _previous_folder_row_above, _sync_library_canvas
+from .canvas_sync import (
+    _apply_library_row_toggle,
+    _previous_folder_row_above,
+    _sync_library_canvas,
+)
 from .library_notes_state import LibraryNotesState, notes_state_shim_attr
 from . import library_notes_sync_attention as notes_sync_attention
 from .library_notes_work_session import (
@@ -653,6 +657,11 @@ LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
 #: configured profile's full start that outlives the wait paints the honest
 #: not-ready option, and the start's done-callback repaints it when it lands.
 _NOTES_SYNC_START_SETTLE_SECONDS = 0.5
+
+
+def _notes_noun(count: int) -> str:
+    """``note`` or ``notes`` for a bulk receipt's count (TASK-34000.29 N-14)."""
+    return "note" if count == 1 else "notes"
 
 
 class LibraryNotesController:
@@ -2048,9 +2057,25 @@ class LibraryNotesController:
             "notice-refresh": "#library-notes-notice-refresh",
             "link-back": "#library-note-link-back",  # TASK-34000.28 N-21
             "use-in-console": "#library-note-use-in-console",  # TASK-34000.29
+            # TASK-34000.29 (N-14): see the matching rows in
+            # ``_library_notes_semantic_role``.
+            "select-all": "#library-notes-select-all",
+            "select-clear": "#library-notes-select-clear",
+            "select-actions": "#library-notes-select-actions",
         }.get(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
+        elif role.startswith("select-action-choice:"):
+            try:
+                return self.query_one(
+                    "#library-notes-select-action-"
+                    f"{role.removeprefix('select-action-choice:')}",
+                    Widget,
+                )
+            except (NoMatches, QueryError):
+                # The chooser closes on a pick or Escape; its opener is where
+                # a choice's focus belongs once it is gone (the Sort pair).
+                selector = "#library-notes-select-actions"
         elif role.startswith("sort-choice:"):
             try:
                 return self.query_one(
@@ -3247,9 +3272,22 @@ class LibraryNotesController:
             self._apply_library_note_presentation_state()
             self._focus_library_note_control("#library-note-context")
             return
+        if self._library_notes_select_mode and self._notes_state.select_actions_visible:
+            # TASK-34000.29 (N-14): an open Actions… chooser closes first and
+            # hands focus back to its opener; select mode stays.
+            self._notes_state.select_actions_visible = False
+            _sync_library_canvas(
+                self,
+                "notes",
+                then=lambda: self._focus_library_note_control(
+                    "#library-notes-select-actions"
+                ),
+            )
+            return
         if self._library_notes_select_mode:
             self._library_notes_select_mode = False
             self._library_notes_row_selection.clear()
+            self._notes_state.select_actions_visible = False
             _sync_library_canvas(
                 self,
                 "notes",
@@ -6731,6 +6769,7 @@ class LibraryNotesController:
             return
         self._library_notes_select_mode = not self._library_notes_select_mode
         self._library_notes_row_selection.clear()
+        self._notes_state.select_actions_visible = False  # TASK-34000.29 (N-14)
         _sync_library_canvas(self, "notes")
     @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
@@ -6742,7 +6781,498 @@ class LibraryNotesController:
         if self._library_notes_mutation_fenced():
             return
         self._library_notes_row_selection.clear()
+        # TASK-34000.29 (N-14): nothing is checked, so no bulk action is open.
+        self._notes_state.select_actions_visible = False
         _sync_library_canvas(self, "notes")
+    def action_library_notes_toggle_row_selection(self) -> None:
+        """Keyboard Space: toggle the focused Notes row (TASK-34000.29 N-14).
+
+        The Notes twin of ``action_library_media_toggle_row_selection``, and
+        the same as pressing the row in select mode: memory only, nothing is
+        written. The binding is priority, and ``check_action`` claims only a
+        focused Notes row or a Notes pane grip in select mode -- on a grip
+        this is a deliberate no-op, so Space never collapses a pane under a
+        footer promising "space toggle".
+
+        Ruling T7-b: a priority binding never reaches ``on_key``, so the
+        user's own key withdraws a pending programmatic focus landing (Back's
+        row re-focus, the filter's Down hand-off) here, as every other
+        real-input site does.
+        """
+        self._screen._withdraw_library_notes_pending_focus_handoffs()
+        state = self._notes_state
+        if not state.select_mode or self._library_notes_mutation_fenced():
+            return
+        focused = self.focused
+        if focused is None or not focused.has_class("library-notes-row"):
+            return
+        note_id = str(getattr(focused, "note_id", "") or "")
+        if not note_id:
+            return
+        state.tree_selected_placement_id = str(getattr(focused, "placement_id", "") or "")
+        state.row_selection.toggle(note_id)
+        _apply_library_row_toggle(self._screen, "notes", focused, note_id)
+    @on(Button.Pressed, "#library-notes-select-actions")
+    def handle_library_notes_select_actions(self, event: Button.Pressed) -> None:
+        """Open or close the select strip's Actions… chooser (TASK-34000.29 N-14).
+
+        Owner question 4: Move to folder… / Add keyword… / Remove keyword…
+        in one strip under the select row, the Sort chooser's shape. Opening
+        lands focus on the first choice; closing returns it to Actions….
+        Nothing is written here.
+        """
+        event.stop()
+        state = self._notes_state
+        if (
+            self._library_notes_mutation_fenced()
+            or not state.select_mode
+            or not state.row_selection.count
+        ):
+            return
+        state.select_actions_visible = not state.select_actions_visible
+
+        def focus_open_strip() -> None:
+            self._focus_library_choice_strip_active(
+                ".library-notes-select-action-choice", ""
+            )
+
+        def focus_opener() -> None:
+            self._focus_library_note_control("#library-notes-select-actions")
+
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=focus_open_strip if state.select_actions_visible else focus_opener,
+        )
+    @on(Button.Pressed, ".library-notes-select-action-choice")
+    def handle_library_notes_select_action_choice(self, event: Button.Pressed) -> None:
+        """Open the picker or dialog one Actions… choice needs (TASK-34000.29 N-14).
+
+        A choice only ASKS: the bulk seams run from the picker's or dialog's
+        own Enter/Choose/Apply with a value, never from Escape, Cancel or the
+        backdrop (those return ``None``). The chooser closes first and focus
+        goes back to Actions…, so that is the opener the dialog returns focus
+        to when it is dismissed.
+        """
+        event.stop()
+        state = self._notes_state
+        choice = str(getattr(event.button, "choice_value", "") or "")
+        note_ids = tuple(sorted(state.row_selection.ids))
+        state.select_actions_visible = False
+        runnable = bool(
+            note_ids
+            and state.select_mode
+            and not self._library_notes_mutation_fenced()
+            and choice in {"move", "add_keyword", "remove_keyword"}
+        )
+
+        def focus_opener_then_ask() -> None:
+            # Synchronously (``Widget.focus`` is deferred): the dialog records
+            # the focused widget as the opener it returns focus to, and the
+            # choice that was focused is gone with the strip. Measured live:
+            # a deferred focus left the dialog returning focus to the filter.
+            for opener in self.query("#library-notes-select-actions").results(
+                Button
+            ):
+                self._library_notes_programmatic_focus_target = opener
+                self.set_focus(opener, scroll_visible=False)
+            if not runnable:
+                return
+            if choice == "move":
+                self._choose_library_notes_bulk_move_target(note_ids)
+            else:
+                self._ask_library_notes_bulk_keyword(
+                    note_ids, remove=choice == "remove_keyword"
+                )
+
+        _sync_library_canvas(self, "notes", then=focus_opener_then_ask)
+    def _choose_library_notes_bulk_move_target(self, note_ids: tuple[str, ...]) -> None:
+        """Push the all-folders picker for a bulk move (TASK-34000.29 N-14)."""
+        # Imported here (ADR-097): its module already loads at boot for the
+        # Name dialog, and this keeps the boot import graph unchanged.
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderTargetDialog,
+        )
+
+        # The receipt names the folder the user picked, as the picker
+        # painted it -- remembered from the pages the picker was served.
+        paths: dict[str, str] = {}
+
+        async def loader(query: str, offset: int) -> NoteFolderChildPage:
+            page = await self._page_library_notes_folder_targets(query, offset)
+            paths.update(
+                (folder.folder_id, folder.path.strip("/").replace("/", " / "))
+                for folder in page.folders
+            )
+            return page
+
+        count = len(note_ids)
+        self.app.push_screen(
+            LibraryNoteFolderTargetDialog(
+                title=f"Move {count} {_notes_noun(count)} to…", loader=loader
+            ),
+            lambda target_id: (
+                self._bulk_move_library_notes(
+                    note_ids, target_id, destination_label=paths.get(target_id, "")
+                )
+                if target_id
+                else None
+            ),
+        )
+    def _ask_library_notes_bulk_keyword(
+        self, note_ids: tuple[str, ...], *, remove: bool
+    ) -> None:
+        """Push the one-keyword dialog for a bulk keyword change (N-14)."""
+        # Imported here (ADR-097), beside the folder dialogs it shares a
+        # module with.
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteKeywordDialog,
+        )
+
+        count = len(note_ids)
+        noun = _notes_noun(count)
+        self.app.push_screen(
+            LibraryNoteKeywordDialog(
+                title=(
+                    f"Remove a keyword from {count} {noun}"
+                    if remove
+                    else f"Add a keyword to {count} {noun}"
+                ),
+            ),
+            lambda keyword: (
+                self._bulk_keyword_library_notes(note_ids, keyword, remove=remove)
+                if keyword
+                else None
+            ),
+        )
+    def _claim_library_notes_bulk(self) -> bool:
+        """Take the Notes single-writer interlock for one bulk action.
+
+        The same claim ``_schedule_library_notes_tree_mutation`` makes:
+        synchronous, so a second bulk action, Create or a folder action
+        cannot start until the worker releases it, and the tree's paging is
+        fenced so a page in flight cannot land over the change.
+        """
+        if self._library_notes_mutation_fenced():
+            return False
+        self._library_notes_mutation_in_flight = True
+        self._screen._fence_library_notes_tree_mutation()
+        return True
+    def _bulk_move_library_notes(
+        self,
+        note_ids: tuple[str, ...],
+        destination_id: str,
+        *,
+        destination_label: str = "",
+    ) -> bool:
+        """Move every note in ``note_ids`` into one folder (TASK-34000.29 N-14).
+
+        Each note takes the single-note ``move_placement`` shape: placed in
+        the destination first, then detached from every MANUAL folder it was
+        in, so a failure part-way leaves it in both folders rather than in
+        none. Sync-managed placements are never touched.
+
+        Args:
+            note_ids: The checked notes.
+            destination_id: The folder the picker returned.
+            destination_label: That folder's path as the picker painted it.
+
+        Returns:
+            Whether the worker was started.
+        """
+        if not note_ids or not destination_id or not self._claim_library_notes_bulk():
+            return False
+        self.run_worker(
+            self._run_library_notes_bulk_move(
+                note_ids, destination_id, destination_label or "the folder"
+            ),
+            exclusive=True,
+            group="library_notes_bulk",
+        )
+        _sync_library_canvas(self, "notes")
+        return True
+    async def _run_library_notes_bulk_move(
+        self, note_ids: tuple[str, ...], destination_id: str, destination_label: str
+    ) -> None:
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        common = {"scope": "local_note", "user_id": self._library_notes_user_id()}
+        moved: list[str] = []
+        try:
+            for note_id in note_ids:
+                try:
+                    if await self._move_one_library_note(
+                        service, common, note_id, destination_id
+                    ):
+                        moved.append(note_id)
+                except Exception as exc:  # noqa: BLE001 - counted, never raised
+                    logger.warning(
+                        "Bulk note move left one note where it was; error_type={}",
+                        type(exc).__name__,
+                    )
+        finally:
+            self._library_notes_mutation_in_flight = False
+        total = len(note_ids)
+        receipt = (
+            f"Moved {len(moved)} of {total} {_notes_noun(total)} to {destination_label}"
+        )
+        failed = tuple(note_id for note_id in note_ids if note_id not in moved)
+        snapshot = self._library_note_session.snapshot
+        if snapshot is not None and snapshot.note_id in moved:
+            # Info's "Location" names the folders; the open note just moved.
+            self._start_library_note_fact_loads(snapshot.note_id)
+        await self._finish_library_notes_bulk(
+            receipt, failed, failed_verb="did not move"
+        )
+    @staticmethod
+    async def _move_one_library_note(
+        service: Any, common: dict[str, str], note_id: str, destination_id: str
+    ) -> bool:
+        """Place one note in ``destination_id``, then lift its other manual placements."""
+        placements = await service.list_note_placements_for_sync(
+            **common, note_id=note_id
+        )
+        sources = [
+            placement
+            for placement in placements
+            if placement.ownership == "manual"
+            and not placement.owner_id
+            and placement.folder_id != destination_id
+        ]
+        if not await service.attach_note_to_folder(
+            **common, folder_id=destination_id, note_id=note_id
+        ):
+            return False
+        for placement in sources:
+            if not await service.detach_note_from_folder(
+                **common,
+                folder_id=placement.folder_id,
+                note_id=note_id,
+                expected_version=placement.version,
+            ):
+                return False
+        return True
+    def _bulk_keyword_library_notes(
+        self, note_ids: tuple[str, ...], keyword: str, *, remove: bool
+    ) -> bool:
+        """Add or remove one keyword on every note in ``note_ids`` (N-14).
+
+        The keyword is parsed the way the editor's keywords field parses
+        one, so a comma cannot smuggle in a second keyword. The open note's
+        editor holds its keywords in its draft, and every save writes that
+        list whole -- so a busy open note is left alone (named in the
+        receipt), and a changed one is reloaded from the database.
+
+        Returns:
+            Whether the worker was started.
+        """
+        parsed = self._library_note_keywords_from_input(keyword) or []
+        if len(parsed) != 1:
+            notify = getattr(self.app_instance, "notify", None)
+            if parsed and callable(notify):
+                # A toast: select mode hides the status line a notice uses.
+                notify(
+                    "Enter one keyword at a time — a comma separates keywords.",
+                    severity="warning",
+                    markup=False,
+                )
+            return False
+        if not note_ids or not self._claim_library_notes_bulk():
+            return False
+        self.run_worker(
+            self._run_library_notes_bulk_keyword(note_ids, parsed[0], remove),
+            exclusive=True,
+            group="library_notes_bulk",
+        )
+        _sync_library_canvas(self, "notes")
+        return True
+    async def _run_library_notes_bulk_keyword(
+        self, note_ids: tuple[str, ...], keyword: str, remove: bool
+    ) -> None:
+        service = getattr(self.app_instance, "notes_service", None)
+        user_id = self._library_notes_user_id()
+        snapshot = self._library_note_session.snapshot
+        open_id = snapshot.note_id if snapshot is not None else ""
+        open_busy = snapshot is not None and (
+            snapshot.dirty or snapshot.saving or snapshot.in_conflict
+        )
+
+        def write() -> tuple[str, list[str], list[str], list[str]]:
+            # One ``BEGIN IMMEDIATE`` Notes transaction (the save path's own,
+            # ``note_transaction``) around the get-or-create and every link:
+            # a deferred read-then-write upgrade loses to any concurrent
+            # writer with SQLITE_BUSY_SNAPSHOT -- measured here as an
+            # OperationalError on the first run that raced the tree reload
+            # (TASK-34000.28 N-24's trap). The calls below join it.
+            with service.note_transaction(user_id):
+                return write_in_transaction()
+
+        def write_in_transaction() -> tuple[str, list[str], list[str], list[str]]:
+            changed: list[str] = []
+            unchanged: list[str] = []
+            failed: list[str] = []
+            row = service.get_keyword_by_text(user_id, keyword)
+            keyword_id = row.get("id") if isinstance(row, dict) else None
+            # The receipt names the keyword as stored (matching ignores case).
+            label = str(row.get("keyword") or keyword) if keyword_id else keyword
+            if keyword_id is None and not remove:
+                keyword_id = service.add_keyword(user_id, keyword)
+            for note_id in note_ids:
+                if note_id == open_id and open_busy:
+                    failed.append(note_id)
+                    continue
+                if keyword_id is None:
+                    unchanged.append(note_id)
+                    continue
+                try:
+                    linked = (
+                        service.unlink_note_from_keyword(user_id, note_id, keyword_id)
+                        if remove
+                        else service.link_note_to_keyword(user_id, note_id, keyword_id)
+                    )
+                except Exception as exc:  # noqa: BLE001 - counted, never raised
+                    logger.warning(
+                        "Bulk keyword change skipped one note; error_type={}",
+                        type(exc).__name__,
+                    )
+                    failed.append(note_id)
+                    continue
+                (changed if linked else unchanged).append(note_id)
+            return label, changed, unchanged, failed
+
+        try:
+            label, changed, unchanged, failed = await self._run_library_service_call(
+                write, isolate_in_worker=True
+            )
+        except Exception as exc:  # noqa: BLE001 - one normalized boundary
+            logger.warning(
+                "Bulk keyword change failed before any note; error_type={}",
+                type(exc).__name__,
+            )
+            label, changed, unchanged, failed = keyword, [], [], list(note_ids)
+        finally:
+            self._library_notes_mutation_in_flight = False
+        done = len(changed)
+        receipt = (
+            f"Removed '{label}' from {done} {_notes_noun(done)}"
+            if remove
+            else f"Added '{label}' to {done} {_notes_noun(done)}"
+        )
+        if unchanged:
+            receipt += (
+                f" · {len(unchanged)} did not have it"
+                if remove
+                else f" · {len(unchanged)} already had it"
+            )
+        if open_id and open_id in changed:
+            # The editor's draft still lists the old keywords and its next
+            # save would write them back; the note is not dirty (``open_busy``
+            # above), so its session reopens from the database.
+            self.run_worker(
+                self._refresh_library_note_detail(open_id),
+                exclusive=True,
+                group="library_note_detail",
+            )
+        await self._finish_library_notes_bulk(
+            receipt, tuple(failed), failed_verb="could not be changed"
+        )
+    async def _finish_library_notes_bulk(
+        self, receipt: str, failed: tuple[str, ...], *, failed_verb: str
+    ) -> None:
+        """Name the outcome, refresh the tree, and leave select mode on success.
+
+        A partial failure keeps select mode with exactly the notes that did
+        not change still checked, so the same action retries only those, and
+        says so: in select mode the status line is hidden, so the count is
+        also a warning toast.
+        """
+        state = self._notes_state
+        state.select_actions_visible = False
+        if failed and not state.select_mode:
+            # The user left select mode (Escape) while the worker ran: name
+            # what did not change, but check nothing behind a closed mode.
+            receipt += f" · {len(failed)} {failed_verb}"
+            state.row_selection.clear()
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(receipt, severity="warning", markup=False)
+        elif failed:
+            receipt += (
+                f" · {len(failed)} {failed_verb} — still checked, so you can try again"
+            )
+            state.row_selection.clear()
+            state.row_selection.select_all(failed)
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(receipt, severity="warning", markup=False)
+        else:
+            state.select_mode = False
+            state.row_selection.clear()
+        state.notice = receipt
+        if not self.is_mounted:
+            return
+        # Focus is still where the dialog returned it (Actions…) unless the
+        # user moved it while the worker ran -- then it stays put. Otherwise
+        # it goes, SYNCHRONOUSLY and before any resync, to the control whose
+        # portable role survives them: Actions… while select mode stays,
+        # else Done, whose ``select-toggle`` role is the "Select" the
+        # recompose puts in its place. A deferred focus after the sync lost
+        # to the tree reload's own captures: measured, focus ended in the
+        # filter after every bulk Move (fix the role, not the timing).
+        focused = self.focused
+        if focused is None or getattr(focused, "id", "") == "library-notes-select-actions":
+            target_id = (
+                "library-notes-select-actions"
+                if state.select_mode
+                else "library-notes-select-toggle"
+            )
+            for target in self.query(f"#{target_id}").results(Button):
+                if self.focused is not target:
+                    self._library_notes_programmatic_focus_target = target
+                    self.set_focus(target, scroll_visible=False)
+        _sync_library_canvas(self, "notes")
+        await self._refresh_library_notes_tree_in_place()
+    async def _refresh_library_notes_tree_in_place(self) -> None:
+        """Reload every loaded tree slice where it is, its rows kept on screen.
+
+        The single-note mutations' own way (``_reconcile_library_notes_tree_
+        mutation`` reloads exact slices over retained rows), applied to every
+        loaded slice, since a bulk action touches many. A fresh visit
+        (``_request_library_notes_tree_initial_load``) would clear the tree
+        first: no rows until the pages land, and the toolbar's Select
+        disabled meanwhile, which the focus replays then cannot land on.
+        """
+        screen = self._screen
+        state = self._notes_state
+        screen._fence_library_notes_tree_mutation()
+        lifecycle = state.tree_lifecycle_generation
+        filter_state = state.tree_filter_state
+        if state.filter.strip() and filter_state is not None:
+            await screen._run_library_notes_filter(
+                filter_state.query,
+                offset=filter_state.start_offset,
+                direction="target",
+                navigation_generation=state.navigation_generation,
+            )
+            return
+        for key in sorted(
+            state.tree_branches,
+            key=lambda value: (
+                value.parent_id is not None,
+                value.parent_id or "",
+                value.slice_kind,
+            ),
+        ):
+            branch = state.tree_branches.get(key)
+            if branch is None:
+                continue
+            if state.tree_lifecycle_generation != lifecycle or not self.is_mounted:
+                return
+            await screen._load_library_notes_tree_slice(
+                key,
+                direction="target",
+                offset=branch.start_offset,
+                mutation_operation="bulk",
+            )
     @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         """Return the Library notes canvas from the editor to its list view.

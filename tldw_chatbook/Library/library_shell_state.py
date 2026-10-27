@@ -79,6 +79,15 @@ LIBRARY_EXPORT_SELECTED_TOOLTIP = "Export the selected items."
 LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete them."
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 
+# TASK-34000.29 (N-14): the Notes select strip's Actions… chooser (Move to
+# folder / Add keyword / Remove keyword) follows the same pair.
+LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP = (
+    "Select one or more notes to move them or change a keyword."
+)
+LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP = (
+    "Move the selected notes to a folder, or add or remove a keyword on all of them."
+)
+
 # task-28242: the Media canvas's "Review selected" bulk action, same pair.
 LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = "Select one or more items to review them."
 LIBRARY_REVIEW_SELECTED_TOOLTIP = "Review the selected items, one by one."

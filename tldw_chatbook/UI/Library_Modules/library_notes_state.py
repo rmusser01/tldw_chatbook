@@ -426,6 +426,9 @@ class LibraryNotesState:
     )
     sort: str = "newest"
     sort_choices_visible: bool = False
+    #: TASK-34000.29 (N-14): the select strip's Actions… chooser is open.
+    #: State, not canvas-local: Escape, the footer and the pick all read it.
+    select_actions_visible: bool = False
     filter: str = ""
     filter_records: list | None = None
     filter_generation: int = 0

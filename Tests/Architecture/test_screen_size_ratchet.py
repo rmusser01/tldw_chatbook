@@ -1155,7 +1155,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: and the Discard tail's docstring: 38233 -> 38228 lines, 1374 methods
     #: (measured). Rebased 2026-10-26 onto polish-1a's PR #3259 CI fix round
     #: (its +29 lines above): 38228 -> 38257 lines, 1374 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38257, 1374),
+    #: 2026-10-26, TASK-34000.29 (polish-1b Task 7, N-14 + TASK-34000.82;
+    #: owner decision "expand limits, don't contort code"): the Notes Space
+    #: binding, its gate and delegator (``_library_notes_space_claims``), the
+    #: select footer's "space toggle" and chooser tiers, Select all asking
+    #: the mounted canvas, the Actions… delegators and focus roles, and the
+    #: selection reconcile waiting out a tree reload
+    #: (``_library_notes_rows_reloading``), and the visit reload standing
+    #: down under a running Notes mutation: 38257 -> 38386 lines, 1374 -> 1379
+    #: methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38386, 1379),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

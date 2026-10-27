@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ Navigation                     │  a  │ Library notes · Ready · Next: Create a note or add from      │  o                                                   │
+│ │     Import…                    │  v  │ files.                                                       │  t                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (122)                                                  │  e                                                   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for notes   │  s                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ that live in a folder on disk, switch to Folder files. To    │                                                      │
+│ │                                │     │ copy or keep a folder synced, choose Add from files.         │                                                      │
+│ │ ─────────────────────────────  │     │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                               │
+│ │ Browse                    ▾    │     │ Filte▊                                                              ▎                                               │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▊  Move 2 notes to…                                            ▎                                               │
+│ │    Conversations (0)           │     │ ▊ Fil▊  ┌────────────────────────────────────────────────────────┐  ▎                                               │
+│ │  ▸ Notes (122)                 │     │ ▊▁▁▁▁▊  │  Type to narrow folders…                               │  ▎                                               │
+│ │    Prompts (0) — reuse         │     │      ▊  └────────────────────────────────────────────────────────┘  ▎                                               │
+│ │    Skills (1) — AI add-ons     │<--- │  2 se▊    Agent_Lessons                                             ▎                                               │
+│ │    Collections (0)             │     │      ▊    Journal                                                   ▎                                               │
+│ │    Search / RAG — find all     │     │ 2 sel▊    Meetings                                                  ▎                                               │
+│ │ ─────────────────────────────  │     │  ▸ Ag▊    Projects                                                  ▎                                               │
+│ │ Artifacts                 ▾    │     │  ▾ Jo▊    Projects / App launch                                     ▎                                               │
+│ │    All artifacts               │     │  ☑   ▊    Projects / Thesis                                         ▎                                               │
+│ │    Chatbooks                   │     │  ☑   ▊    Recipes                                                   ▎                                               │
+│ │    Reports                     │     │  ☐   ▊    Research                                                  ▎                                               │
+│ │    Dreams                      │     │  ☐   ▊    Study                                                     ▎                                               │
+│ │ ─────────────────────────────  │     │  ☐   ▊  9 folders                                                   ▎                                               │
+│ │ Create                    ▾    │<--- │  ☐   ▊                                 Cancel          Choose       ▎                                               │
+│ │    New note                    │     │  ☐   ▊                                                              ▎                                               │
+│ │    New prompt                  │     │  ☐   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                               │
+│ │    New skill                   │     │  ☐   Daily log 2026-09-22 · now                            ▅ │                                                      │
+│ │ ─────────────────────────────  │     │  ☐   Daily log 2026-09-21 · now                              │                                                      │
+│ │ Study                     ▾    │     │  ☐   Daily log 2026-09-20 · now                              │                                                      │
+│ │    Study decks (0)             │     │  ☐   Daily log 2026-09-19 · now                              │                                                      │
+│ │    Flashcards due: 0           │     │  ☐   Daily log 2026-09-18 · now                              │                                                      │
+│ │    Quizzes (0)                 │     │  ☐   Daily log 2026-09-17 · now                              │                                                      │
+│ │ ─────────────────────────────  │     │  ☐   Daily log 2026-09-16 · now                              │                                                      │
+│ │ Import / Export           ▾  ▆ │     │  ☐   Daily log 2026-09-15 · now                              │                                                      │
+│ │    Import…                     │     │  ☐   Daily log 2026-09-14 · now                              │                                                      │
+│ │  ▾ scroll for more             │     │  ☐   Daily log 2026-09-13 · now                              │                                                      │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter select note | e export selected | esc done | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

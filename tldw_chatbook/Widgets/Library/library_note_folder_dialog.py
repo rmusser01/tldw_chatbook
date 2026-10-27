@@ -44,10 +44,19 @@ class LibraryNoteFolderNameDialog(SafeModalDismissMixin, ModalScreen[str | None]
     #library-note-folder-dialog-actions { height: auto; align-horizontal: right; }
     """
 
-    def __init__(self, *, title: str, initial_name: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        title: str,
+        initial_name: str = "",
+        placeholder: str = "Folder name",
+        confirm_label: str = "Save",
+    ) -> None:
         super().__init__()
         self._title = title
         self._initial_name = initial_name
+        self._placeholder = placeholder
+        self._confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
         with Vertical(id="library-note-folder-name-dialog"):
@@ -58,13 +67,15 @@ class LibraryNoteFolderNameDialog(SafeModalDismissMixin, ModalScreen[str | None]
             )
             yield Input(
                 value=self._initial_name,
-                placeholder="Folder name",
+                placeholder=self._placeholder,
                 id="library-note-folder-name",
             )
             with Horizontal(id="library-note-folder-dialog-actions"):
                 yield Button("Cancel", id="library-note-folder-dialog-cancel")
                 yield Button(
-                    "Save", id="library-note-folder-dialog-confirm", variant="primary"
+                    self._confirm_label,
+                    id="library-note-folder-dialog-confirm",
+                    variant="primary",
                 )
 
     def _submit(self) -> None:
@@ -86,6 +97,28 @@ class LibraryNoteFolderNameDialog(SafeModalDismissMixin, ModalScreen[str | None]
     def _name_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self._submit()
+
+
+class LibraryNoteKeywordDialog(LibraryNoteFolderNameDialog):
+    """Collect one keyword for a bulk keyword change (TASK-34000.29, N-14).
+
+    Owner question 4: Add keyword… and Remove keyword… on the Notes select
+    strip share this one small dialog. It is the folder-name dialog's chrome
+    -- one field, Cancel and a confirm, Enter confirms, Escape / Cancel / the
+    backdrop dismiss with ``None`` -- reused whole, its stylesheet included (a
+    Textual type selector matches a subclass), so the CSS bundle gains no
+    rule. Dismisses with the trimmed text; the caller parses it as one
+    keyword.
+    """
+
+    def __init__(self, *, title: str) -> None:
+        """Build the dialog.
+
+        Args:
+            title: The heading, naming the action and how many notes it
+                covers (no user text).
+        """
+        super().__init__(title=title, placeholder="Keyword", confirm_label="Apply")
 
 
 class LibraryNoteFolderTargetDialog(SafeModalDismissMixin, ModalScreen[str | None]):

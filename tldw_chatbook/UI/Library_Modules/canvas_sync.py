@@ -27,6 +27,8 @@ from ...Library.library_shell_state import (
     LIBRARY_DELETE_SELECTED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_EXPORT_SELECTED_TOOLTIP,
+    LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP,
+    LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP,
     LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP,
     LIBRARY_ANALYZE_SELECTED_TOOLTIP,
     LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP,
@@ -413,6 +415,20 @@ def _apply_library_row_toggle(
         # compose time -- notes spells the compact label differently, so
         # the patcher must not hard-code it.
         _patch_library_disabled_marker_label(export_button)
+        if kind == "notes":
+            # TASK-34000.29 (N-14): Actions… is the second bulk action on the
+            # Notes strip and follows the same count, in place. By query, so
+            # a strip composed before it existed cannot raise.
+            for actions in screen.query("#library-notes-select-actions").results(
+                Button
+            ):
+                actions.disabled = selection.count == 0
+                actions.tooltip = (
+                    LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP
+                    if actions.disabled
+                    else LIBRARY_NOTES_SELECT_ACTIONS_TOOLTIP
+                )
+                _patch_library_disabled_marker_label(actions)
         # task-2853: Media is the only canvas with a "Delete selected" bulk
         # action today (conversations/notes are out of this task's scope) --
         # flip it in place too, same reason/action tooltip pair as export.
