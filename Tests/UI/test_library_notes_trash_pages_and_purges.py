@@ -524,6 +524,11 @@ async def test_at_100x30_previous_back_to_a_full_page_keeps_the_pager_in_view(
     so focus is on Next -- the list's last row, which must be scrolled into
     view. Base (739adc11c8): the old page's offset (0) was replayed, so the
     focused Next and the exact total sat below the fold.
+
+    Then the same Previous twice more, each with ONE concurrent Notes sync
+    injected: during the page change's mount (review R2-2) and right after
+    its landing returns (review R3-1, ruling T8-j) -- both orders end with
+    the landed control in view.
     """
     host, _seed = _mounted(tmp_path, count=25)
     async with host.run_test(size=COMPACT) as pilot:
@@ -620,6 +625,52 @@ async def test_at_100x30_previous_back_to_a_full_page_keeps_the_pager_in_view(
             and _focused_id(screen) == "library-notes-trash-next"
             and _one(screen, "#library-notes-trash-restore-19") is not None,
             lambda: f"page 1 after the injected sync (focus: {_focused_id(screen)!r})",
+        )
+        listing = screen.query_one("#library-notes-trash-list")
+        assert _visible_in(listing, screen.focused), (
+            listing.scroll_y,
+            tuple(listing.region),
+            tuple(screen.focused.region),
+        )
+        assert "1–20 of 25 · Page 1 of 2" in _painted(host)
+
+        # R3-1 (fix round 4, ruling T8-j): the inverse window. ONE default
+        # Notes sync fires right after the Previous landing returns -- after
+        # it queued its keep-in-view, before the next refresh -- so that
+        # sync's deferred offset re-apply is queued LAST. Its capture read
+        # the new list at offset 0 (layout still pending) and put it back
+        # over the scroll-in. Deterministic: the controller's landing is
+        # wrapped, no timing. Base (0fdabffd2b): Next at y=33 under a list
+        # ending at y=28.
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: "21–25 of 25 · Page 2 of 2" in _painted(host)
+            and _focused_id(screen) == "library-notes-trash-previous",
+            lambda: f"page 2 a third time (focus: {_focused_id(screen)!r})",
+        )
+        controller = screen._notes_controller
+        real_land = controller._land_library_notes_trash_focus
+        landed_then_synced: list[bool] = []
+
+        def land_then_sync(role: str) -> None:
+            real_land(role)
+            if not landed_then_synced and role == "trash-previous":
+                landed_then_synced.append(True)
+                _sync_library_canvas(screen, "notes")
+
+        controller._land_library_notes_trash_focus = land_then_sync
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: bool(landed_then_synced)
+            and _focused_id(screen) == "library-notes-trash-next"
+            and _one(screen, "#library-notes-trash-restore-19") is not None,
+            lambda: f"page 1 after the post-landing sync (focus: {_focused_id(screen)!r})",
         )
         listing = screen.query_one("#library-notes-trash-list")
         assert _visible_in(listing, screen.focused), (
