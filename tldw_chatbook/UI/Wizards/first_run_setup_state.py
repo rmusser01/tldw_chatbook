@@ -2292,12 +2292,13 @@ def build_summary_rows(
     auto_retrieve = rag_state.read_auto_retrieve(app_config)
     search_detail = rag_state.search_summary_detail(
         auto_retrieve=auto_retrieve,
-        facts=rag_model if rag_deps_installed else None,
+        facts=rag_model,
+        extras_installed=rag_deps_installed,
     )
-    if not rag_deps_installed:
-        search_detail += " · the optional search extras aren't installed"
+    # AC#5: a saved "automatic" that cannot run without the extras is no tick.
+    automatic_state = ROW_CONFIGURED if rag_deps_installed else ROW_ATTENTION
     rag_row = SummaryRow(
-        "Search", ROW_CONFIGURED if auto_retrieve else ROW_DEFAULT, search_detail
+        "Search", automatic_state if auto_retrieve else ROW_DEFAULT, search_detail
     )
 
     if prefill.model_id and provider_ok:
