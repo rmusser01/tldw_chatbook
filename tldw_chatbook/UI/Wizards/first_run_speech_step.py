@@ -1373,6 +1373,8 @@ class SpeechSetupStep(SetupStep):
     @on(InstallProgressed)
     def _install_progressed(self, event: InstallProgressed) -> None:
         event.stop()  # Minor 9: LibraryScreen's equivalent handler stops it too
+        if self._operation != "install":  # review F5: a tick after the result
+            return
         self._progress = event.progress
         try:
             progress = self.query_one(

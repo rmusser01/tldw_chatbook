@@ -2803,3 +2803,30 @@ async def test_external_vad_install_waits_in_line_naming_what_it_waits_for(
     assert control.wait_if_busy is True
     assert statuses[0] == "Waiting for the OmniVoice voice model download to finish…"
     assert statuses[1] == "Installing managed VAD dependency · 1,024 / 2,048 bytes"
+
+
+@pytest.mark.asyncio
+async def test_a_late_progress_tick_never_rewrites_a_finished_install_status():
+    """TASK-34100.14 review F5: a worker's last InstallProgressed can be
+    handled after its result was applied (post_message vs call_from_thread
+    ordering); it used to flip "Not installed. Download cancelled — nothing
+    was saved." back to "Downloading …" until the reload recomposed.
+    """
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step._install_outcome = "Download cancelled — nothing was saved."
+        step.refresh(recompose=True)
+        await pilot.pause()
+        before = str(step.query_one("#setup-speech-status", Static).render())
+        assert step._operation is None
+        step.post_message(InstallProgressed(_fetch_event(1, 2)))
+        await pilot.pause(0.2)
+        after = str(step.query_one("#setup-speech-status", Static).render())
+
+    assert before == "Not installed. Download cancelled — nothing was saved."
+    assert after == before
+    assert step._progress is None
