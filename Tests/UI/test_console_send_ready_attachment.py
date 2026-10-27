@@ -12,8 +12,9 @@ between ready and disabled, and a label the screen had not yet cleared kept
 Send ready after its image had left the staging list.
 
 Both sites now read the composer's ``has_sendable_payload``, and the screen
-answers its attachment half with the send gate's own predicate. A ready Send
-is one whose press sends.
+answers its attachment half with the send gate's own predicate. So does the
+Workbench's own ``send`` action, which used to derive a third answer. A ready
+Send is one whose press sends.
 """
 
 from __future__ import annotations

@@ -594,8 +594,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # existing entry changes shard. Rebased 2026-10-27 onto dev's 964: 964 + 1 = 965.
 # Rebased 2026-10-29 onto dev's 1140 entries: 1140 + 1 = 1141.
 # TASK-33620.15.22 (2026-10-27) appends 1 whole-file entry at the tail: a
-# staged attachment gets one Send readiness from either sync site (two
-# mounted cases, about 9 s locally), so no existing entry changes shard:
+# staged attachment gets one Send readiness from either sync site (four
+# mounted cases, about 17 s locally), so no existing entry changes shard:
 # dev's 964 + 1 = 965.
 MINIMUM_FILES = 1143
 
