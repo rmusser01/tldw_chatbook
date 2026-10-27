@@ -568,3 +568,29 @@ and explicit successor proofs. C2a fields retain their ownership; unresolved C2c
 C3, T, S and A-runs work remains noninsertable. `require_complete()` always refuses,
 even for empty remaining families. This API performs no owning-row writes,
 dispatch/recovery, holds, receipts, file publication or instruction activation.
+
+### Private logical actor planning and complete C2 composition (C2c)
+
+`content_actor_plan()` consumes the real captured workflow plan and completes the
+246-field C2 ownership matrix. Fixed handlers transform the 116 columns of the
+portable Actor registry, Buddy profiles and bindings, Persona Visual graph, and
+shared Visual Identity graph. Native decoders validate original and projected
+associations; only declared typed references change. Portable UUIDs, revisions,
+manifests, hashes and historical source associations remain intact.
+
+Logical visual rows retain exact pending physical asset/manifest proofs. The
+current native legacy asset admission guard refuses populated asset stores before
+captured planning; data-only logical tests do not establish captured asset support
+or physical UI readability. Persona references use the existing captured authority
+API and retain its member/provenance digests. That API does not prove a requested
+Persona revision, so revision-bound bindings remain noninsertable dependencies.
+No new capture owner, reader, publisher or live configuration authority is added.
+
+Complete C2 carries C1 transitive blockers and the C2a authority slots forward.
+A nonNULL local character authority remains an omitted, pending T column with
+its original association; genuine NULL remains NULL. Dictionary proof discharge
+rechecks the retained C2a native derivation against original metadata and source
+indices, plus mapped metadata and projected indices. C2c successor discharge
+preserves native actor and historical emote graph associations. The immutable
+plan still always refuses C3, T, S, A-runs and integrated completion, including
+empty families. It cannot authorize writes, holds, receipts, dispatch or activation.

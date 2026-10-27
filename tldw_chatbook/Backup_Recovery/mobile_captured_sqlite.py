@@ -221,6 +221,12 @@ class _CapturedSQLite:
 
         return _plan_content_workflows(self)
 
+    def content_actor_plan(self):
+        """Compose C2 logical actor history without asset or execution authority."""
+        from .mobile_content_actors import _plan_content_actors
+
+        return _plan_content_actors(self)
+
     def retire(self):
         self.active = False
         for resource in reversed(tuple(self.resources)):
