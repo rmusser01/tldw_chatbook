@@ -16,6 +16,7 @@ import inspect
 import json
 import os
 import stat
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -1146,3 +1147,82 @@ async def test_prompt_render_failure_reports_error_and_allows_retry(tmp_path):
         assert len(notices) == 2
         assert "exported successfully" in notices[-1][0]
         assert notices[-1][1] == "information"
+
+
+@pytest.mark.asyncio
+async def test_prompt_collision_recheck_failure_reports_error_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    """A refused late metadata probe must preserve the App, file and retry."""
+    from tldw_chatbook.UI.Library_Modules import library_file_export as seam
+
+    destination = _export_folder(tmp_path) / "recheck.md"
+    metadata_unavailable = threading.Event()
+    real_write = seam.write_export_text
+    real_lstat = Path.lstat
+    attempts = []
+    refused_probes = []
+    notices = []
+
+    def racing_write(path, content, *, overwrite=True):
+        attempts.append(overwrite)
+        if not overwrite:
+            path.write_bytes(PRECIOUS)
+        try:
+            return real_write(path, content, overwrite=overwrite)
+        except FileExistsError:
+            # Only the probe AFTER the real atomic no-clobber refusal fails.
+            metadata_unavailable.set()
+            raise
+
+    def unavailable_lstat(path, *args, **kwargs):
+        if path == destination and metadata_unavailable.is_set():
+            refused_probes.append(path)
+            raise PermissionError(errno.EACCES, "private metadata failure detail")
+        return real_lstat(path, *args, **kwargs)
+
+    def notify(message, severity="information"):
+        notices.append((message, severity))
+
+    monkeypatch.setattr(seam, "write_export_text", racing_write)
+    monkeypatch.setattr(Path, "lstat", unavailable_lstat)
+    app = _FakeApp()
+    host = App()
+    async with host.run_test():
+        screen = SimpleNamespace(app=app, run_worker=host.run_worker)
+        try:
+            seam.export_library_prompt_file(
+                screen, destination, _PROMPT_DETAIL, 7, notify
+            )
+            await host.workers.wait_for_complete()
+        finally:
+            metadata_unavailable.clear()
+        assert host.is_running
+        assert refused_probes == [destination]
+        assert attempts == [False]
+        assert notices == [("Error exporting prompt: PermissionError", "error")]
+        assert app.pushed == []
+        assert destination.read_bytes() == PRECIOUS
+        assert _names(destination.parent) == ["recheck.md"]
+
+        detail = dict(_PROMPT_DETAIL)
+        seam.export_library_prompt_file(screen, destination, detail, 7, notify)
+        # The existing-file answer keeps the payload captured before this edit.
+        detail["user_prompt"] = "Later working copy must not be exported."
+        await _answer(app, True)
+        await host.workers.wait_for_complete()
+        assert host.is_running
+        assert attempts == [False, True]
+        written = destination.read_text(encoding="utf-8")
+        assert "Review my week." in written
+        assert "Later working copy" not in written
+        assert notices == [
+            ("Error exporting prompt: PermissionError", "error"),
+            (
+                "Prompt exported successfully to "
+                + seam.describe_export_destination(destination),
+                "information",
+            ),
+        ]
+        assert app.pushed == []
+        assert _names(destination.parent) == ["recheck.md"]

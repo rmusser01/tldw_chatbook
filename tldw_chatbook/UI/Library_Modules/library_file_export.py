@@ -468,13 +468,15 @@ def export_library_prompt_file(
 
     async def _write(*, overwrite: bool) -> None:
         try:
-            await asyncio.to_thread(
-                write_export_text, target, content, overwrite=overwrite
-            )
-        except Exception as exc:
-            if isinstance(exc, FileExistsError) and not overwrite:
-                # A late no-clobber collision asks on the UI loop. Its answer
-                # starts another worker, so neither picker callback waits for I/O.
+            try:
+                await asyncio.to_thread(
+                    write_export_text, target, content, overwrite=overwrite
+                )
+            except FileExistsError:
+                if overwrite:
+                    raise
+                # Keep the late metadata recheck inside the export error boundary.
+                # Its answer starts a worker; neither modal callback waits for I/O.
                 request_export_write(
                     screen.app,
                     target,
@@ -483,6 +485,7 @@ def export_library_prompt_file(
                     picked=validated_path,
                 )
                 return
+        except Exception as exc:
             logger.warning(
                 "Failed to export Library prompt {} (category={}).",
                 prompt_id,

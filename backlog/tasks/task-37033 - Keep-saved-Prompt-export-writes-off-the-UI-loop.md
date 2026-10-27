@@ -15,7 +15,7 @@ references:
 - Docs/superpowers/qa/2026-10-27-textual-book-after-pr3251.md
 assignee:
 - '@codex'
-updated_date: 2026-10-27 22:17
+updated_date: 2026-10-27 22:39
 ---
 
 ## Description
@@ -44,8 +44,8 @@ Evidence, source pins, book pages, controls and limitations: [post-merge Textual
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Promote committed real SQLite/FileSave audit into ordinary and held App dispatch regressions. 2. Move captured Prompt destination writes off the UI loop through existing worker and confirmation ownership; retain Replace/no-clobber/scoped feedback. 3. Verify targeted journeys/helper/source/worker guards, document evidence and commit exact owned files. ADR required: no. ADR path: N/A. Reason: bounded scheduling repair preserving existing service and UI ownership. Existing ADRs: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/036-application-service-composition-lifecycle.md; backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md.
+4. Review fix round1 (I1): reproduce a real no-clobber collision followed by a destination metadata recheck PermissionError in a native App worker, retain safe captured feedback and retry, then place that recheck inside the existing recoverable Prompt-only boundary. Verify focused error/render/direct Prompt controls and the two real mounted racing-file Cancel/Replace controls; qualify unchanged normal success-path AST/import/source and update report. ADR required: no. ADR path: N/A. Reason: preserve the existing scoped export error contract without changing shared helper or ownership boundaries; existing canonical ADR paths above still apply.
 <!-- SECTION:PLAN:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
@@ -54,4 +54,5 @@ Evidence, source pins, book pages, controls and limitations: [post-merge Textual
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Saved Prompt export now captures Markdown and destination before submitting a native screen worker; FileSave and Replace callbacks return immediately, filesystem-only writing runs off-loop, and scoped UI receipts retain the captured Prompt identity. Late no-clobber collisions reopen the existing Replace prompt. Render/write failures keep safe feedback and retry. Added real SQLite/FileSave controls and adapted existing tests to await native export completion without weakening assertions. Final minimal ordinary/held New/Replace controls: 4 parent passes and 4 actual private-child passes, zero errors/skips. Also verified race Cancel/Replace, 34 helper cases, 3 navigation scopes, 64 size/wiring controls and unchanged native preimport budget at 558/558 modules. Fourteen existing native Windows mode/symlink/CRLF/receipt expectations and two unchanged inventory/import guard failures reproduce on original source; all raw receipts and causal witness methodology are retained in .superpowers/sdd/2026-10-27-textual-37031-37034/task-3-report.md. Updated Docs/Architecture/library-shell.md. ADR required: no; existing backlog/decisions/033-application-session-state-ownership.md, 036-application-service-composition-lifecycle.md, 031-tui-keybinding-and-footer-hint-conventions.md, 150-design-token-system-and-design-language.md and 161-component-pattern-library.md preserve existing ownership. Task remains In Progress for coordinator independent review and current-head CI; no full suite or allowance increases.
+Review fix round1 (I1): placed late-collision metadata recheck inside the existing Prompt-only recoverable export error boundary. Permission failures now report the captured sanitized exception category instead of escaping as a fatal native worker failure; worker defaults, named nonexclusive ownership, generic helper and Notes/Report remain unchanged. New native App regression arms a destination Path.lstat PermissionError only after a real atomic no-clobber refusal, verifies file preservation, safe feedback, App survival and explicit same-destination Replace retry with captured content. TDD: task3-r1-red01 has one intended WorkerFailed(PermissionError) failure and no errors/skips; task3-r1-green01 passes all10 focused parent cases and both actual private racing-file children with zero failures/errors/skips. Focused Ruff/format pass. AST qualification preserves ordinary writer await, existing error feedback/success receipt, captured/modal/worker ownership and every function/import outside Prompt export. ADR required: no; existing canonical ADRs in the plan remain applicable. M1 inherited dependency/test warnings remain deferred; task stays In Progress pending coordinator scoped rereview and final combined-source/CI gates.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
