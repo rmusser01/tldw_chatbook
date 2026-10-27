@@ -19,6 +19,9 @@ from tldw_chatbook.UI.Console_Modules.environment import (
     ConsoleEnvironmentController,
 )
 
+#: The automatic refreshes' root-read worker group (TASK-33620.15.1.6).
+_ROOT_GROUP = getattr(ConsoleEnvironmentController, "ROOT_WORKER_GROUP", None)
+
 
 class Fixture:
     def __init__(self, monkeypatch, *, root="/w/repo", rail_open=True):
@@ -58,7 +61,13 @@ class Fixture:
             ),
         )
 
+        self.root_reads = 0
+
         def run_worker(fn, **kwargs):
+            if kwargs.get("group") == _ROOT_GROUP:
+                self.root_reads += 1
+                fn()  # the off-loop root read (TASK-33620.15.1.6), inline
+                return
             self.dispatched.append(kwargs)
             fn()  # synchronous: the "worker" runs inline
 
@@ -234,7 +243,8 @@ def test_stale_scope_snapshot_is_dropped_when_root_changes_mid_flight(monkeypatc
     fx = Fixture(monkeypatch)
 
     def run_worker_scope_shift(fn, **kwargs):
-        fx.root = "/other/repo"  # root changes while the "worker" runs
+        if kwargs.get("group") != _ROOT_GROUP:
+            fx.root = "/other/repo"  # root changes while the GATHER runs
         fn()
 
     fx.controller._run_worker = run_worker_scope_shift
@@ -306,7 +316,18 @@ class DeferredFixture:
             ),
         )
 
+        self.root_jobs: list = []
+        self.defer_root_reads = False
+
         def run_worker(fn, **kwargs):
+            if kwargs.get("group") == _ROOT_GROUP:
+                # The off-loop root read (TASK-33620.15.1.6) runs inline unless
+                # a test holds it to exercise that hop.
+                if self.defer_root_reads:
+                    self.root_jobs.append(fn)
+                else:
+                    fn()
+                return
             self.dispatched.append(kwargs)
             self.jobs.append(fn)  # queued -- NOT run inline
 
@@ -1135,3 +1156,223 @@ def test_the_unknown_landing_does_not_pretend_a_scope_was_established(monkeypatc
     fx.root = "/w/repo"
     fx.controller.poll_tick()
     assert fx.controller.snapshot.git.availability is EnvSourceAvailability.OK
+
+
+# ---------------------------------------------------------------------------
+# TASK-33620.15.1.6: Environment root reads stay off the UI loop.
+#
+# Each root read is a Change Review consent lookup (a SELECT on the workspace
+# registry database). Measured live at load 30-47, a refresh read it two or
+# three times on the UI loop -- `request_refresh` asked, `_land`'s
+# stale-scope guard asked again, and `poll_tick` asked before delegating --
+# and with only one read left a rail open still held the loop 104.5 ms and a
+# poll tick 146 ms. The automatic refreshes now read the root on a worker;
+# an explicit Refresh press reads it once on the loop; the guard's re-check
+# runs in the gather worker, after the gather.
+# ---------------------------------------------------------------------------
+
+
+class _RootReads:
+    """Counts root reads, labelled by the phase the test says it is in."""
+
+    def __init__(self, fx) -> None:
+        self.fx = fx
+        self.phase = "ui"
+        self.reads: list[str] = []
+        fx.controller._workspace_root_accessor = self
+
+    def __call__(self):
+        self.reads.append(self.phase)
+        return self.fx.root
+
+
+def _queue_landings(fx) -> list:
+    """Hold each gather landing until the test runs it, like the UI loop.
+
+    A root read's continuation is not what these tests hold, so it runs at
+    once (a test that wants it held sets ``fx.defer_root_reads``).
+    """
+    landings: list = []
+
+    def marshal(fn, *args):
+        if getattr(fn, "__name__", "") == "_root_read":
+            fn(*args)
+        else:
+            landings.append((fn, args))
+
+    fx.controller._marshal_to_ui = marshal
+    return landings
+
+
+def _in_phase(reads: _RootReads, phase: str, action) -> None:
+    reads.phase = phase
+    try:
+        action()
+    finally:
+        reads.phase = "ui"
+
+
+def test_automatic_refreshes_read_no_root_on_the_ui_loop(monkeypatch):
+    """AC#1: rail open, run completion / focus regain and the poll read off-loop.
+
+    Base (origin/dev 3be493413a): each asks the accessor on the UI loop --
+    rail open and completion once, the poll tick twice -- and no worker does.
+    """
+    fx = DeferredFixture(monkeypatch)
+    fx.defer_root_reads = True
+    reads = _RootReads(fx)
+
+    fx.controller.notify_rail_opened()
+    fx.controller.request_refresh()  # the run-completion / focus-regain nudge
+    fx.controller.poll_tick()
+    assert reads.reads == [], f"the UI loop read the root: {reads.reads}"
+    assert len(fx.root_jobs) == 3
+
+    for job in list(fx.root_jobs):
+        _in_phase(reads, "worker", job)
+    assert reads.reads == ["worker"] * 3
+    assert len(fx.jobs) >= 1  # the continuations dispatched the local gather
+
+
+def test_an_explicit_refresh_reads_the_root_once_and_settles_its_ack(monkeypatch):
+    """AC#1: the Refresh press keeps its one read, so its ack is known at once."""
+    fx = DeferredFixture(monkeypatch)
+    fx.defer_root_reads = True
+    reads = _RootReads(fx)
+
+    fx.controller.request_refresh(include_net=True, force_net=True)
+
+    assert reads.reads == ["ui"]
+    assert fx.root_jobs == []
+    assert fx.controller.pending_ack_tiers == frozenset({"local", "net"})
+
+
+def test_a_bound_refresh_s_landings_never_read_the_root(monkeypatch):
+    """AC#1: the stale-scope guard's re-check runs in the gather worker.
+
+    Base: the local and the net landing each ask the accessor on the UI loop.
+    """
+    fx = DeferredFixture(monkeypatch)
+    reads = _RootReads(fx)
+    landings = _queue_landings(fx)
+
+    _in_phase(reads, "worker", fx.controller.notify_rail_opened)  # root job inline
+    _in_phase(reads, "worker", lambda: fx.run_job(0))  # local gather
+    _in_phase(reads, "landing", lambda: (lambda fn, args: fn(*args))(*landings.pop(0)))
+    _in_phase(reads, "worker", lambda: fx.run_job(1))  # the deferred net fetch
+    _in_phase(reads, "landing", lambda: (lambda fn, args: fn(*args))(*landings.pop(0)))
+
+    assert "landing" not in reads.reads, reads.reads
+    assert fx.controller._landed_root == "/w/repo"
+    assert fx.controller.snapshot.git.branch == "feat/call-1"
+    assert fx.controller.snapshot.pr.number == 7
+
+
+def test_an_unbound_automatic_refresh_lands_after_its_off_loop_read(monkeypatch):
+    """The unbound landing reuses the root read that chose it; no gather runs."""
+    fx = DeferredFixture(monkeypatch, root=None)
+    fx.defer_root_reads = True
+    reads = _RootReads(fx)
+
+    fx.controller.notify_rail_opened()
+    assert fx.snapshots == []  # nothing lands before the root is read
+    _in_phase(reads, "worker", fx.root_jobs.pop(0))
+
+    assert reads.reads == ["worker"]
+    assert fx.controller.snapshot.git.availability is EnvSourceAvailability.UNBOUND
+    assert fx.jobs == []
+
+
+def test_a_root_read_answered_after_the_rail_closed_dispatches_nothing(monkeypatch):
+    fx = DeferredFixture(monkeypatch)
+    fx.defer_root_reads = True
+    fx.controller.notify_rail_opened()
+    fx.rail_open = False  # the user collapsed the Inspect rail meanwhile
+    fx.root_jobs.pop(0)()
+    assert fx.jobs == [] and fx.snapshots == []
+
+
+def test_an_older_root_read_answered_late_acts_on_the_newer_answer(monkeypatch):
+    """Reads answer out of order; a late older one must not re-dispatch its root."""
+    fx = DeferredFixture(monkeypatch, root="/w/A")
+    fx.defer_root_reads = True
+    held: list = []
+    fx.controller._marshal_to_ui = lambda fn, *args: held.append((fn, args))
+
+    fx.controller.notify_rail_opened()  # read 1: both tiers wanted
+    fx.root_jobs.pop(0)()  # answers /w/A; its continuation is in flight
+    fx.root = "/w/B"
+    fx.controller.poll_tick()  # read 2
+    fx.root_jobs.pop(0)()  # answers /w/B
+    newer, older = held.pop(1), held.pop(0)
+    newer[0](*newer[1])
+    older[0](*older[1])
+
+    assert fx.controller._observed_root == "/w/B"
+    # The rail open's net request is kept, for the root the newest read named.
+    assert fx.controller._net_pending_scope == "/w/B"
+    for index in range(len(fx.jobs)):
+        fx.run_job(index)
+    scopes = [args[0] for _fn, args in held]
+    assert scopes and set(scopes) == {"/w/B"}, scopes
+
+
+def test_a_landing_whose_root_changed_during_its_gather_is_dropped(monkeypatch):
+    """AC#2, the in-flight half: the worker's re-check sees the new root."""
+    fx = DeferredFixture(monkeypatch)
+    landings = _queue_landings(fx)
+    fx.controller.notify_rail_opened()
+    fx.root = "/w/other"  # changes while the gather runs
+    fx.run_job(0)
+    fn, args = landings.pop(0)
+    fn(*args)
+    assert fx.snapshots == []
+    assert fx.controller._has_landed is False
+    assert fx.controller._net_pending is False  # the deferred net is dropped too
+
+
+def test_a_landing_is_dropped_when_a_newer_refresh_saw_another_root(monkeypatch):
+    """AC#2, the hop half: the root changes after the worker's re-check.
+
+    A net landing in flight keeps the net tier's newest token (the new root's
+    net fetch defers until its local tier lands), so only the scope guard can
+    drop it. The worker saw the OLD root; the poll tick that ran before the
+    landing reached the UI loop saw the new one, and that is enough.
+    """
+    fx = DeferredFixture(monkeypatch)
+    landings = _queue_landings(fx)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    fn, args = landings.pop(0)
+    fn(*args)  # local lands for /w/repo and issues the net fetch
+    fx.run_job(1)  # gh returns; the worker re-checks: still /w/repo
+    assert len(landings) == 1
+
+    fx.root = "/w/other"
+    fx.controller.poll_tick()  # sees the change: refetches, net defers
+    snapshots_before = len(fx.snapshots)
+    fn, args = landings.pop(0)
+    fn(*args)  # the old root's PR
+
+    assert len(fx.snapshots) == snapshots_before
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.PENDING
+
+
+def test_a_worker_root_read_that_raises_drops_the_landing_and_its_ack(monkeypatch):
+    """A failed re-check is "cannot tell" (UNKNOWN_ROOT), never a pass."""
+    fx = DeferredFixture(monkeypatch)
+    landings = _queue_landings(fx)
+    fx.controller.request_refresh(force_net=True)
+    assert fx.controller.pending_ack_tiers == frozenset({"local"})
+
+    def boom():
+        raise RuntimeError("registry read failed")
+
+    fx.controller._workspace_root_accessor = boom
+    fx.run_job(0)
+    fn, args = landings.pop(0)
+    fn(*args)
+
+    assert fx.controller._has_landed is False
+    assert fx.controller.pending_ack_tiers == frozenset()
+    assert len(fx.snapshots) == 1  # the ack clear is announced
