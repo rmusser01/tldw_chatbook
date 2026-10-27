@@ -865,10 +865,12 @@ MINIMUM_FILES = 1748
 # - task 7 fix round 1 (2026-10-27): Tests/UI/test_library_notes_deferred_
 #   visit_reload.py (one real-Library boot, ~6 s; review R0 M-1, ruling
 #   T7-f): 920 -> 921.
+# - task 8 (2026-10-27, part 8a, ruling T8-b): Tests/UI/test_library_notes_
+#   trash_pages_and_purges.py (one real-Library boot, ~9 s alone): 921 -> 922.
 # Rebased 2026-11-06 onto dev 2684e5453f (1748 entries, floor 1748): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 1748 + 5 = 1753.
-MINIMUM_FILES = 1753
+# moves; the floor is the measured entry count: 1748 + 6 = 1754.
+MINIMUM_FILES = 1754
 
 
 def read_census(path: Path) -> list[str]:
