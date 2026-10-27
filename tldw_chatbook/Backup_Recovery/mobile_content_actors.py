@@ -783,7 +783,12 @@ def _plan_content_actors(reads):
         else:
             raise ValueError("unknown_actor_successor")
         discharged.append(item)
-    # Native historical emotes bind one exact graph, never the current actor binding.
+    # Native fallback history need not select an asset or a visual pack.
+    expressions = {
+        r.original[0]: dict(r.values)
+        for r in workflows.settings.graph.source_rows
+        if r.table == "character_expression_images"
+    }
     original_messages = {
         r.original[0]: dict(r.values)
         for r in workflows.settings.source_rows
@@ -804,15 +809,34 @@ def _plan_content_actors(reads):
         version = builder.by_id["visual_identity_pack_versions"].get(
             emote.pack_version_id
         )
-        if (
-            asset is None
-            or version is None
-            or asset["pack_id"] != emote.pack_id
-            or version["pack_id"] != emote.pack_id
-            or asset["pack_version_id"] != emote.pack_version_id
-            or asset["expression_key"] != emote.expression_key
-            or asset["deleted"]
-        ):
+        if emote.asset_id is None:
+            # A native no-selection snapshot may retain both pack IDs; a legacy
+            # expression has neither. Neither form proves a visual asset.
+            mismatch = (emote.pack_id is None) != (emote.pack_version_id is None)
+            if emote.pack_id is not None:
+                mismatch = mismatch or (
+                    version is None
+                    or version["pack_id"] != emote.pack_id
+                    or emote.expression_id is not None
+                )
+        else:
+            mismatch = (
+                asset is None
+                or version is None
+                or asset["pack_id"] != emote.pack_id
+                or version["pack_id"] != emote.pack_id
+                or asset["pack_version_id"] != emote.pack_version_id
+                or asset["expression_key"] != emote.expression_key
+                or asset["deleted"]
+            )
+        if emote.expression_id is not None:
+            expression = expressions.get(emote.expression_id)
+            mismatch = mismatch or (
+                expression is None
+                or expression["character_id"] != emote.actor_id
+                or expression["deleted"]
+            )
+        if mismatch:
             builder.blockers.append(
                 _ContentBlocker("messages", (identity,), "native_emote_graph_mismatch")
             )

@@ -631,3 +631,170 @@ def test_native_manifest_generation_maps_declared_reference_without_rehashing_hi
     assert before.pack_content_sha256 == after.pack_content_sha256
     assert ("visual_asset", 221) in row.dependencies
     assert original["manifest_json"] == source_bytes
+
+
+def test_captured_complete_c2_preserves_native_emote_fallback_and_legacy_expression(
+    tmp_path, monkeypatch
+):
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.test_mobile_content_graph import _install_rows
+    from Tests.Character_Chat.test_visual_identity_resolution import _png_bytes
+    from tldw_chatbook.Character_Chat.visual_identity import resolve_visual_identity
+    from tldw_chatbook.Chat.message_metadata import (
+        CharacterEmoteMetadata,
+        MessageMetadata,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    encoded = {}
+    image = _png_bytes((20, 30, 40))
+
+    def seed(connection, purpose):
+        _seed_actors(connection, purpose)
+        if purpose == "legacy":
+            connection.execute(
+                "INSERT INTO visual_identity_packs(id,owner_user_id,title) VALUES (221,0,'Unbound historical pack')"
+            )
+            connection.execute(
+                "UPDATE character_expression_images SET state_id='thinking' WHERE id=11"
+            )
+
+    def native_seed(db, purpose):
+        if purpose != "legacy":
+            return
+        db.set_character_expression_image(11, "thinking", image, "image/png")
+        native = resolve_visual_identity(
+            db,
+            actor_kind="character",
+            actor_id=11,
+            requested_state="thinking",
+            user_data_dir=tmp_path / "source-native-assets",
+        )
+        assert native.resolution_source == "legacy_expression"
+        assert native.expression_id == 11
+        assert (native.pack_id, native.pack_version_id, native.asset_id) == (
+            None,
+            None,
+            None,
+        )
+        forms = {
+            "graph-answer": CharacterEmoteMetadata(
+                0, actor_kind="character", actor_id=1, fallback_reason="no_active_pack"
+            ),
+            "graph-variant": CharacterEmoteMetadata(
+                0,
+                actor_kind="character",
+                actor_id=11,
+                expression_id=native.expression_id,
+                expression_key=native.resolved_expression_key,
+            ),
+            "emote-cross-owner": CharacterEmoteMetadata(
+                0,
+                actor_kind="character",
+                actor_id=1,
+                expression_id=11,
+                expression_key=native.resolved_expression_key,
+            ),
+            "emote-partial": CharacterEmoteMetadata(
+                0,
+                actor_kind="character",
+                actor_id=11,
+                pack_id=221,
+            ),
+        }
+        for identity, emote in forms.items():
+            if identity.startswith("emote-"):
+                db.add_message(
+                    {
+                        "id": identity,
+                        "conversation_id": "conversation",
+                        "sender": "Assistant",
+                        "role": "assistant",
+                        "content": "Exact emote history",
+                        "parent_message_id": "graph-user",
+                    }
+                )
+            encoded[identity] = MessageMetadata(character_emote=emote).to_json()
+            assert MessageMetadata.from_json(encoded[identity]).character_emote == emote
+            with db.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE messages SET metadata_json=? WHERE id=?",
+                    (encoded[identity], identity),
+                )
+
+    with content_reads(tmp_path, monkeypatch, seed, native_seed=native_seed) as reads:
+        plan = reads.content_actor_plan()
+        messages = {r.original[0]: r for r in plan.rows if r.table == "messages"}
+        mismatched = {
+            b.original[0]
+            for b in plan.blockers
+            if b.table == "messages" and b.reason == "native_emote_graph_mismatch"
+        }
+        checks = {
+            "actor_only_fallback_preserved": "graph-answer" in messages,
+            "native_legacy_expression_preserved": "graph-variant" in messages,
+            "cross_owner_refuses": "emote-cross-owner" in mismatched
+            and "emote-cross-owner" not in messages,
+            "partial_pack_refuses": "emote-partial" in mismatched
+            and "emote-partial" not in messages,
+        }
+        assert all(checks.values()), checks
+        originals = {
+            r.original[0]: dict(r.values)["metadata_json"]
+            for r in plan.workflows.settings.source_rows
+            if r.table == "messages"
+        }
+        for identity in ("graph-answer", "graph-variant"):
+            assert originals[identity] == encoded[identity]
+            expected = MessageMetadata.from_json(encoded[identity]).character_emote
+            actual = MessageMetadata.from_json(
+                dict(messages[identity].values)["metadata_json"]
+            ).character_emote
+            assert actual == replace(
+                expected,
+                actor_id=plan.identities.mapped("character", expected.actor_id),
+                expression_id=plan.identities.mapped(
+                    "character_expression", expected.expression_id
+                )
+                if expected.expression_id is not None
+                else None,
+            )
+            assert not any(
+                p.startswith("C2c:") for p in messages[identity].required_proofs
+            )
+        with closing(CharactersRAGDB(":memory:", "mapped-emote-consumer")) as sink:
+            _install_rows(
+                sink,
+                [
+                    r
+                    for r in plan.rows
+                    if r.table in {"character_cards", "character_expression_images"}
+                ],
+            )
+            mapped_actor = plan.identities.mapped("character", 11)
+            assert (
+                sink.get_character_expression_image(mapped_actor, "thinking") == image
+            )
+            assert (
+                sink.get_character_expression_image(
+                    plan.identities.mapped("character", 1), "thinking"
+                )
+                is None
+            )
+            resolved = resolve_visual_identity(
+                sink,
+                actor_kind="character",
+                actor_id=mapped_actor,
+                requested_state="thinking",
+                user_data_dir=tmp_path / "mapped-native-assets",
+            )
+            assert resolved.resolution_source == "legacy_expression"
+            assert resolved.expression_id == plan.identities.mapped(
+                "character_expression", 11
+            )
+            assert (resolved.pack_id, resolved.pack_version_id, resolved.asset_id) == (
+                None,
+                None,
+                None,
+            )

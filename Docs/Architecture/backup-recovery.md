@@ -593,6 +593,10 @@ A nonNULL local character authority remains an omitted, pending T column with
 its original association; genuine NULL remains NULL. Dictionary proof discharge
 rechecks the retained C2a native derivation against original metadata and source
 indices, plus mapped metadata and projected indices. C2c successor discharge
-preserves native actor and historical emote graph associations. The immutable
+preserves native actor and historical emote associations: actor-only fallback
+needs no selected asset, legacy expressions must belong to their recorded
+character, and selected visual assets must match their exact pack/version graph.
+A no-selection snapshot may retain a matching pack/version pair without claiming
+asset proof; partial pairs and cross-owner expressions refuse. The immutable
 plan still always refuses C3, T, S, A-runs and integrated completion, including
 empty families. It cannot authorize writes, holds, receipts, dispatch or activation.
