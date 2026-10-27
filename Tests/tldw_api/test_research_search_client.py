@@ -412,3 +412,40 @@ async def test_research_search_client_routes_paper_detail_and_medrxiv_aliases(
     assert semantic_detail.paperId == "abc"
     assert medrxiv.items[0].doi == "10.1101/2026.01.01.000001"
     assert medrxiv_detail.title == "Clinical Preprint Governance"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"items": ["a", "b"], "total_results": 2.0}, id="non-dict-items-float-total"),
+        pytest.param([{"x": 1}], id="list-body"),
+    ],
+)
+async def test_paper_search_accepts_raw_passthrough_list_shapes(monkeypatch, body):
+    client = TLDWAPIClient("http://localhost:8000")
+    monkeypatch.setattr(client, "_request", AsyncMock(return_value=body))
+    result = await client.paper_search(PaperSearchRequest(endpoint="medrxiv/raw/pubs"))
+    assert result.items == (body["items"] if isinstance(body, dict) else [])
+    assert result.raw == (None if isinstance(body, dict) else body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{"id": 123, "title": ["t"]}, [1, 2]])
+async def test_paper_search_detail_accepts_int_id_and_raw_bodies(monkeypatch, body):
+    client = TLDWAPIClient("http://localhost:8000")
+    monkeypatch.setattr(client, "_request", AsyncMock(return_value=body))
+    result = await client.paper_search_detail(
+        PaperSearchDetailRequest(endpoint="medrxiv/raw/pub")
+    )
+    assert (result.id == 123) if isinstance(body, dict) else (result.raw == body)
+
+
+@pytest.mark.asyncio
+async def test_paper_search_ingest_accepts_list_data(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    monkeypatch.setattr(client, "_request", AsyncMock(return_value={"data": [1, 2]}))
+    result = await client.paper_search_ingest(
+        PaperSearchIngestRequest(endpoint="arxiv/ingest")
+    )
+    assert result.data == [1, 2]

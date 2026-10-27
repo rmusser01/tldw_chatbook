@@ -1,4 +1,6 @@
 import inspect
+import pathlib
+import re
 from unittest.mock import Mock
 
 import pytest
@@ -330,12 +332,10 @@ async def test_paper_search_detail_and_ingest_use_public_client_methods():
 
 
 def test_no_interop_module_calls_private_client_request():
-    import pathlib, re
-
     root = pathlib.Path(research_search_module.__file__).parents[1]
     offenders = [
         str(p.relative_to(root))
         for p in root.glob("*_Interop/**/*.py")
-        if re.search(r"\bclient\._request\(", p.read_text())
+        if re.search(r"\._request\(|getattr\([^)]*[\"']_request[\"']", p.read_text())
     ]
     assert offenders == []
