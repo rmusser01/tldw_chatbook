@@ -937,11 +937,11 @@ class EvalsScreen(LabScreen):
     def _on_character_bench_editor_saved(
         self, event: CharacterBenchEditor.Saved
     ) -> None:
-        """Mirrors ``_on_bench_editor_saved`` exactly, for the character-
-        bench editor's own ``Saved`` message: re-selecting reloads the
-        form from what ``save_character_bench`` actually persisted and
-        refreshes the rail row and inspector alongside it, the same way
-        any other selection change does."""
+        """Unconditionally re-select the character bench after its Save.
+        The new form reloads what ``save_character_bench`` actually
+        persisted, refreshing the rail row and inspector alongside it.
+        This character-editor path remains separate from the conditional
+        word-bench Save publication."""
         event.stop()
         self.select(kind="character_bench", id=event.bench_id)
 
