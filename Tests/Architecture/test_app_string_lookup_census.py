@@ -8,6 +8,10 @@ those literal-name lookups per top-level package (top-level modules count under
 app-like when its last name segment is ``app``, ``app_instance``, ``tldw_app``,
 ``_app`` or ``_app_instance`` (``app``, ``self.app_instance``, ``screen.app``).
 
+Non-literal lookups such as ``getattr(app, name)`` are not counted (about 45,
+e.g. ``Event_Handlers/LLM_Management_Events/server_lifecycle.py``), so they
+bypass both the count and the private-name rule.
+
 * A count above its pin fails: reach the service explicitly instead.
 * A count below its pin fails too: lower the pin in the same change.
 * A lookup of an underscore-prefixed app attribute that is not in
