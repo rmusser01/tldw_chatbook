@@ -807,3 +807,32 @@ A separate incidence-size preflight was considered and rejected: it would duplic
 native projection semantics without a complete faithful bound for JSON, base64,
 masks, sanitizer and legacy expansion. The shared explicit native allowance keeps
 those reservations beside the operations that allocate the representations.
+
+### Retired world-book entry identity occupancy
+
+The existing integer `world_book_entry` identity domain includes live rows and
+native hard-delete proofs from the fixed captured `sync_log` table in both source
+and canonical partitions. A qualifying proof has the exact native entity,
+operation, version and body-free `{id, world_book_id}` payload. Its IDs obey
+SQLite integer grammar and `entity_id` equals the native text cast of `id`;
+booleans, coercions and fabricated positive-only constraints are invalid.
+
+One native identity reserves once, including when a retained tombstone shares a
+live identity. Allocation excludes canonical retired identities as well as live,
+source and newly reserved targets under the existing signed-integer bounds.
+Each original proof retains its parent association and authenticated provenance;
+its `world_book_id` must resolve through the existing typed parent map or yield
+an exact dependency refusal. Malformed, body-bearing or ambiguous required proofs
+refuse before effects.
+
+A historical reservation creates no live entry, parent, body or authority and
+does not prove frontier completeness. Native retention and unique INSERT current
+proof remain unchanged. The fixed captured read interface is sufficient; no new
+SQL, reader, capture or callback capability is introduced. Pure plans remain
+noninsertable until their integrated and native owning gates are qualified.
+
+This union is necessary because native hard-delete retention keeps deletion
+proofs after their entry rows disappear. Reserving only live IDs could associate
+an imported deletion with a different canonical entry. Actual native deletion,
+body privacy, retired/live collision, parent closure and no-effects retirement
+checks qualify this rule; payload samples alone do not.
