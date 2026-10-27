@@ -9,8 +9,9 @@ This scan is stdlib AST only. Its import resolution copies
 ``Docs/QA/architecture-review-2026-10-25/scripts/graph.py`` and its layers
 copy ``layers.py`` there, so its counts agree with the review's record.
 Top-level and function-level imports both count; ``if TYPE_CHECKING:`` imports
-are out of scope. An ``importlib.import_module`` call on a string literal
-counts as a function-level (``lazy``) import of that module, wherever it is.
+are out of scope. An ``importlib.import_module`` call on an absolute
+``tldw_chatbook.`` string literal counts as an import of that module, with the
+kind of the place it sits in (``top`` at module level, ``lazy`` in a function).
 
 ``layer_direction_allowlist.tsv`` freezes the upward imports that existed when
 this test landed, one ``src_module<TAB>dst_module<TAB>kind`` row each, where
@@ -88,7 +89,7 @@ def _imports(
 ) -> list[tuple[ast.Import | ast.ImportFrom | ast.Call, str]]:
     """Every import statement and ``import_module("...")`` call, with its kind.
 
-    Kind is top, lazy or typing. A call counts as lazy (typing under TYPE_CHECKING).
+    Kind is top, lazy or typing, for calls the same as for statements.
     """
     found: list[tuple[ast.Import | ast.ImportFrom | ast.Call, str]] = []
 
@@ -109,7 +110,7 @@ def _imports(
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
         ):
-            found.append((node, "typing" if kind == "typing" else "lazy"))
+            found.append((node, kind))
         if isinstance(node, ast.If) and _is_type_checking(node.test):
             for stmt in node.body:
                 visit(stmt, "typing")
@@ -246,7 +247,8 @@ def test_no_new_upward_import() -> None:
         f"reviewer's agreement first. Never just append a row to {ALLOWLIST_NAME} to "
         "make this test pass. A move that leaves a re-export shim at the old path "
         "may add that shim's row only if the same change deletes at least as many "
-        "rows; the shim's row is deleted when its importers are retargeted."
+        "rows; the shim's row is deleted together with the shim, once its importers "
+        "are retargeted."
     )
 
 
