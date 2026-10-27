@@ -169,6 +169,24 @@ LIBRARY_NOTES_SORT_FILTERED_TOOLTIP = (
 #: drift out of alignment.
 LIBRARY_ACTION_LABEL_PAD = " " * (cell_len(LIBRARY_DISABLED_ACTION_MARKER) + 1)
 
+#: TASK-34000.40 (N-33): Ctrl+S saves in every Library editor (ADR-031
+#: refinement 2026-10-03). Owner ruling 2026-10-27 (owner question 2): an
+#: editor with nothing unsaved answers the key on its own status line, never
+#: with a toast, in these words.
+LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH = "Saved — nothing to flush."
+#: The key's refusals where an editor's Save is held (rule (c): said at the
+#: editor, no focus moved), in ``library_disabled_reason_line``'s grammar.
+LIBRARY_EDITOR_SAVE_BUSY_COPY = "Save unavailable — wait for the current update to finish."
+LIBRARY_PROMPT_SAVE_BULK_PREVIEW_COPY = (
+    "Save unavailable — this prompt is a read-only bulk preview."
+)
+LIBRARY_PROMPT_SAVE_NOT_LOADED_COPY = (
+    "Save unavailable — this prompt's details did not load."
+)
+LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY = (
+    "Save unavailable — finish or cancel the delete first."
+)
+
 
 def library_disabled_reason_line(label: str, reason: str) -> str:
     """One blocked control's reason, in the grammar this screen already uses.

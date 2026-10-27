@@ -1214,10 +1214,14 @@ MINIMUM_FILES = 2439
 #   trash_pages_and_purges.py (one real-Library boot, ~9 s alone): 921 -> 922.
 # - task 8 fix round 1 (2026-10-27, ruling T8-g): Tests/UI/test_library_notes_
 #   riders_trash.py (boot-free and canvas-only pins, ~7 s alone, no plugin): 922 -> 923.
+# - task 9 (2026-10-27, TASK-34000.40 N-33, ruling T9-b): Tests/UI/test_library_
+#   ctrl_s_saves_in_every_editor.py (four real-app boots: notes x2, prompts,
+#   Folder files, ~24 s alone), its `_media` sibling (one production-CSS boot,
+#   ~6 s) and its `_skills` sibling (one real-app boot, ~7 s): 923 -> 926.
 # Rebased 2026-11-20 onto dev d85e90bc9e (2439 entries, floor 2439): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2439 + 7 = 2446.
-MINIMUM_FILES = 2446
+# moves; the floor is the measured entry count: 2439 + 10 = 2449.
+MINIMUM_FILES = 2449
 
 
 def read_census(path: Path) -> list[str]:
