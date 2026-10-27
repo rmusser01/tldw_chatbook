@@ -103,16 +103,39 @@ def test_an_unknown_session_raises_as_the_full_build_did():
         resolve_session_workspace_roots(controller, "gone")
 
 
-def test_an_installed_turn_context_provider_still_owns_the_roots():
-    """A controller built with a provider answers from the provider's snapshot."""
+def test_an_installed_turn_context_provider_is_not_asked_for_the_roots():
+    """TASK-33620.15.1.5 AC#3: no caller builds a turn snapshot to get the roots.
+
+    The runtime-owned controller never has a provider (``ConsoleRuntime``
+    forces it to ``None``); a directly built one used to answer from its
+    provider's whole snapshot. The roots are the consent admission's either
+    way, so they are read from it either way.
+    """
     asked: list[str] = []
     controller = _controller(
         consent=_consent({"ws-1": ("/w/consent",)}, asked),
         provider=lambda session_id: None,
     )
-    controller.resolve_turn_execution_context = lambda session_id: SimpleNamespace(
-        workspace_roots=("/w/provider", session_id)
+
+    assert resolve_session_workspace_roots(controller, "s1") == ("/w/consent",)
+    assert asked == ["ws-1"]
+
+
+def test_capture_change_review_admission_returns_string_roots():
+    """TASK-33620.15.1.5 AC#2: every reader gets ``str`` roots from the source."""
+    from pathlib import PurePosixPath
+
+    from tldw_chatbook.Chat.console_turn_context import (
+        capture_change_review_admission,
     )
 
-    assert resolve_session_workspace_roots(controller, "s1") == ("/w/provider", "s1")
-    assert asked == []
+    app = SimpleNamespace(
+        change_review_consent_service=_consent(
+            {"ws-1": (PurePosixPath("/w/one"), "/w/two")}, []
+        )
+    )
+
+    roots, _aliases, _skipped = capture_change_review_admission(app, "ws-1")
+
+    assert roots == ("/w/one", "/w/two")
+    assert all(type(root) is str for root in roots)

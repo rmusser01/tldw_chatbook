@@ -337,7 +337,7 @@ from tldw_chatbook.Chat.console_configuration_capture import (
     capture_skill_context_maximum as capture_skill_context_maximum,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
 )
 from tldw_chatbook.Chat.console_turn_context import (
-    capture_change_review_admission,
+    read_session_change_review_admission,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
     ConsoleProjectAuthoritySnapshot,
@@ -20995,8 +20995,8 @@ class ConsoleChatController:
             return {key: getattr(snapshot, key) for key in keys}
         session = next(item for item in self.store.sessions() if item.id == session_id)
         workspace_id = self.store.session_workspace_id(session_id)
-        roots, _aliases, _skipped = capture_change_review_admission(
-            self.app, workspace_id
+        roots, _aliases, _skipped = read_session_change_review_admission(
+            self.app, self.store, session_id
         )
         return {
             "workspace_roots": roots,
