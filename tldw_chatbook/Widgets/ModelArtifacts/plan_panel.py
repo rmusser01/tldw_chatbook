@@ -203,7 +203,7 @@ class ModelPlanPanel(Vertical):
     (the first-run wizard, Lab ▸ Models, Library).
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     ModelPlanPanel {
         height: auto;
     }
