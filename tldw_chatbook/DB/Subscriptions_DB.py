@@ -2084,8 +2084,9 @@ class SubscriptionsDB(BaseDB):
             transaction rather than starting its own.
 
         Raises:
-            Exception: Whatever the body raises, re-raised unchanged after the
-                OUTERMOST block rolls back. An inner block does not roll back;
+            BaseException: Whatever the body raises (including
+                KeyboardInterrupt/SystemExit/GeneratorExit), re-raised
+                unchanged after the OUTERMOST block rolls back. An inner block does not roll back;
                 the exception propagates so the outermost can.
         """
         conn = self.conn
