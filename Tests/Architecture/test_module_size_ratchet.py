@@ -146,7 +146,11 @@ _BUDGETS: dict[str, int] = {
     # (29,043), the Library-pause fixes measure 29,055: dev's TASK-35992
     # extraction already moved out the Library preparation body that these
     # fixes used to shrink here, so their stop/shelf/card wiring now shows.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29055,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3 +1 (the
+    # Tools chip counts what plain chat is offered for the composing run's
+    # session, net of the speculative voice attempt's removed tool preview;
+    # rebased 2026-10-27 onto dev 0923ec0ca2's 29,055).
+    "tldw_chatbook/Chat/console_chat_controller.py": 29056,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     # TASK-34100.5.3 review round 2: both preflight tool previews moved into
@@ -534,9 +538,17 @@ _BUDGETS: dict[str, int] = {
     # `test_every_module_of_the_guard_size_has_a_row` keeps new gaps from opening.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25693,
     "tldw_chatbook/config.py": 12258,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3 +323 (plain
+    # chat's light tool surface: the planner narrowing, light_surface_for,
+    # preview_tool_schemas and the run_reply closures; rebased 2026-10-29
+    # onto dev 3efe8476ce's 12,088).
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12411,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9620,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3 +34
+    # (allow_discovery, the safe-set fallback and the gateway's planning
+    # margin in build_first_request_schema_plan; rebased 2026-10-29 onto
+    # dev 3efe8476ce's 9,620).
+    "tldw_chatbook/Agents/agent_service.py": 9654,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
@@ -545,12 +557,17 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/session.py": 7000,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3 +9 (the
+    # bridge's light-surface and kill-switch readers; rebased 2026-10-27).
+    "tldw_chatbook/Chat/console_runtime.py": 6695,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
-    "tldw_chatbook/Agents/local_tool_provider.py": 5749,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3 +101 (the
+    # providerless ask_user/web_deep_search specs and their light-surface
+    # gate table; rebased 2026-10-27).
+    "tldw_chatbook/Agents/local_tool_provider.py": 5850,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5186,
