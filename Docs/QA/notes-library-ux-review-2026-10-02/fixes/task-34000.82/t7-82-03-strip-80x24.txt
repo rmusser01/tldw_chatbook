@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Ready · Next:    N  Select a note to edit it here.
+  a   Create a note or add from        o
+  v   files.                           t
+      Notes (122)                      e
+      Filter  Filter notes… (Enter)    s
+        Done     All 30     Clear
+--->      Export       Actions…
+      1 selected
+      ▸ Agent_Lessons                <---
+      ▾ Journal
+      ☐   Daily log 2026-09-28 · 3m ▄
+--->  ☐   Daily log 2026-09-27 · 3m
+     █☑   Daily log 2026-09-26 · 3m
+      ☐   Daily log 2026-09-25 · 3m
+      ☐   Daily log 2026-09-24 · 3m
+      ☐   Daily log 2026-09-23 · 3m
+      ☐   Daily log 2026-09-22 · 3m
+      ☐   Daily log 2026-09-21 · 3m
+  space toggle | enter select | esc done | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -995,10 +995,13 @@ MINIMUM_FILES = 2028
 #   160x45 boots, ~26 s): 916 -> 917.
 # - task 6 fix round 1: Tests/UI/test_library_notes_focus_capture_and_export_
 #   outcomes.py (two 160x45 boots, ~27 s): 917 -> 918.
+# - task 7: Tests/UI/test_library_notes_select_mode_counts_and_bulk.py (four
+#   real-Library boots, ~27 s) and its `_extended` sibling (three boots,
+#   ~25 s alone, so it is gated too -- the task 5 R2-1 precedent): 918 -> 920.
 # Rebased 2026-11-12 onto dev 4b90eb860b (2028 entries, floor 2028): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2028 + 2 = 2030.
-MINIMUM_FILES = 2030
+# moves; the floor is the measured entry count: 2028 + 4 = 2032.
+MINIMUM_FILES = 2032
 
 
 def read_census(path: Path) -> list[str]:
