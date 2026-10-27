@@ -20828,6 +20828,22 @@ all five exited-worker handles to exact Character-target revalidation. Check
 coverage of retained identities, not just observer drop counts; preserve the
 incomplete attempt and do not use instrumented timings as latency evidence.
 Evidence: [both probes and corrected origins](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+## A pilot test at a roomy harness size passes a layout bug the live 120x40 shows (TASK-34100.6 review round 2, 2026-10-06)
+
+The Provider step's harness runs at `SIZE = (160, 52)`. The fix for "Switch to
+Anthropic keeps the 'openai' filter" cleared the filter, and its test passed. Live at
+120x40 (`setup-wizard-ux-qa/evidence/g6-r2fix/06`) the cleared filter grew the list from
+7 rows to the whole catalog and pushed the focused key field, and the note saying where
+the key went, below the fold. At 160x52 the field still fit, so the test could not see
+the defect. Parametrising the same test with `(120, 40)` made it RED at once
+(`test_a_switch_shows_the_provider_it_moved_to[120x40]`). Any assertion about what is on
+screen after a change that grows or shrinks the layout belongs at the geometries users
+run: 120x40 and 80x24, not the harness default. The same round's dead-row fix moved
+the step's focus-centring scroll by one row at 80x24, and the shared click helper then
+landed on the step's padding. A click helper must scroll a row the viewport clips into
+view first, as a user would (`provider_step_harness.click_provider_row`).
+
 ## First-step publication can be too late for a live child target
 
 **TASK-32497, 2026-09-29.** Reading an inline child's persisted target from its

@@ -144,7 +144,8 @@ _BASE_ON_HANDLERS = {
         "_on_endpoint_changed", "_on_keep", "_on_key_changed",
         "_on_key_submitted", "_on_provider_chosen", "_on_provider_highlighted",
         "_on_provider_list_interacted", "_on_replace", "_on_test_pressed",
-        "_on_use_detected",
+        # TASK-34100.6 retired "_on_use_detected" with its 'Use this server'
+        # button: a detected server is now the list's first row (provider-02).
     ),
     "ModelStep": ("_on_custom_model", "_on_model_chosen", "_retry_model_discovery"),
     "VoiceSetupStep": (

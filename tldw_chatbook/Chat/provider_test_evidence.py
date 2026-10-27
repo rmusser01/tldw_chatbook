@@ -61,6 +61,8 @@ EndpointFailureCategory = Literal[
     "http_status",
     "invalid_payload",
     "connection_error",
+    "tls_untrusted",
+    "tls_plain_http",
 ]
 ReadinessVerdictCode = Literal[
     "incomplete",
@@ -139,6 +141,8 @@ _FAILURE_CATEGORIES = frozenset(
         "http_status",
         "invalid_payload",
         "connection_error",
+        "tls_untrusted",
+        "tls_plain_http",
     }
 )
 #: The categories "model_listing_unavailable" may carry: none (no usable
@@ -180,6 +184,15 @@ _FAILURE_DETAILS = {
     "connection_error": (
         "Connection error - could not reach the server. Check the endpoint, "
         "and that the server is running."
+    ),
+    # TASK-34100.6 (review coverage-19): the server answered; no inline
+    # 'turn verification off' -- the fix is a trusted CA.
+    "tls_untrusted": (
+        "The server answered, but its certificate isn't trusted. On a work "
+        "network, add your company's CA bundle in Settings ▸ Network, then try again."
+    ),
+    "tls_plain_http": (
+        "This server speaks plain HTTP - try http:// instead of https://."
     ),
 }
 _CONFIGURATION_ISSUE_DETAILS = {

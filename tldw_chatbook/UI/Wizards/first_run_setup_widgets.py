@@ -378,8 +378,10 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
         screen -- the old suffix offered "Skip this step", which does not
         exist. TASK-34100.8 (SF3 stage 3): a step whose refusal a retry
         cannot fix overrides this and names its own escapes instead.
+        TASK-34100.6: "Retry" only where a retry can work, single-spaced
+        (``step_guard.refusal_suffix``).
         """
-        return f"{error}  Retry with Next, or go Back."
+        return error + step_guard.refusal_suffix(self, error)
 
     def show_step_error(self, message: str) -> None:
         """Render a step error on the wizard's pinned error strip.
@@ -397,7 +399,14 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
         except Exception:  # noqa: BLE001
             logger.warning("Setup step error had nowhere to render: {}", message)
             return
-        strip.update(message)
+        # TASK-34100.6 (review provider-16): an error reads as one, not by colour.
+        strip.update(message if message.startswith("✗") else f"✗ {message}")
+        # Padded to this step's content column (review round 1, live F8): the
+        # strip's own padding matches the step edge; add the wrapper's indent.
+        wrapper = next(iter(self.children), None)
+        indent = wrapper.styles.padding.left if wrapper is not None else 0
+        top, right, bottom, left = strip.styles.base.padding
+        strip.styles.padding = (top, right, bottom, left + indent)
         strip.remove_class("hidden")
 
     def clear_step_error(self) -> None:

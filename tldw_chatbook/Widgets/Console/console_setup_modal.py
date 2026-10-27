@@ -51,6 +51,10 @@ CONSOLE_SETUP_MODAL_STEP_COUNT = 3
 CONSOLE_SETUP_MODAL_ACTION_ID = "console-setup-modal-action"
 CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID = "console-setup-modal-detected-action"
 CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION = "use-detected-local-server"
+# TASK-34100.6 (review entry-exit-handoff-21): look for a local server again
+# on request -- a quiet card never polls.
+CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID = "console-setup-modal-look-again"
+CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION = "look-again-local-server"
 # task-32140: a needs-no-provider secondary action alongside the detected-
 # server one -- same "extra affordance while blocking" shape.
 CONSOLE_SETUP_MODAL_NOTES_ACTION_ID = "console-setup-modal-notes-action"
@@ -198,6 +202,14 @@ class ConsoleSetupModal(Vertical):
             detected.tooltip = self._detected_action_tooltip()
             detected.display = blocking and self._detected_action is not None
             yield detected
+            look_again = Button(
+                "Look again for a local server",
+                id=CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID,
+                classes="console-setup-modal-action",
+            )
+            look_again.tooltip = "Checks this computer for a running model server."
+            look_again.display = blocking and self._detected_action is None
+            yield look_again
 
     def sync_card_state(
         self,
@@ -309,6 +321,11 @@ class ConsoleSetupModal(Vertical):
         detected.label = self._detected_action_label()
         detected.tooltip = self._detected_action_tooltip()
         detected.display = self.is_blocking and self._detected_action is not None
+        try:
+            look_again = self.query_one(f"#{CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID}", Button)
+        except Exception:
+            return
+        look_again.display = self.is_blocking and self._detected_action is None
 
     def _detected_action_label(self) -> str:
         """Return the escaped label for the detected-server button."""
@@ -415,6 +432,12 @@ class ConsoleSetupModal(Vertical):
             event.stop()
             self.post_message(
                 WorkbenchActionRequested(CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION)
+            )
+            return
+        if event.button.id == CONSOLE_SETUP_MODAL_LOOK_AGAIN_ID:
+            event.stop()
+            self.post_message(
+                WorkbenchActionRequested(CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION)
             )
             return
         if event.button.id == CONSOLE_SETUP_MODAL_NOTES_ACTION_ID:

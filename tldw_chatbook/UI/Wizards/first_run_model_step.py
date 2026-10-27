@@ -32,6 +32,7 @@ from textual.widgets import (
 )
 
 from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
+from tldw_chatbook.UI.Wizards import first_run_provider_skip as provider_skip
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
     _first_run_discovery_staged_settings,
@@ -77,6 +78,8 @@ class ModelStep(SetupStep):
     forms via ``first_run_setup_state.curated_models_for_provider`` so a
     case/format mismatch never silently empties the list.
     """
+
+    REFUSAL_NAMES_ITS_FIX = True  # its refusals name their own fix (34100.6)
 
     def __init__(
         self,
@@ -131,24 +134,24 @@ class ModelStep(SetupStep):
 
         Returns:
             "" when the probe succeeded, never ran, or belongs to a
-            superseded identity; otherwise "authentication", "key_required"
-            or "connection" (wizard_state.PROVIDER_PROBE_*).
+            superseded identity; otherwise a wizard_state.PROVIDER_PROBE_*
+            value ("authentication", "key_required", "connection", ...), also
+            while Model still loads.
         """
-        if self._rendered_discovery_key is None:
-            return ""
+        if self._rendered_discovery_key is None:  # provider-03: known before Model renders
+            return model_discovery.handed_off_probe_failure(self)
         try:
             current_key = self._current_discovery_key()
         except Exception:
             return ""
         if current_key != self._rendered_discovery_key:
             return ""
-        return self._rendered_probe_failure
+        return self._rendered_probe_failure or model_discovery.handed_off_probe_failure(self)
 
     def confirm_before_advance(self) -> Optional[str]:
         """UAT M-2: a known-failed probe must not be Next-ed past silently."""
 
-        copy = wizard_state.PROBE_FAILURE_COPY.get(self.current_probe_failure())
-        return copy.confirm if copy else None
+        return wizard_state.probe_failure_confirm_text(self.current_probe_failure()) or None
 
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
@@ -251,7 +254,8 @@ class ModelStep(SetupStep):
                 self._shown_for_provider is None
                 and self._shown_for_discovery_key is None
             )
-            prefill_model_id = (
+            hint = getattr(self.wizard, "first_run_model_hint", None) or ("", "")
+            prefill_model_id = hint[1] if hint[0] == provider_key else (  # E3
                 wizard_state.rerun_model_prefill(
                     getattr(self.wizard.app_instance, "app_config", {}) or {},
                     provider_value=provider_value,
@@ -424,11 +428,9 @@ class ModelStep(SetupStep):
                 if evidence.endpoint == "model_listing_unavailable":
                     discovery_state, models = "listing_unavailable", []
                     failure_category = evidence.category or ""
-                elif evidence.endpoint == "unreachable":
+                elif evidence.endpoint == "unreachable":  # review round 1, live F1
                     discovery_state = "connection_failed"
-                    failure_category = model_discovery.tested_failure_category(
-                        evidence.category
-                    )
+                    failure_category = model_discovery.evidence_failure_category(evidence, owner)
                     models = []
                 elif evidence.endpoint == "reachable" and not models:
                     models = list(evidence.model_ids)
@@ -589,28 +591,13 @@ class ModelStep(SetupStep):
                 failed_text = failed_text.format(
                     display=provider_display_name(provider_key)
                 )
-            else:
-                endpoint = ""
+            else:  # TASK-34100.6: the server, its certificate or its HTTP status
                 identity = getattr(discovery_key, "connection_identity", ())
-                if len(identity) > 1 and identity[1]:
-                    endpoint = str(identity[1])
-                at_endpoint = f" at {endpoint}" if endpoint else ""
-                if provider_key in ("ollama", "local_ollama"):
-                    failed_text = (
-                        f"Ollama isn't running{at_endpoint}. Start it "
-                        "(ollama serve), then Retry — or enter a model ID "
-                        "below."
-                    )
-                elif provider_key in ("llama_cpp", "local_llamacpp"):
-                    failed_text = (
-                        f"The llama.cpp server isn't reachable{at_endpoint}. "
-                        "Start it, then Retry — or enter a model ID below."
-                    )
-                else:
-                    failed_text = (
-                        f"Couldn't reach the server ({category}). Check it's "
-                        "running, then Retry — or enter a model ID below."
-                    )
+                failed_text = model_discovery.connection_failed_text(
+                    provider_key,
+                    category,
+                    str(identity[1]) if len(identity) > 1 and identity[1] else "",
+                )
             await radio_set.mount(
                 _status_line(failed_text, "setup-model-connection-failed")
             )
@@ -637,15 +624,15 @@ class ModelStep(SetupStep):
         self._rendered_probe_failure = probe_failure
         try:
             retry = self.query_one("#setup-model-retry", Button)
-            # Retry shows for connection failures only (start the server,
-            # retry); retrying cannot fix a refused or missing key, the fix
-            # lives one step Back (UAT M-1).
-            retry.set_class(
-                probe_failure != wizard_state.PROVIDER_PROBE_CONNECTION, "hidden"
-            )
+            # Retry shows for a failure a retry can fix (start the server, wait
+            # out an HTTP error -- TASK-34100.6); retrying cannot fix a refused
+            # or missing key, the fix lives one step Back (UAT M-1).
+            key_fix = {wizard_state.PROVIDER_PROBE_AUTH, wizard_state.PROVIDER_PROBE_KEY_REQUIRED}
+            retry.set_class(not probe_failure or probe_failure in key_fix, "hidden")
         except NoMatches:
             return
         self._rendered_discovery_key = discovery_key
+        getattr(self.wizard, "_rebuild_progress", lambda: None)()  # review F4: '!' now
 
     @on(Button.Pressed, "#setup-model-retry")
     def _retry_model_discovery(self, event: Button.Pressed) -> None:
@@ -944,12 +931,8 @@ class ModelStep(SetupStep):
                 )
             )
         ):
-            return (
-                False,
-                (
-                    "Connection settings changed. Refresh models or re-enter the "
-                    "model ID."
-                ),
+            return False, (
+                "Connection settings changed. Refresh models or re-enter the model ID."
             )
         commit_kwargs = {
             "discovery_key": selection_key,
@@ -978,9 +961,9 @@ class ModelStep(SetupStep):
                 "Connection settings changed. Models were refreshed; select a "
                 "model again or re-enter its ID.",
             )
-        return (
-            (True, "") if ok else (False, "Saving the provider and model setup failed.")
-        )
+        if ok:  # TASK-34100.6: a failed save names its real cause and a fix
+            return True, ""
+        return False, provider_skip.model_save_failure_message(self.wizard)
 
     def busy_label(self) -> str:
         """What a slow Next from Model is doing (TASK-34100.1)."""

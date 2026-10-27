@@ -111,16 +111,24 @@ def test_candidates_include_wellknown_defaults_first() -> None:
     candidates = build_local_server_candidates({})
 
     # Stock `llama-server` port (8080) first, then Chatbook's documented
-    # convention (9099), then the stock Ollama port.
+    # convention (9099), then the stock Ollama port, then (TASK-34100.6,
+    # review provider-13) LM Studio, Jan and KoboldCpp's OpenAI-compatible
+    # ports, which set up the Custom row.
     assert [candidate.base_url for candidate in candidates] == [
         DEFAULT_LLAMACPP_DISCOVERY_URL,
         DEFAULT_LLAMACPP_BASE_URL,
         DEFAULT_OLLAMA_DISCOVERY_URL,
+        "http://127.0.0.1:1234",
+        "http://127.0.0.1:1337",
+        "http://127.0.0.1:5001",
     ]
     assert [candidate.provider_key for candidate in candidates] == [
         "llama_cpp",
         "llama_cpp",
         "ollama",
+        "custom",
+        "custom",
+        "custom",
     ]
 
 

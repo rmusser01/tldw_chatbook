@@ -29,10 +29,12 @@ from tldw_chatbook.Chat.local_server_discovery import (
     connect_error_is_refused,
     model_ids_from_payload,
     normalize_probe_provider_key,
+    classify_transport_failure,
     read_bounded_model_response,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
 from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
 )
@@ -63,6 +65,8 @@ EndpointProbeCategory = Literal[
     "http_status",
     "invalid_payload",
     "connection_error",
+    "tls_untrusted",
+    "tls_plain_http",
 ]
 _ENDPOINT_PROBE_CATEGORIES = frozenset(
     {
@@ -73,8 +77,19 @@ _ENDPOINT_PROBE_CATEGORIES = frozenset(
         "http_status",
         "invalid_payload",
         "connection_error",
+        "tls_untrusted",
+        "tls_plain_http",
     }
 )
+#: TASK-34100.6: summaries for the transport categories ``_request_models``
+#: names (review coverage-19 / provider-15).
+_TRANSPORT_SUMMARIES = {
+    "timeout": "unreachable: timeout",
+    "connection_refused": "unreachable: connection refused",
+    "tls_untrusted": "unreachable: certificate not trusted",
+    "tls_plain_http": "unreachable: plain HTTP server",
+    "connection_error": "unreachable: connection error",
+}
 _MODEL_IDS_UNSET = object()
 
 
@@ -307,6 +322,8 @@ def key_check_probe_result(
         "timeout",
         "connection_refused",
         "connection_error",
+        "tls_untrusted",
+        "tls_plain_http",
     }:
         return ProviderProbeResult("unreachable", (), category)
     if kind == "invalid_response" or category == "http_status":
@@ -354,6 +371,19 @@ def _failure(
     )
 
 
+def _policy_client(timeout: float) -> httpx.AsyncClient:
+    """A client under the app's TLS trust policy (TASK-34100.6, coverage-19).
+
+    An untrusted-certificate verdict points to Settings ▸ Network's CA
+    bundle, so the check must use it. If that policy cannot be read, the
+    check still runs with default verification rather than failing.
+    """
+    try:
+        return build_httpx_async_client(timeout=timeout)
+    except Exception:  # noqa: BLE001 - a policy read must not cost the check.
+        return httpx.AsyncClient(timeout=timeout)
+
+
 async def _request_models(
     client: httpx.AsyncClient,
     url: str,
@@ -387,12 +417,9 @@ async def _request_models(
                     f"unreachable: HTTP {response.status_code}",
                 )
             body = await read_bounded_model_response(response)
-    except httpx.TimeoutException:
-        return _failure("timeout", "unreachable: timeout")
-    except httpx.ConnectError as error:
-        if connect_error_is_refused(error):
-            return _failure("connection_refused", "unreachable: connection refused")
-        return _failure("connection_error", "unreachable: connection error")
+    except (httpx.TimeoutException, httpx.ConnectError) as error:
+        category = await classify_transport_failure(error, url)
+        return _failure(category, _TRANSPORT_SUMMARIES[category])
     except httpx.HTTPError:
         return _failure("connection_error", "unreachable: connection error")
     except Exception:  # noqa: BLE001 - this UI boundary must never leak or raise.
@@ -701,7 +728,7 @@ async def probe_settings_endpoint(
         )
     owns_client = http_client is None
     try:
-        client = http_client or httpx.AsyncClient(timeout=timeout)
+        client = http_client or _policy_client(timeout)
     except Exception:  # noqa: BLE001 - keep UI failures bounded and secret-free.
         return _failure("connection_error", "unreachable: connection error")
     outcome = _failure("connection_error", "unreachable: connection error")

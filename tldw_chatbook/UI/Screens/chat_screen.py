@@ -372,6 +372,7 @@ from ...Chat.console_onboarding_state import (
     build_console_detected_server_action,
     build_console_setup_card_state,
     coerce_console_first_send_completed,
+    env_keyed_provider_for_recovery,
 )
 from ...Chat.local_server_discovery import (
     DiscoveredLocalServer,
@@ -631,6 +632,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
+    CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION,
     CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION,
 )
 from ...Widgets.destination_rail import (
@@ -4682,6 +4684,9 @@ class ChatScreen(BaseAppScreen):
             from ..Console_Modules.model_switcher import open_setup_card_switcher
 
             open_setup_card_switcher(self, self._console_detected_local_server)
+        elif action_id == CONSOLE_SETUP_MODAL_LOOK_AGAIN_WORKBENCH_ACTION:
+            self._console_local_discovery_started = False  # TASK-34100.6
+            self._maybe_start_console_local_discovery()
         elif action_id == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION:
             # task-32140: the "Get started" card's needs-no-provider action
             # -- same destination as the command-palette "new_note" quick
@@ -13910,6 +13915,7 @@ class ChatScreen(BaseAppScreen):
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,
+            local_server_found=self._console_detected_local_server is not None,
         )
 
     def _dismiss_console_guidance(self) -> None:
@@ -14006,10 +14012,11 @@ class ChatScreen(BaseAppScreen):
         """Start the local-server discovery worker while blocked.
 
         Discovery runs once per visit to a blocking card with nothing found
-        (``on_screen_resume`` re-arms it), in its own exclusive worker
-        group so it can never cancel (or be duplicated alongside) the Console
-        UI sync workers. Results only ever add a secondary card affordance;
-        a quiet network stays quiet.
+        (``on_screen_resume`` re-arms it, as does the card's 'Look again',
+        TASK-34100.6), in its own exclusive worker group so it can never
+        cancel (or be duplicated alongside) the Console UI sync workers.
+        Results only ever add a secondary card affordance; a quiet network
+        stays quiet.
         """
         if self._console_local_discovery_started:
             return
@@ -19666,11 +19673,15 @@ class ChatScreen(BaseAppScreen):
 
         provider, model, settings = self._active_console_provider_model_display()
         settings_provider = settings.provider if settings is not None else None
-        settings_model = settings.model if settings is not None else None
+        provider_context = str(settings_provider or provider or "").strip()
+        model_context = str(model or (settings.model if settings else None) or "").strip()
+        config = self._provider_readiness_app_config()  # TASK-34100.6: a key that is
+        if keyed := env_keyed_provider_for_recovery(config, provider_context):  # exported
+            provider_context, model_context = keyed, ""
         open_provider_setup(  # Settings, with the way back to this chat.
             self,
-            str(settings_provider or provider or "").strip(),
-            str(model or settings_model or "").strip() or None,
+            provider_context,
+            model_context or None,
             field=self._console_provider_recovery_field(),
         )
 

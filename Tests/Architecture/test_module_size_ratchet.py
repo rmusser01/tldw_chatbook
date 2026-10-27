@@ -485,8 +485,11 @@ _BUDGETS: dict[str, int] = {
     # screen. TASK-34100.8: the Voice resume restore moved onto the step
     # (VoiceSetupStep.restore_checkpoint) -> 3,145; review round 1 moved the
     # refused-Next suffix onto SetupStep.refusal_message -> 3,144.
-    # TASK-33008 (Phase 8) -> 3,136.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3136,
+    # TASK-33008 (Phase 8) -> 3,136. TASK-34100.6: the tracker reads its
+    # glyphs from first_run_setup_state, the refusal suffix rule lives in the
+    # guard, and the skip, key entry and discovery moved to
+    # first_run_provider_*.py helpers; merged onto dev -> 3,130.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3130,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -501,8 +504,12 @@ _BUDGETS: dict[str, int] = {
     # the Test-evidence line moved there too -> 2,456. Review round 2: the
     # failed-listing line and the key line went there as well -> 2,453.
     # Round 3: the key mark came back to the listing's call site, where a
-    # reader sees it (that line stays pure) -> 2,454.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2454,
+    # reader sees it (that line stays pure) -> 2,454. TASK-34100.6: the
+    # localhost detection, skip, key entry, provider list, connection test,
+    # key check and status copy moved to first_run_provider_{detection,skip,
+    # key_entry,list,check}.py (TASK-33008's listing and Test lines with
+    # them); merged onto dev -> 1,665.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1665,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
@@ -518,7 +525,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 892,
     # TASK-33008 (Phase 8): 1,012 -> 994; its review's fixes -> 997.
     # TASK-35578: 990; the subtitle moved to first_run_model_discovery.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 990,
+    # TASK-34100.6: Model's failed-discovery copy moved to
+    # first_run_model_discovery.connection_failed_text and the evidence
+    # category mapping there too; rebased onto dev -> 973.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 973,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of

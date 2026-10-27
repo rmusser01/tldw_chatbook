@@ -207,15 +207,10 @@ class SetupWizardProgress(WizardProgress):
                 with Vertical(classes="step-indicator-stack"):
                     number_classes = f"step-number {item.state}"
                     # TASK-21143 (UAT N-7): "attention" = visited, but its
-                    # probe failed — "!" instead of the ✓ users read as "OK".
-                    yield Static(
-                        "✓"
-                        if item.state == "complete"
-                        else "!"
-                        if item.state == "attention"
-                        else str(index + 1),
-                        classes=number_classes,
-                    )
+                    # probe failed — "!" instead of the ✓ users read as "OK";
+                    # TASK-34100.6: a deliberate skip reads "–", not an error.
+                    glyph = wizard_state.PROGRESS_GLYPHS.get(item.state)
+                    yield Static(glyph or str(index + 1), classes=number_classes)
                     title = Label(
                         item.title,
                         classes=f"step-title {item.state}",
@@ -224,7 +219,7 @@ class SetupWizardProgress(WizardProgress):
                     yield title
                 if index < len(self.items) - 1:
                     connector_classes = "step-connector"
-                    if item.state in ("complete", "attention"):
+                    if item.state in ("complete", "attention", "skipped"):
                         connector_classes += " complete"
                     connector = Static("", classes=connector_classes)
                     connector.display = not compact
@@ -1523,10 +1518,10 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             shown = self.steps[self.current_step]
         except IndexError:
             shown = None
-        if isinstance(shown, ProviderStep):
-            copy = wizard_state.PROBE_FAILURE_COPY.get(self.provider_probe_failure())
-            if copy:
-                shown.show_step_error(copy.provider_notice)
+        if isinstance(shown, ProviderStep) and (
+            notice := shown.return_notice(self.provider_probe_failure())
+        ):
+            shown.show_step_error(notice)
         self._sync_exit_controls()
         try:
             current_step = self.steps[self.current_step]
@@ -1587,14 +1582,13 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             # TASK-25818 widens that to the step the user simply walked
             # through without configuring: the summary already reports it as
             # unconfigured, and the tracker must not disagree.
-            attention = wizard_state.setup_attention_ids(
-                self.wizard_data,
-                probe_failed=bool(self.provider_probe_failure()),
-            )
             items = wizard_state.build_setup_progress(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
-                attention_ids=attention,
+                attention_ids=wizard_state.setup_attention_ids(
+                    self.wizard_data, probe_failed=bool(self.provider_probe_failure())
+                ),
+                skipped_ids=wizard_state.setup_skipped_ids(self.wizard_data),
             )
             self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:
@@ -3108,8 +3102,8 @@ _MOVED_PUBLIC_NAMES: dict[str, str] = {
     "VoiceSetupStep": "first_run_voice_step",
     "EXIT_ROUTE_LIBRARY_NOTES": "first_run_summary_step",
     "ProviderChoiceList": "first_run_provider_step",
-    "ProviderEndpointCandidateList": "first_run_provider_step",
-    "ProviderEndpointCandidateOption": "first_run_provider_step",
+    "ProviderEndpointCandidateList": "first_run_provider_detection",
+    "ProviderEndpointCandidateOption": "first_run_provider_detection",
     "GENERIC_DISCOVERY_FAILURE_CATEGORY": "first_run_model_discovery",
 }
 

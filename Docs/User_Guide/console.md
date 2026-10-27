@@ -345,7 +345,7 @@ same one of four things for the same connection:
 | **Ready · not tested** | Nothing blocks a send, and nothing has been checked this session. |
 | **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. A cloud key check that accepted the key but did not list this model reads this too. |
 | **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing that listed this model, or a paid generation test of this model succeeded, at that time. A test of one model never verifies another, and a listing alone never means generation was tested. In Switch model each row reads its own model this way, so one key check can show some of a provider's rows verified and others reachable. |
-| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out" or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
+| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out", "untrusted cert" (the server's certificate isn't trusted — add your CA in Settings ▸ Network), "plain http" (an https address on a plain-HTTP server) or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
 
 The words carry the state; colour only repeats it (the Model section line
 turns red when Not ready). A provider whose model list is public, such as
@@ -413,8 +413,15 @@ applies to this chat only, and the detected server is used the same way.
 Discovery runs when Console first shows the card, and again each time
 Console comes back to the card with nothing found, as after a trip to
 Settings or a dialog closed over the card; a well-known port where nothing
-answers stays silent. A server you start while the card shows is offered
-the next time you come back to it. Once one is found, discovery stops.
+answers stays silent. It checks the same addresses first-run setup checks
+(LM Studio's :1234 among them). A server you start while the card shows is
+offered the next time you come back to it, or at once when you choose **Look
+again for a local server**, which the card shows while nothing was found —
+the card never polls. Once one is found, discovery stops, and the current
+step reads "No model connected" instead of "no key". If you exported a key
+for a provider other than the configured one (only `ANTHROPIC_API_KEY`,
+say), **Set up provider** opens Settings ▸ Providers & Models on that
+provider.
 
 Every action on the card is drawn as a button with a rounded edge, one under
 the other; Tab and Shift+Tab move between the ones shown, wrapping at either
