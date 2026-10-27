@@ -702,26 +702,33 @@ class SchedulerLoop:
     async def _emergency_stopped(self) -> bool:
         """Whether the global emergency stop holds new dispatches (26004).
 
-        The stop-state read is blocking file I/O, so it runs off the event
-        loop (TASK-31507). Fail-safe is preserved: an offload failure reads
-        as stopped, holding work rather than proceeding on doubt.
+        The whole check runs off the event loop: the stop-state read is
+        blocking file I/O (TASK-31507), and resolving the default path is a
+        guarded config read that can enter storage admission
+        (TASK-33620.15.24; live, 98 ms on the loop in one tick). Fail-safe is
+        preserved: a refused lookup or a failed read reads as stopped,
+        holding work rather than proceeding on doubt.
         """
+        try:
+            return await self._offload(self._read_emergency_stop)
+        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
+            return True
+
+    def _read_emergency_stop(self) -> bool:
+        """Resolve the stop path and read its state (worker thread)."""
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook.emergency_stop import (
             default_emergency_stop_path,
             is_emergency_stopped,
         )
 
-        try:
-            # Config can refuse this lookup when native backup intent arrives
-            # before local scheduler settlement. An unknown stop state holds
-            # dispatch just like an unreadable sentinel; the next tick retries.
-            path = getattr(self, "_emergency_stop_path", None) or (
-                default_emergency_stop_path()
-            )
-            return await self._offload(is_emergency_stopped, path)
-        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
-            return True
+        # Config can refuse this lookup when native backup intent arrives
+        # before local scheduler settlement. An unknown stop state holds
+        # dispatch just like an unreadable sentinel; the next tick retries.
+        path = getattr(self, "_emergency_stop_path", None) or (
+            default_emergency_stop_path()
+        )
+        return is_emergency_stopped(path)
 
     async def _reconcile_and_prune_run_ledger(self) -> None:
         """Startup maintenance for the TASK-26026 run ledger. Never raises."""

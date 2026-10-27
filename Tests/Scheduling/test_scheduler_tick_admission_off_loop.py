@@ -297,3 +297,94 @@ async def test_cancelled_scheduler_with_admission_in_flight_releases_its_lease(
     assert held.finalized == 0, "an admission was never released, only garbage-collected"
     assert held.exits == held.entries
     assert _scope_leases() <= leases_before, "a scope lease outlived its admission"
+
+
+# --- The tick's emergency-stop check: its default path is a guarded config read ---
+#
+# Live (2026-10-27, branch arm), the first tick after a send spent 98 ms on the
+# loop in `default_emergency_stop_path()`: `get_user_data_dir()` is a guarded
+# config read that enters storage admission for the config participant. Only the
+# stop-state file read had been moved off the loop (TASK-31507).
+
+
+def _hold_stop_path_lookup(monkeypatch, tmp_path, *, refuse=False):
+    from tldw_chatbook import emergency_stop
+
+    held = _HeldAdmission(None)
+
+    def lookup():
+        held.enter_threads.append(threading.current_thread())
+        held.entered.set()
+        held.outcomes.append(held.release.wait(held.HOLD_SECONDS))
+        if refuse:
+            raise RuntimeError("config read refused")
+        return tmp_path / "emergency_stop.json"
+
+    monkeypatch.setattr(emergency_stop, "default_emergency_stop_path", lookup)
+    return held
+
+
+@pytest.mark.asyncio
+async def test_tick_emergency_stop_path_lookup_runs_off_the_loop(
+    db, monkeypatch, tmp_path
+):
+    task_id = _due_reminder(db)
+    ran = []
+
+    async def handler(row):
+        ran.append(row["id"])
+
+    held = _hold_stop_path_lookup(monkeypatch, tmp_path)
+    scheduler = SchedulerLoop(db, {"reminder": handler}, handler_timeout_seconds=0)
+    scheduler.queue.load()
+    loop_thread = threading.current_thread()
+    tick = asyncio.create_task(scheduler.tick())
+    try:
+        await _observe_hold(held)
+        assert held.outcomes == [], (
+            "the emergency-stop path lookup (a guarded config read) ran on the "
+            "event loop: the loop could not run until it timed out"
+        )
+        assert ran == [], "nothing dispatches before the stop check resolves"
+        held.release.set()
+        await asyncio.wait_for(tick, 5)
+    finally:
+        held.release.set()
+        await asyncio.gather(tick, return_exceptions=True)
+
+    assert held.outcomes == [True]
+    assert loop_thread not in held.enter_threads
+    assert ran == [task_id]
+
+
+@pytest.mark.asyncio
+async def test_refused_emergency_stop_path_lookup_still_holds_dispatch(
+    db, monkeypatch, tmp_path
+):
+    task_id = _due_reminder(db)
+    ran = []
+
+    async def handler(row):
+        ran.append(row["id"])
+
+    held = _hold_stop_path_lookup(monkeypatch, tmp_path, refuse=True)
+    scheduler = SchedulerLoop(db, {"reminder": handler}, handler_timeout_seconds=0)
+    scheduler.queue.load()
+    tick = asyncio.create_task(scheduler.tick())
+    try:
+        await _observe_hold(held)
+        assert held.outcomes == [], (
+            "the emergency-stop path lookup (a guarded config read) ran on the "
+            "event loop: the loop could not run until it timed out"
+        )
+        held.release.set()
+        await asyncio.wait_for(tick, 5)
+    finally:
+        held.release.set()
+        await asyncio.gather(tick, return_exceptions=True)
+
+    assert held.outcomes == [True]
+    # Doubt still holds work: an unreadable stop state reads as stopped (26004).
+    assert ran == []
+    assert len(scheduler.queue) == 1, "the held occurrence stays queued"
+    assert db.get_reminder_task(task_id)["last_status"] is None
