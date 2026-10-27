@@ -305,14 +305,22 @@ def _ordered(reads, domain, table):
     )
 
 
-def _rows(reads, purpose, family, table):
+def _rows(reads, purpose, family, table, *, _read_budget=None):
     if not any(p == purpose and f == family for p, f, _ in reads.versions):
         return ()
+    if _read_budget is not None:
+        _read_budget.container()
     result, offset = [], 0
     while True:
         columns, rows = reads.page(purpose, family, table, offset=offset, limit=1000)
-        result.extend(dict(zip(columns, row, strict=True)) for row in rows)
+        for row in rows:
+            if _read_budget is not None:
+                _read_budget.value(row)
+                _read_budget.container(len(columns) * 2)
+            result.append(dict(zip(columns, row, strict=True)))
         if len(rows) < 1000:
+            if _read_budget is not None:
+                _read_budget.container(len(result))
             return tuple(result)
         offset += len(rows)
 

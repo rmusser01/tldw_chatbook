@@ -881,9 +881,21 @@ def test_exact_frontier_and_metadata_refusals_close_dependencies(tmp_path, monke
         reads.integrated_plan()
 
 
+@pytest.mark.parametrize("control", range(9))
 def test_integrated_later_sync_loss_closes_native_call_and_canvas_inputs(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, control
 ):
+    from tldw_chatbook.Backup_Recovery import mobile_sync_plan
+
+    budgets = []
+    native_sync = mobile_sync_plan._plan_sync
+
+    def observed_sync(reads, **kwargs):
+        budgets.append(kwargs["_read_budget"])
+        return native_sync(reads, **kwargs)
+
+    monkeypatch.setattr(mobile_sync_plan, "_plan_sync", observed_sync)
+
     from Tests.Backup_Recovery.test_mobile_trace_plan import _seed_response_trace
     from tldw_chatbook.Canvas.repository import CanvasRepository
 
@@ -1001,47 +1013,60 @@ def test_integrated_later_sync_loss_closes_native_call_and_canvas_inputs(
             for r in qualified
             if (r.table, r.original) != (header.table, header.original)
         )
-        blockers = []
-        closed = _close_qualified_inputs(trace, missing_header, blockers)
-        assert not any(
-            r.table == "console_trace_calls" and r.original == (bad[0],) for r in closed
-        )
-        assert any(
-            r.table == "console_trace_calls" and r.original == (good[0],)
-            for r in closed
-        )
-        assert any(b.reason == "integrated_native_input_lost" for b in blockers)
+        if control == 0:
+            blockers = []
+            closed = _close_qualified_inputs(
+                trace, missing_header, blockers, _read_budget=budgets[0]
+            )
+            assert not any(
+                r.table == "console_trace_calls" and r.original == (bad[0],)
+                for r in closed
+            )
+            assert any(
+                r.table == "console_trace_calls" and r.original == (good[0],)
+                for r in closed
+            )
+            assert any(b.reason == "integrated_native_input_lost" for b in blockers)
 
         good_proof = proofs[good[0]]
         attachments = [
             key for key in good_proof.inputs if key[0] == "message_attachments"
         ]
         assert len(attachments) == 1
-        blockers = []
-        closed = _close_qualified_inputs(
-            trace,
-            tuple(r for r in qualified if (r.table, r.original) != attachments[0]),
-            blockers,
-        )
-        assert not any(
-            r.table == "console_trace_calls" and r.original == (good[0],)
-            for r in closed
-        )
-        assert any(
-            r.table == "console_trace_calls" and r.original == (bad[0],) for r in closed
-        )
-        assert any(b.reason == "integrated_native_input_lost" for b in blockers)
-        for invalid in (
-            (),
-            (good_proof, good_proof),
-            (replace(good_proof, source_manifest_digest="0" * 64),),
-            (replace(good_proof, canonical_manifest_digest="0" * 64),),
-            (replace(good_proof, mapped_call_id="wrong-call"),),
-            (replace(good_proof, inputs=()),),
+        if control == 1:
+            blockers = []
+            closed = _close_qualified_inputs(
+                trace,
+                tuple(r for r in qualified if (r.table, r.original) != attachments[0]),
+                blockers,
+                _read_budget=budgets[0],
+            )
+            assert not any(
+                r.table == "console_trace_calls" and r.original == (good[0],)
+                for r in closed
+            )
+            assert any(
+                r.table == "console_trace_calls" and r.original == (bad[0],)
+                for r in closed
+            )
+            assert any(b.reason == "integrated_native_input_lost" for b in blockers)
+        for index, invalid in enumerate(
+            (
+                (),
+                (good_proof, good_proof),
+                (replace(good_proof, source_manifest_digest="0" * 64),),
+                (replace(good_proof, canonical_manifest_digest="0" * 64),),
+                (replace(good_proof, mapped_call_id="wrong-call"),),
+                (replace(good_proof, inputs=()),),
+            )
         ):
+            if control != index + 2:
+                continue
             malformed = replace(trace, input_incidence=(proofs[bad[0]],) + invalid)
             blockers = []
-            closed = _close_qualified_inputs(malformed, qualified, blockers)
+            closed = _close_qualified_inputs(
+                malformed, qualified, blockers, _read_budget=budgets[0]
+            )
             assert not any(
                 r.table == "console_trace_calls" and r.original == (good[0],)
                 for r in closed
@@ -1053,26 +1078,30 @@ def test_integrated_later_sync_loss_closes_native_call_and_canvas_inputs(
             assert any(
                 b.reason == "integrated_native_incidence_unproved" for b in blockers
             )
-        changed = tuple(
-            replace(
-                r,
-                values=tuple(
-                    (dict(r.values) | {"content": "unqualified change"}).items()
-                ),
+        if control == 8:
+            changed = tuple(
+                replace(
+                    r,
+                    values=tuple(
+                        (dict(r.values) | {"content": "unqualified change"}).items()
+                    ),
+                )
+                if r.table == "messages" and r.original == (good[2],)
+                else r
+                for r in qualified
             )
-            if r.table == "messages" and r.original == (good[2],)
-            else r
-            for r in qualified
-        )
-        blockers = []
-        closed = _close_qualified_inputs(trace, changed, blockers)
-        assert not any(
-            r.table == "console_trace_calls" and r.original == (good[0],)
-            for r in closed
-        )
-        assert any(
-            r.table == "console_trace_calls" and r.original == (bad[0],) for r in closed
-        )
-        assert any(b.reason == "integrated_native_input_changed" for b in blockers)
+            blockers = []
+            closed = _close_qualified_inputs(
+                trace, changed, blockers, _read_budget=budgets[0]
+            )
+            assert not any(
+                r.table == "console_trace_calls" and r.original == (good[0],)
+                for r in closed
+            )
+            assert any(
+                r.table == "console_trace_calls" and r.original == (bad[0],)
+                for r in closed
+            )
+            assert any(b.reason == "integrated_native_input_changed" for b in blockers)
     with pytest.raises(ValueError, match="inactive"):
         reads.integrated_plan()

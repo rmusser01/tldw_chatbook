@@ -714,7 +714,10 @@ and envelope hash rules. Deleted owners retain body-free tombstones and their
 captured base hash, or the explicitly marked native legacy reconstruction. No
 proof recreates deleted content. Conversation archive-only bumps retain their
 last emitted source frontier; ambiguous current proofs, missing predecessors,
-foreign payloads and surplus retained rows refuse their exact owner.
+foreign payloads and surplus retained rows refuse their exact owner. For the three
+latest-only entities, the selected log row's actual version must match the native
+owner (literal one for world-book entries); the planner never repairs a foreign
+proof version. The conversation archive exception remains separate.
 
 Native hard-deleted `world_book_entries` retain each original proof and parent
 association. Validated integer IDs from live rows and body-free tombstones in both
@@ -724,11 +727,14 @@ needs its accepted mapped `world_book` parent. The fixed native payload grammar,
 CAST-as-text identity correspondence and signed SQLite bounds reject malformed
 history before any mapped output.
 
-The S operation owns one existing `_TraceReadBudget` and passes that same instance
-through the private `_plan_traces` argument, then spends its remaining allowance on
-S accumulation, decode, hash and serialization work. Standalone trace planning
-still constructs its ordinary budget. The returned immutable plans expose no
-budget or renewed allowance. This bounds the representation work receiving that
+The outer S or integrated operation owns one existing `_TraceReadBudget` and
+passes that same instance privately through Sync and T. Its remaining allowance
+covers S accumulation, decode, hash and serialization and every newly introduced
+integrated metadata transform, index/container, fixed-point pass, repeated input
+projection and result. Reservations precede expansion, including the integrated
+A-duty row accumulation; existing R/I/C callers retain their original behavior.
+Standalone Sync and trace planning still construct their ordinary budget. The
+returned immutable plans expose no budget or renewed allowance. This bounds the representation work receiving that
 allowance, not all pre-existing R/I/C allocations or Python heap usage; the original
 SQLite cancellation, deadline and step bounds independently remain in force.
 
@@ -766,6 +772,12 @@ frontiers whose exact owners remain accepted, while keeping original proof
 provenance. S and integrated planning recheck all six captured members and their
 resource restrictions before returning. Nested component plans remain diagnostic
 proofs, never insertion capabilities.
+
+C-qualified dispatch checkpoints, hook/machine followups and fleet delivery rows
+retain their exact known quarantine requirement and an unresolved per-row native
+owner duty. This preserves the mapped projection and its dependencies; it does not
+prove that a native quarantine consumer has run. Other unclosed S semantics still
+refuse, including an unknown requirement or a known tag on the wrong table.
 
 Every S and integrated `require_complete()` unconditionally refuses. Typed pending
 duties identify native Run/Goal handlers, all-owner preflight before any file or data

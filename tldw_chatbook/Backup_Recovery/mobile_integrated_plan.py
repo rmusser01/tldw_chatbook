@@ -7,6 +7,13 @@ from .mobile_content_settings import _SettingsSuccessor
 from .mobile_identity_plan import _COMPOSITES, _DOMAINS, _rows
 from .mobile_plan_manifest import _TABLES
 
+_NATIVE_QUARANTINE_DUTIES = {
+    "console_dispatch_checkpoints": "S:imported_dispatch_quarantine",
+    "console_hook_continuation_receipts": "S:imported_followup_quarantine",
+    "console_machine_followup_receipts": "S:imported_followup_quarantine",
+    "fleet_progress_messages": "S:imported_delivery_quarantine",
+}
+
 
 @dataclass(frozen=True)
 class _PendingOwnerDuty:
@@ -38,7 +45,12 @@ class _IntegratedPlan:
         raise ValueError("mobile_integrated_owner_handlers_pending")
 
 
-def _workspace_rows(workspace):
+def _workspace_rows(workspace, *, _read_budget):
+    budget = _read_budget
+    budget.value(workspace.source_rows)
+    budget.value(workspace.rows)
+    budget.container((len(workspace.source_rows) + len(workspace.rows)) * 8)
+    budget.container(len(_TABLES) + len(_DOMAINS))
     specs = {s.table: s for s in _TABLES if s.handler == "I"}
     domain = {d.table: d for d in _DOMAINS if d.family == "workspaces"}
     original_rows = []
@@ -83,7 +95,9 @@ def _workspace_rows(workspace):
         if row.table == "workspace_rag_scopes":
             from .mobile_workspace_plan import _object
 
+            budget.json(before["payload"])
             for item in _object(before["payload"])["items"]:
+                budget.container(2)
                 dependencies.append((item["source_type"], item["source_id"]))
         transformed.append(
             _ContentRow(row.table, keys, row.values, dependencies=tuple(dependencies))
@@ -91,17 +105,22 @@ def _workspace_rows(workspace):
     return tuple(transformed), tuple(original_rows)
 
 
-def _close_dependencies(rows, originals, blockers):
+def _close_dependencies(rows, originals, blockers, *, _read_budget):
+    budget = _read_budget
+    budget.value(originals)
+    budget.container(len(originals) * 4)
     known = {}
     for row in originals:
         values = dict(row.values)
         for domain in _DOMAINS:
             if domain.family != "runs" and domain.table == row.table:
+                budget.container(5)
                 known.setdefault((domain.name, values[domain.column]), set()).add(
                     (row.table, row.original)
                 )
         for name, family, table, fields in _COMPOSITES:
             if family != "runs" and table == row.table:
+                budget.container(len(fields) + 5)
                 identity = tuple(values[column] for column, _kind in fields)
                 known.setdefault((name, identity), set()).add((row.table, row.original))
     # Only I's proved Default equivalence may omit the imported Default row.
@@ -111,6 +130,7 @@ def _close_dependencies(rows, originals, blockers):
     ):
         known.pop(("workspace", "workspace-default"), None)
     while True:
+        budget.container(len(rows) * 8)
         accepted = {(r.table, r.original) for r in rows}
         retained = []
         for row in rows:
@@ -125,6 +145,7 @@ def _close_dependencies(rows, originals, blockers):
             if missing is None:
                 retained.append(row)
             else:
+                budget.container(6)
                 blockers.append(
                     _ContentBlocker(
                         row.table,
@@ -144,7 +165,12 @@ def _plan_integrated(reads):
     if type(reads) is not _CapturedSQLite:
         raise ValueError("mobile_integrated_native_snapshot_required")
     reads.check()
-    sync = reads.sync_plan()
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+    from .mobile_sync_plan import _plan_sync
+
+    budget = _TraceReadBudget()
+    sync = _plan_sync(reads, _read_budget=budget)
     trace = sync.trace
     manifest = reads.plan_manifest()
     from .mobile_workspace_plan import _plan_workspaces
@@ -152,7 +178,11 @@ def _plan_integrated(reads):
     workspace = _plan_workspaces(reads, _identities=sync.identities)
     if workspace.identities is not sync.identities:
         raise ValueError("mobile_integrated_identity_binding_changed")
-    workspace_rows, workspace_originals = _workspace_rows(workspace)
+    workspace_rows, workspace_originals = _workspace_rows(
+        workspace, _read_budget=budget
+    )
+    budget.container(len(trace.content.rows) * 4)
+    budget.container(len(trace.authority_discharges) * 6)
     content_rows = {(r.table, r.original): r for r in trace.content.rows}
     for discharge in trace.authority_discharges:
         previous = content_rows[discharge.table, discharge.original]
@@ -161,10 +191,31 @@ def _plan_integrated(reads):
             or discharge.pending_columns
         ):
             raise ValueError("mobile_integrated_authority_slot_mismatch")
+        budget.value(previous.values)
+        budget.value(discharge.values)
         before, after = dict(previous.values), dict(discharge.values)
         if {k: v for k, v in after.items() if k != "assistant_authority_id"} != before:
             raise ValueError("mobile_integrated_authority_owner_changed")
         content_rows[discharge.table, discharge.original] = discharge
+    budget.container((len(content_rows) + len(trace.rows) + len(workspace_rows)) * 3)
+    budget.container(
+        (
+            len(trace.content.source_rows)
+            + len(trace.source_rows)
+            + len(workspace_originals)
+        )
+        * 3
+    )
+    budget.container(
+        (
+            len(trace.content.blockers)
+            + len(trace.blockers)
+            + len(sync.blockers)
+            + len(workspace.blockers)
+            + len(manifest.unsupported_records)
+        )
+        * 8
+    )
     rows = tuple(content_rows.values()) + trace.rows + workspace_rows
     originals = trace.content.source_rows + trace.source_rows + workspace_originals
     blockers = list(trace.content.blockers + trace.blockers + sync.blockers)
@@ -184,18 +235,22 @@ def _plan_integrated(reads):
     # Each pass starts from the actual qualified projections, so semantic tags
     # removed on an earlier pass cannot conceal a newly lost prerequisite.
     base_rows = rows
+    budget.container((len(blockers) + len(rows)) * 4)
     blocked = {(b.table, b.original) for b in blockers}
     accepted = {(r.table, r.original) for r in rows} - blocked
     while True:
+        budget.container((len(base_rows) + len(blockers)) * 12)
         rows = tuple(r for r in base_rows if (r.table, r.original) in accepted)
         rows, semantic_discharges, semantic_blockers = _close_semantics(
-            sync, workspace, rows, originals
+            sync, workspace, rows, originals, _read_budget=budget
         )
         blockers.extend(semantic_blockers)
         for row in rows:
+            budget.container(len(row.required_proofs) * 3 + 6)
             if any(
                 proof.split(":", 1)[0]
                 in {"I", "C1", "C2a", "C2b", "C2c", "C3", "T", "S"}
+                and proof != _NATIVE_QUARANTINE_DUTIES.get(row.table)
                 for proof in row.required_proofs
             ):
                 blockers.append(
@@ -205,12 +260,15 @@ def _plan_integrated(reads):
                 )
         blocked = {(b.table, b.original) for b in blockers}
         rows = tuple(r for r in rows if (r.table, r.original) not in blocked)
-        rows = _close_dependencies(rows, originals, blockers)
-        rows = _close_qualified_inputs(trace, rows, blockers)
+        rows = _close_dependencies(rows, originals, blockers, _read_budget=budget)
+        rows = _close_qualified_inputs(trace, rows, blockers, _read_budget=budget)
         remaining = {(r.table, r.original) for r in rows}
         if remaining == accepted:
             break
         accepted = remaining
+    budget.container(
+        (len(semantic_discharges) + len(sync.frontiers) + len(blockers)) * 8
+    )
     semantic_discharges = tuple(
         proof
         for proof in semantic_discharges
@@ -229,6 +287,7 @@ def _plan_integrated(reads):
         sync, frontiers=tuple(f for f in sync.frontiers if f.owner in accepted)
     )
     blockers = list(dict.fromkeys(blockers))
+    budget.container(len(_TABLES) * 12)
     specs = {s.table: s for s in _TABLES}
     ownership = dict(
         trace.content.field_ownership + trace.field_ownership + sync.field_ownership
@@ -240,10 +299,12 @@ def _plan_integrated(reads):
     if ownership != expected:
         raise ValueError("mobile_integrated_field_ownership_incomplete")
     for row in rows:
+        budget.container((len(row.values) + len(row.pending_columns)) * 4)
         if set(dict(row.values)) | set(row.pending_columns) != set(
             specs[row.table].columns
         ):
             raise ValueError("mobile_integrated_row_fields_incomplete")
+    budget.container(len(semantic_discharges) * 5)
     duties = [
         _PendingOwnerDuty(
             "owner-write",
@@ -256,7 +317,10 @@ def _plan_integrated(reads):
     ]
     for spec in _TABLES:
         if spec.handler == "A-runs" and not spec.canonical_only:
-            for value in _rows(reads, "legacy", spec.family, spec.table):
+            for value in _rows(
+                reads, "legacy", spec.family, spec.table, _read_budget=budget
+            ):
+                budget.container(len(spec.identity_columns) + 6)
                 duties.append(
                     _PendingOwnerDuty(
                         "A-runs",
@@ -268,6 +332,7 @@ def _plan_integrated(reads):
     # A row tag is an obligation, never proof of passive native recovery or a hold.
     for row in rows:
         for proof in row.required_proofs:
+            budget.container(6)
             duties.append(
                 _PendingOwnerDuty(
                     "A-runs" if proof.startswith("A-runs:") else "owner-write",
@@ -277,6 +342,7 @@ def _plan_integrated(reads):
                 )
             )
     for binding in workspace.binding_holds:
+        budget.container(6)
         duties.append(
             _PendingOwnerDuty(
                 "owner-write",
@@ -285,6 +351,7 @@ def _plan_integrated(reads):
                 "atomic_exact_binding_hold_and_native_unavailability",
             )
         )
+    budget.container(32)
     duties.extend(
         (
             _PendingOwnerDuty(
@@ -322,6 +389,7 @@ def _plan_integrated(reads):
     from .mobile_trace_inputs import _check_trace_members
 
     _check_trace_members(reads)
+    budget.container(len(blockers) + len(duties) + len(_TABLES) * 5 + 10)
     return _IntegratedPlan(
         manifest,
         sync,

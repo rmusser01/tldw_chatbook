@@ -6,15 +6,21 @@ from .mobile_content_graph import _ContentBlocker, _UnprovedReference
 from .mobile_content_settings import _METADATA_JSON, _typed
 
 
-def _canvas(before, after, originals, accepted, identities):
+def _canvas(before, after, originals, accepted, identities, budget):
+    for raw in (before["metadata_json"], after["metadata_json"]):
+        budget.json(raw)
+        budget.value(raw, text_copies=2)
     source = _typed(_METADATA_JSON, before["metadata_json"])
     mapped = _typed(_METADATA_JSON, after["metadata_json"])
     if len(source.canvas_cards) != len(mapped.canvas_cards):
         raise ValueError("canvas_card_count_changed")
+    budget.container(len(source.canvas_cards) * 2)
     dependencies = []
     for old, new in zip(source.canvas_cards, mapped.canvas_cards, strict=True):
         canvas = accepted.get(("canvas_documents", (old.canvas_id,)))
         message = accepted.get(("messages", (old.origin.message_id,)))
+        budget.container(len(originals) * 3)
+        budget.value(old)
         revisions = [
             (key, row)
             for key, row in originals.items()
@@ -44,6 +50,10 @@ def _canvas(before, after, originals, accepted, identities):
             revision = accepted.get(key)
             if revision is None:
                 raise _UnprovedReference("canvas_revision", original["id"])
+            budget.value(revision.values)
+            budget.value(canvas.values)
+            budget.value(message.values)
+            budget.container(3)
             value = dict(revision.values)
             if (
                 value["canvas_id"] != new.canvas_id
@@ -54,10 +64,15 @@ def _canvas(before, after, originals, accepted, identities):
             ):
                 raise _UnprovedReference("canvas_revision", original["id"])
             dependencies.append(("canvas_revision", original["id"]))
+    budget.container(len(dependencies))
     return tuple(dependencies)
 
 
-def _fork(before, after, originals, accepted, identities):
+def _fork(before, after, originals, accepted, identities, budget):
+    for raw in (before["metadata_json"], after["metadata_json"]):
+        budget.json(raw)
+        budget.value(raw, text_copies=2)
+    budget.container(len(originals) * 4)
     from tldw_chatbook.Chat.console_chat_fork import (
         encode_console_fork_message_metadata,
         parse_console_fork_message_metadata,
@@ -79,20 +94,26 @@ def _fork(before, after, originals, accepted, identities):
         for key, _row in calls
     ):
         raise _UnprovedReference("message", turn)
+    budget.container(len(calls) * 3 + 2)
     return (
         encode_console_fork_message_metadata(source[0], source[1], mapped),
         tuple(("trace_call", row["call_id"]) for _key, row in calls),
     )
 
 
-def _close_semantics(sync, workspace, rows, originals):
+def _close_semantics(sync, workspace, rows, originals, *, _read_budget):
     """Proof completion changes no native owner/hold/quarantine authority."""
+    budget = _read_budget
+    budget.value(rows)
+    budget.value(originals)
+    budget.container((len(rows) + len(originals) + len(sync.frontiers)) * 8)
     accepted = {(r.table, r.original): r for r in rows}
     source = {(r.table, r.original): dict(r.values) for r in originals}
     frontiers = {(f.entity, (f.original_id,)) for f in sync.frontiers}
     successors = sync.trace.content.successors
     discharges, blockers = [], []
     for key, row in tuple(accepted.items()):
+        budget.container(len(row.required_proofs) * 3 + len(row.dependencies) * 3 + 10)
         pending = set(row.required_proofs)
         if not pending & {
             "I:binding",
@@ -111,6 +132,11 @@ def _close_semantics(sync, workspace, rows, originals):
                     decode_project_context_json,
                 )
 
+                for raw in (
+                    source[key]["console_project_context_json"],
+                    values["console_project_context_json"],
+                ):
+                    budget.json(raw)
                 old = decode_project_context_json(
                     source[key]["console_project_context_json"]
                 )
@@ -131,12 +157,14 @@ def _close_semantics(sync, workspace, rows, originals):
                 closed.add("I:binding")
             if "T:canvas_turn" in pending:
                 dependencies.extend(
-                    _canvas(source[key], values, source, accepted, sync.identities)
+                    _canvas(
+                        source[key], values, source, accepted, sync.identities, budget
+                    )
                 )
                 closed.add("T:canvas_turn")
             if "T:trace_turn" in pending:
                 values["metadata_json"], refs = _fork(
-                    source[key], values, source, accepted, sync.identities
+                    source[key], values, source, accepted, sync.identities, budget
                 )
                 dependencies.extend(refs)
                 closed.add("T:trace_turn")
@@ -162,6 +190,9 @@ def _close_semantics(sync, workspace, rows, originals):
             )
             continue
         if closed:
+            budget.container(
+                len(values) * 2 + len(row.required_proofs) + len(dependencies) + 10
+            )
             accepted[key] = replace(
                 row,
                 values=tuple(values.items()),
@@ -175,6 +206,7 @@ def _close_semantics(sync, workspace, rows, originals):
                     slot.table,
                     slot.original,
                 ) == key and slot.handler + ":" + slot.domain in closed:
+                    budget.value(slot)
                     discharges.append(
                         replace(
                             slot,
@@ -185,4 +217,5 @@ def _close_semantics(sync, workspace, rows, originals):
                         if slot.domain == "trace_turn"
                         else slot
                     )
+    budget.container(len(accepted) + len(discharges) + len(blockers))
     return tuple(accepted.values()), tuple(discharges), tuple(blockers)

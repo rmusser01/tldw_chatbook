@@ -275,7 +275,7 @@ def _sync_rows(reads, budget):
         offset += len(rows)
 
 
-def _plan_sync(reads):
+def _plan_sync(reads, *, _read_budget=None):
     from .mobile_captured_sqlite import _CapturedSQLite
 
     if type(reads) is not _CapturedSQLite:
@@ -285,7 +285,7 @@ def _plan_sync(reads):
 
     from .mobile_trace_plan import _plan_traces
 
-    budget = _TraceReadBudget()
+    budget = _TraceReadBudget() if _read_budget is None else _read_budget
     trace = _plan_traces(reads, _read_budget=budget)
     for row in chain(
         trace.content.source_rows, trace.content.rows, trace.authority_discharges
@@ -416,6 +416,8 @@ def _plan_sync(reads):
             if len(current) != 1 or current_version > version:
                 raise _SyncRefusal("current_proof_ambiguous")
             current = current[0]
+            if latest and current["version"] != version:
+                raise _SyncRefusal("current_proof_version_mismatch")
             budget.container(len(group))
             previous = [
                 r
