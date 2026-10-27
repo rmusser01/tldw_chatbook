@@ -271,9 +271,9 @@ the terminal before the app opens.
 - **Full setup** — adds search, dictation, tools and appearance (ten steps).
   Every added step starts on "leave as is": pressing Next without changing
   anything writes nothing. The one exception is Appearance on a terminal that
-  asks for plain output (`NO_COLOR` set, or the Linux console) when no glyph
-  choice was ever saved: it proposes plain ASCII status marks, and Next saves
-  that proposal.
+  asks for plain output (`NO_COLOR` set, or the Linux console) on a first run:
+  it proposes plain ASCII status marks, and Next saves that proposal. On a
+  re-run your saved glyph choice stands.
 
 ## What each step does
 
@@ -378,7 +378,8 @@ Nothing is written to `[transcription]` unless you chose something in this run.
 The Appearance step lists themes by name with their tone ("Default dark",
 "Nord · dark"), offers **Startup animation: Off / Short (2 s) / Full**,
 **Reduce motion** and **Plain ASCII status marks** (ticked for you when
-`NO_COLOR` is set or on the Linux console, unless you saved a choice before),
+`NO_COLOR` is set or on the Linux console on a first run; a re-run keeps your
+saved choice),
 and names the current splash card
 with a pointer to Settings ▸ Splash Screen for choosing one. The Full track has
 no Notes step: notes folder sync is set up from Library ▸ Notes ▸ Add from
