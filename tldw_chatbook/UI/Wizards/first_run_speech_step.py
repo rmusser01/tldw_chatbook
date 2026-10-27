@@ -1107,6 +1107,8 @@ class SpeechSetupStep(SetupStep):
 
     def on_unmount(self) -> None:
         self._discard_external_selection()
+        if self._download is not None:  # review F4: never start after setup
+            self._download.cancel_if_waiting()
 
     # -- lazy installed-state load ----------------------------------------
     def on_show(self) -> None:

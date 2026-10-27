@@ -507,7 +507,9 @@ _BUDGETS: dict[str, int] = {
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the
     # class); the copy itself lives in first_run_speech_step_state.py.
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1768,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.14 +2 (review
+    # F4) -- leaving setup abandons a Speech download still waiting in line.
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1770,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained

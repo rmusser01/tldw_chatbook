@@ -1418,6 +1418,11 @@ class ArtifactAcquisitionService:
                 lease = await self._acquire_session_lease(
                     loop, root, progress, scope.control
                 )
+                if scope.control is not None:
+                    # Review F4: from here on the download is running, so a
+                    # host that goes away no longer abandons it (only a
+                    # waiting one; DownloadControl.cancel_if_waiting).
+                    scope.control.mark_started()
                 _set_active_acquisition(
                     ActiveAcquisition(
                         root=root,

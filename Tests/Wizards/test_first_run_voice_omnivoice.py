@@ -829,3 +829,25 @@ async def test_omnivoice_second_download_after_a_cancel_can_be_cancelled_too(
     assert (second_phase, second_disabled) == ("Downloading model", False)
     assert controls[1].cancel_requested is True
     assert status == "Download cancelled — nothing was saved."
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_leaving_setup_abandons_an_omnivoice_download_still_waiting_in_line(
+    monkeypatch, started
+) -> None:
+    """TASK-34100.14 review F4: see the Speech step's twin test."""
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
+
+    _state(monkeypatch, "model_missing")
+    step = _step()
+    host = _Host(step)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        control = DownloadControl(label="OmniVoice voice model", wait_if_busy=True)
+        if started:
+            control.mark_started()
+        step._omnivoice_download = control
+        await step.remove()
+        await pilot.pause()
+
+    assert control.cancel_requested is (not started)

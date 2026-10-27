@@ -2710,3 +2710,29 @@ def test_cancelled_download_says_nothing_was_saved_and_stays_not_installed(
     step._installed_item = None
     status, _action = step._status_and_action()
     assert status == "Not installed. Download cancelled — nothing was saved."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started", [False, True])
+async def test_leaving_setup_abandons_a_speech_download_still_waiting_in_line(
+    started,
+):
+    """TASK-34100.14 review F4: a Speech install queued behind another
+    download must not start on its own after the wizard is gone (no UI would
+    be left to see or stop it); one already transferring carries on, as it
+    did before this branch, until part 2's leave guard decides.
+    """
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
+
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        control = DownloadControl(label=step._model_label(), wait_if_busy=True)
+        if started:
+            control.mark_started()
+        step._download = control
+        await step.remove()
+        await pilot.pause()
+
+    assert control.cancel_requested is (not started)

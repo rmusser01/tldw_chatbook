@@ -436,6 +436,62 @@ def test_cancel_while_queued_leaves_the_running_download_alone(tmp_path: Path) -
     assert second_ref not in _installed_refs(core)
 
 
+def test_leaving_abandons_a_queued_install_but_never_a_running_one(
+    tmp_path: Path,
+) -> None:
+    """TASK-34100.14 review F4: a host that goes away (the wizard closes)
+    abandons a download that is still waiting for its turn -- otherwise it
+    would start on its own later, with no UI left to see or stop it -- while
+    one already transferring carries on, as before this branch.
+    """
+    gate = threading.Event()
+    with FixtureArtifactServer() as srv:
+        (first_ref, first_service, first_consent), (
+            second_ref,
+            second_service,
+            second_consent,
+        ), catalog, core = _two_artifacts(tmp_path, srv, gate)
+        holder = _download_control("OmniVoice voice model", wait_if_busy=True)
+        waiting = _download_control("Parakeet v2 (English, INT8)", wait_if_busy=True)
+        first = _ThreadedProvision(
+            first_service, first_ref, first_consent, catalog, control=holder
+        )
+        second = _ThreadedProvision(
+            second_service, second_ref, second_consent, catalog, control=waiting
+        )
+        try:
+            first.start().wait_fetching()
+            second.start().wait_queued()
+            assert holder.cancel_if_waiting() is False
+            assert waiting.cancel_if_waiting() is True
+            second.join(timeout=3.0)
+            assert first.thread.is_alive(), "abandoning the waiter stopped the holder"
+        finally:
+            gate.set()
+        first.join()
+
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionCancelledError
+
+    assert holder.cancel_requested is False
+    assert isinstance(second.error, AcquisitionCancelledError), second.error
+    assert first.error is None, first.error
+    installed = _installed_refs(core)
+    assert first_ref in installed
+    assert second_ref not in installed
+    assert "/second.onnx" not in srv.requests
+
+
+def test_a_control_abandoned_before_its_install_runs_never_starts() -> None:
+    """The wizard can close between Install and the worker picking it up."""
+    control = _download_control("Parakeet v2 (English, INT8)", wait_if_busy=True)
+    assert control.cancel_if_waiting() is True
+    assert control.cancel_requested is True
+    started = _download_control("OmniVoice voice model")
+    started.mark_started()
+    assert started.cancel_if_waiting() is False
+    assert started.cancel_requested is False
+
+
 def test_cancelling_the_running_download_lets_the_queued_one_start(
     tmp_path: Path,
 ) -> None:

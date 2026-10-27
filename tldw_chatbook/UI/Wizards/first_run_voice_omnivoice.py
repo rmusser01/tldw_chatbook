@@ -452,6 +452,17 @@ class OmniVoiceStepBase(SetupStep):
         progress.display = True
         progress.update_progress(event.progress)
 
+    def on_unmount(self) -> None:
+        """Abandon an OmniVoice download still waiting in line (review F4).
+
+        Leaving setup must not let a queued 1.1 GB download start later with
+        no UI left to show or stop it; one already transferring carries on.
+        Textual dispatches ``on_unmount`` per class along the MRO, so this
+        runs alongside the Voice step's own handler.
+        """
+        if self._omnivoice_download is not None:
+            self._omnivoice_download.cancel_if_waiting()
+
     @on(ModelInstallProgress.CancelRequested, "#setup-voice-omnivoice-progress")
     def _omnivoice_cancel_requested(
         self, event: ModelInstallProgress.CancelRequested
