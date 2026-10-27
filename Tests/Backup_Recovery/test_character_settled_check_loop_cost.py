@@ -11,19 +11,27 @@ all twice more. Measured in process on the 15.6 head, an unchanged check made
 A settled check now qualifies on the loop only what the loop runs (the
 display entry's own checks, as on the original route, and the readers the
 midpoint calls); the worker qualifies every reader before each read, as it
-did. A first scope read that does not settle is the probe's outcome: the
-check reloads without probing the scope again. A reader customized before a
-settled check is still refused before any read, and the check then takes the
-original route.
+did. A first scope read that does not settle, or fails, is the probe's
+outcome: the check reloads without probing the scope again. A reader
+customized before a settled check is still refused before any read, and the
+check then takes the original route.
+
+Two of the loop's remaining checks are pinned on their own (review of the
+first cut): an identity reader changed as a settled pair's on-loop midpoint
+starts never runs its changed body there (``require_loop_readers``; dev
+holds this too, with its whole-set check), and a ``_await_database_work``
+changed after the display entry's checks never receives the merged callback
+(it was handed ``read_current`` before the selection qualified it).
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 import threading
 from contextlib import contextmanager
-from types import CodeType
+from types import CodeType, FunctionType
 
 import pytest
 
@@ -283,4 +291,208 @@ async def test_reader_changed_after_selection_refuses_and_takes_the_probe_route(
         for restore in restores:
             restore()
         assert function.__code__ is original_code
+        database.close()
+
+
+def _recording_body(function, record):
+    """Change ``function``'s body to one that records each call, then runs the original.
+
+    The change is a new code object in the original defining namespace, so
+    every reader qualification sees a customized reader. Returns the restore.
+    """
+    assert type(function) is FunctionType and function.__closure__ is None
+    clone = FunctionType(
+        function.__code__,
+        function.__globals__,
+        function.__name__,
+        function.__defaults__,
+        function.__closure__,
+    )
+    clone.__kwdefaults__ = function.__kwdefaults__
+    namespace = function.__globals__
+    names = ("_character_settled_original", "_character_settled_record")
+    assert all(name not in namespace for name in names)
+    namespace[names[0]], namespace[names[1]] = clone, record
+    asynchronous = inspect.iscoroutinefunction(function)
+    exec(  # noqa: S102 - fixed test body in the original defining namespace.
+        f"{'async ' if asynchronous else ''}def _character_settled_body(self, *args, **kwargs):\n"
+        "    _character_settled_record(args)\n"
+        f"    return {'await ' if asynchronous else ''}"
+        "_character_settled_original(self, *args, **kwargs)\n",
+        namespace,
+    )
+    original_code = function.__code__
+    function.__code__ = namespace.pop("_character_settled_body").__code__
+
+    def restore():
+        function.__code__ = original_code
+        for name in names:
+            namespace.pop(name)
+
+    return restore
+
+
+@contextmanager
+def _loop_change(code, function, calls, *, until_return):
+    """Change ``function``'s body when ``code`` first starts on this (the loop's) thread.
+
+    With ``until_return`` the original body is back when that first frame
+    returns; otherwise it stays changed until the context exits. ``calls``
+    records each changed-body call as ``(thread name, arguments)``.
+    """
+    state = {"changed": 0, "restore": None}
+
+    def record(args):
+        calls.append((threading.current_thread().name, args))
+
+    def observe(frame, event, _argument):
+        if frame.f_code is not code or event not in {"call", "return"}:
+            return
+        if event == "call" and not state["changed"]:
+            state["changed"] = 1
+            state["restore"] = _recording_body(function, record)
+        elif event == "return" and until_return and state["restore"] is not None:
+            state.pop("restore")()
+            state["restore"] = None
+
+    previous = sys.getprofile()
+    sys.setprofile(observe)  # This thread only: the loop the check runs on.
+    try:
+        yield state
+    finally:
+        sys.setprofile(previous)
+        if state.get("restore") is not None:
+            state.pop("restore")()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_active", [True, False], ids=["active", "idle"])
+@pytest.mark.parametrize(
+    "method", ["_current_character_identity", "_open_conversation_identity"]
+)
+async def test_reader_changed_at_the_settled_midpoint_never_runs_on_the_loop(
+    tmp_path, run_active, method
+):
+    """The settled pair's on-loop midpoint still refuses a changed identity reader.
+
+    A settled check's midpoint no longer qualifies the whole reader set on
+    the loop; it qualifies what it runs there (``require_loop_readers``):
+    the two identity readers ``_ambient_scope_matches`` calls. One changed as
+    the midpoint starts, after the worker's own check, is refused there:
+    its changed body never runs on the UI loop. Dev qualifies the whole set
+    there, so this holds on dev too; it pins the one on-loop check left in
+    the settled first read, which no other Character test catches.
+    """
+    database = CharactersRAGDB(tmp_path / "midpoint.sqlite", "midpoint")
+    function = vars(character_context.ConsoleCharacterContextController)[method]
+    original_code, calls = function.__code__, []
+    pair = character_context.ConsoleCharacterContextController._read_database_scope_metadata_pair
+    (midpoint,) = (
+        item
+        for item in pair.__code__.co_consts
+        if type(item) is CodeType and item.co_name == "validate"
+    )
+    try:
+        controller, screen, _ = await _settled(database, run_active=run_active)
+        if run_active:
+            controller._scope_checked = None
+
+        with _loop_change(midpoint, function, calls, until_return=True) as change:
+            await _display(controller, screen)
+
+        assert change["changed"] == 1, "the settled check's midpoint never ran"
+        assert function.__code__ is original_code
+        assert not calls, f"a changed {method} body ran: {calls}"
+        assert not worker_leases(database)
+        assert not controller.state.loading
+    finally:
+        function.__code__ = original_code
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_active", [True, False], ids=["active", "idle"])
+async def test_dispatch_changed_after_the_entry_never_receives_the_merged_read(
+    tmp_path, run_active
+):
+    """A settled check hands its merged read only to the stock dispatch.
+
+    ``_await_database_work`` runs on the loop and receives the check's
+    finite callback. The display entry qualifies it with every reader, but
+    ambient accessors run between that and the dispatch. Changed there (here
+    as ``_check_recent_batch`` starts), the check takes the original route,
+    whose own reads the changed dispatch keeps, as a customized reader
+    always has; the merged callback never reaches it.
+    """
+    database = CharactersRAGDB(tmp_path / "dispatch.sqlite", "dispatch")
+    controller_type = character_context.ConsoleCharacterContextController
+    function = vars(controller_type)["_await_database_work"]
+    original_code, calls = function.__code__, []
+    try:
+        controller, screen, _ = await _settled(database, run_active=run_active)
+        state = controller.state
+        if run_active:
+            controller._scope_checked = None
+
+        with _loop_change(
+            controller_type._check_recent_batch.__code__,
+            function,
+            calls,
+            until_return=False,
+        ) as change:
+            changed = await _display(controller, screen)
+
+        assert change["changed"] == 1, "the check never reached its dispatch"
+        assert function.__code__ is original_code
+        merged = [
+            getattr(args[1], "__qualname__", "")
+            for _thread, args in calls
+            if len(args) > 1
+        ]
+        assert not any(
+            name.endswith("_check_recent_batch.<locals>.read_current") for name in merged
+        ), merged
+        assert calls, "the original route did not read through the changed dispatch"
+        assert changed is False
+        assert controller.state is state
+        assert not worker_leases(database)
+    finally:
+        function.__code__ = original_code
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_active", [True, False], ids=["active", "idle"])
+async def test_failed_first_read_reloads_without_probing_again(tmp_path, run_active):
+    """A first scope read that fails is the probe's outcome, as one that does not settle.
+
+    The original route answers a failed probe by reloading, which presents
+    the read error. On the 15.6 head the check handed the failure to the
+    whole probe-then-refresh route, which probed the scope again on a handle
+    of its own first: three helpers where the read and the reload need two.
+    """
+    database = CharactersRAGDB(tmp_path / "failed.sqlite", "failed")
+    try:
+        controller, screen, _ = await _settled(database, run_active=run_active)
+        if run_active:
+            controller._scope_checked = None
+        with database.transaction() as cursor:
+            cursor.execute(
+                "UPDATE character_conversation_search_revision"
+                " SET data_revision = ? WHERE singleton_id = 1",
+                ("invalid",),
+            )
+
+        with _unsettled_first_reads(database, 0) as observed:
+            await _display(controller, screen)
+
+        assert not worker_leases(database)
+        state = controller.state
+        assert not state.loading and state.error
+        # The failed read, then the reload that presents its error: two
+        # finite callbacks, two helpers.
+        assert observed["callbacks"] == 2, observed
+        if os.name != "nt":
+            assert observed["helpers"] == 2, observed
+    finally:
         database.close()

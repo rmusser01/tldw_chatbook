@@ -308,9 +308,10 @@ class _CharacterRefreshReaders:
             raise _ConsoleCharacterReaderChanged("Character display reader changed")
 
     def require_loop_readers(self) -> None:
-        """Qualify, on the loop, what a settled check's first midpoint runs there.
+        """Qualify, on the loop, what a settled first read's midpoints run there.
 
-        TASK-35961: the midpoint of a settled check's first scope pair calls
+        TASK-35961: the on-loop midpoint of each pair in a settled check's
+        first scope read (up to ``_SCOPE_CAPTURE_ATTEMPTS`` pairs) calls
         ``_ambient_scope_matches`` (qualified by ``_stock_character_scope_pair``
         beside it), which calls the two identity readers through the captured
         accessors. Those are qualified here; the worker qualifies every reader
@@ -485,7 +486,9 @@ def _settled_character_refresh_readers(controller, presentation, generation, set
     ``require_current``, on top of the display entry's checks. It now
     qualifies on the loop what runs there: the owner's structure (as
     ``_stock_character_presentation`` does), the two identity readers the
-    selection calls, and the captured bound callbacks. The finite callback
+    selection calls, ``_await_database_work`` (the check hands it the finite
+    callback next, on the loop, after ambient accessors that ran since the
+    display entry's checks) and the captured bound callbacks. The finite callback
     qualifies every reader, in the worker, before its first read and around
     each read after it, as it did. A reader changed after this selection is
     refused there before anything is read, so no handle is opened, and the
@@ -514,7 +517,7 @@ def _settled_character_refresh_readers(controller, presentation, generation, set
             or controller._service_factory is not CharacterConversationNavigationService
             or not all(
                 _character_reader_current(record, controller)
-                for record in _CHARACTER_LOOP_READERS
+                for record in _CHARACTER_SETTLED_SELECTION_READERS
             )
         ):
             return None
@@ -833,9 +836,9 @@ class ConsoleCharacterContextController:
         """Keep the original pair on one handle and its ambient check on-loop.
 
         ``_reader_check`` runs in the worker around each read. The on-loop
-        midpoint runs ``_loop_check`` when given (TASK-35961: a settled
-        check's first pair qualifies there what the midpoint runs), else
-        ``_reader_check``.
+        midpoint runs ``_loop_check`` when given (TASK-35961: each pair of a
+        settled check's first scope read qualifies there what the midpoint
+        runs), else ``_reader_check``.
         """
         if not _stock_character_scope_pair(self):
             return None
@@ -1415,9 +1418,10 @@ class ConsoleCharacterContextController:
         as ``settled`` (TASK-33620.15.6). A settled pair that still matches it
         returns before the full post-pair owner check: nothing is published
         from it, and the caller confirms the ambient scope on the loop, as
-        after the original probe. That read's on-loop midpoint qualifies the
-        readers it runs there (TASK-35961, ``require_loop_readers``); this
-        worker qualifies them all around each read.
+        after the original probe. The on-loop midpoint of each pair in that
+        read (every attempt) qualifies the readers it runs there (TASK-35961,
+        ``require_loop_readers``); this worker qualifies them all around each
+        read.
         """
         loop_check = readers.require_loop_readers if settled is not None else None
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
@@ -1552,8 +1556,9 @@ class ConsoleCharacterContextController:
         loop only what runs there; the worker qualifies every reader before
         its first read, and a reader changed after the selection is refused
         there before anything is read (no handle is opened). A first scope
-        read that does not settle, or fails, for a current owner is returned
-        as the probe's outcome, so the caller does not read the scope again.
+        read that does not settle, or a callback that fails, for a current
+        owner is returned as the probe's outcome, so the caller does not read
+        the scope again.
 
         Args:
             presentation: The original display-owner closure.
@@ -1567,9 +1572,10 @@ class ConsoleCharacterContextController:
             the original batch, an owner that moved on or a reader that
             changed during the read gets no publication, and a scope that
             moved again during the load is reloaded by the original
-            ``refresh``. A ``_CharacterScopeProbed`` when the first scope
-            read did not settle or failed for a current owner: the caller
-            takes the original route's branch for that probe outcome. None
+            ``refresh``. A ``_CharacterScopeProbed`` when, for a current
+            owner, the first scope read did not settle or the callback
+            failed (in that read or after it): the caller takes the original
+            route's branch for that probe outcome, which reloads. None
             when the check reached no decision for a current owner (no stock
             readers, a settled check's reader changed before its first read,
             an unchanged read whose ambient scope or displayed fingerprint
@@ -1623,12 +1629,16 @@ class ConsoleCharacterContextController:
                 return True
             except _ConsoleCharacterAmbientError as failure:
                 ambient_error = failure.error
-            except Exception as error:  # noqa: BLE001 - an unsettled or unreadable first scope.
+            except Exception as error:  # noqa: BLE001 - an unsettled or unreadable first scope, or a later failure.
                 # As after the original probe: a display owner that moved on gets
                 # nothing; a current one takes the original route, which decides
-                # and presents the read error. TASK-35961: this read was that
-                # probe (three tries on its one handle, as ``_capture_scope``
-                # tries three times), so its outcome is handed over, not read again.
+                # and presents the read error. TASK-35961: the first scope read
+                # was that probe (three tries on its one handle, as
+                # ``_capture_scope`` tries three times), so its outcome is handed
+                # over, not read again. Any other failure here, including one
+                # after that read (an ambient check timing out once the groups
+                # loaded, say), is handed over as a read error: the original
+                # route reloads after either, so the caller reloads once.
                 try:
                     current = readers.ambient_current()
                 except _ConsoleCharacterReaderChanged:
@@ -2718,6 +2728,14 @@ _CHARACTER_LOOP_READERS = tuple(
     record
     for record in _CHARACTER_REFRESH_READERS
     if record[1] in {"_current_character_identity", "_open_conversation_identity"}
+)
+#: TASK-35961: what a settled check's selection qualifies on the UI loop: the
+#: two identity readers it calls, and ``_await_database_work``, which the
+#: check runs next on the loop with its finite callback, so a dispatch changed
+#: since the display entry's checks never receives that callback.
+_CHARACTER_SETTLED_SELECTION_READERS = (
+    *_CHARACTER_LOOP_READERS,
+    *(record for record in _CHARACTER_SCOPE_READERS if record[1] == "_await_database_work"),
 )
 
 
