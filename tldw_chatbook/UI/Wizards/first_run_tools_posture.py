@@ -132,9 +132,14 @@ def posture_sentence(posture: ToolsPosture) -> str:
 def also_available_line(posture: ToolsPosture) -> str:
     """The read-only line naming the default-on groups the step does not offer."""
     if not posture.also_available:
+        # Live (TASK-34100.13 resume): the app's own MCP server still offers
+        # list_characters and chat_with_character here (no native twin;
+        # TASK-34100.5 decides whether that server belongs in plain chat), so
+        # the line names only what goes: every tool that edits a card.
         return (
-            "Web search, Watchlists, character and question tools are switched "
-            f"off. Turn them on under {TOOL_GATES_PANE_PATH}."
+            "Web search, Watchlists, questions for you and the tools that edit "
+            "character cards are switched off. Turn them on under "
+            f"{TOOL_GATES_PANE_PATH}."
         )
     # Live (TASK-34100.13): a model whose context window is unknown -- a
     # fresh local server -- gets a plain request with no tools at all
