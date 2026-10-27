@@ -136,6 +136,7 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_first_reply_failure_copy.py",
     "Tests/Chat/test_first_token_window.py",
     "Tests/Architecture/test_surface_swap_guard.py",
+    "Tests/Architecture/test_agent_runtime_import_footprint.py",
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
