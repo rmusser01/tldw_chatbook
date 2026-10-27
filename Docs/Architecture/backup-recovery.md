@@ -600,3 +600,47 @@ A no-selection snapshot may retain a matching pack/version pair without claiming
 asset proof; partial pairs and cross-owner expressions refuse. The immutable
 plan still always refuses C3, T, S, A-runs and integrated completion, including
 empty families. It cannot authorize writes, holds, receipts, dispatch or activation.
+
+
+### Private generated memory and complete C composition (C3)
+
+`content_plan()` composes the actual C1, C2 settings/workflow/actor and C3
+projections into the fixed 61-table/580-column ownership contract. The final
+97 C3 columns cover context policy, auxiliary accounting, generated memories,
+scopes/selections and the five character-search families. All original rows
+remain private alongside mapped rows; original prefix, prompt and unit
+associations are retained independently of the required mapped proof. C1's
+relocated Note content remains the final body consumed by later native frontiers.
+
+Memory mapping checks the exact source lineage, selected variant, attachment
+bytes and native unit provenance before producing the mapped native persisted
+prefix digest. Runtime and persisted source digest forms are checked separately.
+Native manual continuation snapshots use their fixed tool-call/result identity
+grammar and actual retained checkpoint bodies; provider call IDs stay opaque.
+Changed/missing historical inputs refuse at the exact memory dependency rather
+than synthesizing a proof from a digest. Sealed prior-range references retain
+revision/scope ownership and ordered coverage, cycles refuse, and invalid scope
+or memory dependencies close over selections. Global selection sequence mapping
+uses I's reserved destination frontier; reset/history status and accounting are
+preserved without replaying a call or selecting anything in a live session.
+
+Character-search source rows contribute typed digests and captured-manifest
+associations, never imported index/state rows. Destination singleton authority
+and native monotonic/index effects remain destination-owned; unresolved source
+or destination builds refuse without expiry repair. Existing legacy summary
+text and mapped boundary associations discharge the exact C2 successor.
+
+The full C value remains unconditionally noninsertable, including empty families:
+T, S, A-runs, physical/revision/authority dependencies and integrated/write gates
+remain explicit. It grants no rows, receipts, holds, publication, dispatch or
+public cutover. Ordinary seeded-default Character name collisions still refuse;
+renamed isolated positive fixtures do not establish an untouched-default import.
+
+Each C builder requests `content_schema_catalog()` with its nonempty unique
+tuple of literal installed Chat C table names. The live reader queries exactly
+those source and canonical table columns; `schema_catalog()` retains its full
+catalog behavior. Full schema/version admission at open and all retained-member
+pre/post hash, name, ancestor, claim/journal, cancellation and resource checks
+remain in force, including the unqueried Workspaces and Runs members. This
+removes repeated irrelevant metadata queries across the five nested C builders;
+it introduces no cache, reader renewal or change to the original SQL budgets.

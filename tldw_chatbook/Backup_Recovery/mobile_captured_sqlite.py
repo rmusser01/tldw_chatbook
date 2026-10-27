@@ -179,6 +179,64 @@ class _CapturedSQLite:
         self.check()
         return tuple(result)
 
+    def content_schema_catalog(self, selected):
+        """Read a literal C-table subset while retaining every member's fences."""
+        from .mobile_plan_manifest import _TABLES
+
+        allowed = {s.table for s in _TABLES if s.family == "chat" and s.handler == "C"}
+        if (
+            type(selected) is not tuple
+            or not 0 < len(selected) <= len(allowed)
+            or any(type(table) is not str or table not in allowed for table in selected)
+            or len(set(selected)) != len(selected)
+        ):
+            raise ValueError("mobile_content_catalog_selector")
+        self.check()
+        result, entries, size = [], 0, 0
+        members = tuple(sorted(self._connections.items()))
+        for _key, (_connection, restrictions, _tables, candidate, digest) in members:
+            if restrictions.expired():
+                raise ValueError("sqlite_resource_limit")
+            _verify_candidate(self, restrictions, candidate, digest)
+        for (purpose, family), (
+            connection,
+            restrictions,
+            tables,
+            candidate,
+            digest,
+        ) in members:
+            if family != "chat":
+                continue
+            if not set(selected) <= tables:
+                raise ValueError("mobile_content_schema_mismatch")
+            for table in sorted(selected):
+                cursor = connection.execute(
+                    'PRAGMA table_xinfo("' + table.replace('"', '""') + '")'
+                )
+                try:
+                    columns = tuple(row[1] for row in cursor if row[6] != 1)
+                finally:
+                    cursor.close()
+                entries += 1 + len(columns)
+                size += len(table.encode("utf-8")) + sum(
+                    len(value.encode("utf-8")) for value in columns
+                )
+                if (
+                    not columns
+                    or entries > sqlite_validation._CATALOG_LIMIT
+                    or size > sqlite_validation._CATALOG_BYTES
+                ):
+                    raise ValueError("sqlite_catalog_limit")
+                result.append((purpose, family, table, columns))
+        # No partially verified metadata escapes: every retained object and the
+        # full native capture/claim/selector scope are checked before any return.
+        for _key, (_connection, restrictions, _tables, candidate, digest) in members:
+            if restrictions.expired():
+                raise ValueError("sqlite_resource_limit")
+            _verify_candidate(self, restrictions, candidate, digest)
+        self.check()
+        return tuple(result)
+
     def authority_reference(self, kind, reference_id):
         """Prove one fixed captured raw reference without importing authority."""
         from .mobile_captured_authority import _authority_reference
@@ -220,6 +278,12 @@ class _CapturedSQLite:
         from .mobile_content_workflows import _plan_content_workflows
 
         return _plan_content_workflows(self)
+
+    def content_plan(self):
+        """Build the complete fixed C projection without import authority."""
+        from .mobile_content_memory import _plan_content
+
+        return _plan_content(self)
 
     def content_actor_plan(self):
         """Compose C2 logical actor history without asset or execution authority."""

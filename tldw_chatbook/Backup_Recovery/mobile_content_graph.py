@@ -79,7 +79,7 @@ class _GraphBuilder:
         self.specs = {s.table: s for s in _TABLES if s.family == "chat"}
         catalog = {
             (purpose, table): columns
-            for purpose, family, table, columns in reads.schema_catalog()
+            for purpose, family, table, columns in reads.content_schema_catalog(tables)
             if family == "chat"
         }
         if any(
