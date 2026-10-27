@@ -3,9 +3,11 @@ id: TASK-37000
 title: >-
   Console: a first send rebuilds the collapsed Inspector's run section and lays
   out hidden widgets
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-10-26 12:30'
+updated_date: '2026-10-27 15:53'
 labels:
   - console
   - performance
@@ -30,3 +32,13 @@ Fix direction to evaluate (not prescribed): let the collapsed Inspector defer it
 - [ ] #2 While the Inspector is collapsed, a send causes no layout request from widgets inside it, and opening it afterwards shows the same rows, actions and geometry as a rail that was open throughout
 - [ ] #3 A deterministic test pins both halves and fails on the base build
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure first (headless, 160x45, collapsed Inspector): count layout/recompose requests and full reflows from widgets inside #console-right-rail during a first send and a later send on origin/dev; A/B the rail opened after a collapsed send against one open throughout.
+2. Tests first: one test counting in-rail layout requests across a first and a later send (positive control with the rail open), one A/B witness (rows, actions, classes, geometry) of an Inspector opened after the send vs one open throughout. Both must fail on origin/dev for the right reason.
+3. Fix: while the rail's collapse cascade hides them, ConsoleRunInspector and ConsoleInspectorSection keep their state current, re-write row copy without a layout, and hold any rebuild for the rail's opening; the cascade's opening runs the held rebuild. Display writes into the hidden rail (the Agents section) record into the cascade's marker instead of bypassing it.
+4. Mutation-check the fix against the tests; re-measure headless; live paired spot-check with the pf2probe kit (base vs branch).
+5. Related suites by test id vs origin/dev, ratchets, preflight, rebase onto newest origin/dev.
+<!-- SECTION:PLAN:END -->
