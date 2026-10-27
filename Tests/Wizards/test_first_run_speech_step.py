@@ -2676,6 +2676,66 @@ def test_provision_names_the_download_and_waits_in_line(monkeypatch, tmp_path):
     assert control.wait_if_busy is True
 
 
+@pytest.mark.asyncio
+async def test_progress_cancel_stops_the_control_the_install_was_given(
+    monkeypatch, tmp_path
+):
+    """TASK-34100.14 final review T2: the tests above prove Cancel cancels
+    ``step._download`` and that provision gets *a* control, but not that they
+    are the same object. Mirrors the Voice step's end-to-end test: the fake
+    download only stops when the control it was handed is cancelled, and the
+    Cancel button in the step's own progress widget is what cancels it.
+    """
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionCancelledError
+
+    seen: dict = {}
+
+    async def provision(model, precision, report, *, progress=None, control=None):
+        seen["control"] = control
+        progress(_fetch_event(1, 2))
+        for _ in range(200):
+            if control is not None and control.cancel_requested:
+                raise AcquisitionCancelledError()
+            await asyncio.sleep(0.05)
+        raise AssertionError("the download was never cancelled")
+
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", provision)
+    source_service = MagicMock()
+    step = _step(installed=(), wizard=_wizard_with_source(source_service))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        # What Install + the consent modal's Confirm do, minus the preflight.
+        step._operation = "install"
+        step._pending_report = _report(destination=tmp_path / "managed")
+        step._confirm_install(True)
+        cancel = None
+        for _ in range(80):
+            await pilot.pause(0.05)
+            found = step.query("#setup-speech-install-progress .model-install-cancel")
+            if found and found.first(Button).display and "control" in seen:
+                cancel = found.first(Button)
+                break
+        assert cancel is not None, "no Cancel download on the Speech progress"
+        await pilot.click(cancel)
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if step._operation is None:
+                break
+        await pilot.pause(0.2)
+        status = str(step.query_one("#setup-speech-status", Static).render())
+
+    control = seen["control"]
+    assert control.label == "Parakeet v2 (English, INT8)"
+    assert control.cancel_requested is True
+    assert step._download is None
+    assert status == "Not installed. Download cancelled — nothing was saved."
+    source_service.prefer_managed.assert_not_called()
+
+
 def test_cancelled_download_says_nothing_was_saved_and_stays_not_installed(
     monkeypatch, tmp_path
 ):
