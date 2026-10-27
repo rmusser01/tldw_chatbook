@@ -2629,12 +2629,6 @@ def _load_settings_uncached(
         # where motion is read (startup_logging.motion_reduced), never here --
         # Settings ▸ Appearance saves this table back whole.
         "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
-        # TASK-34100.2 AC#8: Library import, the ingest job and the Media panel
-        # read analysis's provider from this snapshot; without the section
-        # every one of them reported "no analysis provider is configured".
-        "analysis_defaults": copy.deepcopy(
-            toml_config_data.get("analysis_defaults", {})
-        ),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
         "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)
