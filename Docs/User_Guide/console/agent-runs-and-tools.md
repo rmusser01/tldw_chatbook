@@ -223,8 +223,11 @@ Other activity rows include:
 (`Status: Ready` / `Status: Generating…` / `Status: Needs approval` /
 `Status: Source blocked` / `Status: Blocked`), and the "Run recipe" row summarizes provider / model /
 sources / tools / approvals for the next send. The **Agents** section near
-the top of this rail is the sub-agent list itself — it appears once the
-reply has spawned at least one sub-agent; see
+the top of this rail is the sub-agent list itself. Once the chat is saved
+(after its first send) it shows a **Run history** summary with a **View all
+runs** button, and it lists sub-agents once a reply spawns them. The rail
+shows the same after a send whether it was open during the send or opened
+afterwards; see
 [The fleet panel](#the-fleet-panel--three-states) below for its three
 states (collapsed summary, expanded rows, drilled into one child), how to
 cancel a child, and how its token spend shows up. The list used to live in
