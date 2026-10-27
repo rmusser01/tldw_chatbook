@@ -248,7 +248,8 @@ class ConsoleEnvironmentController:
         self._landed_root: str | None = None
         self._has_landed = False
         # The newest root a refresh DETERMINED (``str | None``), for the
-        # stale-scope guard (TASK-33620.15.1.6); never an ``UNKNOWN_ROOT``.
+        # stale-scope guard (TASK-33620.15.1.6). ``UNKNOWN_ROOT`` only until
+        # the first determined answer; an undetermined read never sets it.
         self._observed_root: "str | None | UnknownRoot" = UNKNOWN_ROOT
         # Root reads are numbered in issue order; a read answered after a
         # newer one acts on the newer answer (``_root_read``).
