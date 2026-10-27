@@ -139,3 +139,55 @@ def test_capture_change_review_admission_returns_string_roots():
 
     assert roots == ("/w/one", "/w/two")
     assert all(type(root) is str for root in roots)
+
+
+def test_the_admission_stamp_moves_with_each_in_app_input_and_reads_nothing():
+    """TASK-33620.15.1.6: the Environment guard's UI-loop check, from memory.
+
+    ``session_change_review_admission_stamp`` names everything
+    ``read_session_change_review_admission`` reads -- the session's
+    workspace, the registry's binding generation, and which consent service
+    answers at which admission revision -- without asking the registry or
+    the consent service anything, so the UI loop can tell that a session's
+    roots may have changed after a worker read them.
+    """
+    from tldw_chatbook.Chat.console_turn_context import (
+        session_change_review_admission_stamp,
+    )
+
+    def _no_read(*_args, **_kwargs):
+        raise AssertionError("the stamp must not read the registry or consent")
+
+    consent = SimpleNamespace(admission_revision=0, admit_turn=_no_read)
+    registry = SimpleNamespace(mutation_generation=0, list_folder_bindings=_no_read)
+    app = SimpleNamespace(
+        change_review_consent_service=consent, workspace_registry_service=registry
+    )
+    workspaces = {"s1": "ws-1", "s2": "ws-2"}
+    store = _Store(workspaces)
+
+    def stamp(session_id: str = "s1"):
+        return session_change_review_admission_stamp(app, store, session_id)
+
+    first = stamp()
+    assert stamp() == first, "nothing changed, so the stamp holds"
+    hash(first)
+
+    assert stamp("s2") != first  # another session's workspace
+    workspaces["s1"] = "ws-2"
+    assert stamp() != first  # the session moved to another workspace
+    workspaces["s1"] = "ws-1"
+    assert stamp() == first
+
+    registry.mutation_generation += 1  # a folder bound or unbound
+    assert stamp() != first
+    moved = stamp()
+    consent.admission_revision += 1  # consent toggled, or a root became ready
+    assert stamp() != moved
+    moved = stamp()
+    app.change_review_consent_service = SimpleNamespace(
+        admission_revision=consent.admission_revision, admit_turn=_no_read
+    )
+    assert stamp() != moved  # another service answers now
+
+    assert stamp("gone") is not None  # an unknown session does not raise

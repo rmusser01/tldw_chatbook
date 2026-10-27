@@ -184,7 +184,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: review, same owner rule: the rail cascade names its marker through the
     #: shared CONSOLE_RAIL_PRIOR_DISPLAY constant instead of four string
     #: literals (+1 for the import). Dev 773cc9729c measured 24319/736.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24325, 736),
+    #: Raised 24319 -> 24321 (methods unchanged) 2026-10-27 by
+    #: TASK-33620.15.1.6, owner rule (a fix over a size ratchet raises the row
+    #: with a dated comment; never move or reflow code to make it fit): the
+    #: Environment controller gets the screen's scope stamp (one keyword and
+    #: its import; the stamp lives in Console_Modules/wiring.py::
+    #: environment_scope_stamp). Dev 416feb50ee measures 24319/736; with the
+    #: fix, 24321/736, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

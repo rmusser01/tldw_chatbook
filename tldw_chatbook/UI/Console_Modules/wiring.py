@@ -75,6 +75,7 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnCustodyRequest,
     resolve_session_workspace_roots,
+    session_change_review_admission_stamp,
 )
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
@@ -827,6 +828,30 @@ def _review_selection_workspace_roots(screen: Any) -> tuple[str, ...] | None:
     if not active:
         return None
     return resolve_session_workspace_roots(controller, active)
+
+
+def environment_scope_stamp(screen: Any) -> tuple[Any, ...] | None:
+    """Stamp what ``_review_selection_workspace_roots`` reads, from memory.
+
+    The Environment panel's stale-scope guard compares this on the UI loop,
+    where the roots read (a registry SELECT) is too slow (TASK-33620.15.1.6).
+    It moves with the chat controller, the active session and every in-app
+    input of that session's admitted roots
+    (``session_change_review_admission_stamp``).
+    """
+    controller = screen._console_chat_controller
+    if controller is None:
+        return None
+    active = controller.store.active_session_id
+    if not active:
+        return (id(controller), None)
+    return (
+        id(controller),
+        active,
+        session_change_review_admission_stamp(
+            controller.app, controller.store, active
+        ),
+    )
 
 
 def _review_selection_run_active(screen: Any) -> bool:

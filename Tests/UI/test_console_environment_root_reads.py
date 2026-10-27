@@ -66,9 +66,22 @@ class _CountingConsent:
     """A Change Review consent service that records who asked, and where."""
 
     def __init__(self, *roots: str) -> None:
-        self.roots = tuple(roots)
+        self._roots = tuple(roots)
+        # Moves with every change of the admitted roots, as the real
+        # service's does (TASK-33620.15.1.6 review): the Environment panel's
+        # scope stamp reads it on the UI loop instead of asking again.
+        self.admission_revision = 0
         self.reads: list[tuple[str, str | None]] = []
         self._main = threading.main_thread().ident
+
+    @property
+    def roots(self) -> tuple[str, ...]:
+        return self._roots
+
+    @roots.setter
+    def roots(self, roots: tuple[str, ...]) -> None:
+        self._roots = tuple(roots)
+        self.admission_revision += 1
 
     def admit_turn(self, _workspace_id):
         thread = "ui" if threading.get_ident() == self._main else "worker"
@@ -112,6 +125,7 @@ def _canned_gatherers(
     *,
     gate: threading.Event | None = None,
     started: threading.Event | None = None,
+    gh_roots: list[str] | None = None,
 ) -> None:
     """Keep git/``gh``/backlog off the test; optionally hold the git gather."""
 
@@ -125,13 +139,12 @@ def _canned_gatherers(
         )
 
     monkeypatch.setattr(env_mod, "gather_git_env", gather_git)
-    monkeypatch.setattr(
-        env_mod,
-        "gather_pr_env",
-        lambda path, branch, *, previous=None: PrEnvState(
-            availability=EnvSourceAvailability.NOT_APPLICABLE
-        ),
-    )
+    def gather_pr(path, branch, *, previous=None):
+        if gh_roots is not None:
+            gh_roots.append(str(path))
+        return PrEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE)
+
+    monkeypatch.setattr(env_mod, "gather_pr_env", gather_pr)
     monkeypatch.setattr(
         env_mod.BacklogTaskScanner,
         "scan",
@@ -297,3 +310,69 @@ async def test_a_landing_whose_root_changed_while_gathering_never_lands(
         )
         assert old_root not in painted
         assert painted[-1] == new_root
+
+
+@pytest.mark.asyncio
+async def test_a_landing_whose_root_changed_after_its_worker_re_check_never_lands(
+    monkeypatch, tmp_path
+):
+    """AC#2, the hop: the root changes after the worker's re-check.
+
+    The gather worker re-reads the root after gathering, then hands the
+    landing to the UI loop. Consent admitting another folder in between
+    reaches neither read; the landing is still dropped, on the scope stamp
+    the UI loop reads without the database, and the old root's ``gh`` fetch
+    is never issued.
+
+    Pre-fix head 6669709e0e: the old root painted and its ``gh`` fetch ran.
+    origin/dev: dropped, but by reading consent on the UI loop.
+    """
+    old_root = str(tmp_path / "old")
+    new_root = str(tmp_path / "new")
+    consent = _CountingConsent(old_root)
+    gh_roots: list[str] = []
+    _canned_gatherers(monkeypatch, gh_roots=gh_roots)
+    async with _console(consent) as (pilot, screen):
+        controller = screen._console_environment
+        painted: list[str] = []
+        land_snapshot = controller._on_snapshot
+
+        def record(snapshot):
+            painted.append(snapshot.git.root)
+            land_snapshot(snapshot)
+
+        controller._on_snapshot = record
+        landings = _record_landings(controller)
+        recording_land = controller._land
+        in_hop = threading.Event()
+        changed = threading.Event()
+        marshal = controller._marshal_to_ui
+
+        def hold_the_old_landing(fn, *args):
+            # Runs on the gather worker, after its re-check read the root.
+            if fn is recording_land and args[0] == old_root and not changed.is_set():
+                in_hop.set()
+                changed.wait(5)
+            return marshal(fn, *args)
+
+        controller._marshal_to_ui = hold_the_old_landing
+
+        await _open_rail(pilot, screen)
+        await _until(pilot, in_hop.is_set, "the old root's landing to reach the hop")
+        consent.roots = (new_root,)  # an in-app change, on the UI loop
+        changed.set()
+        await _until(pilot, lambda: old_root in landings, "the old root's landing")
+        await pilot.pause()
+
+        assert old_root not in painted
+        assert controller._has_landed is False
+        assert gh_roots == [], "no gh fetch for the abandoned root"
+        assert consent.environment_reads("ui") == 0, consent.reads
+
+        screen._poll_console_environment()
+        await _until(
+            pilot, lambda: controller._landed_root == new_root, "the new root's landing"
+        )
+        assert old_root not in painted
+        assert painted[-1] == new_root
+        assert consent.environment_reads("ui") == 0, consent.reads

@@ -167,6 +167,7 @@ from ..Console_Modules import skill as skill_controller
 from ..Console_Modules.wiring import (
     _commit_captured_console_draft,
     build_console_controllers,
+    environment_scope_stamp,
 )
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
@@ -7701,6 +7702,7 @@ class ChatScreen(BaseAppScreen):
                 ),
                 marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
                 workspace_root_accessor=self._console_environment_root,
+                scope_stamp_accessor=lambda: environment_scope_stamp(self),
                 rail_open_accessor=(
                     lambda: (
                         self._is_active_console_screen()

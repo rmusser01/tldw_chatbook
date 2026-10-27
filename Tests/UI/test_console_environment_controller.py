@@ -3,6 +3,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 # Admit import-time config before the per-test environment redirect.
 import tldw_chatbook.app  # noqa: F401
 
@@ -1376,3 +1378,207 @@ def test_a_worker_root_read_that_raises_drops_the_landing_and_its_ack(monkeypatc
     assert fx.controller._has_landed is False
     assert fx.controller.pending_ack_tiers == frozenset()
     assert len(fx.snapshots) == 1  # the ack clear is announced
+
+
+# ---------------------------------------------------------------------------
+# TASK-33620.15.1.6 review: the hop between the worker's re-check and the
+# landing.
+#
+# The gather worker re-reads the root after gathering and only then hands the
+# landing to the UI loop, so an in-app change made in that hop (a session
+# switch, a folder bound or unbound, Change Review consent revoked) reaches
+# neither the re-check nor any refresh. origin/dev caught it by reading the
+# root again on the UI loop -- the read this task removed. The screen now
+# supplies a scope stamp: an in-memory reading (no database) of everything
+# the root depends on, which every in-app change moves. The worker reads it
+# before its re-check and the UI loop compares it in ``_land``; a root answer
+# whose stamp has moved by the time it reaches the UI loop is read again.
+# ---------------------------------------------------------------------------
+
+
+def _stamped(fx) -> None:
+    """Install an in-app scope stamp that ``_change_scope`` moves."""
+    fx.stamp = 0
+    fx.controller._scope_stamp_accessor = lambda: fx.stamp
+
+
+def _change_scope(fx, root) -> None:
+    """An in-app change of the workspace root: the root and its stamp move."""
+    fx.root = root
+    fx.stamp += 1
+
+
+def _run(held) -> None:
+    fn, args = held
+    fn(*args)
+
+
+@pytest.mark.parametrize(
+    "new_root", ["/w/other", None], ids=["another-folder", "consent-revoked"]
+)
+def test_a_landing_whose_root_changed_after_its_worker_re_check_is_dropped(
+    monkeypatch, new_root
+):
+    """AC#2, the hop: a change after the re-check and before the landing.
+
+    Pre-fix head 6669709e0e: the landing painted /w/repo and issued the old
+    root's deferred ``gh`` fetch, for a folder that is no longer the
+    conversation's (or, with consent revoked, for no folder at all).
+    """
+    fx = DeferredFixture(monkeypatch)
+    _stamped(fx)
+    reads = _RootReads(fx)
+    landings = _queue_landings(fx)
+
+    _in_phase(reads, "worker", fx.controller.notify_rail_opened)
+    _in_phase(reads, "worker", lambda: fx.run_job(0))  # gather, re-check: /w/repo
+    _change_scope(fx, new_root)
+    _in_phase(reads, "landing", lambda: _run(landings.pop(0)))
+
+    assert "landing" not in reads.reads, reads.reads
+    assert fx.snapshots == []
+    assert fx.controller._has_landed is False
+    assert fx.controller._net_pending is False
+    groups = [d["group"] for d in fx.dispatched]
+    assert ConsoleEnvironmentController.NET_WORKER_GROUP not in groups, groups
+
+
+def test_an_unmoved_scope_stamp_lets_the_landing_through(monkeypatch):
+    """Control for the hop test: no change, so the landing and its gh fetch go."""
+    fx = DeferredFixture(monkeypatch)
+    _stamped(fx)
+    landings = _queue_landings(fx)
+
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    _run(landings.pop(0))
+
+    assert fx.controller._landed_root == "/w/repo"
+    assert [d["group"] for d in fx.dispatched] == [
+        ConsoleEnvironmentController.LOCAL_WORKER_GROUP,
+        ConsoleEnvironmentController.NET_WORKER_GROUP,
+    ]
+
+
+def test_a_net_landing_whose_root_changed_after_its_re_check_is_dropped(monkeypatch):
+    """AC#2, the hop, for the ``gh`` tier: the old root's PR never paints."""
+    fx = DeferredFixture(monkeypatch)
+    _stamped(fx)
+    landings = _queue_landings(fx)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    _run(landings.pop(0))  # local lands for /w/repo and issues the net fetch
+    fx.run_job(1)  # gh returns; the re-check still sees /w/repo
+    _change_scope(fx, "/w/other")
+    painted = len(fx.snapshots)
+
+    _run(landings.pop(0))
+
+    assert len(fx.snapshots) == painted
+    assert fx.controller.snapshot.pr.availability is EnvSourceAvailability.PENDING
+
+
+def test_an_unbound_answer_overtaken_by_a_scope_change_is_read_again(monkeypatch):
+    """AC#2 for the unbound landing, which is made from the root read itself.
+
+    The read answers on a worker and the UNBOUND landing is made from that
+    answer on the UI loop. A folder bound in between must not be painted
+    over with "nothing is bound": the answer is read again and the refresh
+    acts on the new root. Pre-fix head: UNBOUND landed.
+    """
+    fx = DeferredFixture(monkeypatch, root=None)
+    _stamped(fx)
+    fx.defer_root_reads = True
+    held: list = []
+    fx.controller._marshal_to_ui = lambda fn, *args: held.append((fn, args))
+
+    fx.controller.notify_rail_opened()
+    fx.root_jobs.pop(0)()  # answers None
+    _change_scope(fx, "/w/bound")
+    _run(held.pop(0))  # the continuation
+
+    assert fx.snapshots == []
+    assert len(fx.root_jobs) == 1, "the overtaken answer is read again"
+    fx.root_jobs.pop(0)()
+    _run(held.pop(0))
+    assert fx.controller._observed_root == "/w/bound"
+    assert [d["group"] for d in fx.dispatched][0] == (
+        ConsoleEnvironmentController.LOCAL_WORKER_GROUP
+    )
+
+
+def test_a_root_answer_overtaken_twice_waits_for_the_next_refresh(monkeypatch):
+    """The re-read happens once: a scope still moving is left to the next poll."""
+    fx = DeferredFixture(monkeypatch, root=None)
+    _stamped(fx)
+    fx.defer_root_reads = True
+    held: list = []
+    fx.controller._marshal_to_ui = lambda fn, *args: held.append((fn, args))
+
+    fx.controller.notify_rail_opened()
+    fx.root_jobs.pop(0)()
+    _change_scope(fx, "/w/one")
+    _run(held.pop(0))
+    fx.root_jobs.pop(0)()
+    _change_scope(fx, "/w/two")
+    _run(held.pop(0))
+
+    assert fx.root_jobs == [] and held == []
+    assert fx.snapshots == [] and fx.dispatched == []
+    fx.controller.poll_tick()
+    fx.root_jobs.pop(0)()
+    _run(held.pop(0))
+    assert fx.controller._observed_root == "/w/two"
+
+
+def test_a_scope_stamp_that_raises_falls_back_to_the_root_checks(monkeypatch):
+    """An unreadable stamp never wedges the panel: the root checks still apply."""
+    fx = DeferredFixture(monkeypatch)
+
+    def boom():
+        raise RuntimeError("stamp unavailable")
+
+    fx.controller._scope_stamp_accessor = boom
+    landings = _queue_landings(fx)
+    fx.controller.notify_rail_opened()
+    fx.run_job(0)
+    _run(landings.pop(0))
+    assert fx.controller._landed_root == "/w/repo"
+
+    fx.controller.poll_tick()
+    fx.root = "/w/other"  # changes during the gather: the re-check catches it
+    fx.run_job(2)
+    _run(landings.pop(-1))
+    assert fx.controller._landed_root == "/w/repo"
+
+
+def test_an_older_read_under_the_current_scope_outranks_a_newer_overtaken_one(
+    monkeypatch,
+):
+    """Read order ranks answers within one scope; a newer scope ranks first.
+
+    The poll's read (issued second) answers first and is acted on; the scope
+    then moves, and the rail open's read (issued first) answers under the new
+    scope. That answer is the current one: acting on the poll's older-scope
+    answer would dispatch for a root that is gone and record it as observed,
+    so a later landing for the real root would be dropped as stale.
+    """
+    fx = DeferredFixture(monkeypatch, root="/w/A")
+    _stamped(fx)
+    fx.defer_root_reads = True
+    held: list = []
+    fx.controller._marshal_to_ui = lambda fn, *args: held.append((fn, args))
+
+    fx.controller.notify_rail_opened()  # read 1
+    fx.controller.poll_tick()  # read 2
+    rail_read, poll_read = fx.root_jobs
+    poll_read()  # answers /w/A
+    _run(held.pop(0))
+    assert fx.controller._observed_root == "/w/A"
+
+    _change_scope(fx, "/w/B")
+    rail_read()  # answers /w/B under the new scope
+    _run(held.pop(-1))
+
+    assert fx.controller._observed_root == "/w/B"
+    assert fx.controller._net_pending_scope == "/w/B"
