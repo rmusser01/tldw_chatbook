@@ -173,7 +173,8 @@ _BUDGETS: dict[str, int] = {
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29252,
+    # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29253,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -500,7 +501,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
     # Its review: 6,162; a named custom endpoint's listing gets its own note.
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6162,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7011,
+    # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
@@ -617,9 +619,11 @@ _BUDGETS: dict[str, int] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     "tldw_chatbook/config.py": 12245,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 11729,
+    # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12052,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9656,
+    # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Agents/agent_service.py": 9690,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,
@@ -651,12 +655,14 @@ _BUDGETS: dict[str, int] = {
     # docstring says so.
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 7067,
+    # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Chat/console_runtime.py": 7076,
     "tldw_chatbook/Chat/console_trace_service.py": 6679,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
-    "tldw_chatbook/Agents/local_tool_provider.py": 5750,
+    # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Agents/local_tool_provider.py": 5851,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5176,
