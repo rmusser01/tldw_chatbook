@@ -643,7 +643,11 @@ _BUDGETS: dict[str, int] = {
     # decision): the Trash list as a scroll owner, a failed page read keeping
     # the painted page, page 1's loading state on a reopen, the owed landing's
     # lifetime comment: 8271 -> 8305 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8305,
+    # 2026-10-27, Task 8 fix round 2 (review R1 N-1, N-2; same decision): a
+    # page change replays no old offset (the Trash scroll owner matches the
+    # page it shows), a failed read marks the snapshot and the Retry handler
+    # re-runs it: 8305 -> 8358 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8358,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

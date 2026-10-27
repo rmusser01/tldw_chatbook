@@ -1527,7 +1527,9 @@ between pages; while every deleted note fits one page, only the range is
 shown. Restoring a row keeps you on the same page: the rows below it move up,
 and focus lands on the row now in its place — or on the new last row when you
 restored the bottom one. Restoring the only row left on the last page shows
-the page before it, with focus on its first row.
+the page before it, with focus on its first row. If a page cannot be read, the
+view keeps what it shows, says "Couldn't load recently deleted notes." and
+offers **Retry**.
 Nothing here deletes anything for good: the Trash offers **Restore** and no
 permanent delete.
 

@@ -2024,7 +2024,8 @@ class LibraryNotesController:
             "lasting_roots": "#notes-sync-roots-body",
             "import": "#library-note-import-canvas",
             # TASK-34000.29 fix round 1 (review R0 m-6): the Trash list
-            # scrolls now, so a sync keeps its offset like every other region.
+            # scrolls now, so a reload of the SAME page keeps its offset like
+            # every other region (a page change does not; see below).
             "trash": "#library-notes-trash-list",
         }.get(region)
         if selector is None:
@@ -2032,7 +2033,18 @@ class LibraryNotesController:
         # TASK-23025: positive ref cache -- a mounted owner is one attribute
         # read; absence still costs one walk, so callers should not probe
         # regions their route cannot mount (see the observer installer).
-        return self._library_layout_ref(selector)
+        owner = self._library_layout_ref(selector)
+        if region == "trash" and owner is not None:
+            # Review R1 N-1 (ruling T8-h): the list's offset belongs to the
+            # page it shows. A sync that paints ANOTHER page (Previous, Next,
+            # a clamp) finds no owner, so it captures no offset and its
+            # replay scrolls the landed control into view instead -- in either
+            # direction. Replaying the old page's offset hid the focused Next
+            # below the fold after Previous back to a full page (100x30).
+            trash = self._library_notes_trash
+            if trash is None or getattr(owner, "trash_page", None) != trash.page:
+                return None
+        return owner
     def _capture_library_notes_recompose_state(
         self,
     ) -> _LibraryNotesRecomposeCapture | None:
@@ -2270,6 +2282,9 @@ class LibraryNotesController:
         if role == "trash-back":
             for back in self.query("#library-notes-trash-back").results(Button):
                 return back
+        if role == "trash-retry":
+            for retry in self.query("#library-notes-trash-retry").results(Button):
+                return retry
         rows = list(self.query(".library-notes-trash-restore").results(Button))
         if rows:
             index = 0
@@ -2279,6 +2294,9 @@ class LibraryNotesController:
                 except ValueError:
                     index = 0
             return rows[min(max(index, 0), len(rows) - 1)]
+        # No rows: a failed read's Retry before Back (review R1 N-2).
+        for retry in self.query("#library-notes-trash-retry").results(Button):
+            return retry
         for back in self.query("#library-notes-trash-back").results(Button):
             return back
         return None
@@ -7822,6 +7840,29 @@ class LibraryNotesController:
         event.stop()
         self._page_library_notes_trash(1, role="trash-next")
 
+    @on(Button.Pressed, "#library-notes-trash-retry")
+    def handle_library_notes_trash_retry(self, event: Button.Pressed) -> None:
+        """Re-run the Trash read that failed (review R1 N-2, ruling T8-i).
+
+        The same page the failed read asked for (a failed Next retries the
+        next page). A read, so no interlock; under a running Restore it is
+        queued like a page press. Once it lands focus goes to the first row,
+        or Back when the Trash is empty.
+
+        Args:
+            event: Press event emitted by the Trash failure line's Retry.
+        """
+        event.stop()
+        trash = self._library_notes_trash
+        if trash is not None:
+            self._library_notes_trash_page = trash.retry_page or trash.page
+        role = "trash-restore:0"
+        self._trash_focus_role = role
+        if self._library_notes_mutation_fenced():
+            self._trash_reload_owed = role
+            return
+        self._refresh_library_notes_trash(focus_role=role)
+
     def _page_library_notes_trash(self, step: int, *, role: str) -> None:
         """Move the Trash view one page and read it; focus follows the press.
 
@@ -7934,18 +7975,30 @@ class LibraryNotesController:
         requested = max(
             int(page if page is not None else self._library_notes_trash_page or 1), 1
         )
-        def keep_the_painted_page() -> None:
+        def keep_the_painted_page(tried: int) -> None:
             # Review R0 m-1: a failed read keeps the painted snapshot, so the
             # page the view asks for goes back to the one it shows -- left on
             # the target, the next Next counted from it and did nothing.
+            # Review R1 N-2 (ruling T8-i): and the snapshot SAYS the read
+            # failed -- the Trash paints one failure line and a Retry for the
+            # page that failed, the Media Trash's own shape -- instead of
+            # leaving "Loading…" up forever. ``None`` (never read) stays
+            # ``None``: the opener row is not shown off a failed read.
             shown = self._library_notes_trash
             self._library_notes_trash_page = shown.page if shown is not None else 1
+            if shown is None:
+                return
+            self._library_notes_trash = dataclasses.replace(
+                shown, loading=False, retry_page=tried
+            )
+            if self.is_mounted and self._library_notes_view == "trash":
+                _sync_library_canvas(self, "notes")
 
         # Class-forwarded: the loader's clamp tests run it on a fake.
         read_page = LibraryNotesController._read_library_notes_trash_page
         result = await read_page(self, list_deleted_notes, requested)
         if result is None:
-            keep_the_painted_page()
+            keep_the_painted_page(requested)
             return
         total = result.get("total")
         if isinstance(total, int):
@@ -7954,7 +8007,7 @@ class LibraryNotesController:
                 requested = last
                 result = await read_page(self, list_deleted_notes, requested)
                 if result is None:
-                    keep_the_painted_page()
+                    keep_the_painted_page(requested)
                     return
                 total = result.get("total")
         self._library_notes_trash_page = requested

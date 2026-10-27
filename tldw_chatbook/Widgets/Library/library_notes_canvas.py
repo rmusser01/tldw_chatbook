@@ -3150,6 +3150,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             classes="library-canvas-action",
             compact=True,
         )
+        if trash.failed:
+            yield from self._compose_trash_failure()
         if not trash.rows and trash.loading:
             # Review R0 m-7: reopening over another page's snapshot paints
             # page 1's loading state, never the old page or "Nothing deleted".
@@ -3160,6 +3162,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             return
         if not trash.rows:
+            if trash.failed:
+                # Nothing was read: say so, never "Nothing deleted recently".
+                return
             yield Static(
                 "Nothing deleted recently. Deleted notes appear here — press "
                 "Escape to go back to the list.",
@@ -3168,6 +3173,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
             return
         trash_list = Vertical(id="library-notes-trash-list")
+        # Review R1 N-1: the page this list shows, so a sync that paints
+        # another page replays no old offset (``_library_notes_scroll_owner``).
+        trash_list.trash_page = trash.page
         # TASK-34000.29 (N-29): the list is the page's scroll owner. A plain
         # Vertical is ``overflow: hidden``, so below ~120x36 the last rows of
         # a 20-row page were clipped -- focusable, never painted (the folder
@@ -3202,6 +3210,32 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     button.note_version = row.version
                     yield button
             yield from self._compose_trash_pager(trash)
+
+    def _compose_trash_failure(self) -> ComposeResult:
+        """One failure line and a Retry (review R1 N-2, ruling T8-i).
+
+        The Media Trash's shape (``library_media_trash_browse_controller``:
+        failure copy plus Retry for the same request), above whatever the
+        view still paints: the page a failed Next kept, or nothing at all
+        when a first read or a reopen failed.
+        """
+        failure = Horizontal(id="library-notes-trash-failure")
+        failure.add_class("h-auto")
+        with failure:
+            line = Static(
+                "Couldn't load recently deleted notes.",
+                id="library-notes-trash-error",
+                markup=False,
+            )
+            line.styles.width = "1fr"
+            yield line
+            yield Button(
+                "Retry",
+                id="library-notes-trash-retry",
+                classes="library-canvas-action",
+                compact=True,
+                tooltip="Read the deleted notes again.",
+            )
 
     def _compose_trash_pager(self, trash: LibraryNotesTrashState) -> ComposeResult:
         """Page through every deleted note with the exact total (N-29).

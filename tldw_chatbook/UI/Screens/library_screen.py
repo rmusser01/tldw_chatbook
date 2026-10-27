@@ -5367,6 +5367,7 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-trash-previous": "trash-previous",
             "library-notes-trash-next": "trash-next",
             "library-notes-trash-back": "trash-back",
+            "library-notes-trash-retry": "trash-retry",  # review R1 N-2
         }
         if widget_id in direct_roles:
             return direct_roles[widget_id]
@@ -32638,6 +32639,15 @@ class LibraryScreen(BaseAppScreen):
             event: Press of the Trash pager's Next.
         """
         return self._notes_controller.handle_library_notes_trash_next(event)
+
+    @on(Button.Pressed, "#library-notes-trash-retry")
+    def handle_library_notes_trash_retry(self, event: Button.Pressed) -> None:
+        """Re-run the failed Trash read (TASK-34000.29 review R1 N-2).
+
+        Args:
+            event: Press of the Trash failure line's Retry.
+        """
+        return self._notes_controller.handle_library_notes_trash_retry(event)
 
     def _leave_library_notes_trash(self) -> None:
         return self._notes_controller._leave_library_notes_trash()

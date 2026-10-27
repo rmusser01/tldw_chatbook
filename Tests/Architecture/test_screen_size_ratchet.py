@@ -1178,7 +1178,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (Previous, Next, Back, each Restore) and the real-input withdrawal of
     #: the Trash landing: 38441 -> 38474 lines, 1381 -> 1383 methods
     #: (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38474, 1383),
+    #: 2026-10-27, Task 8 fix round 2 (review R1 N-2; same owner decision):
+    #: the Trash failure line's Retry delegator and its portable role:
+    #: 38474 -> 38484 lines, 1383 -> 1384 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38484, 1384),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
