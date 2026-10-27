@@ -180,7 +180,7 @@ MAX_PASS_ADDED_MODULES = 558
 #: module, 557, under the 558 ceiling). The other +46 is the audit's fixes in
 #: already-resident modules (watchlists +50, settings +10, llm +2, schedules
 #: -16).
-#: 2026-10-26 TASK-34000.28/.40 polish-1a + TASK-34000.29 polish-1b Task 6: 425,347 -> 425,925 (paired arms; dev 424,643 + 1,159, then ddb9693e3b + 90, then fix round 1 + 18 + 15) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
+#: 2026-10-26 TASK-34000.28/.40 polish-1a + TASK-34000.29 polish-1b Task 6: 425,347 -> 425,954 (paired arms; dev 424,643 + 1,159, then ddb9693e3b + 90, then fix round 1 + 18 + 15; rebased onto polish-1a's CI fix: dev 424,643 + 1,311 = 425,954) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 MAX_PASS_ADDED_LOC = 427_830
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
