@@ -235,7 +235,16 @@ class ConsoleTraceNativeReader:
         messages: list[object] = []
         continuations: list[object] = []
         omissions: list[str] = []
-        for _, key in projection.entries:
+        if _read_budget is None:
+            entries = projection.entries
+        else:
+            # Size is stored; accessing .entries here would allocate a tuple.
+            _read_budget.container(4 * projection.root.size)
+            entries = projection.root.iter_entries()
+        first_key = None
+        for _, key in entries:
+            if first_key is None:
+                first_key = key
             if _read_budget is not None:
                 _read_budget.container()
             component_kind, reference_kind, identity = key
@@ -311,8 +320,8 @@ class ConsoleTraceNativeReader:
                 or system_slot != 0
                 or len(system_rows) != 1
                 or system_rows[0].ordinal != 0
-                or not projection.entries
-                or projection.entries[0][1][:2] != ("rendered_system", "artifact")
+                or first_key is None
+                or first_key[:2] != ("rendered_system", "artifact")
                 or not messages
                 or not isinstance(messages[0], Mapping)
                 or messages[0].get("role") != "system"

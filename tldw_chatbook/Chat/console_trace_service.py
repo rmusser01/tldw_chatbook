@@ -4879,7 +4879,7 @@ class ConsoleTraceService:
         cached = self._surface_ref_cache.get(segment_id)
         if cached is not None and cached.head_id == head_id:
             if _read_budget is not None:
-                _read_budget.container(len(cached.entries))
+                _read_budget.container(cached.root.size)
             return cached
         nodes: list[SurfaceNodeRecord] = []
         continuation = None
@@ -4917,7 +4917,13 @@ class ConsoleTraceService:
         root_node: _SequenceNode | None = None
         active: dict[int, _SequenceNode] = {}
         if inherited_projection is not None:
-            for sequence, key in inherited_projection.entries:
+            if _read_budget is None:
+                inherited_entries = inherited_projection.entries
+            else:
+                # Reserve iterator stack and yielded pairs before traversing.
+                _read_budget.container(4 * inherited_projection.root.size)
+                inherited_entries = inherited_projection.root.iter_entries()
+            for sequence, key in inherited_entries:
                 if _read_budget is not None:
                     _read_budget.container(8)
                 sequence_node = _SequenceNode(sequence, key)

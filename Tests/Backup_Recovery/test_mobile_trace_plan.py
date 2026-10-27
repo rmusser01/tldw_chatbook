@@ -1522,3 +1522,218 @@ def test_fixed_native_trace_seam_retains_all_member_fences(
         assert bool(reached) == (fault != "pre_nonchat_tamper")
     with pytest.raises(ValueError, match="inactive"):
         reads.check()
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_captured_surface_iteration_reserves_before_materialization(
+    tmp_path, monkeypatch, inherited
+):
+    import json
+    import linecache
+    import sys
+
+    from tldw_chatbook.Chat.console_trace_models import (
+        FrozenTracePolicy,
+        TraceCallState,
+        TraceContentRef,
+        new_opaque_id,
+    )
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+    from tldw_chatbook.Chat.console_trace_service import (
+        ConsoleTraceService,
+        _ProjectionRoot,
+    )
+
+    payload = json.dumps({"role": "user", "content": "x" * 4096}).encode()
+    children = set()
+    ordinary = []
+
+    def seed(db, purpose):
+        if purpose != "legacy":
+            return
+        conversation = db.add_conversation({"id": "surface-budget", "title": "Budget"})
+        message = db.add_message(
+            {
+                "id": "surface-user",
+                "conversation_id": conversation,
+                "sender": "User",
+                "role": "user",
+                "content": "surface",
+            }
+        )
+        parent_conversation = (
+            db.add_conversation({"id": "surface-parent", "title": "Parent"})
+            if inherited
+            else conversation
+        )
+        repository = ConsoleTraceRepository()
+        with db.transaction(immediate=True) as cursor:
+            policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+            repository.ensure_policy(cursor, policy)
+            parent = repository.create_segment(cursor)
+            owner = repository.attach_owner(
+                cursor,
+                conversation_id=parent_conversation,
+                root_segment_id=parent.segment_id,
+            )
+            artifact = repository.store_sanitized_artifact(
+                cursor,
+                sanitized_bytes=payload,
+                media_type="application/json",
+                normalization_version="surface-budget-v1",
+            )
+            tail = None
+            for sequence in range(16):
+                tail = repository.append_surface_node(
+                    cursor,
+                    segment_id=parent.segment_id,
+                    sequence=sequence,
+                    predecessor_node_id=None if tail is None else tail.node_id,
+                    component_kind="message",
+                    reference=TraceContentRef(artifact.artifact_id, "message"),
+                )
+            segment = parent
+            if inherited:
+                repository.append_event(
+                    cursor,
+                    segment_id=parent.segment_id,
+                    sequence=0,
+                    event_type="surface_append",
+                    surface_node_id=tail.node_id,
+                )
+                segment = repository.create_segment(
+                    cursor,
+                    parent_segment_id=parent.segment_id,
+                    inherited_through_sequence=0,
+                    inherited_surface_head_id=tail.node_id,
+                )
+                children.add(segment.segment_id)
+                owner = repository.attach_owner(
+                    cursor,
+                    conversation_id=conversation,
+                    root_segment_id=segment.segment_id,
+                )
+            header = repository.create_or_reuse_request_header(
+                cursor,
+                provider_name="openai",
+                model_name="surface-budget",
+                route_identity="fresh",
+                endpoint_identity="https://example.invalid/v1",
+                generation_parameters={},
+                adapter_defaults={},
+                response_format={},
+                reasoning_controls={},
+                components=(),
+            )
+            for sequence in range(32):
+                call = repository.reserve_call(
+                    cursor,
+                    owner_id=owner.owner_id,
+                    segment_id=segment.segment_id,
+                    turn_id=message,
+                    run_id="surface-run",
+                    call_sequence=sequence,
+                    idempotency_key=f"surface-{sequence}",
+                    policy_id=policy.policy_id,
+                )
+                repository.bind_call(
+                    cursor,
+                    call_id=call.call_id,
+                    surface_node_id=tail.node_id,
+                    request_header_id=header.header_id,
+                    provider_name="openai",
+                    model_name="surface-budget",
+                    route_identity="fresh",
+                )
+                for state in (
+                    TraceCallState.DISPATCH_STARTED,
+                    TraceCallState.RESPONSE_STARTED,
+                    TraceCallState.COMPLETE,
+                ):
+                    repository.advance_call_state(
+                        cursor,
+                        call_id=call.call_id,
+                        target=state,
+                        occurred_at="2026-10-27T00:00:00Z",
+                        integrity_state="complete",
+                    )
+                repository.append_event(
+                    cursor,
+                    segment_id=segment.segment_id,
+                    sequence=sequence,
+                    event_type="call_boundary",
+                    call_id=call.call_id,
+                )
+        # Ordinary None callers must still reconstruct the same ordered surface.
+        calls = ConsoleTraceNativeReader(db).read_calls(message)
+        assert len(calls) == 32
+        for call in calls:
+            assert (
+                call.capture.request["messages_payload"] == [json.loads(payload)] * 16
+            )
+        ordinary.append(len(calls))
+
+    with content_reads(
+        tmp_path, monkeypatch, lambda connection, purpose: None, native_seed=seed
+    ) as reads:
+        materializations = []
+        cache_hits = []
+        inherited_entries = []
+        streamed = []
+        original_projection = ConsoleTraceService._surface_projection
+        original_materialize = _ProjectionRoot.materialize
+        original_iter = _ProjectionRoot.iter_entries
+
+        def observed_projection(self, cursor, segment_id, tail, **kwargs):
+            assert kwargs.get("_read_budget") is not None
+            cached = self._surface_ref_cache.get(segment_id)
+            if cached is not None and cached.head_id == (
+                None if tail is None else tail.node_id
+            ):
+                cache_hits.append(cached.root.size)
+            if segment_id in children:
+                inherited_entries.append(segment_id)
+            return original_projection(self, cursor, segment_id, tail, **kwargs)
+
+        def observed_materialize(self):
+            result = original_materialize(self)
+            caller = sys._getframe(2)
+            materializations.append(
+                (
+                    caller.f_code.co_name,
+                    linecache.getline(
+                        caller.f_code.co_filename, caller.f_lineno
+                    ).strip(),
+                    len(result),
+                )
+            )
+            return result
+
+        def observed_iter(self):
+            caller = sys._getframe(1)
+            streamed.append(caller.f_code.co_name)
+            yield from original_iter(self)
+
+        monkeypatch.setattr(
+            ConsoleTraceService, "_surface_projection", observed_projection
+        )
+        monkeypatch.setattr(_ProjectionRoot, "materialize", observed_materialize)
+        monkeypatch.setattr(_ProjectionRoot, "iter_entries", observed_iter)
+        with pytest.raises(_TraceReadLimit, match="mobile_trace_input_limit"):
+            reads.trace_inputs()
+        assert ordinary == [32]
+        assert cache_hits and all(size == 16 for size in cache_hits)
+        assert bool(inherited_entries) is inherited
+        inherited_boundary = (
+            any("inherited_projection.entries" in item[1] for item in materializations)
+            or "_surface_projection" in streamed
+        )
+        assert inherited_boundary is inherited
+        assert materializations == [], (
+            "budgeted iteration materialized complete native surfaces",
+            materializations,
+        )
+    with pytest.raises(ValueError, match="inactive"):
+        reads.check()
