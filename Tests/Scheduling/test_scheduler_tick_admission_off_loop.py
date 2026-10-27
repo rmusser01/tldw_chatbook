@@ -180,7 +180,7 @@ async def test_tick_admission_resolves_off_the_loop_before_any_dispatch(
 
     assert held.outcomes and all(held.outcomes), _BLOCKED
     assert ran == [task_id]
-    (open_scopes, live_leases), = held_while_running
+    ((open_scopes, live_leases),) = held_while_running
     assert open_scopes >= 2 and live_leases >= 1, (
         "the job ran without its storage admission held: "
         f"{open_scopes} open scopes, {live_leases} live scope leases"
@@ -190,7 +190,9 @@ async def test_tick_admission_resolves_off_the_loop_before_any_dispatch(
     assert loop_thread not in held.enter_threads
     assert loop_thread not in held.exit_threads
     gc.collect()
-    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.finalized == 0, (
+        "an admission was never released, only garbage-collected"
+    )
     assert held.exits == held.entries
 
 
@@ -226,14 +228,14 @@ async def test_tick_refused_off_the_loop_still_refuses_and_stops_the_scheduler(
     assert len(scheduler.queue) == 1, "the refused tick consumed nothing"
     assert not scheduler.running
     gc.collect()
-    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.finalized == 0, (
+        "an admission was never released, only garbage-collected"
+    )
     assert held.exits == held.entries
 
 
 @pytest.mark.asyncio
-async def test_slow_tick_admission_never_overlaps_or_piles_up_ticks(
-    db, monkeypatch
-):
+async def test_slow_tick_admission_never_overlaps_or_piles_up_ticks(db, monkeypatch):
     held = _hold(monkeypatch, armed=False)
     scheduler = SchedulerLoop(db, {}, poll_interval=0.001)
     scheduler.report_configuration = lambda: setattr(held, "armed", True)
@@ -267,7 +269,9 @@ async def test_slow_tick_admission_never_overlaps_or_piles_up_ticks(
     # Ticks stayed sequential: no two admissions were ever resolving at once.
     assert held.max_resolving == 1
     gc.collect()
-    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.finalized == 0, (
+        "an admission was never released, only garbage-collected"
+    )
     assert held.exits == held.entries
 
 
@@ -309,7 +313,9 @@ async def test_cancelled_scheduler_with_admission_in_flight_releases_its_lease(
     assert dispatched == [], "a cancelled tick never dispatches"
     # The admission that resolved after its waiter left closed its own lease.
     gc.collect()
-    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.finalized == 0, (
+        "an admission was never released, only garbage-collected"
+    )
     assert held.exits == held.entries
     assert _scope_leases() <= leases_before, "a scope lease outlived its admission"
 
@@ -344,8 +350,12 @@ def test_scope_lease_acquired_on_one_thread_closes_on_another(db):
 
     assert outcome["allowed"] is True, "the real admission was refused"
     assert outcome["live"] >= 1, "admission held no storage lease"
-    assert "error" not in outcome, f"cross-thread release raised: {outcome.get('error')!r}"
-    assert _scope_leases() <= leases_before, "a lease closed from another thread stayed live"
+    assert "error" not in outcome, (
+        f"cross-thread release raised: {outcome.get('error')!r}"
+    )
+    assert _scope_leases() <= leases_before, (
+        "a lease closed from another thread stayed live"
+    )
 
 
 # --- A pause or stop() that lands while the tick's admission is resolving ---
@@ -403,7 +413,9 @@ async def test_pause_landing_while_tick_admission_resolves_skips_that_tick(
 
     assert held.outcomes == [True], _BLOCKED
     gc.collect()
-    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.finalized == 0, (
+        "an admission was never released, only garbage-collected"
+    )
     assert held.exits == held.entries
 
 
@@ -424,10 +436,14 @@ async def test_stop_landing_while_tick_admission_resolves_skips_that_tick(
         await asyncio.gather(runner, return_exceptions=True)
 
     assert held.outcomes == [True], _BLOCKED
-    assert dispatched == [], "a tick dispatched after stop() landed before its admission"
+    assert dispatched == [], (
+        "a tick dispatched after stop() landed before its admission"
+    )
     assert not scheduler.running
     gc.collect()
-    assert held.finalized == 0, "an admission was never released, only garbage-collected"
+    assert held.finalized == 0, (
+        "an admission was never released, only garbage-collected"
+    )
     assert held.exits == held.entries
 
 
