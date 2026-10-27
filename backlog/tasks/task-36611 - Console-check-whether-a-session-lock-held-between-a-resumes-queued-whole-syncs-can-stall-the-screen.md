@@ -3,11 +3,11 @@ id: TASK-36611
 title: >-
   Console: check whether a session lock held between a resume's queued whole
   syncs can stall the screen
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-24 07:50'
-updated_date: '2026-10-27 16:09'
+updated_date: '2026-10-27 16:23'
 labels:
   - console
   - reliability
@@ -76,7 +76,9 @@ New pin `Tests/UI/test_console_session_lock_screen_pump.py`:
 **Other changes**
 - Census: the new file is appended at the tail (about 9 s locally), and `MINIMUM_FILES` goes from 908 to 909 with a dated comment.
 - Lesson added to `lessons-testing-evidence.md`.
-- Not changed: `Tests/UI/test_console_tab_publication_read_barrier.py` takes the surface lock after a settle as weak as the old one and clicks while holding it. It passed 3 of 3 here, and the same hazard applies to it.
+- Not changed: `Tests/UI/test_console_tab_publication_read_barrier.py` takes the surface lock after a settle as weak as the old one and clicks while holding it. It passed 3 of 3 here, and the same hazard applies to it. Filed as TASK-37040.
 
 Files: `Tests/UI/test_console_tab_publication_maintenance.py`, `Tests/UI/test_console_session_lock_screen_pump.py` (new), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
+
+Rebased onto dev a2b7104d1e (docs-only changes since the base). On the rebased head, with preflight running alongside: the maintenance file passed 3 of 3, and the new pin passed 1 of 1.
 <!-- SECTION:NOTES:END -->
