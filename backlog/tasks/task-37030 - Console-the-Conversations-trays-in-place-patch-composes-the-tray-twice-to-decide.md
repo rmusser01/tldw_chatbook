@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-26 14:32'
+updated_date: '2026-10-27 16:55'
 labels:
   - console
   - performance
@@ -26,3 +27,9 @@ TASK-36012 lets the Conversations tray repaint a run's start and end in place: o
 - [ ] #2 The patch still lands the same geometry, paint, classes and tooltips as a rebuild (the TASK-36012 A/B stays green)
 - [ ] #3 CPU for a patched running-marker sync, measured with process_time at 12 and 40 rows, falls below the dev baseline
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-10-27 (TASK-33620.15.20): the stylesheet applies this description names are gone from the patch path. `compose_delta.detached_styles_skipped` skips restyling parentless nodes while the tray builds its two diff composes (neither tree is ever mounted, and Textual styles a widget again when it mounts). Headless, app stylesheets, `process_time` around `sync_state`, median of 9 alternating idle/running syncs, two interleaved runs per arm: a patched running-marker sync fell from 92 and 92 ms of CPU to 13 and 10 ms at 12 rows, and from 290 and 279 ms to 26 and 24 ms at 40 rows (sync plus settle: 104/101 -> 23/19 ms and 310/297 -> 45/44 ms). Not re-checked against this task's own AC#3 harness; AC#1 (one compose) is untouched.
+<!-- SECTION:NOTES:END -->

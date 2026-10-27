@@ -61,6 +61,11 @@ setting native_tools alone does not override provider capability policy.
 
 **What to do.** Before adding a runtime regression to a required lane, run it under that lane's actual install list. Provision the narrow runtime dependency it exercises and keep the lane contract in sync; the ordinary developer environment cannot establish that CI's setup is complete. A change to the shared lane environment also needs the UI shards to pass in CI.
 
+## A compose that is never mounted still pays Textual's stylesheet for every class it sets (TASK-33620.15.20, 2026-10-27)
+
+**Incident.** TASK-36012 let the Conversations tray patch a send's "Running" marker in place by diffing two off-DOM composes of the tray. Its review timed the patched sync against the rebuild it replaced, found the same CPU, and concluded the patch "saves the reflows but no CPU". Nobody asked where that CPU went. A live probe that recorded each `App.update_styles` call with its app-frame caller found it: every `add_class`/`remove_class`/`set_class` in the compose helpers, and the two `set_class` calls in every `Button` constructor, restyle the new node at once (`DOMNode.update_node_styles` -> `Stylesheet.apply`), whether or not it is in the DOM. The two diff composes restyled 64-69 nodes for 21-34 ms, inside the first poll tick after a send's acceptance, which made that tick the longest UI-loop callback between Enter and the provider POST in 8 of 12 live sends (and pushed that callback from about 35 to 48 ms). Skipping the restyle of parentless nodes while the diff composes run cut the patched sync's CPU from 92 to 10-13 ms at 12 rows and from 279-290 to 24-26 ms at 40 rows (headless, app stylesheets). Nothing visible changed: Textual styles a widget again when it mounts (`App._register`), and these trees are never mounted.
+
+**What to do.** When a compose, a recompose or a throwaway widget tree costs more than its widget count suggests, count `App.update_styles` calls on nodes whose `_parent` is `None` before looking anywhere else. Time a diff or a dry-run compose by what it styles, not only against the path it replaced: two equal CPU numbers can both be mostly wasted work.
 
 ## The PR lanes run pytest 9; the repo venv runs pytest 8 (TASK-33620.15.15, 2026-10-27)
 
