@@ -51,14 +51,12 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
-    model_readiness_words,
     build_target_default_console_session_settings,
     console_reply_capacity_exhausted,
+    model_readiness_words,
     provider_holds_template_sample_values,
     provider_is_template_sample,
     provider_left_at_shipped_default,
-    readiness_words,
-    readiness_words_for_model,
     resolve_console_value_layers,
     resolve_effective_chat_configuration,
 )
@@ -1806,13 +1804,16 @@ class ConsoleModelPopover(
     def _row_words(
         self, readiness: ConsoleSettingsReadiness | None, row: SwitcherRow
     ) -> str:
-        """This row's readiness word, judged for its own model (TASK-34100.2)."""
+        """This row's readiness word, judged for its own model: its own
+        model-level blockers (TASK-34100.2) and what its listing verified
+        (TASK-33005.11)."""
         if readiness is None or not row.model:
             return switcher_readiness_words(readiness)
         key = provider_key(row.provider)
         try:
-            return readiness_words_for_model(
-                readiness, key, row.model, max_tokens=self._row_max_tokens(key, row.model)
+            return model_readiness_words(
+                readiness, row.model, provider=key,
+                max_tokens=self._row_max_tokens(key, row.model),
             )
         except Exception:  # noqa: BLE001 - a row word never breaks the list
             return switcher_readiness_words(readiness)

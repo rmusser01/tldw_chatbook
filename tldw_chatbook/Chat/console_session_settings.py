@@ -3135,7 +3135,11 @@ def _setup_verdict_words(
 
 
 def model_readiness_words(
-    readiness: ConsoleSettingsReadiness, model: str | None
+    readiness: ConsoleSettingsReadiness,
+    model: str | None,
+    *,
+    provider: str | None = None,
+    max_tokens: int | None = None,
 ) -> str:
     """Return the readiness word for ``model`` on ``readiness``'s connection.
 
@@ -3144,17 +3148,46 @@ def model_readiness_words(
     returned, and a paid test only the model it sent, so each row is worded
     from the evidence for its own model.
 
+    TASK-34100.2 AC#2: a provider blocked only at the model level
+    (``MODEL_LEVEL_BLOCKERS``) is set up and keyed, so each of its models
+    gets its own verdict too: with ``provider`` given, a row whose model
+    cannot take a turn says why (``model_level_not_ready_words``), and every
+    other row reads the provider's Ready word.
+
     Args:
         readiness: One provider's built readiness.
         model: The row's model id (``None`` reads ``readiness`` as built).
+        provider: The row's provider readiness key; given, the row's own
+            model-level blockers are judged (capacity, a past 404).
+        max_tokens: The response maximum this row would send with.
 
     Returns:
         The same word ``readiness_words`` gives a readiness built for
         ``model``.
     """
-    evidence = readiness.evidence
-    if readiness.operability != "ready_to_send" or evidence is None or not model:
+    if not model or (
+        readiness.operability != "ready_to_send"
+        and readiness.blocker not in MODEL_LEVEL_BLOCKERS
+    ):
         return readiness_words(readiness)
+    if provider:
+        blocked = model_level_not_ready_words(provider, model, max_tokens)
+        if blocked is not None:
+            return blocked
+    elif readiness.operability != "ready_to_send":
+        return readiness_words(readiness)
+    evidence = readiness.evidence
+    if evidence is None:
+        # No current evidence: nothing confirms this row's model.
+        return _ready_words(
+            readiness.connection,
+            readiness.endpoint,
+            readiness.credential,
+            readiness.generation,
+            readiness.observed_at,
+            readiness.generation_observed_at,
+            "unconfirmed",
+        )
     tested = evidence.for_model(model)
     return _ready_words(
         readiness.connection,
@@ -4222,44 +4255,3 @@ def default_save_refusal(
     if not default_readiness.native_send_supported:
         return f"Unavailable: {default_readiness.detail}"
     return ""
-
-
-def readiness_words_for_model(
-    readiness: ConsoleSettingsReadiness,
-    provider: str,
-    model: str | None,
-    *,
-    max_tokens: int | None = None,
-) -> str:
-    """One switcher row's word: the provider's verdict, judged for ``model``.
-
-    A provider blocked only at the model level (``MODEL_LEVEL_BLOCKERS``) is
-    set up and keyed, so each of its models gets its own verdict: a row whose
-    model cannot take a turn says why, every other row reads the provider's
-    Ready word.
-
-    Args:
-        readiness: The provider's readiness (built for one representative
-            model).
-        provider: The row's provider readiness key.
-        model: This row's model id.
-        max_tokens: The response maximum this row would send with.
-
-    Returns:
-        The spec §5 readiness word for this provider/model pair.
-    """
-    if readiness.operability != "ready_to_send" and (
-        readiness.blocker not in MODEL_LEVEL_BLOCKERS
-    ):
-        return readiness_words(readiness)
-    blocked = model_level_not_ready_words(provider, model, max_tokens)
-    if blocked is not None:
-        return blocked
-    return _ready_words(
-        readiness.connection,
-        readiness.endpoint,
-        readiness.credential,
-        readiness.generation,
-        readiness.observed_at,
-        readiness.generation_observed_at,
-    )

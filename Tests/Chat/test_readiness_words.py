@@ -211,14 +211,20 @@ def test_a_key_check_verifies_only_the_models_its_listing_returned():
     unlisted = _openai_readiness("gpt-5.6-terra", owner)
 
     assert (listed.model, unlisted.model) == ("confirmed", "unconfirmed")
-    assert readiness_words(listed) == "Ready · verified 09:07"
+    # TASK-34100.2 AC#2 (rewritten on purpose): a listing proves the key, not
+    # a reply, so the listed model reads 'Key verified', never 'Ready ·
+    # verified'.
+    assert readiness_words(listed) == "Key verified 09:07"
     assert readiness_words(unlisted) == "Ready · reachable 09:07"
     # The setup verdict reads its Model facet the same way.
-    for facet, word in (("confirmed", "verified"), ("unconfirmed", "reachable")):
+    for facet, word in (
+        ("confirmed", "Key verified"),
+        ("unconfirmed", "Ready · reachable"),
+    ):
         assert verdict_readiness_words(
             _snapshot(endpoint="reachable", model=facet),
             owner.evidence_for(OPENAI),
-        ) == f"Ready · {word} 09:07"
+        ) == f"{word} 09:07"
 
 
 def test_one_provider_readiness_words_each_listed_model_by_its_own_listing():
@@ -231,7 +237,7 @@ def test_one_provider_readiness_words_each_listed_model_by_its_own_listing():
     for representative in ("gpt-4o", "gpt-5.6-terra"):
         provider_readiness = _openai_readiness(representative, owner)
         assert model_readiness_words(provider_readiness, "gpt-4o") == (
-            "Ready · verified 09:07"
+            "Key verified 09:07"  # TASK-34100.2 AC#2 (rewritten on purpose)
         )
         assert model_readiness_words(provider_readiness, "gpt-5.6-terra") == (
             "Ready · reachable 09:07"

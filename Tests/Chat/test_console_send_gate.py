@@ -22,7 +22,7 @@ import pytest
 from tldw_chatbook.Chat.console_display_state import (
     build_console_disabled_reason,
     console_send_gate_setup_copy as send_blocked_copy,
-    console_setup_blocked_reason as setup_blocked_copy,
+    console_setup_blocked_reason,
     console_setup_blocker,
 )
 from tldw_chatbook.Chat.console_session_settings import (
@@ -72,7 +72,7 @@ def test_a_failed_last_send_never_refuses_the_next_one(status: int) -> None:
     assert readiness.operability == "not_ready"  # every surface still says why
     assert readiness_refuses_turn(readiness) is False
     assert send_blocked_copy(readiness) == ""
-    assert setup_blocked_copy(readiness) == ""
+    assert console_setup_blocked_reason(readiness) == ""
 
 
 @pytest.mark.parametrize("status", [401, 404])
@@ -97,7 +97,7 @@ def test_a_full_context_refuses_and_names_its_fix() -> None:
 
     assert readiness_refuses_turn(readiness) is True
     send = send_blocked_copy(readiness)
-    setup = setup_blocked_copy(readiness)
+    setup = console_setup_blocked_reason(readiness)
     assert "context window" in send and "response maximum" in send
     assert "Finish provider setup" not in send
     assert "context window" in setup and "Fix model limits" in setup
@@ -116,7 +116,7 @@ def test_provider_setup_blockers_keep_their_copy() -> None:
     assert send_blocked_copy(readiness) == (
         "Console send blocked: Add an API key for OpenAI before sending."
     )
-    assert setup_blocked_copy(readiness) == (
+    assert console_setup_blocked_reason(readiness) == (
         "Add API key in Settings > Providers & Models before sending."
     )
 
@@ -126,4 +126,4 @@ def test_a_ready_verdict_is_never_refused() -> None:
 
     assert readiness_refuses_turn(readiness) is False
     assert send_blocked_copy(readiness) == ""
-    assert setup_blocked_copy(readiness) == ""
+    assert console_setup_blocked_reason(readiness) == ""

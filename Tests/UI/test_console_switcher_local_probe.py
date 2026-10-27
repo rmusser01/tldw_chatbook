@@ -861,7 +861,8 @@ async def test_rows_read_verified_only_for_the_models_the_key_check_listed(reque
 
     models = ("gpt-4o", "gpt-5.6-terra")
     words = {
-        "gpt-4o": "Ready · verified 09:07",
+        # TASK-34100.2 AC#2 (rewritten on purpose): a listing proves the key.
+        "gpt-4o": "Key verified 09:07",
         "gpt-5.6-terra": "Ready · reachable 09:07",
     }
     app = _harness()
