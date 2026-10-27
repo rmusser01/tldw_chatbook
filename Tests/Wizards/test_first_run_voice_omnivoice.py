@@ -796,7 +796,10 @@ async def test_omnivoice_second_download_after_a_cancel_can_be_cancelled_too(
         phase = str(
             step.query_one("#model-install-progress-phase", Static).render()
         )
-        return cancel, phase, cancel.disabled
+        status = str(
+            step.query_one("#setup-voice-omnivoice-status", Static).renderable
+        )
+        return cancel, phase, cancel.disabled, status
 
     async def wait_finished(step, pilot) -> None:
         for _ in range(60):
@@ -812,13 +815,15 @@ async def test_omnivoice_second_download_after_a_cancel_can_be_cancelled_too(
     async with host.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await _select_omnivoice(step, pilot)
-        cancel, first_phase, first_disabled = await start_and_find_cancel(step, pilot)
+        cancel, first_phase, first_disabled, first_status = (
+            await start_and_find_cancel(step, pilot)
+        )
         await pilot.click(cancel)
         await wait_finished(step, pilot)
         assert not step._omnivoice_installing
 
-        cancel, second_phase, second_disabled = await start_and_find_cancel(
-            step, pilot
+        cancel, second_phase, second_disabled, second_status = (
+            await start_and_find_cancel(step, pilot)
         )
         await pilot.click(cancel)
         await wait_finished(step, pilot)
@@ -827,6 +832,10 @@ async def test_omnivoice_second_download_after_a_cancel_can_be_cancelled_too(
     assert len(controls) == 2
     assert (first_phase, first_disabled) == ("Downloading model", False)
     assert (second_phase, second_disabled) == ("Downloading model", False)
+    # Found live (g14v5-voice/08): the last outcome stayed on the status
+    # line above the running download.
+    assert first_status == vs.OMNIVOICE_MODEL_MISSING_COPY
+    assert second_status == first_status
     assert controls[1].cancel_requested is True
     assert status == "Download cancelled — nothing was saved."
 

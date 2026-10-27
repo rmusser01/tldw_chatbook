@@ -385,11 +385,15 @@ class OmniVoiceStepBase(SetupStep):
             label="OmniVoice voice model", wait_if_busy=True
         )
         # Review F1: this widget outlives each download; a cancel pending
-        # from the last one must not disarm this one's Cancel.
+        # from the last one must not disarm this one's Cancel, and the last
+        # outcome ("Download cancelled — …") must not sit above this one.
         try:
             self.query_one(
                 "#setup-voice-omnivoice-progress", ModelInstallProgress
             ).reset()
+            self.query_one("#setup-voice-omnivoice-status", Static).update(
+                voice_state.OMNIVOICE_MODEL_MISSING_COPY
+            )
         except NoMatches:
             pass
         self._omnivoice_provision()
