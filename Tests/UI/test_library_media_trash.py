@@ -3244,6 +3244,9 @@ def _bind_trash_mutation_seams(fake):
     fake._library_media_mutation_summary = types.MethodType(
         LibraryMediaController._library_media_mutation_summary, fake
     )
+    # TASK-34000.40 review R1 N-2: the release clears the metadata
+    # form's refusal line on the mounted viewer (none mounted here).
+    fake._mounted_library_media_viewer = lambda: None
     fake._complete_library_media_mutation = types.MethodType(
         LibraryMediaController._complete_library_media_mutation, fake
     )
@@ -3833,6 +3836,9 @@ async def test_media_trash_permanent_delete_uses_only_scope_service_target_seam(
         _sync_library_media_browse_state=lambda *_args: events.append(("sync",)),
         _run_library_service_call=LibraryScreen._run_library_service_call,
     )
+    # TASK-34000.40 review R1 N-2: the release clears the metadata
+    # form's refusal line on the mounted viewer (none mounted here).
+    fake._mounted_library_media_viewer = lambda: None
     fake._complete_library_media_mutation = types.MethodType(
         LibraryMediaController._complete_library_media_mutation, fake
     )
@@ -3942,6 +3948,9 @@ async def test_media_trash_permanent_failure_keeps_fresh_row_and_skips_refresh()
             ("warning", message)
         ),
     )
+    # TASK-34000.40 review R1 N-2: the release clears the metadata
+    # form's refusal line on the mounted viewer (none mounted here).
+    fake._mounted_library_media_viewer = lambda: None
     fake._complete_library_media_mutation = types.MethodType(
         LibraryMediaController._complete_library_media_mutation, fake
     )

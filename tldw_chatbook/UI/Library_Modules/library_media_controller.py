@@ -3375,6 +3375,7 @@ class LibraryMediaController:
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = False  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -3397,6 +3398,7 @@ class LibraryMediaController:
         self._library_media_editing = False
         self._library_media_edit_draft = None
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = False  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -5372,6 +5374,7 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = False
+        self._library_media_saving_analysis = False  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._sync_library_media_viewer_or_recompose()
 
@@ -5550,6 +5553,7 @@ class LibraryMediaController:
         self._media_state.edit_draft = None
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
+        self._media_state.saving_analysis = False  # see the field (N-6)
         self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -5609,6 +5613,7 @@ class LibraryMediaController:
             return
         if self._media_state.editing_analysis:
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = False  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._sync_library_media_viewer_or_recompose()
             return
@@ -6354,6 +6359,11 @@ class LibraryMediaController:
         self._media_state.mutation_scope = None
         self._media_state.mutation_authority = None
         self._media_state.bulk_delete_in_flight = False
+        # TASK-34000.40 review R1 N-2: the metadata form's "Media change in
+        # progress." refusal ends with the interlock it named.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None:
+            viewer.show_form_status("edit", "")
         if not committed and not remove_ids and not upsert_items:
             if has_authority:
                 self._sync_library_media_browse_state(None)
@@ -6422,6 +6432,7 @@ class LibraryMediaController:
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
+        self._media_state.saving_analysis = False  # see the field (N-6)
         # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
         # were typed for -- a reset that cleared the flags but left the
         # drafts kept the dirty predicate true for a form nobody could see.
@@ -7318,6 +7329,7 @@ class LibraryMediaController:
                 self._media_state.composed_detail = None
                 self._media_state.highlights = []
                 self._media_state.editing_analysis = False
+                self._media_state.saving_analysis = False  # see the field (N-6)
                 self._media_state.analysis_draft = None
                 self._close_library_media_find()
                 self._media_state.content_mode = "raw"

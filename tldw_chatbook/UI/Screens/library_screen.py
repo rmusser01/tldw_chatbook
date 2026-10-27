@@ -20330,8 +20330,12 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_note_conflict_callout(self) -> None:
         return self._notes_controller._focus_library_note_conflict_callout()
 
-    def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
-        return self._notes_controller._apply_library_note_save_outcome(outcome)
+    def _apply_library_note_save_outcome(
+        self, outcome: NoteSaveOutcome, *, explicit: bool = False
+    ) -> None:
+        return self._notes_controller._apply_library_note_save_outcome(
+            outcome, explicit=explicit
+        )
 
     async def _save_library_note(
         self,
@@ -20372,7 +20376,7 @@ class LibraryScreen(BaseAppScreen):
         outcome = await self._library_note_session.request_save(explicit=explicit)
         # TASK-34000.1 (N-07): a refused AUTOSAVE never moves a typing user.
         if explicit or not autosave.keep_autosave_veto_in_place(self, outcome):
-            self._apply_library_note_save_outcome(outcome)
+            self._apply_library_note_save_outcome(outcome, explicit=explicit)
 
     async def _flush_library_note_save(
         self, *, gc_untouched_blank: bool = True
@@ -21881,6 +21885,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing = False
             self._media_state.edit_draft = None
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = False  # see the field (N-6)
             self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
         self._close_library_media_find()
@@ -32308,6 +32313,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.confirming_delete = False
             self._media_state.highlights = []
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = False  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._close_library_media_find()
             self._media_state.content_mode = "raw"
