@@ -575,8 +575,10 @@ dispatch/recovery, holds, receipts, file publication or instruction activation.
 246-field C2 ownership matrix. Fixed handlers transform the 116 columns of the
 portable Actor registry, Buddy profiles and bindings, Persona Visual graph, and
 shared Visual Identity graph. Native decoders validate original and projected
-associations; only declared typed references change. Portable UUIDs, revisions,
-manifests, hashes and historical source associations remain intact.
+associations; only declared typed references change. Original manifests, hashes,
+portable UUIDs, revisions and historical source associations remain retained.
+Generation provenance maps only declared references and revalidates the native
+manifest identity, with the exact source JSON retained.
 
 Logical visual rows retain exact pending physical asset/manifest proofs. The
 current native legacy asset admission guard refuses populated asset stores before
