@@ -200,7 +200,7 @@ def test_settings_and_the_snapshot_derive_the_model_facet_one_way():
         words[model] = dict(rows)["Readiness"]
         assert words[model] == verdict_readiness_words(snapshot, listing)
     assert words == {
-        "gpt-a": "Ready · verified 14:04",
+        "gpt-a": "Key verified 14:04",  # TASK-34100.2 AC#2 (rewritten on purpose)
         "gpt-b": "Ready · reachable 14:04",
         "": "Not ready · no model",
         "  ": "Not ready · no model",
