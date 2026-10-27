@@ -1170,6 +1170,52 @@ async def test_progress_widget_cancel_posts_one_request_and_says_it_is_stopping(
     assert "Cancelling download…" in text
 
 
+@pytest.mark.asyncio
+async def test_progress_widget_reset_rearms_cancel_for_the_next_download():
+    """TASK-34100.14 review F1: a host that keeps one widget across downloads
+    (the Voice step composes its OmniVoice progress once) must get a working
+    Cancel for the second download -- a stale "cancel pending" used to hold
+    the button disabled and every phase at "Cancelling download…".
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+    from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
+
+    reference = ArtifactRef("omnivoice-onnx-int8hq", "r1", "int8")
+    app = _CancellableProgressApp(_FakeClock())
+    async with app.run_test() as pilot:
+        widget = app.query_one(ModelInstallProgress)
+        widget.update_progress(
+            AcquisitionProgress("fetch", reference, "model.onnx", 1, 2)
+        )
+        await pilot.pause()
+        cancel = widget.query_one(".model-install-cancel", Button)
+        await pilot.click(cancel)
+        await pilot.pause()
+        assert widget.cancel_pending is True
+
+        widget.reset()
+        await pilot.pause()
+        assert widget.cancel_pending is False
+        assert widget.transfer_line == ""
+        assert cancel.display is False
+        widget.update_progress(
+            AcquisitionProgress("fetch", reference, "model.onnx", 1, 2)
+        )
+        await pilot.pause()
+        text = _progress_text(widget)
+        assert "Downloading model" in text
+        assert "Cancelling download…" not in text
+        assert cancel.display is True
+        assert cancel.disabled is False
+        # Textual's Button ignores a click while its 0.2 s press effect
+        # (``-active``) from the first click is still showing.
+        await pilot.pause(0.3)
+        await pilot.click(cancel)
+        await pilot.pause()
+
+    assert app.cancel_requests == 2
+
+
 class _CancelThenNextApp(ConsolidatedCSSApp):
     """A host with one more focusable control after the progress widget."""
 

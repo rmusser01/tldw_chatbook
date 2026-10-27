@@ -201,6 +201,30 @@ class ModelInstallProgress(Widget):
         if self._initial is not None:
             self.update_progress(self._initial)
 
+    def reset(self) -> None:
+        """Return to the idle display before a host reuses this widget.
+
+        A host that keeps one widget across downloads (the first-run Voice
+        step composes its OmniVoice progress once) calls this when a new
+        download starts: a cancel requested during the previous one would
+        otherwise keep Cancel disabled and every phase reading "Cancelling
+        download…", so the next download could not be stopped
+        (TASK-34100.14 review F1).
+        """
+        self._cancel_pending = False
+        self._estimator.reset()
+        self._transfer_line = ""
+        self.query_one("#model-install-progress-phase", Static).update(
+            "Waiting to install"
+        )
+        self.query_one("#model-install-progress-detail", Static).update("")
+        self.query_one("#model-install-progress-bar", ProgressBar).display = False
+        if self._cancellable:
+            cancel = self.query_one(".model-install-cancel", Button)
+            self._hand_off_focus(cancel)
+            cancel.display = False
+            cancel.disabled = False
+
     def update_progress(
         self,
         event: AcquisitionProgress | LocalGGUFImportProgress,

@@ -384,6 +384,14 @@ class OmniVoiceStepBase(SetupStep):
         self._omnivoice_download = DownloadControl(
             label="OmniVoice voice model", wait_if_busy=True
         )
+        # Review F1: this widget outlives each download; a cancel pending
+        # from the last one must not disarm this one's Cancel.
+        try:
+            self.query_one(
+                "#setup-voice-omnivoice-progress", ModelInstallProgress
+            ).reset()
+        except NoMatches:
+            pass
         self._omnivoice_provision()
 
     @wizard_work(
