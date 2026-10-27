@@ -277,7 +277,10 @@ class ProviderDetectionStep(SetupStep):
             status.set_class(text.startswith(glyph), style)
         if text and self._reveal_status:  # G6-VR2-06: a click's answer shows
             self._reveal_status = text.endswith("…")  # 'Testing…' is interim
-            self.call_after_refresh(status.scroll_visible, animate=False)
+            # Immediate, from the offset it runs at: a deferred scroll kept a
+            # target computed before a refusal's Authentication reveal and
+            # undid it (TASK-33008's test, flaky after G6-VR2-06).
+            self.call_after_refresh(status.scroll_visible, animate=False, immediate=True)
 
     def _checking_text(self) -> str:
         """The status line while the selected provider's check runs."""

@@ -635,9 +635,16 @@ class ProviderListStep(ProviderKeyEntryStep):
         on off screen while the list kept focus. Callers that would scroll
         the step ask this first.
 
+        Browsing means the user has moved through the list: a provider picked
+        before that (the step's first selection, ``select_provider``) still
+        brings Authentication into view when its check asks for a key
+        (TASK-33008 capture 06b).
+
         Returns:
             True while the user is browsing: nothing else may scroll the step.
         """
+        if not getattr(self, "_provider_choice_interacted", False):
+            return False
         try:
             choices = self.query_one("#setup-provider-choice", ProviderChoiceList)
             query = self.query_one("#setup-provider-filter", Input)
