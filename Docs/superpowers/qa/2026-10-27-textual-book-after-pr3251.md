@@ -29,7 +29,7 @@ All four new tasks are **To Do**, independent and testable, with four outcome-ba
 
 | Rank | Priority | Task | User-visible outcome |
 | --- | --- | --- | --- |
-| 1 | Medium / P2 | [TASK-37031](<../../../backlog/tasks/task-37031 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md>) | Preserve a newer Evals bench draft when queued Save publication arrives. |
+| 1 | Medium / P2 | [TASK-37142](<../../../backlog/tasks/task-37142 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md>) | Preserve a newer Evals bench draft when queued Save publication arrives. |
 | 2 | Medium / P2 | [TASK-37032](<../../../backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md>) | Settle independent full reminder-form Saves without one silently cancelling the other. |
 | 3 | Medium / P2 | [TASK-37033](<../../../backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md>) | Keep key/event dispatch responsive during saved-Prompt export writes. |
 | 4 | Low / P3 | [TASK-37034](<../../../backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md>) | Advertise Speech Playground actions only in an applicable view. |
@@ -89,3 +89,5 @@ The immediate filing recheck found root ID ceiling37030, ran and removed a uniqu
 ## Publication review
 
 The independent [Superpowers audit review](2026-10-27-textual-book-after-pr3251/postmerge-review.md) reports zero Critical/Important/Minor findings and readiness to publish. All nine scoped exclusions have explicit executor rulings and costs; none waives future repair acceptance. A fresh prepublication check found unchanged audited dev source and no competing IDs across fetched refs and registered worktrees. The four persisted task records also render through the CLI with UTF-8 output. The initial CP1252 CLI status-symbol rendering failure was a local output-encoding limitation, not a task mutation or product failure.
+
+Task-ID provenance: the Evals finding originally published as TASK-37031 is now [TASK-37142](<../../../backlog/tasks/task-37142 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md>). A pre-implementation-PR sweep found an earlier unrelated Console TASK-37031; the older owner retains that ID. The Evals finding and scope are unchanged.
