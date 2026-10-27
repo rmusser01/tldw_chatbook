@@ -347,10 +347,20 @@ conversations follow it. It also shows, read-only, the embedding model RAG
 uses ("all-MiniLM-L6-v2 · on this computer"), with Settings' privacy sentence
 when the model is a cloud one; change the model in Settings. If that model
 isn't on this computer yet, the first automatic search downloads it, and that
-first message may wait for it. Without the optional search extras the control
-is still there, but automatic search is unavailable (it needs them); the step
-names the extras package, `tldw_chatbook[embeddings_rag]`, with a copy button —
-install it with whatever tool you installed chatbook with.
+first message may wait for it.
+
+Without the optional search extras the control is still there, but its
+second choice reads **Search my Library automatically — unavailable** and
+can't be picked; the line under it says why: Console's automatic search
+needs the extras. You can still search your Library yourself from
+Library ▸ Search / RAG. If automatic search was already saved, the step says
+so, and that each message stops at "Library search failed" before it is sent
+until you choose **only when I ask** (which Next then saves). Below that, the
+step names the extras package, `tldw_chatbook[embeddings_rag]`, with a
+**Copy package name** button: install it with whatever tool you installed
+chatbook with, restart chatbook, then turn on Automatic retrieval in
+Settings ▸ Domain Defaults ▸ RAG. The Summary's Search row says automatic
+search is unavailable, and flags a saved "automatic" that can't run.
 
 The Speech step opens with the dictation engine: **No dictation for now**
 (chosen on a first run, writes nothing), **Already available — <engine>** when
