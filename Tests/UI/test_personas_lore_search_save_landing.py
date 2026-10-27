@@ -120,7 +120,6 @@ async def test_save_refresh_keeps_enter_fenced_until_matching_rows_land(
             )
             assert list(visible_item_ids(library)) == expected_rows
             assert library.item_list.highlighted_id() == f"lore:{target_id}"
-            await pilot.press("enter")
             await until(lambda: screen.state.selected_entity_id == str(target_id))
             assert selected == [("lore", str(target_id))]
             saved = manager.get_world_book(saved_id)

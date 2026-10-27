@@ -359,6 +359,7 @@ from ...Widgets.Persona_Widgets.personas_state import (
     PersonasWorkbenchState,
 )
 from ..Persona_Modules import roleplay_frame_state as frame_state
+from ..Persona_Modules import persona_search_completion
 from ..Workbench.workbench_widgets import FittedText
 from ...Widgets.workbench_focus import (
     WorkbenchPaneTarget,
@@ -3805,7 +3806,9 @@ class PersonasScreen(BaseAppScreen):
 
         Returns at once (TASK-33910.35): the list takes the cursor to the
         searched list's first match when that list's rows land, and Enter on
-        the list opens nothing until then. On dev, Enter within the 0.2 s
+        the list opens nothing until then. A pending list Enter is retained
+        once for current row publication; newer user/context intent cancels it.
+        On dev, Enter within the 0.2 s
         debounce put the cursor on the previous result's first row, so
         ``ctrl+f isolde ⏎ ⏎`` could open the wrong card (spec 1.6's 4-key
         find); B2a waited for the render inside this handler, which held
@@ -3847,16 +3850,8 @@ class PersonasScreen(BaseAppScreen):
         )
 
     def _land_first_match(self, fence: frame_state.ListFence) -> None:
-        """The searched list's rows are in the list: the cursor to its first match, if owed."""
-        if not self._window_state.take_first(fence):
-            # A newer query or source landed: a landing owed on the older
-            # list can never land (its cancelled render skips read_failed).
-            self._window_state.landed_elsewhere(fence)
-            return
-        try:
-            self.query_one(PersonasLibraryPane).land_on_first()
-        except QueryError:
-            pass
+        """Complete the existing first-match intent at actual row publication."""
+        persona_search_completion.land_first_match(self, fence)
 
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
@@ -4136,8 +4131,8 @@ class PersonasScreen(BaseAppScreen):
                 )
             if request.to_end and window.take_end():
                 library.item_list.move_to_end()
-            if request.replace and not blank and window.take_first(fence):
-                library.land_on_first()
+            if request.replace and not blank:
+                self._land_first_match(fence)
             replay = (
                 window.take_replay(fence) if request.replace and not blank else None
             )
@@ -4249,6 +4244,7 @@ class PersonasScreen(BaseAppScreen):
             offset=0,
             page_size=max(1, len(self._profiles)),
         )
+        fence = self._list_fence()
         async with self._render_lock:
             if not self._library_render_snapshot_is_current(
                 expected_query=expected_query,
@@ -4292,6 +4288,7 @@ class PersonasScreen(BaseAppScreen):
                 and self.state.selected_entity_id
             ):
                 library.mark_active_row("persona", self.state.selected_entity_id)
+            persona_search_completion.publish_first_match(self, library, fence)
 
     @on(PersonaSearchChanged)
     def _handle_search_changed(self, message: PersonaSearchChanged) -> None:
@@ -4445,8 +4442,6 @@ class PersonasScreen(BaseAppScreen):
                     "Could not re-render profile rows after search."
                 )
                 self._window_state.read_failed()
-            else:
-                self._land_first_match(self._list_fence())
         elif mode == "dictionaries":
             try:
                 await self._render_dictionary_rows(query=query)
@@ -4455,8 +4450,6 @@ class PersonasScreen(BaseAppScreen):
                     "Could not re-render dictionary rows after search."
                 )
                 self._window_state.read_failed()
-            else:
-                self._land_first_match(self._list_fence())
         elif mode == "lore":
             try:
                 await self._render_lore_rows(query=query)
@@ -4538,6 +4531,7 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
+        fence = self._list_fence()
         self._dictionary_lore_request_generation += 1
         request_generation = self._dictionary_lore_request_generation
 
@@ -4597,6 +4591,7 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
             )
             library.item_list.set_more_available(False)
+            persona_search_completion.publish_first_match(self, library, fence, request_generation)
 
     def _lore_manager(self) -> Any:
         """A ``WorldBookManager`` bound to the app's local DB, or None when absent."""
@@ -4641,6 +4636,7 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
+        fence = self._list_fence()
         self._dictionary_lore_request_generation += 1
         request_generation = self._dictionary_lore_request_generation
 
@@ -4696,20 +4692,8 @@ class PersonasScreen(BaseAppScreen):
                 ),
                 recovery_copy=recovery_copy,
             )
-            if (
-                request_generation != self._dictionary_lore_request_generation
-                or not self.is_attached
-                or self._pruning
-                or not library.is_attached
-                or library._pruning
-                or not self._library_render_snapshot_is_current(
-                    expected_query=expected_query,
-                    expected_mode=expected_mode,
-                )
-            ):
-                return
             library.item_list.set_more_available(False)
-            self._land_first_match(self._list_fence())
+            persona_search_completion.publish_first_match(self, library, fence, request_generation)
 
     # ===== Mode switching =====
 
@@ -5464,6 +5448,8 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaEntitySelected)
     async def _handle_entity_selected(self, message: PersonaEntitySelected) -> None:
         message.stop()
+        if not persona_search_completion.accept_selection(self, message):
+            return
         # Explicit user intent supersedes a restore payload retained after a
         # transient view-mount failure.
         self._pending_restore = None

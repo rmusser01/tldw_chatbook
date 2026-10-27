@@ -2525,7 +2525,7 @@ async def test_the_four_key_find_opens_the_first_match_after_a_read_slower_than_
     """AC#1-#3 on a local source: the read is held for 2.4 s (past the 2 s cap
     dev has had since B2a), a key after Enter is handled at once, a second
     Enter on the list opens nothing and cancels nothing, and when the rows
-    arrive the cursor is on the first match and the next Enter opens it. On
+    arrive the cursor is on the first match and that admitted Enter opens it. On
     dev a read slower than 2 s misses the find (Enter gives up and moves the
     cursor onto the previous results); fixed here."""
     target = volume_348.get_character_card_by_name("Character 0042")
@@ -2579,8 +2579,6 @@ async def test_the_four_key_find_opens_the_first_match_after_a_read_slower_than_
         )
         assert visible_item_ids(screen) == (target_id,)
         assert not screen._window_state.landing_owed()
-        assert screen.state.selected_entity_id == opened_before
-        await pilot.press("enter")
         await wait_until(
             pilot,
             lambda: screen.state.selected_entity_id == str(target["id"]),
@@ -2641,7 +2639,6 @@ async def test_the_four_key_find_opens_the_first_match_after_a_slow_server_searc
             what="the first match under the cursor",
         )
         assert visible_item_ids(screen) == ("character:42",)
-        await pilot.press("enter")
         await wait_until(
             pilot,
             lambda: screen.state.selected_entity_id == "42",
@@ -2670,6 +2667,7 @@ async def test_a_newer_list_drops_the_owed_landing(
             await pilot.press("enter")
             await wait_until(pilot, held.reading.is_set, what="the held read")
             assert screen._window_state.landing_owed()
+            await pilot.press("enter")
             if change == "query":
                 screen.query_one(
                     "#personas-library-search", Input
@@ -2714,6 +2712,7 @@ async def test_a_newer_cursor_move_cancels_the_owed_landing(
             await pilot.press("enter")
             await wait_until(pilot, held.reading.is_set, what="the held read")
             assert screen._window_state.landing_owed()
+            await pilot.press("enter")
             if move == "down":
                 await pilot.press("down")
             else:
@@ -2734,11 +2733,14 @@ async def test_an_empty_or_failed_search_drops_the_owed_landing(mock_app_instanc
     landing owed and opens nothing; Enter on the list is live again."""
     records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 151)]
     state = {"search": "fail"}
+    release, searching = asyncio.Event(), asyncio.Event()
 
     async def list_characters(*, mode, limit, offset):
         return [dict(record) for record in records[offset : offset + limit]]
 
     async def search_characters(query, *, mode, limit):
+        searching.set()
+        await release.wait()
         if state["search"] == "fail":
             raise RuntimeError("server unreachable")
         return []
@@ -2763,8 +2765,15 @@ async def test_an_empty_or_failed_search_drops_the_owed_landing(mock_app_instanc
             search = screen.query_one("#personas-library-search", Input)
             search.value = ""
             await settle(pilot)
-            await pilot.press("ctrl+f", *f"zz{outcome}")
-            await pilot.press("enter")
+            release.clear()
+            searching.clear()
+            try:
+                await pilot.press("ctrl+f", *f"zz{outcome}", "enter", "enter")
+                await wait_until(pilot, searching.is_set, what="the held search")
+                assert screen.state.selected_entity_id == opened_before
+                assert screen._window_state.landing_owed()
+            finally:
+                release.set()
             await wait_until(
                 pilot,
                 lambda: (
@@ -2796,6 +2805,7 @@ async def test_leaving_roleplay_drops_the_owed_landing(
             await pilot.press("enter")
             await wait_until(pilot, held.reading.is_set, what="the held read")
             assert screen._window_state.landing_owed()
+            await pilot.press("enter")
             screen._end_visit()
             assert not screen._window_state.landing_owed()
         finally:
@@ -2817,20 +2827,20 @@ async def test_a_dictionary_search_takes_the_landing_when_its_render_ends(
         item_list.focus()
         await select_roleplay_item(pilot, screen, index=5, load=False)
 
-        async def render(*, query):
+        async def list_dictionaries(**kwargs):
             if read == "fails":
                 raise RuntimeError("no dictionaries")
+            return {"dictionaries": [{"id": 1, "name": "Book", "entries": []}]}
 
-        monkeypatch.setattr(screen, "_render_dictionary_rows", render)
-        monkeypatch.setattr(
-            screen, "_library_render_snapshot_is_current", lambda **kw: True
+        mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
+            list_dictionaries=list_dictionaries
         )
         monkeypatch.setattr(screen.state, "active_mode", "dictionaries")
         screen._window_state.owe_first(screen._list_fence())
         await screen._render_search_query(query="", mode="dictionaries")
         assert not screen._window_state.landing_owed()
-        expected = 0 if read == "ok" else 5
-        assert item_list.highlighted == expected
+        assert visible_item_ids(screen) == (("dictionary:1",) if read == "ok" else ())
+        assert item_list.highlighted == (0 if read == "ok" else None)
 
 
 def test_the_2_s_bound_and_its_fallback_are_gone():
@@ -2918,6 +2928,7 @@ async def test_a_newer_dictionary_query_drops_the_landing_owed_on_the_older_one(
             await pilot.press("enter")
             await wait_until(pilot, lambda: len(calls) == 2, what="the held search")
             assert screen._window_state.landing_owed()
+            await pilot.press("enter")
             monkeypatch.setattr(
                 personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 0.2
             )
@@ -2982,6 +2993,7 @@ async def test_a_source_change_during_a_dictionary_search_drops_the_landing(
             await pilot.press("enter")
             await wait_until(pilot, lambda: len(calls) == 2, what="the held search")
             assert screen._window_state.landing_owed()
+            await pilot.press("enter")
             mock_app_instance.runtime_backend = "server"
             mock_app_instance.active_server_id = "server-a"
             await screen.handle_runtime_backend_changed("server")
