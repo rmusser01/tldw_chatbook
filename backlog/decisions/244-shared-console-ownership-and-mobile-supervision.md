@@ -1024,8 +1024,69 @@ source/archive/member/fence/cancellation/final-check/retirement requirements rem
 
 ### Native passive command-history storage and reads (R105)
 
-Ruling105 (record verbatim BEFORE new passive command storage/consumer policy tests/code; amend ADR244 contemporaneously): Authorize one fixed native passive command-history contract in the EXISTING Runs26 mobile_consolidation_batches five-column table, with no schema/catalog/owner change and no insertion into console_command_receipts. Native source reads establish that mapping_json currently has NO installed grammar/writer/reader/completion validator; this is a NEW payload/consumer contract, not reuse of an existing one. Reserve batch_key 'history.command' for a PASSIVE-ONLY completion manifest with exact version1/kind='command_history'/record_count nonnegative native integer, and 'history.command:' plus exact original command_id for child rows. Child mapping_json has exact version1, record containing all twelve ORIGINAL SQL columns, and run_associations containing only separately proved originalRun/mappedRun pairs for actual target.run_id. Preserve original owner_epoch and target_json strings, native_id, timestamps, state, fingerprint and every original scalar verbatim; native _decode validates shape without authenticating unavailable HMAC/monotonic/current execution. Session/incarnation/handle/epoch/unproved native IDs remain opaque. Strict fixed key/version/type/command-key/operation/source/count consistency is mandatory; unknown, foreign, duplicate, incomplete or malformed data refuses, never falls back to active receipts. The passive manifest means ONLY complete retained command history; it MUST NOT create, stand in for, or be named as a whole 'runs' owner-completion receipt. The later real Runs writer writes passive children+manifest atomically WITH its actual rows/maps/provenance/holds/owning receipt in the existing native owner transaction. A fixed private transaction-borrowing retention primitive may be qualified first, enforcing actual native transaction/connection ownership and existing mutation admission, but no consolidation call is enabled before actual all-owner readiness. Component fixture/sealed rows are not real import completion. A separate immutable historical DTO and native paged reader require an actually admitted native AgentRuns handle and BOTH exact operation_id and source_fingerprint; caller strings or a SQL primary key alone are never authority. Validate actual stored passive manifest and child grammars/source consistency, retain transaction-consistent paging and complete-record coverage, and return historical facts only. Adopt NEW explicit bounds of default50/max100 records requested, at most16MiB encoded bytes per child measured through SQL byte length BEFORE Python text/body materialization, and one nonrenewable16MiB representation allowance per reader page covering raw/text/JSON/native decoding/clones/results BEFORE construction. These are new consumer bounds, not inherited permission from R101. Return fewer complete records with a continuation when the page allowance would be exceeded; never drop/truncate/skip a record or return a nonprogressing empty page. A single record that cannot be read completely under those bounds must be an exact prewrite refusal; preflight all records and account its new representations on the original composed allowance, without resetting/replacing that allowance to make records fit. Query validation/completeness and cursors must remain bounded and bind the actual stored operation/source; no unbounded full-JSON fallback. Source24 authenticated absence stays distinct, and source command count is not limited by the LIVE4096 quota. No automatic retention expiry, invalidation, pruning, unresolved-control observation, routing, claim, dispatch or permission integration; no new delete API. Native DB backup/lifecycle retains the passive records; existing applicable deletion/privacy semantics remain and any future historical deletion is an owning transaction, never live-receipt pruning. Qualify exact12-field/raw-string preservation, proved association separation, malformed/foreign/incomplete data, paging/byte/representation admission, rollback invisibility/committed passive readability, read-only reopening and actual4096 live-capacity/invalidation/prune/unresolved independence with native SQLite and explicit physical owner retirement. No cap patches, fake import readiness or whole-profile/runtime authority claim. Record a truthful precode ADR checkpoint before affected tests/code. Cost if wrong: hidden history can be pruned or counted as live work, JSON can escape bounds or become unreadable, or a passive receipt can falsely certify full import or execution authority.
+AgentRuns26 retains imported command facts in its existing five-column
+`mobile_consolidation_batches` table, which previously had no installed JSON
+payload grammar, completion validator or reader. This new fixed contract changes
+no schema, catalog or owner and never inserts into `console_command_receipts`.
 
-### Serial native-owner qualification (R106)
+The exact key `history.command` contains only `version: 1`,
+`kind: "command_history"` and nonnegative integer `record_count`.
+Each `history.command:<exact original command_id>` child contains only
+`version: 1`, `record` with all twelve original SQL fields, and
+`run_associations` with separately proved original/mapped Run pairs for actual
+`target.run_id`. Original epoch/target JSON strings, native ID, clocks, state,
+fingerprint, reason and timestamps remain verbatim. Native decoding validates
+shape, never historical HMAC/monotonic authentication or current execution.
+Session/incarnation/handle/epoch/unproved native IDs remain opaque.
 
-Ruling106 (serial native owner implementation boundary, BEFORE affected readiness/effect policy code): Authorize reviewed SERIAL increments within existing Task36766, preserving every AC and original Task8 BASE6e83/A-chat85fa/full-Task8 gate: first implement actual R105 passive retention/reader primitives and bounded native component qualification using the current sole worker; inspect exact existing definition/current-authority gates and route any genuinely new hold/consumer semantics before affected code rather than silently enable imported definitions. Then a fresh reviewed-BASE increment implements real SAME-operation/session/claim/journal/capture-bound all-owner readiness and the physical captured-reader retirement to native-owner transition. The actual source guards in storage_admission.mobile_consolidation_owner and _CapturedSQLite.check forbid simultaneous captured readers/history scopes and an active native owner. A saved/replaced _RunsPreflight, caller plan or pending-duty string cannot cross that boundary as authority; all pure hard completion guards stay. This ruling authorizes the serial scope only, not an unspecified readiness token/handoff protocol: route its concrete source-grounded contract/ADR BEFORE tests/code. Finally implement fixed Chat/Workspace/Run legal owning transactions, exact typed maps/provenance/holds/receipts, allocator admission, receipt-first crash/resume and required real native consumers, including receipt-bound original-ID RunLog lookup and definition/current Goal/recovery enforcement. Undefined runtime history access must receive its own concrete native receipt/membership contract; no HistoryFiles capability/full-tree read_member shortcut or path/run_id as authority. No partial public activation, file publication or owning import effect while ANY populated owner/required disposition remains unsupported or readiness/consumer proof is unresolved. Internal component primitives can be tested on explicit disposable native fixtures and must be reported as such, never as an actual migration or all-owner-ready result. Every serial delivery is concrete implementation with targeted tests/ordinary commit/scoped review, not an audit-only substitute; use fresh successors at actual approved BASEs, preserve earlier evidence, and conduct a complete owner-range gate from92ff before subsequent publicB/full original Task8 review. Keep Task36766 InProgress/ACs unchecked until all original requirements are met; no future uncreated Backlog IDs or altered scope. Tasks9–11/root wholebranch/hardware remain later and mandatory where applicable; root final combined fix cap remains unused. Cost if wrong: a diagnostic can be promoted across retired readers as stale authority, partial writes can occur before all owners are ready, or serial reviews can hide an incomplete integration.
+A private retention primitive borrows the actual admitted native owner transaction
+and original composed allowance. It preflights every complete record before
+insertion. The eventual real Runs writer commits passive children and manifest
+atomically with actual rows, maps, provenance, exact holds and a separate owning
+receipt. This passive manifest certifies only command retention, never full Runs
+completion. Component fixtures and saved planning rows do not grant import
+readiness; no consolidation caller is enabled by this primitive.
+
+The native reader requires both operation ID and source fingerprint on an
+actually admitted AgentRuns handle. It validates strict stored key/version/type,
+command-key, source, count and association consistency in one read snapshot.
+Unknown, foreign, duplicate, incomplete or malformed data refuses without active
+receipt fallback. A missing manifest refuses; a valid zero-count manifest alone
+means completed empty retention. Authenticated source24 table absence remains
+separate provenance for the later owner receipt. Pagination binds the actual
+operation/source and existing child, retaining complete-record coverage.
+
+New reader limits are default 50 / maximum 100 records, a 16 MiB encoded-byte ceiling per
+child, and one nonrenewable 16 MiB representation allowance per page. SQL BLOB byte
+lengths precede Python text/body materialization for both master and children.
+Keys/cursors/metadata, raw text, JSON, native decoding/clones and results are
+admitted before construction. Pages may return fewer complete records with a
+continuation; they never skip/truncate records or return a nonprogressing empty
+page. A single unreadable record refuses before any retention writes; its new
+representations are charged on the original composed allowance without reset or
+replacement. Coverage queries remain bounded with no full-JSON fallback. The
+historical source count has no live 4,096-row quota.
+
+Passive history has no expiry, invalidation, pruning, unresolved-control
+observation, routing, claim, dispatch or permission integration. Native database
+backup/lifecycle retains these records. Existing applicable privacy/deletion
+semantics remain; future history deletion is an owning transaction, never live
+receipt pruning. No deletion API is introduced.
+
+### Native owner admission and history access (R106)
+
+Captured SQLite/history readers and a native consolidation owner cannot be active
+simultaneously. Their transition must preserve the actual operation/session/claim/
+journal/capture cohort across physical reader retirement. Saved/replaced plans
+and pending-duty strings never supply that authority; pure completion guards
+remain hard refusals. A concrete readiness protocol and runtime RunLog receipt/
+membership contract require separate qualification before implementation.
+Maintenance HistoryFiles or an arbitrary path/Run ID grants no runtime access.
+
+All populated owners and required dispositions must be supported and qualified
+before file publication or owning import effects. Fixed Chat/Workspace/Run
+transactions preserve legal lifecycle, maps/provenance/holds/receipts, snapshot
+allocator admission, receipt-first recovery and actual definition/current Goal/
+recovery consumers. Original-ID RunLog access must bind committed receipts and
+distinguish root ownership, framed membership and historical references.
+Passive component delivery grants no partial public activation or cutover.

@@ -176,3 +176,39 @@ Optional-sidecar revalidation during SQLite ownership and native 0600 main-file
 creation remain unchanged. Fixed sidecar observations at ownership retirement or
 recovery allow ordinary WAL generations to change without weakening permanent DB/ancestor
 witnesses or writing per-row journal records.
+
+
+### Passive imported command history (ADR-244 R105)
+
+`DB/console_command_history.py::_retain_command_history` borrows the actual native
+AgentRuns transaction and supplied original `_TraceReadBudget`. It validates fixed
+operational-history rows and complete readability before writing children plus a
+passive manifest in `mobile_consolidation_batches`. Foreign connections, absent
+transactions, duplicate records and repeat retention refuse. The primitive never
+commits the caller's transaction. No consolidation caller is enabled; source and
+mapped-ownership proof plus all-owner readiness remain later importer duties.
+
+The manifest key is `history.command`; children append `:` and the original
+command ID. Strict versioned JSON preserves all twelve SQL fields, including raw
+epoch/target strings, with original/mapped Run pairs separately represented.
+The manifest certifies passive history only, never completion of the Runs owner.
+
+`ConsoleCommandReceiptRepository.list_imported_history(operation_id,
+source_fingerprint, *, cursor=None, limit=50)` returns immutable historical DTOs
+and a bound continuation. It refuses an already-active transaction and owns a
+single deferred read snapshot, including on admitted read-only handles. Missing,
+foreign, malformed and incomplete manifests refuse; empty retention is explicit.
+It checks count/source/key coverage and each returned record's exact grammar.
+
+SQL BLOB byte lengths gate master/child materialization; children have a 16 MiB
+encoded ceiling and pages share one 16 MiB representation allowance covering keys,
+metadata, JSON/native decoding and results. Default/max record counts are 50/100.
+Allowance pressure returns complete records plus continuation; an individually
+unreadable record refuses. These limits are representation admission, not heap
+measurement or whole-profile capacity. No full-history JSON is materialized.
+
+Live command lookup, claims, transitions, unresolved queries, invalidation,
+pruning and 4,096 capacity still address only `console_command_receipts`.
+Passive records have no expiry or new deletion API; database backup/lifecycle and
+applicable privacy semantics remain. This component introduces no RunLog reader,
+imported-definition activation, schema migration or owner-readiness handoff.

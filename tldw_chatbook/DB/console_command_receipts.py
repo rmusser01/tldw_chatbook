@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity, Consol
 
 if TYPE_CHECKING:
     from .AgentRuns_DB import AgentRunsDB
+    from .console_command_history import CommandHistoryCursor, CommandHistoryPage
 
 MAX_COMMAND_RECEIPTS = 4096
 ACTIONS = frozenset(
@@ -156,6 +157,21 @@ class ConsoleCommandReceiptRepository:
                     (command_id,),
                 ).fetchone()
             )
+
+    def list_imported_history(
+        self,
+        operation_id: str,
+        source_fingerprint: str,
+        *,
+        cursor: CommandHistoryCursor | None = None,
+        limit: int = 50,
+    ) -> CommandHistoryPage:
+        """Read committed passive facts, separate from live command lookup."""
+        from .console_command_history import _list_command_history
+
+        return _list_command_history(
+            self.runs_db, operation_id, source_fingerprint, cursor=cursor, limit=limit
+        )
 
     def claim(self, receipt: ConsoleCommandReceipt) -> ConsoleCommandClaim:
         """Only the atomic inserter may dispatch; pending is never ownership."""
