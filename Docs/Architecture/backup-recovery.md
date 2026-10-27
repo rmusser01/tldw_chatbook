@@ -530,3 +530,37 @@ member proof; the plan does not invent an asset reader or publisher. This remain
 a pure partial projection: `require_complete()` always refuses pending C2b/C2c,
 C3, T, S and A-runs obligations, including when their source families are empty.
 There are no imported rows, instruction activation, dispatch, holds or receipts.
+
+### Private workflow ledger planning (C2b)
+
+`content_workflow_plan()` consumes the captured C2a settings plan, C1 dependencies
+and I identities. Fixed native handlers cover the 76 columns of dispatch
+checkpoints, hook and machine-followup receipts, fleet progress, generation
+metadata, trajectory metadata and transcript annotations. Declared references
+map through their typed domains; provider parameters, prompts, quotes and message
+bodies retain their meaning. Receipt operation/turn/settlement/chain identities
+remain opaque host history. Native unique-key collisions refuse explicitly.
+
+Checkpoint admission uses the captured active branch and native owner/serializer
+predicates. Valid on-path rows retain pending import-quarantine obligations.
+Active continuation beside a checkpoint, terminal owners, stale versions/states
+and stranded pointers produce exact prewrite conflicts with originals retained;
+the planner never reconciles, deletes a checkpoint or invents a historical
+version. Checkpoint-free accepted/dispatched and valid continuation history is
+supported separately. Stored machine receipts omit acceptance-time source-message
+versions: their historical ancestry is readable, but no fresh admission proof is
+reconstructed from the current message version.
+
+Trajectory handlers recognize fixed native event grammars and declared retrieval
+references. A capture-failure hash remains associated with its original source
+event; absent source events do not permit rehashing or fresh verification claims.
+Unknown grammar, ephemeral turn associations and unproved physical/dependency
+references refuse exactly. Transcript message anchors validate conversation
+membership even when the separate message-id column is NULL. Fleet sequence
+mapping consumes I's global ordered frontier, preserving delivery quarantine.
+
+The immutable plan exposes retained source rows, body-free blockers, provenance
+and explicit successor proofs. C2a fields retain their ownership; unresolved C2c,
+C3, T, S and A-runs work remains noninsertable. `require_complete()` always refuses,
+even for empty remaining families. This API performs no owning-row writes,
+dispatch/recovery, holds, receipts, file publication or instruction activation.

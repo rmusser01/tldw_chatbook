@@ -215,6 +215,12 @@ class _CapturedSQLite:
 
         return _plan_content_settings(self)
 
+    def content_workflow_plan(self):
+        """Plan native C2b ledgers without replaying imported authority."""
+        from .mobile_content_workflows import _plan_content_workflows
+
+        return _plan_content_workflows(self)
+
     def retire(self):
         self.active = False
         for resource in reversed(tuple(self.resources)):
