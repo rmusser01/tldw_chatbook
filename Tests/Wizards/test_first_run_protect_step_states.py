@@ -31,6 +31,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 import tldw_chatbook.config as config_module
+import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_MODEL,
     STEP_PROTECT,
@@ -117,6 +118,15 @@ def _install(monkeypatch, document: dict, *, enable_result: bool = True) -> _Dis
     # Next and Exit setup save a checkpoint; keep it off the real profile.
     monkeypatch.setattr(
         config_module, "save_settings_to_cli_config", lambda *a, **k: True
+    )
+    # Summary's speech-model check resolves the data dir through the config
+    # cache, which the patched loader above never fills; since TASK-36478 each
+    # bootstrap_profile test starts with that cache dropped, so the check
+    # raised RecoveryRequired. No speech model is part of these tests.
+    monkeypatch.setattr(
+        summary_step_module,
+        "managed_model_artifact_root",
+        lambda: CONFIG_PATH.parent / "no-managed-models",
     )
     return disk
 
