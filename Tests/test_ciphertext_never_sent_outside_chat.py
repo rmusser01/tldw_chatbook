@@ -369,6 +369,58 @@ def test_server_client_never_sends_an_encrypted_explicit_token(monkeypatch):
     assert client.bearer_token is None
 
 
+def test_a_stranded_api_key_does_not_change_how_the_auth_token_is_sent(monkeypatch):
+    # Review v5r1 (R1-7): auth_mode unset, a plain auth_token, a stranded
+    # `enc:` api_key and a plain bearer_token. The auth_token always went as
+    # the API key (the api_key's presence picks api-key mode); screening the
+    # api_key flipped the inferred mode to bearer, so the same valid token
+    # went out as a Bearer header instead -- a working server could 401.
+    client = _server_client(
+        monkeypatch,
+        {
+            "auth_token": "server-plain",
+            "api_key": _enc("server-real"),
+            "bearer_token": "server-bearer",
+        },
+    )
+
+    assert client.token == "server-plain"
+    assert client.bearer_token is None
+
+
+def test_a_bearer_token_used_in_place_of_a_stranded_key_is_sent_as_bearer(
+    monkeypatch,
+):
+    # When the bearer token is the credential actually chosen, it must go as
+    # a Bearer header, never in the API-key header.
+    client = _server_client(
+        monkeypatch, {"api_key": _enc("server-real"), "bearer_token": "server-bearer"}
+    )
+
+    assert client.bearer_token == "server-bearer"
+    assert client.token is None
+
+
+@pytest.mark.parametrize(
+    ("api_config", "token", "bearer"),
+    [
+        ({"auth_token": "t", "bearer_token": "b"}, None, "t"),
+        ({"api_key": "k", "bearer_token": "b"}, "k", None),
+        ({"bearer_token": "b"}, None, "b"),
+        ({"auth_token": "t", "api_key": "k"}, "t", None),
+    ],
+    ids=["token+bearer", "key+bearer", "bearer-only", "token+key"],
+)
+def test_server_client_auth_mode_is_unchanged_without_ciphertext(
+    monkeypatch, api_config, token, bearer
+):
+    # Guard: with no `enc:` value the inferred mode is exactly the old rule
+    # ("bearer" iff a bearer_token and no api_key).
+    client = _server_client(monkeypatch, api_config)
+
+    assert (client.token, client.bearer_token) == (token, bearer)
+
+
 def test_server_client_still_sends_a_plain_token(monkeypatch):
     client = _server_client(monkeypatch, {"auth_token": "server-plain"})
 
