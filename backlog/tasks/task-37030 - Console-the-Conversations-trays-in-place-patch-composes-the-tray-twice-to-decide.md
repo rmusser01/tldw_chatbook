@@ -3,10 +3,11 @@ id: TASK-37030
 title: >-
   Console: the Conversations tray's in-place patch composes the tray twice to
   decide
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-10-26 14:32'
-updated_date: '2026-10-27 16:55'
+updated_date: '2026-10-27 21:48'
 labels:
   - console
   - performance
@@ -23,13 +24,19 @@ TASK-36012 lets the Conversations tray repaint a run's start and end in place: o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A run marker that the tray patches in place runs at most one compose of the tray
-- [ ] #2 The patch still lands the same geometry, paint, classes and tooltips as a rebuild (the TASK-36012 A/B stays green)
-- [ ] #3 CPU for a patched running-marker sync, measured with process_time at 12 and 40 rows, falls below the dev baseline
+- [x] #1 A run marker that the tray patches in place runs at most one compose of the tray
+- [x] #2 The patch still lands the same geometry, paint, classes and tooltips as a rebuild (the TASK-36012 A/B stays green)
+- [x] #3 CPU for a patched running-marker sync, measured with process_time at 12 and 40 rows, falls below the dev baseline
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-2026-10-27 (TASK-33620.15.20): the stylesheet applies this description names are gone from the patch path. `compose_delta.detached_styles_skipped` skips restyling parentless nodes while the tray builds its two diff composes (neither tree is ever mounted, and Textual styles a widget again when it mounts). Headless, app stylesheets, `process_time` around `sync_state`, median of 9 alternating idle/running syncs, two interleaved runs per arm: a patched running-marker sync fell from 92 and 92 ms of CPU to 13 and 10 ms at 12 rows, and from 290 and 279 ms to 26 and 24 ms at 40 rows (sync plus settle: 104/101 -> 23/19 ms and 310/297 -> 45/44 ms). Not re-checked against this task's own AC#3 harness; AC#1 (one compose) is untouched.
+Done in TASK-33620.15.20's branch (2026-10-27): the patch now runs no compose at all. It decides from the row data, as this description proposed, and goes one step further, since the record also replaces the compose of the next state.
+
+- Compose records, per browser row, the values a run can change (`_BrowserRowPaint`: the row tooltip, the action glyph with its colour, the attention class and the action tooltip, all from one `_conversation_row_paint` that compose and patch both call) and the marker each section and group header shows. The patch compares the record with what the incoming rows give, checks that the mounted buttons still show the record, and writes only what differs. A header marker change, a glyph-mode flip, or a row that drifted from its record rebuilds.
+- `plan_in_place_delta` (the compose diff) and the interim `detached_styles_skipped` (which swapped `App.update_styles` while the diff composes ran) are removed.
+- AC#1: `Tests/UI/test_console_tray_patch_styles.py::test_running_marker_patch_builds_and_styles_no_throwaway_node` pins 0 composes, 0 widgets built and 0 off-DOM restyles for a patched running marker (red on origin/dev 0923ec0ca2 and on the interim head: 2 composes).
+- AC#2: `test_running_marker_patch_matches_a_recompose` stays green. `test_browser_paint_deltas_match_a_rebuild` adds an A/B per patchable field (row attention, icon, colour, run marker; section and group markers) that also compares label spans and painted segment styles. It found that TASK-36012's patch dropped a colour-only change: Textual's reactive compares `Content` by text, so `button.label = ...` was a no-op. The label is now written with `set_reactive` + `mutate_reactive`.
+- AC#3, headless (app stylesheets, `process_time` around `sync_state`, median of 9 alternating idle/running syncs, 4 interleaved runs per arm, host load 27-42): at 12 rows, dev 87-93 ms, the interim head 11-13 ms, this change 1.3-2.7 ms; at 40 rows, 243-266, 24-26 and 2.0-3.6 ms. Widgets built per sync: 96 / 96 / 0 at 12 rows, 264 / 264 / 0 at 40.
 <!-- SECTION:NOTES:END -->
