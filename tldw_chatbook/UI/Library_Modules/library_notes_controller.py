@@ -1574,6 +1574,7 @@ class LibraryNotesController:
             ),
             transfer_status=operation.status_line if operation is not None else "",
             transfer_running=bool(operation and operation.running),
+            transfer_origin=operation.origin_control if operation is not None else "",
             bulk_read_only=self._library_notes_select_mode,
             bulk_included=self._library_notes_row_selection.is_selected(
                 snapshot.note_id

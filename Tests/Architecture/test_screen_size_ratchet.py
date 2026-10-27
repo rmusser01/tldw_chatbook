@@ -1151,9 +1151,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: role: 38166 -> 38233 lines, 1373 -> 1374 methods (measured with
     #: ``_measure``). Fix round 1 (same decision; review R0 I-1/M-1/M-3): the
     #: pruned-control substitution narrowed to Textual's own landing, the
-    #: origin rule bounded to the operation's region, and the Discard tail's
-    #: docstring: 38233 -> 38244 lines, 1374 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38244, 1374),
+    #: operation-origin capture rule removed (the origin now stays enabled),
+    #: and the Discard tail's docstring: 38233 -> 38228 lines, 1374 methods
+    #: (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38228, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

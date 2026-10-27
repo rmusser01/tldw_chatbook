@@ -5426,22 +5426,6 @@ class LibraryScreen(BaseAppScreen):
             else self._notes_state.stage
         )
         role = self._library_notes_semantic_role(focused)
-        # TASK-34000.29 (N-12): a running operation disabled the control that
-        # started it, so Textual moved focus on (to Delete, in Info). The
-        # portable identity stays the ORIGIN's: a sync captured in that window
-        # (the export dialog's close resyncs the tree) must replay it, never
-        # the stop focus fell to (lessons-textual: fix the ROLE). Only for an
-        # operation whose region is the one on screen (review M-3).
-        operation = self._library_notes_operation_for_active_region()
-        if (
-            operation is not None
-            and operation.running
-            and operation.origin_control
-            and getattr(focused, "id", None) != operation.origin_control
-        ):
-            origin = self.query(f"#{operation.origin_control}")
-            if origin:
-                role = self._library_notes_semantic_role(origin.first()) or role
         snapshot = self._library_note_session.snapshot
         note_id = snapshot.note_id if snapshot is not None else None
         if note_id is None and region == "navigator":

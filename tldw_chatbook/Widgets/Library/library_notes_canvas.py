@@ -1222,6 +1222,9 @@ class LibraryNotePresentationState:
     discard_new_note: bool = False
     transfer_status: str = ""
     transfer_running: bool = False
+    #: TASK-34000.29: the control that started the running transfer. It
+    #: stays enabled so it keeps focus (disabling it sent focus to Delete).
+    transfer_origin: str = ""
     bulk_read_only: bool = False
     bulk_included: bool = False
     status_channels: NotesStatusChannels | None = None
@@ -1315,8 +1318,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     #: Class-level so the WARNING is logged once, not once per note opened.
     _pending_lookup_warned: ClassVar[bool] = False
 
-    #: TASK-34000.29: ``(pruned child, Textual's predicted landing)``, set
-    #: only while ``recompose`` is replacing a focused child.
+    #: TASK-34000.29: ``(pruned child, Textual's predicted landing, mode)``,
+    #: set only while ``recompose`` is replacing a focused child.
     focus_before_prune: Any = None
 
     def __init__(
@@ -1529,8 +1532,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             focused_child = self.screen.focused
         except Exception:  # noqa: BLE001 - a detached canvas has no screen
             focused_child = None
-        self.focus_before_prune = (
-            (focused_child, self._predicted_reset_target(focused_child))
+        pruned = self.focus_before_prune = (
+            (focused_child, self._predicted_reset_target(focused_child), self.mode)
             if focused_child is not None and self in focused_child.ancestors
             else None
         )
@@ -1538,6 +1541,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             await super().recompose()
         finally:
             self.focus_before_prune = None
+        if pruned is not None:
+            self._refocus_pruned_child(*pruned)
         if (
             not newest_focus_id
             or not self.is_attached
@@ -1552,6 +1557,32 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         matches = self.query(f"#{newest_focus_id}")
         if matches:
             matches.first().screen.set_focus(matches.first())
+
+    def _refocus_pruned_child(self, pruned: Any, landing: Any, mode: str) -> None:
+        """Hand focus back to the pruned child's same-id replacement.
+
+        TASK-34000.29: runs once this recompose's queued follow-ups (the Notes
+        identity replays) have run, and only while focus still sits exactly on
+        the landing Textual's reset picked. A replay, a hand-off or the user's
+        own move wins. Only a control with the same id takes it (no stand-in),
+        and only for an editor resync (the mode was and is ``"editor"``): a
+        transition (opening a note, Create, a delete) owns its own landing.
+        Without this, a replay that was vetoed or replaced left focus on the
+        Library grip, and the next sync captured the grip.
+        """
+        if mode != "editor" or self.mode != "editor":
+            return
+        if not pruned.id or not self.is_attached:
+            return
+        try:
+            screen = self.screen
+        except Exception:  # noqa: BLE001 - a detached canvas has no screen
+            return
+        if screen.focused is not landing:
+            return
+        matches = self.query(f"#{pruned.id}")
+        if matches and matches.first() is not pruned:
+            screen.set_focus(matches.first())
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -4238,7 +4269,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ):
             node(selector).disabled = (
                 state.destructive_running
-                or state.transfer_running
+                or (state.transfer_running and selector != f"#{state.transfer_origin}")
                 or bulk_read_only
                 # task-32132 fix round 1 Important 5: Info stays visible
                 # while confirming (this fix's own AC#1), so its Danger/

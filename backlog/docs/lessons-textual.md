@@ -1787,7 +1787,7 @@ Pilot pins were green.
     CPU load; certain once the attempt is held). Landing at once, while the
     rows are known to be mounted, takes the race away.
 
-## A focus identity captured during a prune, or while a running action has disabled its button, names the wrong control (TASK-34000.29, 2026-10-26)
+## A focus identity captured during a prune, or after a running action disabled its button, names the wrong control (TASK-34000.29, 2026-10-26)
 
 Returning focus to Info's Export Markdown after a cancelled export passed 7
 runs in 8; the eighth left focus on the Info region. A cancelled export with
@@ -1807,23 +1807,35 @@ no fix at all always left it on Delete.
   `_capture_library_notes_focus_identity` that prints role, focus and
   operation phase showed it: `CAPTURE role='' focus=library-browse-items-grip`
   ran right after the prune.
-- **Fix the capture, not the timing.** While an operation runs, the capture
-  takes the role of the operation's origin control. While a recompose is
-  pruning the focused control, the capture uses that control
-  (`LibraryNotesCanvas.focus_before_prune`). It does so only while focus is
-  still on the landing Textual's reset picks, as predicted by the base
-  class's pinned `_predicted_reset_target`, or on nothing. A user's own move
-  inside the window is captured as made (review R0 I-1 caught a first cut
-  that substituted for any role-less focus). The return to the origin is
-  also synchronous (`set_focus`, marked programmatic), because a deferred
-  focus leaves a window for another capture.
-- **Mutation evidence.**
-  - Drop the operation rule: the export arm fails every run.
-  - Make the return deferred-only: it fails 1 run in 2.
-  - Drop the prune rule: only about 1 run in 8 failed, which is not a pin.
-    The deterministic pin enters the window through the work pane's
-    `compose`, which runs after the prune and before the remount. Deleting
-    the substitution then fails 3 runs out of 3.
+- **Remove the first landing; fix the capture for the second; and do not
+  leave focus on a landing that no replay claimed.**
+  - The control that started the operation now stays enabled while it runs,
+    so focus never moves to Delete.
+  - While a recompose is pruning the focused control, the capture uses that
+    control (`LibraryNotesCanvas.focus_before_prune`). It does so only while
+    focus is still on the landing Textual's reset picks, as predicted by the
+    base class's pinned `_predicted_reset_target`, or on nothing. A user's own
+    move inside the window is captured as made. Review R0 I-1 caught a first
+    cut that substituted for any focus without a role.
+  - Once an editor-mode resync's follow-ups have run, focus that is still on
+    that landing goes to the same-id replacement, with no stand-in.
+    Transitions such as opening a note, Create or a delete are excluded,
+    because they own their own landing.
+- **Evidence.**
+  - The first cut used an "operation origin" capture rule while the button
+    stayed disabled, plus the role substitution. The cancelled export still
+    left focus on the Info region 2 runs in 24, and the round before it 1 in
+    24.
+  - The failing trace showed why. The operation ended while a resync had
+    pruned the displaced Delete. The automatic tree-slice restores were
+    vetoed (Textual's reset counts as a user move, the TASK-34000.90 shape),
+    so focus stayed on the grip and the next sync captured it.
+  - With the button kept enabled and the same-id refocus added, the result
+    was 72 runs out of 72.
+  - Deterministic pins enter the window through the work pane's `compose`,
+    which runs after the prune and before the remount. Each mutation fails
+    every run: deleting the substitution, deleting the refocus, or disabling
+    the origin again.
 - **Rule.** When a test of a focus return passes most runs but not all,
   record every capture and every focus write before changing any timing.
   The replay that wins is usually one captured in a window you did not know

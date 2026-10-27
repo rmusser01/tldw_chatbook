@@ -91,6 +91,39 @@ async def _capture_inside_the_prune(screen, pilot, monkeypatch, *, user_moves_to
     return seen["landing"], seen["predicted"], seen["captured_on"], seen["identity"]
 
 
+async def _bare_recompose(screen, pilot, monkeypatch, *, user_moves_to=None):
+    """Recompose the work pane with no Notes sync, so no identity replay runs.
+
+    ``user_moves_to`` is focused inside the window, as in
+    ``_capture_inside_the_prune``. Returns the Export Markdown control that
+    was replaced.
+    """
+    pane = screen.query_one("#library-note-work-pane")
+    replaced = screen.query_one(f"#{EXPORT_MD}")
+    real_compose = pane.compose
+    ran: list[bool] = []
+
+    def compose_after_the_prune():
+        if user_moves_to is not None:
+            screen.set_focus(user_moves_to)
+        ran.append(True)
+        monkeypatch.setattr(pane, "compose", real_compose)
+        yield from real_compose()
+
+    monkeypatch.setattr(pane, "compose", compose_after_the_prune)
+    pane.refresh(recompose=True)
+    await _wait(
+        pilot,
+        lambda: bool(ran)
+        and not pane.recompose_in_flight
+        and pane.focus_before_prune is None
+        and bool(screen.query(f"#{EXPORT_MD}"))
+        and screen.query_one(f"#{EXPORT_MD}") is not replaced,
+        "the bare recompose to finish",
+    )
+    return replaced
+
+
 async def test_a_capture_in_a_prune_keeps_the_pruned_control_only_on_textuals_landing(
     tmp_path, monkeypatch
 ) -> None:
@@ -102,6 +135,9 @@ async def test_a_capture_in_a_prune_keeps_the_pruned_control_only_on_textuals_la
        Shift+Tab (a real key) walks on to Copy.
     2. The same window, but the user's own move lands on a control with no
        portable role first: the capture does not claim Export Markdown.
+    3. A recompose that no replay follows: focus left on Textual's landing
+       goes to the same-id replacement, but a move the user made inside the
+       window is left where it is.
     """
     host, seeded, _toasts, _copies = _mounted(tmp_path, monkeypatch)
     async with host.run_test(size=SIZE) as pilot:
@@ -157,6 +193,20 @@ async def test_a_capture_in_a_prune_keeps_the_pruned_control_only_on_textuals_la
         )
         assert role_target is console
 
+        # 3. No replay follows a bare recompose of the work pane.
+        await _focus_settles_on(
+            host, screen, pilot, EXPORT_MD, "export Markdown", after="the replay"
+        )
+        replaced = await _bare_recompose(screen, pilot, monkeypatch)
+        assert screen.focused is not replaced
+        await _focus_settles_on(
+            host, screen, pilot, EXPORT_MD, "export Markdown",
+            after="a recompose no replay followed",
+        )
+        await _bare_recompose(screen, pilot, monkeypatch, user_moves_to=toggle)
+        await pilot.pause()
+        assert screen.focused is toggle, _focused_id(screen)
+
 
 async def test_a_failed_or_kept_export_returns_focus_and_keep_is_a_cancel(
     tmp_path, monkeypatch
@@ -184,6 +234,12 @@ async def test_a_failed_or_kept_export_returns_focus_and_keep_is_a_cancel(
         # Failed: the folder does not exist.
         await pilot.press("enter")
         dialog = await _export_dialog(host, pilot)
+        # While the picker is open the export runs, and the button that
+        # started it keeps the Library's focus (disabling it moved focus to
+        # Delete); the other transfer buttons are disabled.
+        assert _focused_id(screen) == EXPORT_MD
+        assert not screen.query_one(f"#{EXPORT_MD}", Button).disabled
+        assert screen.query_one("#library-note-context-copy", Button).disabled
         dialog.query_one(FileNameInput).value = str(tmp_path / "missing" / "ideas.md")
         await pilot.press("enter")
         await _back_on_screen(host, screen, pilot)

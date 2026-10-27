@@ -24294,7 +24294,16 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
                 "The untouched blank note was never GC'd from the real DB "
                 "via a rail-row switch."
             )
-        assert screen._library_selected_row_id == "browse-media"
+        # TASK-34000.29 fix round 1: the GC lands inside the switch's flush,
+        # before the destination is set, so the row is waited on rather than
+        # read at the instant the count reaches 0 (measured: "browse-notes"
+        # at that instant in 3 of 20 fresh runs, "browse-media" a second
+        # later in all of them).
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_selected_row_id == "browse-media",
+            message=lambda: f"row stayed {screen._library_selected_row_id!r}",
+        )
 
 
 @pytest.mark.asyncio
