@@ -717,7 +717,15 @@ class LibraryNotesController:
     #: read that grip falls back to in the Trash region, so a replay a later
     #: sync replaced still lands on the right row (with the generation as the
     #: veto, 18 of 24 runs under 8-way load ended on the first row).
+    #: Ruling T8-j (review R3-1): while a read's landing settles -- from its
+    #: page's publish until that landing's keep-in-view has run -- no capture
+    #: records the Trash list's scroll offset (``_trash_landing_settling``).
     _trash_focus_role: str = ""
+    #: The owed role whose read has published and whose keep-in-view has not
+    #: run yet; honoured only while it is still the owed role, and dropped by
+    #: the keep-in-view, by every press that arms a role (the open among
+    #: them) and by leaving the view.
+    _trash_landing_settling: str = ""
 
     def __init__(
         self,
@@ -2043,6 +2051,14 @@ class LibraryNotesController:
             # below the fold after Previous back to a full page (100x30).
             trash = self._library_notes_trash
             if trash is None or getattr(owner, "trash_page", None) != trash.page:
+                return None
+            # Ruling T8-j (review R3-1): nor while a read's landing settles.
+            # A sync captured after the landing but before the next refresh
+            # read the new list at offset 0 (layout pending) and re-applied it
+            # AFTER the keep-in-view, hiding the focused Next again. With no
+            # offset, its replay scrolls the focused control in -- either order.
+            settling = getattr(self, "_trash_landing_settling", "")
+            if settling and settling == getattr(self, "_trash_focus_role", ""):
                 return None
         return owner
     def _capture_library_notes_recompose_state(
@@ -7728,6 +7744,7 @@ class LibraryNotesController:
         # Review R2-1: the open owes focus to the first row (or, if its read
         # fails, to Retry) until the user's own input moves it.
         self._trash_focus_role = "trash-restore:0"
+        self._trash_landing_settling = ""
         trash = self._library_notes_trash
         if trash is not None and trash.page != 1:
             # Review R0 m-7: never paint the page the last visit left behind.
@@ -7767,6 +7784,7 @@ class LibraryNotesController:
         """The single exit from the Trash view -- Back and Escape share it."""
         self._library_notes_view = "list"
         self._trash_focus_role = ""
+        self._trash_landing_settling = ""
         # Review R0 m-7: the next visit starts on page 1, and the list view's
         # own reloads (a delete, a visit) read page 1 meanwhile.
         self._library_notes_trash_page = 1
@@ -7816,6 +7834,7 @@ class LibraryNotesController:
         if button_id.startswith(prefix):
             trash_focus = f"trash-restore:{button_id.removeprefix(prefix)}"
             self._trash_focus_role = trash_focus
+            self._trash_landing_settling = ""
         self._library_notes_mutation_in_flight = True
         self.run_worker(
             self._undo_library_note_delete(receipt, trash_focus=trash_focus),
@@ -7861,6 +7880,7 @@ class LibraryNotesController:
             self._library_notes_trash_page = trash.retry_page or trash.page
         role = "trash-restore:0"
         self._trash_focus_role = role
+        self._trash_landing_settling = ""
         if self._library_notes_mutation_fenced():
             self._trash_reload_owed = role
             return
@@ -7890,6 +7910,7 @@ class LibraryNotesController:
             return
         self._library_notes_trash_page = target
         self._trash_focus_role = role
+        self._trash_landing_settling = ""
         if self._library_notes_mutation_fenced():
             self._trash_reload_owed = role
             return
@@ -7926,8 +7947,11 @@ class LibraryNotesController:
 
         Only while the landing still stands: the owed role unchanged (a real
         input since clears it) and its control the focused widget -- a user's
-        own move is never scrolled after.
+        own move is never scrolled after. Either way the landing has settled,
+        so the Trash list's offset is captured again (ruling T8-j).
         """
+        if getattr(self, "_trash_landing_settling", "") == role:
+            self._trash_landing_settling = ""
         if self._library_notes_view != "trash" or self._trash_focus_role != role:
             return
         target = self._library_notes_trash_focus_target(role)
@@ -8052,6 +8076,10 @@ class LibraryNotesController:
             page=requested,
         )
         if self.is_mounted:
+            if focus_role:
+                # Ruling T8-j: this landing settles from here until its
+                # keep-in-view has run; no capture records the list's offset.
+                self._trash_landing_settling = focus_role
             _sync_library_canvas(
                 self,
                 "notes",

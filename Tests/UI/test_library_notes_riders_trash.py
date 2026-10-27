@@ -1176,3 +1176,44 @@ def test_the_landed_control_is_scrolled_in_only_while_it_still_has_focus() -> No
     fake._trash_focus_role = ""  # a real input withdrew the landing
     LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-next")
     assert scrolled == ["next"]
+
+
+def test_the_trash_offset_is_withheld_only_while_a_page_landing_settles() -> None:
+    """Ruling T8-j (review R3-1): order-proof, in the one scroll-owner seam.
+
+    From a landing read's publish until its keep-in-view has run, the Trash
+    list is no capture's scroll owner, so no sync -- on either side of the
+    keep-in-view -- puts the new list's pre-layout offset back over it. The
+    keep-in-view, a real input and the next press each end it; afterwards a
+    same-page reload keeps its offset again (review R0 m-6).
+    """
+    listing = SimpleNamespace(trash_page=1)
+    fake = SimpleNamespace(
+        _library_layout_ref=lambda _selector: listing,
+        _library_notes_trash=SimpleNamespace(page=1),
+        _library_notes_view="trash",
+        _trash_focus_role="trash-previous",
+        _trash_landing_settling="trash-previous",
+        _library_notes_trash_focus_target=lambda _role: None,
+        focused=None,
+    )
+
+    def owner():
+        return LibraryNotesController._library_notes_scroll_owner(fake, "trash")
+
+    assert owner() is None
+    fake._trash_focus_role = ""  # a real input withdrew the landing
+    assert owner() is listing
+    fake._trash_focus_role = "trash-previous"
+    assert owner() is None
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-previous")
+    assert fake._trash_landing_settling == ""
+    assert owner() is listing
+
+    pressed, _refreshes = _pager_press_fake(fenced=False)
+    pressed._trash_focus_role = pressed._trash_landing_settling = "trash-next"
+    LibraryNotesController.handle_library_notes_trash_next(
+        pressed, SimpleNamespace(stop=lambda: None)
+    )
+    assert pressed._trash_focus_role == "trash-next"
+    assert pressed._trash_landing_settling == ""

@@ -651,7 +651,12 @@ _BUDGETS: dict[str, int] = {
     # failed read lands focus on Retry, a landed control is scrolled in after
     # the deferred offset re-applies (``_keep_landed_trash_control_in_view``),
     # a reopen clears the old failure: 8358 -> 8393 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8393,
+    # 2026-10-27, Task 8 fix round 4 (review R3-1, ruling T8-j; same
+    # decision): while a page change's landing settles, the Trash scroll
+    # owner records no offset (``_trash_landing_settling``), so a sync on
+    # either side of the keep-in-view cannot hide the landed control:
+    # 8393 -> 8421 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8421,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
