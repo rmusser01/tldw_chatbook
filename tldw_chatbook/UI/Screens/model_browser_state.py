@@ -643,11 +643,16 @@ def transfer_summary(
         The progress clause shared by the progress widget and the steps
         that echo it in their own status line.
     """
-    parts = [format_mib_progress(done_bytes, total_bytes)]
+    # Review F1-b: a count at or past its total promises no time left (it
+    # used to say "less than a minute left" with minutes to go), and the
+    # figure never reads past the total.
+    finished = total_bytes > 0 and done_bytes >= total_bytes
+    shown = min(done_bytes, total_bytes) if finished else done_bytes
+    parts = [format_mib_progress(shown, total_bytes)]
     rate = estimator.bytes_per_second if estimator is not None else None
     if rate is not None:
         parts.append(format_transfer_rate(rate))
-        left = estimator.seconds_left(total_bytes - done_bytes)
+        left = None if finished else estimator.seconds_left(total_bytes - done_bytes)
         if left is not None:
             parts.append(format_time_left(left))
     return " · ".join(parts)

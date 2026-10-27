@@ -624,3 +624,105 @@ def test_weak_validators_never_claim_a_mid_file_checkpoint(
         report = asyncio.run(service.preflight(ref, catalog))
 
     assert report.already_staged_bytes == 0
+
+
+# ---------------------------------------------------------------------------
+# Review F1-b: a file that starts over from byte zero never pushes the
+# progress readout past 100% (and so never fakes a "less than a minute left").
+# ---------------------------------------------------------------------------
+
+
+def _staged(staging_dir: Path, name: str, body: bytes, entry: dict) -> None:
+    from tldw_chatbook.Utils.atomic_file_ops import atomic_write_json
+
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    (staging_dir / name).write_bytes(body)
+    atomic_write_json(
+        staging_dir.parent / "state" / "fetch-state.json", {"files": {name: entry}}
+    )
+
+
+def _assert_never_past_total(events, phase: str) -> list[AcquisitionProgress]:
+    picked = [event for event in events if event.phase == phase]
+    assert picked, f"no {phase} events"
+    over = [(e.bytes_done, e.bytes_total) for e in picked if e.bytes_done > e.bytes_total]
+    assert not over, f"{phase} progress ran past its total: {over[:3]}"
+    return picked
+
+
+@pytest.mark.asyncio
+async def test_a_resume_restarted_from_zero_grows_the_total_instead_of_overrunning(
+    tmp_path: Path,
+) -> None:
+    """The upstream object changed (new ETag), so the resumed file restarts
+    from zero. The run planned only the bytes after the staged checkpoint
+    (preflight credited it), so without an adjustment the count ended past
+    the total -- the live "1116.6 of 512.8 MiB" readout.
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import _ProvisionProgressState
+
+    staged = 100
+    new_body = b"9876543210" * 1200
+    events: list[AcquisitionProgress] = []
+    with FixtureArtifactServer() as srv:
+        srv.serve("/model.onnx", new_body, etag='"v2"', support_range=True)
+        core = ModelArtifactService(tmp_path / "root")
+        svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
+        desc = make_descriptor(files_body=new_body, source_url=srv.url("/model.onnx"))
+        staging_dir = tmp_path / "staging" / "m"
+        _staged(
+            staging_dir,
+            "model.onnx",
+            b"0" * staged,
+            {"etag": '"v1"', "last_modified": None, "bytes_done": staged,
+             "complete": False},
+        )
+        state = _ProvisionProgressState(
+            callback=events.append, bytes_total=len(new_body) - staged
+        )
+        await svc._fetch_artifact(desc, staging_dir, state)
+
+    fetch = _assert_never_past_total(events, "fetch")
+    assert (fetch[-1].bytes_done, fetch[-1].bytes_total) == (
+        len(new_body),
+        len(new_body),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_preverify_refetch_restarts_the_count_instead_of_overrunning(
+    tmp_path: Path,
+) -> None:
+    """A staged file failing its SHA-256 is deleted and fetched again: both
+    the download count and the check count start that file over, so neither
+    runs past its total (live: "Checking … 1252.5 of 632.8 MiB").
+    """
+    from tldw_chatbook.Model_Artifacts.acquisition import _ProvisionProgressState
+
+    correct = b"correct-content-bytes-" * 50
+    wrong = b"wr0ng-c0ntent-byte5---" * 50
+    events: list[AcquisitionProgress] = []
+    with FixtureArtifactServer() as srv:
+        srv.serve("/model.onnx", correct, etag='"v2"', support_range=True)
+        core = ModelArtifactService(tmp_path / "root")
+        svc = ArtifactAcquisitionService(core, trusted_origins=_trusted(srv))
+        desc = make_descriptor(files_body=correct, source_url=srv.url("/model.onnx"))
+        staging_dir = tmp_path / "staging" / "m"
+        _staged(
+            staging_dir,
+            "model.onnx",
+            wrong,
+            {"etag": '"v1"', "last_modified": None, "bytes_done": len(wrong),
+             "complete": True},
+        )
+        # What provision() plans for a fully staged file: nothing left to
+        # download, the whole file to check.
+        state = _ProvisionProgressState(
+            callback=events.append, bytes_total=0, preverify_bytes_total=len(correct)
+        )
+        await svc._preverify_artifact(desc, staging_dir, state)
+
+    fetch = _assert_never_past_total(events, "fetch")
+    assert (fetch[-1].bytes_done, fetch[-1].bytes_total) == (len(correct), len(correct))
+    checks = _assert_never_past_total(events, "pre-verify")
+    assert checks[-1].bytes_done == len(correct)

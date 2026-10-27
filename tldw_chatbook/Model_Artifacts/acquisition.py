@@ -554,12 +554,35 @@ class _ProvisionProgressState:
     preverify_bytes_total: int | None = None
     bytes_done: int = 0
     preverify_bytes_done: int = 0
+    #: Bytes this run streamed per ``(ref, file path)`` (review F1-b).
+    file_streamed: dict[tuple[ArtifactRef, str], int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Default ``preverify_bytes_total`` to ``bytes_total`` when unset."""
 
         if self.preverify_bytes_total is None:
             self.preverify_bytes_total = self.bytes_total
+
+    def count_streamed(self, key: tuple[ArtifactRef, str], count: int) -> None:
+        """Add freshly streamed bytes of one file to the download count."""
+        self.bytes_done += count
+        self.file_streamed[key] = self.file_streamed.get(key, 0) + count
+
+    def restart_file(self, key: tuple[ArtifactRef, str], on_disk_bytes: int) -> None:
+        """Account for one file starting over from byte zero.
+
+        TASK-34100.14 review F1-b: a resume the server refused (changed
+        validators), a checkpoint without strong validators, or a pre-verify
+        refetch throws away ``on_disk_bytes`` that must now be downloaded
+        again. What this run streamed for the file is no longer progress,
+        and the part it had not streamed (credited as already staged, so
+        never in ``bytes_total``) is added to the total -- the count then
+        never passes its total, so the readout never shows "1116.6 of 512.8
+        MiB" or a time-left estimate built on it.
+        """
+        streamed = self.file_streamed.pop(key, 0)
+        self.bytes_done -= streamed
+        self.bytes_total += max(on_disk_bytes - streamed, 0)
 
 
 @dataclass(frozen=True)
@@ -1884,9 +1907,14 @@ class ArtifactAcquisitionService:
             url=url,
             source_url=descriptor.source_url,
         )
+        progress_key = (descriptor.reference, file.path)
+        if resume_from < recorded_done:
+            # Staged bytes without strong validators cannot be resumed; the
+            # file streams from zero (review F1-b).
+            progress_state.restart_file(progress_key, recorded_done)
 
         def on_chunk(count: int) -> None:
-            progress_state.bytes_done += count
+            progress_state.count_streamed(progress_key, count)
             if progress_state.callback is not None:
                 progress_state.callback(
                     AcquisitionProgress(
@@ -1922,6 +1950,10 @@ class ArtifactAcquisitionService:
                 headers=headers,
                 on_chunk=on_chunk,
                 on_checkpoint=on_checkpoint,
+                on_restart=lambda: progress_state.restart_file(
+                    progress_key,
+                    resume_from + progress_state.file_streamed.get(progress_key, 0),
+                ),
             )
         except OSError as exc:
             raise TransferError(
@@ -1975,6 +2007,7 @@ class ArtifactAcquisitionService:
         headers: Mapping[str, str] | None = None,
         on_chunk: Callable[[int], None],
         on_checkpoint: Callable[[int, FetchValidators], None] | None = None,
+        on_restart: Callable[[], None] | None = None,
     ) -> tuple[FetchResult, int]:
         """Call ``stream_fetch``, restarting once from zero on FetchRestartRequired.
 
@@ -1995,6 +2028,9 @@ class ArtifactAcquisitionService:
             on_checkpoint: TASK-34100.14: mid-file durable-checkpoint sink,
                 forwarded to ``stream_fetch`` with ``FETCH_CHECKPOINT_BYTES``
                 (read at call time) for both attempts.
+            on_restart: TASK-34100.14 review F1-b: called once just before
+                the from-zero restart, so progress accounting can start the
+                file over.
 
         Returns:
             The successful ``FetchResult`` together with the ``resume_from``
@@ -2029,6 +2065,8 @@ class ArtifactAcquisitionService:
                 raise
             if destination.exists():
                 destination.unlink()
+            if on_restart is not None:
+                on_restart()
             result = await stream_fetch(
                 url,
                 destination,
@@ -2114,6 +2152,7 @@ class ArtifactAcquisitionService:
         attempts_used = 0
         loop = asyncio.get_running_loop()
         while True:
+            checked_before = progress_state.preverify_bytes_done
             digest = await self._settle_native(
                 loop.run_in_executor(
                     None,
@@ -2137,6 +2176,12 @@ class ArtifactAcquisitionService:
                     code=TransferFailureCode.VERIFICATION_FAILED,
                 )
             attempts_used += 1
+            # Review F1-b: the refetched file is downloaded and checked
+            # again from zero; count it once, never past either total.
+            progress_state.preverify_bytes_done = checked_before
+            progress_state.restart_file(
+                (descriptor.reference, file.path), file.size_bytes
+            )
             try:
                 destination.unlink()
             except FileNotFoundError:
