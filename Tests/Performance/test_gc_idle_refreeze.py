@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import threading
 import weakref
 from collections.abc import Callable
 
@@ -114,28 +115,25 @@ def make(clock: Clock, ops: Ops, **kwargs) -> IdleHeapRefreezer:
 
 
 def counting_collector(monkeypatch: pytest.MonkeyPatch, calls: list[tuple]) -> None:
-    """Fake ``gc.collect``; each call completes a pass ``gc.get_stats`` counts.
+    """Fake ``gc.collect``; each call runs a pass on the calling thread.
 
-    The re-freeze and the compaction freeze only after a full pass really
-    ran, which they read from the generation-2 pass count.
+    The re-freeze and the compaction freeze only after a full pass really ran
+    on their own thread. A real pass announces itself through
+    ``gc.callbacks`` on the thread that runs it, so the fake does the same.
 
     Args:
         monkeypatch: Installs the fakes.
         calls: Receives ``("collect", generation)`` per call.
     """
-    passes = [0]
-
     def collect(generation: int = 2) -> int:
         calls.append(("collect", generation))
-        passes[0] += 1
+        info = {"generation": generation, "collected": 0, "uncollectable": 0}
+        for phase in ("start", "stop"):
+            for callback in list(gc.callbacks):
+                callback(phase, info)
         return 0
 
     monkeypatch.setattr(ui_responsiveness.gc, "collect", collect)
-    monkeypatch.setattr(
-        ui_responsiveness.gc,
-        "get_stats",
-        lambda: [{}, {}, {"collections": passes[0]}],
-    )
 
 
 @pytest.mark.parametrize("debug", [False, True], ids=["info", "debug"])
@@ -330,6 +328,115 @@ def test_a_compaction_another_collection_blocks_refreezes_and_stays_owed() -> No
 
         assert refreezer.maintain("conversation_painted") == "compact"
         assert garbage() is None
+    finally:
+        gc.unfreeze()
+
+
+class HeldWorkerPass:
+    """A worker thread's full collection, held open at its start.
+
+    A worker's pass can hand the GIL to the UI loop from its finalizers or
+    ``gc.callbacks``. A start hook that waits on an event is the
+    deterministic stand-in: while it waits, CPython skips every other
+    ``gc.collect()``; once released, the pass runs to the end and the
+    generation-2 pass count moves.
+
+    Args:
+        collect: The real ``gc.collect`` (the test replaces the module's).
+    """
+
+    def __init__(self, collect: Callable[[int], int]) -> None:
+        self._collect = collect
+        self._started = threading.Event()
+        self._release = threading.Event()
+        self._thread = threading.Thread(target=lambda: self._collect(2), daemon=True)
+
+    def _hold(self, phase: str, info: dict) -> None:
+        if phase == "start" and threading.get_ident() == self._thread.ident:
+            self._started.set()
+            self._release.wait(10)
+
+    def __enter__(self) -> HeldWorkerPass:
+        gc.callbacks.append(self._hold)
+        self._thread.start()
+        assert self._started.wait(10), "the worker's pass never started"
+        return self
+
+    def finish(self) -> None:
+        """Let the worker's pass run to the end, and wait for it."""
+        self._release.set()
+        self._thread.join(10)
+        assert not self._thread.is_alive(), "the worker's pass never finished"
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.finish()
+        gc.callbacks.remove(self._hold)
+
+
+def a_worker_pass_ends_inside_every_collect(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Every ``gc.collect`` call meets a worker's full pass that ends inside it.
+
+    Args:
+        monkeypatch: Replaces ``gc.collect`` for the test.
+
+    Returns:
+        Per call, whether the generation-2 pass count moved across it: what
+        the pass-count check alone reads as "this call collected".
+    """
+    real_collect = gc.collect
+    moved: list[bool] = []
+
+    def collect(generation: int = 2) -> int:
+        with HeldWorkerPass(real_collect) as worker:
+            before = gc.get_stats()[2]["collections"]
+            result = real_collect(generation)  # skipped: the worker's pass runs
+            worker.finish()
+            moved.append(gc.get_stats()[2]["collections"] != before)
+        return result
+
+    monkeypatch.setattr(ui_responsiveness.gc, "collect", collect)
+    return moved
+
+
+@pytest.mark.parametrize("owed", ["refreeze", "compaction"])
+def test_a_worker_threads_pass_ending_inside_a_skipped_call_is_not_booked(
+    monkeypatch: pytest.MonkeyPatch, owed: str
+) -> None:
+    """Only a full pass that ran on the calling thread books a freeze (TASK-33620.15.11).
+
+    The check read ``gc.get_stats()[2]["collections"]`` before and after the
+    call. A worker thread's pass that finished in between moved it although
+    this call's own collection was skipped: a re-freeze then froze the heap
+    with no collection before it, garbage included, and a compaction was
+    booked as done. Every try here meets such a pass, so the maintenance
+    reports ``busy``, and the collector stays enabled at its thresholds.
+
+    Negative control: the pass count moved across every one of those calls,
+    so the pass-count check alone would have booked the first.
+
+    Args:
+        monkeypatch: Wraps ``gc.collect`` so each call meets a worker's pass.
+        owed: Whether the maintenance owes a re-freeze or a compaction.
+    """
+    gc.unfreeze()
+    gc.collect()
+    thresholds, enabled = gc.get_threshold(), gc.isenabled()
+    try:
+        refreezer = IdleHeapRefreezer(enabled=lambda: True)
+        if owed == "compaction":
+            refreezer.note_stranded()
+        frozen = gc.get_freeze_count()
+        moved = a_worker_pass_ends_inside_every_collect(monkeypatch)
+        outcome = refreezer.maintain("run_settled")
+        monkeypatch.undo()
+
+        assert moved and all(moved), f"negative control: pass count moved {moved}"
+        assert outcome == "busy", f"{outcome} booked over {len(moved)} skipped call(s)"
+        if owed == "compaction":
+            assert refreezer.compaction_due(), "a compaction that never ran was booked"
+        else:
+            assert gc.get_freeze_count() == frozen, "a skipped call was followed by a freeze"
+        assert (gc.get_threshold(), gc.isenabled()) == (thresholds, enabled)
     finally:
         gc.unfreeze()
 
@@ -591,6 +698,154 @@ def test_every_freeze_advances_the_freeze_epoch(
     ui_responsiveness.refreeze_long_lived_heap("unit-test")
     ui_responsiveness.compact_long_lived_heap("unit-test")
     assert ui_responsiveness.heap_freeze_epoch() == start + 3
+
+
+def boot_points_freeze_into(
+    monkeypatch: pytest.MonkeyPatch,
+    refreezer: IdleHeapRefreezer,
+    ops: Ops,
+    freeze: Callable[[], None],
+) -> None:
+    """Route the real boot-point helper to ``refreezer`` and the fake collector.
+
+    ``freeze_long_lived_heap`` (``_ui_ready``, the screen and first-send
+    pre-imports; ADR-198) serves the process's refreezer, which here is
+    ``refreezer``; its young collection does nothing and its freeze runs
+    ``freeze`` against ``ops``'s permanent generation.
+
+    Args:
+        monkeypatch: Installs the fakes.
+        refreezer: Stands in for the process's refreezer.
+        ops: The fake permanent generation the walks read.
+        freeze: Runs in place of ``gc.freeze()``.
+    """
+    monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+    monkeypatch.setattr(ui_responsiveness.gc, "collect", lambda generation=2: 0)
+    monkeypatch.setattr(ui_responsiveness.gc, "freeze", freeze)
+    monkeypatch.setattr(ui_responsiveness.gc, "get_freeze_count", ops.freeze_count)
+
+
+def adds(ops: Ops, objects: int) -> Callable[[], None]:
+    """A fake ``gc.freeze()`` that moves ``objects`` more into the frozen set."""
+
+    def freeze() -> None:
+        ops.frozen += objects
+
+    return freeze
+
+
+def test_a_boot_freeze_after_the_first_maintenance_is_measured_by_the_next_budget_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The budget re-measures the frozen set after a boot point froze (TASK-33620.15.12).
+
+    The budget reuses its last walk until a re-freeze marks it stale. A boot
+    point's freeze after the refreezer's first maintenance did not, so the
+    next check read the frozen set's size from before it. A boot freeze
+    before the first maintenance is measured by the first look itself and
+    costs no extra walk.
+
+    Negative control: with nothing frozen since the last walk, the check
+    reuses it.
+
+    Args:
+        monkeypatch: Routes the boot points to the fake collector.
+    """
+    ops = Ops(frozen=1_000_000, added=100_000)
+    refreezer = make(Clock(), ops, min_growth=1_000)
+    boot_points_freeze_into(monkeypatch, refreezer, ops, adds(ops, 40_000))
+
+    ui_responsiveness.freeze_long_lived_heap("ui_ready")
+    assert ops.walks == 1, "a freeze before the first look walked more than once"
+    refreezer.maintain("conversation_painted")  # first look: 1,040,000, then +100K
+    assert not refreezer.compaction_due()  # 100,000 < 0.25 x 1,040,000
+    walks = ops.walks
+    assert not refreezer.compaction_due()
+    assert ops.walks == walks, "negative control: an unchanged frozen set was walked"
+
+    ui_responsiveness.freeze_long_lived_heap("screen_preimport")
+    walks = ops.walks
+    assert not refreezer.compaction_due()
+    assert ops.walks == walks + 1, (
+        "the budget check read the frozen set's size from before the boot freeze"
+    )
+
+
+@pytest.mark.parametrize("frozen_by", ["screen_preimport", "refreeze"])
+def test_objects_a_boot_point_freezes_never_count_as_growth(
+    monkeypatch: pytest.MonkeyPatch, frozen_by: str
+) -> None:
+    """Only what re-freezes add counts toward a compaction (TASK-33620.15.12).
+
+    A pre-import pass that froze 300K long-lived objects after the first
+    maintenance counted them as growth against the 250K budget, and brought
+    a compaction forward that only re-freezes' growth should call for.
+
+    Negative control: the same 300K frozen by a re-freeze makes one due.
+
+    Args:
+        monkeypatch: Routes the boot points to the fake collector.
+        frozen_by: Which freeze adds the 300K objects.
+    """
+    ops = Ops(frozen=1_000_000, added=0)
+    refreezer = make(Clock(), ops, min_growth=1_000)
+    boot_points_freeze_into(monkeypatch, refreezer, ops, adds(ops, 300_000))
+    assert refreezer.maintain("conversation_painted") == "refreeze"  # first look
+
+    if frozen_by == "refreeze":
+        ops.added = 300_000
+        assert refreezer.maintain("run_settled") == "refreeze"
+        ops.added = 0
+        assert refreezer.maintain("run_settled") == "compact"
+        return
+    ui_responsiveness.freeze_long_lived_heap(frozen_by)  # before the re-freeze's walk
+    assert refreezer.maintain("run_settled") == "refreeze", (
+        "the boot point's objects counted as growth"
+    )
+    ui_responsiveness.freeze_long_lived_heap("first_send_preimport")  # after a walk
+    assert not refreezer.compaction_due(), "the boot point's objects counted as growth"
+    assert refreezer.maintain("run_settled") == "refreeze"
+
+
+def test_a_maintenance_waits_for_a_boot_freeze_on_another_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A boot point's freeze and its accounting are one step (TASK-33620.15.12).
+
+    The screen and first-send pre-imports freeze from their own threads. A
+    maintenance that ran between that freeze and its accounting would read
+    the boot point's objects as growth, so it waits for the boot freeze.
+
+    Args:
+        monkeypatch: Routes the boot points to the fake collector.
+    """
+    ops = Ops(frozen=1_000_000, added=0)
+    refreezer = make(Clock(), ops, min_growth=1_000)
+    refreezer.maintain("conversation_painted")  # first look
+    ran = threading.Event()
+    outcomes: list[str] = []
+    seen: list[str] = []
+
+    def maintain_on_the_ui_loop() -> None:
+        outcomes.append(refreezer.maintain("run_settled"))
+        ran.set()
+
+    ui_loop = threading.Thread(target=maintain_on_the_ui_loop, daemon=True)
+
+    def freeze() -> None:
+        ops.frozen += 300_000
+        ui_loop.start()
+        seen.append("ran" if ran.wait(0.5) else "waited")
+
+    boot_points_freeze_into(monkeypatch, refreezer, ops, freeze)
+    preimport = threading.Thread(
+        target=ui_responsiveness.freeze_long_lived_heap, args=("screen_preimport",)
+    )
+    preimport.start()
+    preimport.join(10)
+    ui_loop.join(10)
+    assert seen == ["waited"], "a maintenance ran inside a boot point's freeze"
+    assert outcomes == ["refreeze"], "the boot point's objects counted as growth"
 
 
 class TranscriptApp(TextualAppGuards, App[None]):

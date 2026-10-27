@@ -410,11 +410,24 @@ progress. A related trap appeared while writing the test for it: on 3.12,
 collection, because each collection parks immortal objects in the permanent
 generation. An `== 0` assertion is wrong there.
 
-**What to do.** When code relies on `gc.collect()` having run, read
-`gc.get_stats()[2]["collections"]` before and after it. To test the skip
-deterministically, call the code from a `gc.callbacks` start hook, where a
-pass is already in progress. When asserting on the frozen set, compare it
-with its value before the step, never with 0.
+**What to do.** When code relies on `gc.collect()` having run, check that
+the pass ran on the calling thread. To test the skip deterministically,
+call the code from a `gc.callbacks` start hook, where a pass is already in
+progress. When asserting on the frozen set, compare it with its value before
+the step, never with 0.
+
+**Follow-up (TASK-33620.15.11, 2026-10-27).** The first fix compared
+`gc.get_stats()[2]["collections"]` before and after the call. That count is
+process-wide. A worker thread's pass that ends between the two reads moves
+it even though the caller's own call was skipped. A probe held a worker's
+generation-2 pass at its start hook (waiting on an event releases the GIL),
+then let it finish inside the UI thread's skipped call. The count went from
+0 to 1, and no callback fired on the UI thread. The same-thread start hook
+used by the original test cannot show this, because the outer pass cannot
+finish while its own hook is running. The fix installs a `gc.callbacks`
+watcher for the one call and accepts the pass only if it starts and stops
+on `threading.get_ident()` of the caller. A fake `gc.collect` must
+therefore fire the callbacks too, or every try reads as busy.
 
 ## A red-then-green fake proves the fix, not the diagnosis (TASK-33620.15.3, 2026-10-20)
 

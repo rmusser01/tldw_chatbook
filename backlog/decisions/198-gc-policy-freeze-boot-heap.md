@@ -227,6 +227,25 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    2 ms apart, so the other pass can finish). Otherwise the maintenance
    reports `busy`. A re-freeze then freezes nothing. A compaction freezes
    the heap again, so the automatic passes do not rescan it, and stays owed.
+
+   **The pass must be the caller's own (2026-10-27, TASK-33620.15.11).** The
+   pass count also moves when a worker thread's pass ends between the two
+   reads while the caller's call was skipped. A probe on 3.12.11 held a
+   worker's generation-2 pass at its start: the UI thread's `gc.collect(2)`
+   returned 0 with no callback on its own thread, and the count still went
+   from 0 to 1 once the worker finished. So a try now counts only when a
+   `gc.callbacks` watcher, installed for that one call, sees a
+   generation-2 pass start and stop on the calling thread.
+
+   **Boot freezes are not growth (2026-10-27, TASK-33620.15.12).** The boot
+   points freeze through the refreezer. Once it has made its first
+   measurement, it measures the frozen set before and after each boot
+   freeze, adds the difference to the baseline, and re-measures at the next
+   budget check, all under a lock that maintenance also holds. The screen
+   and first-send pre-imports freeze from their own threads. Before the
+   first measurement a boot freeze costs nothing extra, because that
+   measurement includes it. After it, a boot freeze costs one more walk
+   (about 2 ms per 700K objects on 3.12.11).
 4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
    never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
    the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.
