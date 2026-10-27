@@ -138,11 +138,14 @@ def _start_live_turn(console, controller, store, session_id):
 def _inspector_rows_text(inspector: ConsoleRunInspector) -> str:
     """The run inspector's row copy as the user sees it, now or at its opening.
 
-    A shown inspector is read from its mounted rows. TASK-37000: inside the
-    collapsed rail (160x48 here) the inspector re-writes rows in place but
-    holds a rebuild, such as the Approvals group appearing, for the rail's
-    opening, which composes exactly ``_rendered_row_entries(state)``; until
-    then that projection is what the rows will show.
+    Read from the mounted rows, hidden or not: inside the collapsed rail
+    (160x48 here) an in-place change re-writes them without a layout.
+    TASK-37000: only while the collapsed rail holds a rebuild, such as the
+    Approvals group appearing, are the mounted rows stale until the opening,
+    which composes ``_rendered_row_entries`` of the inspector's current state
+    and ownership; until then that projection is what the rows will show.
+    Whether the opening paints it is pinned by the TASK-37000 parity tests
+    (test_console_collapsed_inspector_send_layout).
 
     Args:
         inspector: The mounted Console run inspector.
@@ -154,11 +157,11 @@ def _inspector_rows_text(inspector: ConsoleRunInspector) -> str:
         hidden_by_console_rail,
     )
 
-    if hidden_by_console_rail(inspector):
+    if hidden_by_console_rail(inspector) and inspector._rail_rebuild_deferred:
         return "\n".join(
             text
             for _widget_id, text, _status in ConsoleRunInspector._rendered_row_entries(
-                inspector.state
+                inspector.state, inspector._ownership
             )
         )
     return "\n".join(str(row.render()) for row in inspector.query(Static))
