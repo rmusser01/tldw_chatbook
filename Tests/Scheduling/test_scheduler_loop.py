@@ -284,9 +284,16 @@ async def test_failed_queue_load_never_acknowledges_covered_reload_token(db):
     """A raised queue load closes the loop without acknowledging its token."""
     loop = SchedulerLoop(db, handlers={}, poll_interval=60)
 
-    with patch.object(loop.queue, "load", side_effect=[None, RuntimeError("boom")]):
+    with patch.object(
+        loop.queue, "load", side_effect=[None, RuntimeError("boom")]
+    ) as load:
         task = asyncio.create_task(loop.run())
-        while not loop.running:
+        # Request only once the initial load has captured its coverage, so the
+        # token belongs to the raising load. `running` alone is not that point:
+        # since TASK-33620.15.24 storage admission resolves off the loop before
+        # the initial load, and a request made then is (correctly) covered by
+        # the initial, successful load.
+        while load.call_count < 1:
             await asyncio.sleep(0)
         token = loop.request_reload()
 

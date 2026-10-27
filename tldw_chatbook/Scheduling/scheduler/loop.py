@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from functools import wraps
 import threading
 import time
@@ -51,15 +51,54 @@ def _admitted_dispatch(method):
 
     @wraps(method)
     async def admitted(self, *args, **kwargs):
-        with (
-            self._maintenance_operation(),
-            execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-        ):
+        async with self._admitted() as allowed:
             if not allowed:
                 return False
             return await method(self, *args, **kwargs)
 
     return admitted
+
+
+class _OffLoopExecutionScope:
+    """One ``execution_scope`` whose entry and release both run on a worker.
+
+    TASK-33620.15.24: storage admission stats and resolves paths and reads
+    control records. Entered on the app's event loop, the 30-second tick's two
+    admissions held keyboard input for up to ~60 ms. The lease itself has no
+    thread affinity, so it is acquired and closed on worker threads and only
+    held across the awaited body.
+
+    A release that overtakes an entry still in flight (its waiter was
+    cancelled) marks the scope released; the entry then closes the lease it
+    acquired itself, so a cancelled wait can never leak admission.
+    """
+
+    def __init__(self, owners: tuple[str, ...], path: Path | None) -> None:
+        self._owners = owners
+        self._path = path
+        self._lock = threading.Lock()
+        self._stack: ExitStack | None = None
+        self._released = False
+
+    def enter(self) -> bool:
+        """Acquire admission (worker thread); False for a refusal."""
+        stack = ExitStack()
+        # Looked up at call time: the module global is the seam tests replace.
+        allowed = stack.enter_context(execution_scope(self._owners, self._path))
+        with self._lock:
+            if not self._released:
+                self._stack = stack
+                return allowed
+        stack.close()
+        return False
+
+    def release(self) -> None:
+        """Close the acquired lease (worker thread). Idempotent."""
+        with self._lock:
+            self._released = True
+            stack, self._stack = self._stack, None
+        if stack is not None:
+            stack.close()
 
 
 @dataclass(frozen=True)
@@ -236,6 +275,24 @@ class SchedulerLoop:
             else:
                 del self._maintenance_tasks[task]
             self._maintenance_changed.set()
+
+    @asynccontextmanager
+    async def _admitted(self):
+        """Hold a maintenance operation and this loop's storage admission.
+
+        The maintenance fence is entered on the loop (no I/O), so a closed
+        fence still refuses at once. Admission is resolved and released
+        through :meth:`_offload` (TASK-33620.15.24): the body waits for it, so
+        nothing runs before admission resolves and a refusal still yields
+        False, while the event loop stays free. Both hops are owned by the
+        maintenance drain even when their awaiter is cancelled.
+        """
+        with self._maintenance_operation():
+            scope = _OffLoopExecutionScope(("db.scheduled_tasks",), self.db.db_path)
+            try:
+                yield await self._offload(scope.enter)
+            finally:
+                await self._offload(scope.release)
 
     def _maintenance_close_admission(self) -> None:
         """Fence new ticks/manual dispatch; admitted work finishes naturally."""
@@ -473,10 +530,7 @@ class SchedulerLoop:
                 if not self._maintenance_closed:
                     break
                 self._maintenance_open.clear()
-            with (
-                self._maintenance_operation(),
-                execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-            ):
+            async with self._admitted() as allowed:
                 if not allowed:
                     return
                 await self._reload_queue()
@@ -504,12 +558,7 @@ class SchedulerLoop:
                 # handler was active and then put the loop to sleep for a full
                 # poll interval despite the still-pending serial.
                 reload_event.clear()
-                with (
-                    self._maintenance_operation(),
-                    execution_scope(
-                        ("db.scheduled_tasks",), self.db.db_path
-                    ) as allowed,
-                ):
+                async with self._admitted() as allowed:
                     if not allowed:
                         return
                     if (
