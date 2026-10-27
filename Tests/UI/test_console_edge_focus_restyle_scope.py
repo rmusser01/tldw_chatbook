@@ -22,6 +22,7 @@ from typing import Any, Iterator
 
 import pytest
 from textual.css.model import CombinatorType, SelectorType
+from textual.scrollbar import ScrollBar, ScrollBarCorner
 
 from Tests.UI.test_console_shell_regions import make_console_pilot
 from tldw_chatbook.UI.Console_Modules.frame import sync_console_focus_paint
@@ -95,10 +96,21 @@ async def test_an_edge_focus_cue_restyles_only_its_region_and_control() -> None:
             )
             assert not region.has_class(_FOCUS_CLASS)
             resting_divider = getattr(region.styles, f"border_{edge}")
+            resting_control = (control.styles.background, control.styles.color)
 
             for focused, painted in ((control, True), (outside, False)):
                 with _restyles(pilot.app) as restyled:
                     sync_console_focus_paint(screen, focused)
+                # ``Stylesheet.update_nodes`` also restyles a restyled node's
+                # visible scrollbars; those belong to the two nodes it names.
+                restyled = [
+                    node
+                    for node in restyled
+                    if not (
+                        isinstance(node, (ScrollBar, ScrollBarCorner))
+                        and node.parent in (region, control)
+                    )
+                ]
                 inside = {
                     id(node)
                     for node in restyled
@@ -109,12 +121,23 @@ async def test_an_edge_focus_cue_restyles_only_its_region_and_control() -> None:
                     f"it (it holds {subtree} widgets)"
                 )
                 assert {id(node) for node in restyled} <= {id(region), id(control)}
-                # The cue itself still paints, both ways.
+                # The cue itself still paints, both ways: the region's
+                # divider and the control's CSS-driven colours, not only the
+                # inline bold/underline the paint sets on the control.
                 assert region.has_class(_FOCUS_CLASS) is painted
                 assert bool(control.styles.text_style.bold) is painted
                 assert bool(control.styles.text_style.underline) is painted
                 divider = getattr(region.styles, f"border_{edge}")
                 assert (divider != resting_divider) is painted, (region_id, divider)
+                colours = (control.styles.background, control.styles.color)
+                assert (colours[0] != resting_control[0]) is painted, (
+                    control_id,
+                    colours,
+                )
+                assert (colours[1] != resting_control[1]) is painted, (
+                    control_id,
+                    colours,
+                )
             # A repeat with nothing to change restyles nothing.
             with _restyles(pilot.app) as restyled:
                 sync_console_focus_paint(screen, outside)
