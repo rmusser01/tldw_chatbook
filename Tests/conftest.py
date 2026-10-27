@@ -551,6 +551,21 @@ def reset_remote_session_registry():
 
 
 @pytest.fixture(autouse=True)
+def reset_console_send_outcomes():
+    """Forget the process-wide Console send-outcome ledger after each test.
+
+    TASK-34100.2 review (C12): a test that drives the real gateway into a 401
+    or 404 records a 'Not ready' outcome that a later readiness test in the
+    same worker would otherwise read. Never imports the module.
+    """
+    yield
+    module = sys.modules.get("tldw_chatbook.Chat.console_session_settings")
+    ledger = getattr(module, "CONSOLE_SEND_OUTCOMES", None)
+    if ledger is not None:
+        ledger.clear()
+
+
+@pytest.fixture(autouse=True)
 def cleanup_loguru_handlers():
     """Automatically cleanup loguru handlers after each test to prevent file descriptor leaks."""
     from loguru import logger

@@ -744,6 +744,43 @@ class ProviderSetupMutation:
         )
 
 
+def mirror_provider_setup_mutation(
+    app_config: object, mutation: ProviderSetupMutation
+) -> None:
+    """Apply a persisted provider-setup mutation to an in-memory config snapshot.
+
+    TASK-34100.2 review F2: the app's ``app_config`` is a snapshot taken at
+    launch; every reader of it (Library's analyze-after-import, the Media
+    panel, Reader Generate) kept the old chat default after a commit until a
+    relaunch. Setup's own commit mirrors its values the same way
+    (``FirstRunSetupWizard._mirror_into_app_config``). Call it only after the
+    mutation was fully applied on disk.
+
+    Args:
+        app_config: The app's mutable config snapshot; anything that is not a
+            dict is left alone.
+        mutation: The mutation that was persisted.
+    """
+    if not isinstance(app_config, dict):
+        return
+    for dotted_section, values in mutation.section_values.items():
+        target = app_config
+        for part in dotted_section.split("."):
+            nested = target.get(part)
+            if not isinstance(nested, dict):
+                nested = {}
+                target[part] = nested
+            target = nested
+        target.update(values)
+    for dotted_section, keys in mutation.delete_keys.items():
+        target = app_config
+        for part in dotted_section.split("."):
+            target = target.get(part) if isinstance(target, dict) else None
+        if isinstance(target, dict):
+            for key in keys:
+                target.pop(key, None)
+
+
 def project_provider_setup_expected_state(
     snapshot: AtomicConfigSnapshot,
     *,
@@ -849,6 +886,7 @@ def build_provider_setup_mutation(
     keep_stored_credential: bool = False,
     record_environment_credentials: bool = False,
     environ: Mapping[str, str] | None = None,
+    enable_streaming: bool = False,
 ) -> ProviderSetupMutation:
     """Build one provider-owned sparse mutation without performing I/O.
 
@@ -866,6 +904,14 @@ def build_provider_setup_mutation(
             key comes from an exported variable (first-run setup, TASK-34100.6
             AC#6); see ``environment_credential_records``.
         environ: The environment those records read (the process's by default).
+        enable_streaming: Write ``streaming = true`` for this provider in the
+            same mutation (TASK-34100.2 AC#10: setup committing a local
+            OpenAI-compatible server).
+
+    A provider table the shipped template marks ``template_sample = true``
+    is written ``template_sample = false``: the user saved it, so it is no
+    longer a placeholder (TASK-34100.2 AC#9). Deleting the key would let the
+    template's ``true`` merge back on the next load.
     """
 
     if type(draft) is not ProviderSetupDraft:
@@ -895,6 +941,12 @@ def build_provider_setup_mutation(
             raise ValueError("Credential preservation is invalid.")
     endpoint_key = _selected_endpoint_key(provider_settings, ownership)
     provider_values: dict[str, object] = {ownership.model_key: model}
+    if type(enable_streaming) is not bool:
+        raise ValueError("Streaming choice is invalid.")
+    if enable_streaming:
+        provider_values["streaming"] = True
+    if provider_settings.get("template_sample") is True:
+        provider_values["template_sample"] = False
     section_values: dict[str, dict[str, object]] = {
         provider_section: provider_values,
         "chat_defaults": {
@@ -1958,8 +2010,15 @@ def _validate_provider_setup_mutation(
         "credential_source",
         *ownership.credential_keys,
         *_ENDPOINT_KEY_PRECEDENCE,
+        # TASK-34100.2: only ever written as these exact values.
+        "streaming",
+        "template_sample",
     }
     if not set(provider_values).issubset(allowed_provider_keys):
+        raise error
+    if provider_values.get("streaming", True) is not True or (
+        provider_values.get("template_sample", False) is not False
+    ):
         raise error
     if provider_values.get(ownership.model_key) != model:
         raise error

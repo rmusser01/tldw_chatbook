@@ -140,7 +140,8 @@ def _console_word(app, host, provider: str, model: str) -> str:
     [
         (
             httpx.Response(200, json=LISTING),
-            "Ready · verified",
+            # TASK-34100.2 AC#2: the check lists models; it proves the key.
+            "Key verified",
             "key accepted (2 models listed) · generation not tested",
         ),
         (
@@ -251,7 +252,7 @@ async def test_settings_t_sends_the_env_or_typed_key_and_saves_nothing(
         assert [
             (str(r.url), r.headers["authorization"]) for r in provider.requests
         ] == [expected]
-        assert rows["Readiness"].startswith("Ready · verified"), rows
+        assert rows["Readiness"].startswith("Key verified"), rows
         assert rows["Key"].endswith("key accepted (2 models listed)")
         assert _config_digest() == before
         assert screen._category_has_unsaved_changes(
@@ -293,20 +294,25 @@ async def test_settings_t_checks_anthropic_on_its_shipped_endpoint(
         assert (sent.url.host, sent.url.path) == ("api.anthropic.com", "/v1/models")
         assert sent.headers["x-api-key"] == "sk-ant-saved-test-key"
         assert "authorization" not in sent.headers
-        assert rows["Readiness"].startswith("Ready · verified"), rows
+        assert rows["Readiness"].startswith("Key verified"), rows
         assert rows["Model"] == "claude-sonnet-5 · listed by the server"
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "list_key"), [("nvidia", "NVIDIA"), ("novita", "Novita")]
+)
 @private_profile_test
 async def test_settings_t_never_calls_a_public_listing_a_key_check(
-    request, monkeypatch
+    provider_name, list_key, request, monkeypatch
 ):
-    """AC#6: OpenRouter's catalog answers without a key (ADR-020), so its
+    """AC#6: these catalogs answer without a key, and the provider has no
+    authenticated key check (TASK-34100.2: NVIDIA NIM, Novita), so the
     listing reads 'models listed; key not checked' and never 'accepted'."""
-    provider = _Provider(httpx.Response(200, json={"data": [{"id": "openai/gpt-4o"}]}))
+    provider = _Provider(httpx.Response(200, json={"data": [{"id": "meta/llama-x"}]}))
     _route_discovery_to(monkeypatch, provider)
-    app = _cloud_app("openrouter", {"api_key": "sk-or-saved-test-key"}, "openai/gpt-4o")
+    app = _cloud_app(provider_name, {"api_key": "nv-saved-test-key"}, "meta/llama-x")
+    app.providers_models = {list_key: ["meta/llama-x"]}
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(211, 44)) as pilot:
         await _open_settings_category(pilot, PROVIDERS_MODELS)
@@ -321,9 +327,159 @@ async def test_settings_t_never_calls_a_public_listing_a_key_check(
         assert rows["Key"] == "saved in config · models listed; key not checked"
         assert "1 model listed; key not checked" in toasts[-1]
         assert "accepted" not in _result(screen) + toasts[-1]
-        assert _console_word(app, host, "openrouter", "openai/gpt-4o") == (
+        assert _console_word(app, host, provider_name, "meta/llama-x") == (
             "Ready · not tested"
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_t_rejects_an_expired_openrouter_key_at_its_key_endpoint(
+    request, monkeypatch
+):
+    """TASK-34100.2 AC#3 (gap-01): OpenRouter's catalog is public, so 't'
+    follows it with GET /api/v1/key, which refuses an expired key."""
+    provider = _Provider(
+        httpx.Response(200, json={"data": [{"id": "openai/gpt-4o"}]}),
+        httpx.Response(401, json={"error": {"message": "API key expired.", "code": 401}}),
+    )
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app("openrouter", {"api_key": "sk-or-saved-test-key"}, "openai/gpt-4o")
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        rows = await _test_and_settle(screen, pilot)
+
+        assert [str(sent.url) for sent in provider.requests] == [
+            "https://openrouter.ai/api/v1/models",
+            "https://openrouter.ai/api/v1/key",
+        ]
+        # Review round 1 (F3): the provider's own reason, on the Key row and
+        # in the toast, not just 'key rejected'.
+        assert rows["Key"] == "saved in config · key rejected: API key expired."
+        assert "rejected the API key: API key expired." in toasts[-1]
+        assert "accepted" not in _result(screen)
+
+
+def _as_toast_renders(message: str, kwargs: dict) -> str:
+    """The text a Textual toast shows for ``notify(message, **kwargs)``:
+    markup is parsed unless the caller passed ``markup=False``."""
+    from textual.content import Content
+    from textual.markup import MarkupError
+
+    if kwargs.get("markup", True) is False:
+        return message
+    try:
+        return Content.from_markup(message).plain
+    except MarkupError:
+        return "<MarkupError>"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_rejected_keys_reason_reaches_the_toast_as_plain_text(
+    request, monkeypatch
+):
+    """Review round 2 (R3-3): the provider's reason is the provider's words,
+    not markup. The toast parsed it, so the '[redacted]' that stands in for
+    an echoed key vanished and a '[/docs]' raised a MarkupError."""
+    provider = _Provider(
+        httpx.Response(200, json={"data": [{"id": "openai/gpt-4o"}]}),
+        httpx.Response(
+            401,
+            json={
+                "error": {
+                    "message": "Key sk-or-saved-test-key is not valid; see [/docs] "
+                    "for help.",
+                    "code": 401,
+                }
+            },
+        ),
+    )
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app("openrouter", {"api_key": "sk-or-saved-test-key"}, "openai/gpt-4o")
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        toasts: list[tuple[str, dict]] = []
+        host.notify = lambda message, **kwargs: toasts.append((str(message), kwargs))
+
+        await _test_and_settle(screen, pilot)
+
+        shown = _as_toast_renders(*toasts[-1])
+        assert "Key [redacted] is not valid; see [/docs] for help." in shown
+        assert "sk-or-saved-test-key" not in shown
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_t_accepts_an_openrouter_key_its_key_endpoint_accepted(
+    request, monkeypatch
+):
+    provider = _Provider(
+        httpx.Response(200, json={"data": [{"id": "openai/gpt-4o"}]}),
+        httpx.Response(200, json={"data": {"label": "sk-or-v1-abc...xyz"}}),
+    )
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app("openrouter", {"api_key": "sk-or-saved-test-key"}, "openai/gpt-4o")
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        rows = await _test_and_settle(screen, pilot)
+
+        assert len(provider.requests) == 2
+        assert rows["Key"].startswith("saved in config · key accepted")
+        assert "key not checked" not in _result(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_t_checks_a_gemini_key_with_googles_model_list(
+    request, monkeypatch
+):
+    """TASK-34100.2 AC#5 (gap-03): Google's models.list is authenticated, so
+    it is the Gemini key check (it used to say none was available)."""
+    provider = _Provider(
+        httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "models/gemini-flash-latest",
+                        "supportedGenerationMethods": ["generateContent"],
+                    }
+                ]
+            },
+        )
+    )
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app("google", {"api_key": "AIza-saved-test-key"}, "gemini-flash-latest")
+    app.providers_models = {"Google": ["gemini-flash-latest"]}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        rows = await _test_and_settle(screen, pilot)
+
+        assert len(provider.requests) == 1
+        sent = provider.requests[0]
+        assert str(sent.url).startswith(
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        )
+        assert sent.headers["x-goog-api-key"] == "AIza-saved-test-key"
+        assert rows["Key"].startswith("saved in config · key accepted")
 
 
 @pytest.mark.asyncio
@@ -365,11 +521,12 @@ async def test_settings_t_sends_nothing_without_a_usable_key(
 @pytest.mark.parametrize(
     ("provider_name", "settings", "catalog", "note"),
     [
+        # TASK-34100.2: Google gained one (its authenticated models.list).
         (
-            "google",
-            {"api_key": "AIza-saved-test-key"},
-            None,
-            "No non-billable key check is available for Google",
+            "cohere",
+            {"api_key": "co-saved-test-key"},
+            {"Cohere": ["command-a-03-2025"]},
+            "No non-billable key check is available for Cohere",
         ),
         (
             "openai",
@@ -611,7 +768,7 @@ async def test_settings_t_lists_kimi_and_zai_at_the_alias_a_send_pins(
         assert [str(r.url) for r in provider.requests] == [
             "https://alias.example.test/v1/models"
         ], rows
-        assert rows["Readiness"].startswith("Ready · verified"), rows
+        assert rows["Readiness"].startswith("Key verified"), rows
 
 
 @pytest.mark.asyncio
@@ -654,7 +811,7 @@ async def test_a_key_check_outrun_by_an_edit_or_a_rerun_shows_only_the_latest(
         held.set()
         await pilot.pause()
 
-        assert rows["Readiness"].startswith("Ready · verified"), rows
+        assert rows["Readiness"].startswith("Key verified"), rows
         assert _rows(screen) == rows
 
 
@@ -662,7 +819,7 @@ async def test_a_key_check_outrun_by_an_edit_or_a_rerun_shows_only_the_latest(
 @private_profile_test
 async def test_a_typed_key_check_reaches_the_console_after_save(request, monkeypatch):
     """AC#12: a typed key's check carries to the saved connection on Save, so
-    the Console reads 'Ready · verified HH:MM' for that key."""
+    the Console reads 'Key verified HH:MM' for that key."""
     provider = _Provider(httpx.Response(200, json=LISTING))
     _route_discovery_to(monkeypatch, provider)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -676,7 +833,7 @@ async def test_a_typed_key_check_reaches_the_console_after_save(request, monkeyp
         ).value = "sk-typed-test-key"
         await pilot.pause()
         rows = await _test_and_settle(screen, pilot)
-        assert rows["Readiness"].startswith("Ready · verified"), rows
+        assert rows["Readiness"].startswith("Key verified"), rows
 
         screen.action_settings_save_category()
         deadline = time.monotonic() + 8
@@ -851,3 +1008,98 @@ async def test_test_guidance_says_what_t_checks_and_never_claims_generation(
         assert ("t", "test provider") in screen._category_footer_shortcuts(
             SettingsCategoryId.PROVIDERS_MODELS
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_t_judges_the_model_with_the_providers_reply_maximum(
+    request, monkeypatch
+):
+    """Review round 1 (C2): Settings read 'Key verified' for gpt-4o while a
+    200,000-token reply reservation filled its 128k window (live, g2-capacity
+    05-08). This drives the real lookup of the provider's max_tokens, not the
+    static row helper."""
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app(
+        "openai", {"api_key": "sk-saved-test-key", "max_tokens": 200_000}, "gpt-4o"
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+
+        rows = await _test_and_settle(screen, pilot)
+
+    assert rows["Readiness"] == "Not ready · window too small"
+    assert "lower Max tokens or choose another model" in rows["Model"]
+    assert list(rows)[:2] == ["Readiness", "Model"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_t_judges_the_model_with_its_saved_model_default(
+    request, monkeypatch
+):
+    """Review round 1 (F1): Chat settings' 'Default for new chats' saves Max
+    tokens as ``model_defaults.<model>.max_tokens``, which outranks the
+    provider's value. The Console header and the switcher judged gpt-4o's
+    200,000 model default 'Not ready · window too small' while Settings' Test
+    Provider read only the provider's 4,096 and said 'Key verified'
+    (live, g2c-x-oai 14-26). Settings resolves the reply maximum through the
+    same default chain as the Console."""
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app(
+        "openai",
+        {
+            "api_key": "sk-saved-test-key",
+            "max_tokens": 4096,
+            "model_defaults": {"gpt-4o": {"max_tokens": 200_000}},
+        },
+        "gpt-4o",
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+
+        rows = await _test_and_settle(screen, pilot)
+        console = _console_word(app, host, "openai", "gpt-4o")
+
+    assert console == "Not ready · window too small"
+    assert rows["Readiness"] == console
+    # The provider's own Max tokens field cannot fix it: the row names the
+    # model default that set the value.
+    assert "gpt-4o's saved Max tokens default" in rows["Model"]
+    assert list(rows)[:2] == ["Readiness", "Model"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_t_reads_ready_when_the_model_default_overrides_a_huge_provider_value(
+    request, monkeypatch
+):
+    """The other direction of F1: a send uses the model default (4,096), so a
+    200,000 provider value it overrides blocks nothing, and Settings agrees
+    with the Console instead of reading 'window too small'."""
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app(
+        "openai",
+        {
+            "api_key": "sk-saved-test-key",
+            "max_tokens": 200_000,
+            "model_defaults": {"gpt-4o": {"max_tokens": 4096}},
+        },
+        "gpt-4o",
+    )
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+
+        rows = await _test_and_settle(screen, pilot)
+
+    assert rows["Readiness"].startswith("Key verified")
+    assert "window" not in rows["Model"]

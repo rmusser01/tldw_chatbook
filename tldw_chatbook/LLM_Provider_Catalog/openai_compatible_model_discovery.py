@@ -8,7 +8,7 @@ import math
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import ParseResult, unquote, urlparse, urlunparse
 
 import httpx
@@ -158,6 +158,31 @@ _COMPACT_SENSITIVE_METADATA_KEY_SUFFIXES = frozenset({"token"})
 
 _ANTHROPIC_PROVIDER_KEY = "anthropic"
 _ANTHROPIC_VERSION_HEADER = "2023-06-01"
+# TASK-34100.2 (gap-03): Gemini lists models natively (models.list with an
+# x-goog-api-key header, never a ?key= query); the same call verifies the key.
+_GOOGLE_PROVIDER_KEY = "google"
+_GOOGLE_API_PATHS = frozenset({"/v1beta", "/v1"})
+_GOOGLE_PAGE_SIZE = 1000
+#: A generateContent model whose id names one of these is not a chat model
+#: (speech, image, embedding, music, research agents) or is a preview build.
+_GOOGLE_NON_CHAT_ID_TOKENS = (
+    "tts",
+    "image",
+    "embed",
+    "preview",
+    "transcribe",
+    "lyria",
+    "robotics",
+    "computer-use",
+    "deep-research",
+    "antigravity",
+    "aqa",
+    "imagen",
+    "veo",
+)
+#: Longest provider reason kept for an error message (gap-01: the provider's
+#: own words, bounded and scrubbed of the key that was sent).
+_PROVIDER_REASON_MAX_CHARS = 160
 MODEL_DISCOVERY_RESPONSE_MAX_BYTES = MODEL_PROBE_RESPONSE_MAX_BYTES
 # Deliberately NOT MODEL_IDS_MAX_COUNT (100). That constant bounds how many ids
 # the *probe* truncates to for a reachability sample; discovery instead fails
@@ -517,6 +542,9 @@ def supports_openai_compatible_model_discovery(
             ConnectionProbeAvailability.MODELS_ROUTE
         )
     path = _normalized_path(parsed)
+    if provider_key == _GOOGLE_PROVIDER_KEY:
+        # TASK-34100.2: Google's own API base, listed natively.
+        return parsed.scheme == "https" and path.rstrip("/") in _GOOGLE_API_PATHS
     native_paths = _NATIVE_ENDPOINT_PATHS_BY_PROVIDER.get(provider_key, frozenset())
     if path in native_paths:
         return False
@@ -531,6 +559,14 @@ def supports_openai_compatible_model_discovery(
 
 def build_models_url(endpoint: str, provider_identity: str) -> str:
     """Return the OpenAI-compatible models endpoint for a configured URL."""
+    if _normalized_provider_identity(provider_identity) == _GOOGLE_PROVIDER_KEY:
+        parsed = _parse_endpoint(endpoint)
+        if parsed is None:
+            return str(endpoint or "").strip()
+        base_path = parsed.path.rstrip("/")
+        return urlunparse(
+            (parsed.scheme, _safe_netloc(parsed), f"{base_path}/models", "", "", "")
+        )
     if _normalized_provider_identity(provider_identity) == _QWENCLOUD_PROVIDER_KEY:
         try:
             base_url = _qwencloud_base_url(endpoint)
@@ -838,6 +874,377 @@ async def _transport_category(error: httpx.HTTPError) -> str:
     return "connection_error"
 
 
+def _provider_reason(body: bytes | None, api_key: str | None) -> str:
+    """The provider's own error message, bounded and scrubbed (gap-01).
+
+    Reads only ``error.message`` (or a bare ``error``/``message`` string) from
+    a JSON error body, collapses whitespace, drops unprintable characters,
+    never echoes the key that was sent, and caps the length.
+
+    Args:
+        body: The raw (bounded) error response body.
+        api_key: The key the request carried, redacted if echoed back.
+
+    Returns:
+        The reason, or ``""`` when the body carries none.
+    """
+    if not body:
+        return ""
+    try:
+        payload = json.loads(body)
+    except (RecursionError, UnicodeDecodeError, ValueError):
+        return ""
+    message: object = None
+    if type(payload) is dict:
+        error = payload.get("error")
+        if type(error) is dict:
+            message = error.get("message")
+        elif type(error) is str:
+            message = error
+        elif type(payload.get("message")) is str:
+            message = payload["message"]
+    if type(message) is not str:
+        return ""
+    text = " ".join(message.split())
+    if api_key:
+        text = text.replace(api_key, "[redacted]")
+    text = "".join(character for character in text if character.isprintable())
+    if len(text) > _PROVIDER_REASON_MAX_CHARS:
+        text = text[: _PROVIDER_REASON_MAX_CHARS - 1].rstrip() + "…"
+    return text
+
+
+def _rejected_key_error(
+    display_name: str, reason: str, status_code: int
+) -> ModelDiscoveryError:
+    """A rejected key, in the provider's words when it gave any."""
+    return ModelDiscoveryError(
+        kind="missing_credentials",
+        message=f"{display_name} rejected this key: {reason}"
+        if reason
+        else f"{display_name} rejected this key.",
+        recovery_hint="Check the API key configured for this provider.",
+        category="forbidden" if status_code == 403 else "unauthorized",
+        provider_reason=reason,
+    )
+
+
+def _is_google_chat_model(model: Mapping[str, Any]) -> bool:
+    """A generateContent model that is a chat model and not a preview build."""
+    methods = model.get("supportedGenerationMethods")
+    if type(methods) is not list or "generateContent" not in methods:
+        return False
+    model_id = str(model.get("name") or "").removeprefix("models/").lower()
+    return bool(model_id) and not any(
+        token in model_id for token in _GOOGLE_NON_CHAT_ID_TOKENS
+    )
+
+
+def _google_model_rank(model_id: str) -> tuple[int, int]:
+    """Rolling aliases first, the shipped default leading (TASK-34100.2)."""
+    from tldw_chatbook.config import DEFAULT_GOOGLE_CHAT_MODEL
+
+    if model_id == DEFAULT_GOOGLE_CHAT_MODEL:
+        return (0, 0)
+    return (1, 0) if model_id.endswith("-latest") else (2, 0)
+
+
+async def _discover_google_models(
+    *,
+    provider: str,
+    provider_list_key: str,
+    endpoint: str,
+    api_key: str | None,
+    active_client: httpx.AsyncClient,
+) -> ModelDiscoveryResult:
+    """List Gemini chat models from Google's models.list (TASK-34100.2).
+
+    The list is authenticated (``x-goog-api-key``; the key never rides in the
+    URL), so a listing that answers also verifies the key, and Google's 400
+    ``API_KEY_INVALID`` is a rejected key in Google's own words. Only
+    generateContent chat models are kept -- no TTS, image, embedding or
+    preview ids -- with the rolling aliases first.
+    """
+    endpoint_fingerprint = fingerprint_endpoint(endpoint)
+
+    def result(
+        status: Literal["success", "unsupported", "error"],
+        error: ModelDiscoveryError | None = None,
+        models: tuple[DiscoveredModel, ...] = (),
+    ) -> ModelDiscoveryResult:
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider_list_key,
+            endpoint_fingerprint=endpoint_fingerprint,
+            status=status,
+            models=models,
+            error=error,
+            key_verified=status == "success",
+        )
+
+    if not api_key:
+        return result(
+            "error",
+            _discovery_error(
+                "missing_credentials",
+                "Google lists models only for a valid API key.",
+                "Enter a Gemini API key from aistudio.google.com/apikey.",
+            ),
+        )
+    models_url = build_models_url(endpoint, provider)
+    if not validate_url(models_url):
+        return result(
+            "unsupported",
+            _discovery_error(
+                "unsupported_endpoint",
+                "This endpoint is not a valid Google models URL.",
+                "Use the Gemini API base https://generativelanguage.googleapis.com/v1beta.",
+            ),
+        )
+    headers = {"x-goog-api-key": api_key, "Accept-Encoding": "identity"}
+    listed: list[Mapping[str, Any]] = []
+    bytes_read = 0
+    page_token: str | None = None
+    for _page in range(-(-DISCOVERED_MODEL_MAX_COUNT // _GOOGLE_PAGE_SIZE) + 1):
+        params: dict[str, Any] = {"pageSize": _GOOGLE_PAGE_SIZE}
+        if page_token:
+            params["pageToken"] = page_token
+        try:
+            async with _provider_recovery.discovery_native_context(
+                active_client.stream(
+                    "GET",
+                    models_url,
+                    headers=headers,
+                    params=params,
+                    follow_redirects=False,
+                ),
+                response=True,
+            ) as response:
+                body = await read_bounded_model_response(
+                    response, MODEL_DISCOVERY_RESPONSE_MAX_BYTES - bytes_read
+                )
+                status_code = response.status_code
+        except UnsupportedModelResponseEncoding:
+            return result(
+                "error",
+                _discovery_error(
+                    "invalid_response",
+                    "Compressed models responses are not supported.",
+                    "Use an endpoint that honors identity encoding.",
+                ),
+            )
+        except httpx.HTTPError as exc:
+            return result(
+                "error",
+                _discovery_error(
+                    "request_failed",
+                    "Model discovery request failed.",
+                    "Check your network connection.",
+                    _transport_category(exc),
+                ),
+            )
+        if status_code in {400, 401}:
+            reason = _provider_reason(body, api_key)
+            # A 400 rejects the key only when Google says so ('API key not
+            # valid' / 'API key expired', reason API_KEY_INVALID).
+            if status_code == 401 or "api key" in reason.lower():
+                return result("error", _rejected_key_error("Google", reason, status_code))
+        if status_code == 403:
+            # Review round 2 (R2-8): only a 401 rejects a key (owner ruling,
+            # PR #2958). A 403 -- the Gemini API disabled for the key's
+            # project, a key restricted to other APIs -- keeps the shared 403
+            # shape (``forbidden``, read by Settings as 'not permitted') and
+            # Google's own reason, never 'rejected'.
+            reason = _provider_reason(body, api_key)
+            return result(
+                "error",
+                ModelDiscoveryError(
+                    kind="missing_credentials",
+                    message=f"Google refused this request: {reason}"
+                    if reason
+                    else "Google refused this request (HTTP 403).",
+                    recovery_hint=(
+                        "Enable the Gemini API for this key's project, or use a "
+                        "key from aistudio.google.com/apikey."
+                    ),
+                    category="forbidden",
+                    provider_reason=reason,
+                ),
+            )
+        if status_code == 404:
+            return result(
+                "unsupported",
+                _discovery_error(
+                    "unsupported_endpoint",
+                    "The models endpoint is unavailable.",
+                    "Enter the model ID used by this endpoint.",
+                    "http_status",
+                ),
+            )
+        if status_code >= 400 or body is None:
+            return result(
+                "error",
+                _discovery_error(
+                    "request_failed" if status_code >= 400 else "invalid_response",
+                    "Model discovery request failed."
+                    if status_code >= 400
+                    else "The models response is too large.",
+                    "Check the endpoint URL, server availability, and credentials.",
+                    "http_status" if status_code >= 400 else None,
+                ),
+            )
+        bytes_read += len(body)
+        try:
+            payload = await asyncio.to_thread(json.loads, body)
+        except (RecursionError, UnicodeDecodeError, ValueError):
+            payload = None
+        models = payload.get("models", []) if type(payload) is dict else None
+        if type(models) is not list or any(type(item) is not dict for item in models):
+            return result(
+                "error",
+                _discovery_error(
+                    "invalid_response",
+                    "Google did not return a valid model list.",
+                    "Try again later.",
+                ),
+            )
+        listed.extend(models)
+        if len(listed) > DISCOVERED_MODEL_MAX_COUNT:
+            return result(
+                "error",
+                _discovery_error(
+                    "invalid_response",
+                    "The models endpoint returned too many models.",
+                    "Use a narrower models endpoint or provider filter.",
+                ),
+            )
+        next_token = payload.get("nextPageToken")
+        page_token = next_token if type(next_token) is str and next_token else None
+        if page_token is None:
+            break
+    chat = [
+        {**item, "id": str(item["name"]).removeprefix("models/")}
+        for item in listed
+        if _is_google_chat_model(item)
+    ]
+    chat.sort(key=lambda item: _google_model_rank(item["id"]))
+    try:
+        normalized = normalize_models_response(
+            {"data": chat},
+            provider=provider,
+            provider_list_key=provider_list_key,
+            endpoint_fingerprint=endpoint_fingerprint or "",
+            now_iso=datetime.now(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+        )
+    except ValueError:
+        return result(
+            "error",
+            _discovery_error(
+                "invalid_response",
+                "Google did not return a valid model list.",
+                "Try again later.",
+            ),
+        )
+    return result("success", models=normalized)
+
+
+def _key_check_serves_endpoint(record: Any, endpoint: str) -> bool:
+    """Whether the record's key check vouches for keys of this endpoint.
+
+    TASK-34100.2 review F6b: the key check lives on the provider's own host
+    (openrouter.ai, huggingface.co). A user who points the provider at a
+    proxy or a dedicated endpoint holds that host's key, which must never be
+    sent to the provider's key check (and would come back 'rejected').
+    """
+    configured = _parse_endpoint(endpoint)
+    default = _parse_endpoint(getattr(record, "default_base_url", None))
+    return (
+        configured is not None
+        and default is not None
+        and (configured.hostname or "").lower() == (default.hostname or "").lower()
+    )
+
+
+async def _check_listing_key(
+    active_client: httpx.AsyncClient,
+    *,
+    provider: str,
+    provider_list_key: str,
+    endpoint_fingerprint: str | None,
+    endpoint: str,
+    api_key: str,
+) -> tuple[bool, ModelDiscoveryResult | None]:
+    """Prove a public listing's key at the provider's key endpoint (gap-01).
+
+    OpenRouter's and Hugging Face's model lists answer any key, so after a
+    successful listing the key is checked where it can actually fail
+    (``ProviderRecord.key_check_url``). Only a 401 rejects the key, with the
+    provider's reason (owner ruling 2026-10-02, PR #2958). A check that gets
+    no readable answer -- a 403, 429 or 5xx, a network failure, a body the
+    client cannot decode -- verifies nothing and blocks nothing: the listing
+    stands and the key stays unverified (review round 1, F6). A key for
+    another host is never sent to the check at all.
+
+    Returns:
+        ``(key_verified, failure)``: ``failure`` is the rejected-key
+        discovery, else ``None``.
+    """
+    record = RECORDS_BY_KEY.get(_normalized_provider_identity(provider))
+    if (
+        record is None
+        or not record.key_check_url
+        or not _key_check_serves_endpoint(record, endpoint)
+    ):
+        return False, None
+
+    def failed(error: ModelDiscoveryError) -> ModelDiscoveryResult:
+        return ModelDiscoveryResult(
+            provider=provider,
+            provider_list_key=provider_list_key,
+            endpoint_fingerprint=endpoint_fingerprint,
+            status="error",
+            error=error,
+        )
+
+    body: bytes | None = None
+    status_code: int | None = None
+    try:
+        async with _provider_recovery.discovery_native_context(
+            active_client.stream(
+                "GET",
+                record.key_check_url,
+                headers={
+                    **build_discovery_auth_headers(provider, api_key),
+                    "Accept-Encoding": "identity",
+                },
+                follow_redirects=False,
+            ),
+            response=True,
+        ) as response:
+            status_code = response.status_code
+            body = await read_bounded_model_response(response, 64 * 1024)
+    except UnsupportedModelResponseEncoding:
+        # The status stands; only the reason is unreadable. An unreadable
+        # success proves nothing, so it never verifies the key.
+        if status_code == 401:
+            return False, failed(
+                _rejected_key_error(record.display_name, "", status_code)
+            )
+        return False, None
+    except httpx.HTTPError:
+        return False, None
+    if status_code == 401:
+        return False, failed(
+            _rejected_key_error(
+                record.display_name, _provider_reason(body, api_key), status_code
+            )
+        )
+    return status_code is not None and 200 <= status_code < 300, None
+
+
 @_provider_recovery.discovery_call
 async def discover_openai_compatible_models(
     *,
@@ -848,7 +1255,12 @@ async def discover_openai_compatible_models(
     timeout_seconds: float = 10.0,
     client: httpx.AsyncClient | None = None,
 ) -> ModelDiscoveryResult:
-    """Manually discover models from one configured OpenAI-compatible endpoint."""
+    """Manually discover models from one configured OpenAI-compatible endpoint.
+
+    TASK-34100.2: Gemini is listed natively (``_discover_google_models``),
+    and a public listing with a key is followed by that provider's
+    authenticated key check (``_check_listing_key``).
+    """
     endpoint_fingerprint = fingerprint_endpoint(endpoint) if endpoint else None
     if not supports_openai_compatible_model_discovery(provider, endpoint):
         if _parse_endpoint(endpoint) is None:
@@ -895,6 +1307,8 @@ async def discover_openai_compatible_models(
         "Accept-Encoding": "identity",
     }
     paginate = _normalized_provider_identity(provider) == _ANTHROPIC_PROVIDER_KEY
+    #: Set by the listing's authenticated key check (``_check_listing_key``).
+    key_check = {"verified": False}
 
     async def _request_payloads(
         active_client: httpx.AsyncClient,
@@ -1079,11 +1493,36 @@ async def discover_openai_compatible_models(
                     "Use a narrower provider-side model filter.",
                 ),
             )
+        if api_key:
+            verified, key_failure = await _check_listing_key(
+                active_client,
+                provider=provider,
+                provider_list_key=provider_list_key,
+                endpoint_fingerprint=endpoint_fingerprint,
+                endpoint=endpoint,
+                api_key=api_key,
+            )
+            if key_failure is not None:
+                return None, key_failure
+            key_check["verified"] = verified
         return payloads, None
+
+    async def _run(
+        active_client: httpx.AsyncClient,
+    ) -> tuple[list[Mapping[str, Any]] | None, ModelDiscoveryResult | None]:
+        if _normalized_provider_identity(provider) == _GOOGLE_PROVIDER_KEY:
+            return None, await _discover_google_models(
+                provider=provider,
+                provider_list_key=provider_list_key,
+                endpoint=endpoint,
+                api_key=api_key,
+                active_client=active_client,
+            )
+        return await _request_payloads(active_client)
 
     try:
         if client is not None:
-            payloads, request_error = await _request_payloads(client)
+            payloads, request_error = await _run(client)
         else:
             async with _provider_recovery.discovery_native_context(
                 build_httpx_async_client(
@@ -1091,7 +1530,7 @@ async def discover_openai_compatible_models(
                     **_provider_recovery.discovery_client_options(),
                 )
             ) as active_client:
-                payloads, request_error = await _request_payloads(active_client)
+                payloads, request_error = await _run(active_client)
     except httpx.HTTPError as exc:
         return ModelDiscoveryResult(
             provider=provider,
@@ -1158,4 +1597,6 @@ async def discover_openai_compatible_models(
         endpoint_fingerprint=endpoint_fingerprint,
         status="success",
         models=models,
+        # The listing's key check ran and passed (``_check_listing_key``).
+        key_verified=key_check["verified"],
     )

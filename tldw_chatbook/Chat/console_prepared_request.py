@@ -21,12 +21,22 @@ from tldw_chatbook.Agents.project_instruction_runtime import PROJECT_INSTRUCTION
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
-    DEFAULT_RESPONSE_RESERVATION,
     count_console_messages_tokens,
     count_provider_continuation_tokens,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptSnapshot
+# TASK-34100.2 review round 2 (R2-4): the capacity rule lives in a
+# dependency-light module readiness can import; re-exported for callers here.
+from tldw_chatbook.Chat.console_request_capacity import (  # noqa: F401
+    ESTIMATED_WINDOW_RESERVATION_DIVISOR as ESTIMATED_WINDOW_RESERVATION_DIVISOR,
+    MINIMUM_SAFETY_MARGIN_TOKENS as MINIMUM_SAFETY_MARGIN_TOKENS,
+    ConsoleRequestCapacity as ConsoleRequestCapacity,
+    LimitSource as LimitSource,
+    estimated_window_reply_cap as estimated_window_reply_cap,
+    request_safety_margin_tokens as request_safety_margin_tokens,
+    resolve_request_capacity as resolve_request_capacity,
+)
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
     ThinkingOwnerGroup,
@@ -99,7 +109,6 @@ def compose_current_mixin_messages(
     ]
 
 
-MINIMUM_SAFETY_MARGIN_TOKENS = 512
 MEMORY_OPEN_TAG = "<chatbook_conversation_memory>"
 MEMORY_CLOSE_TAG = "</chatbook_conversation_memory>"
 MEMORY_OWNER_KEY = "_tldw_context_owner"
@@ -118,9 +127,6 @@ MEMORY_SAFETY_COPY = (
 
 RequestOwner = Literal["system", "memory", "mandatory", "compactable", "active"]
 WireStyle = Literal["distinct_roles", "single_preamble"]
-LimitSource = Literal[
-    "detected", "estimated", "provider_input_cap", "user_override", "unknown"
-]
 
 
 def freeze_json(value: Any) -> Any:
@@ -626,21 +632,6 @@ def attach_thinking_history(
         effective_thinking_policy=effective_thinking_policy,
         provenance=updated_provenance,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class ConsoleRequestCapacity:
-    """Resolved provider/model limits and response reservation."""
-
-    context_window_tokens: int | None
-    provider_input_cap_tokens: int | None
-    provider_output_cap_tokens: int | None
-    requested_response_tokens: int
-    effective_response_tokens: int
-    safety_margin_tokens: int
-    effective_input_ceiling_tokens: int | None
-    limit_source: LimitSource
-    safety_verified: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1208,18 +1199,6 @@ def build_console_request(
     )
 
 
-def request_safety_margin_tokens(window_tokens: int) -> int:
-    """Tokens a request keeps free of a ``window_tokens`` context window.
-
-    The Console gateway refuses a request over ``window - reply reserve -
-    this margin`` (``resolve_request_capacity``); the first-request planner
-    plans within the same ceiling (``first_request_window.planning_window``)
-    so it never picks a tool surface the gateway then refuses
-    (TASK-34100.5.3 review round 2, V2-2).
-    """
-    return max(MINIMUM_SAFETY_MARGIN_TOKENS, window_tokens // 50)
-
-
 def positive_token_cap(capabilities: Mapping[str, Any], *names: str) -> int | None:
     """Return the first advertised positive integer cap, excluding booleans."""
     for name in names:
@@ -1227,74 +1206,6 @@ def positive_token_cap(capabilities: Mapping[str, Any], *names: str) -> int | No
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             return value
     return None
-
-
-def resolve_request_capacity(
-    *,
-    context_window_tokens: int | None,
-    provider_input_cap_tokens: int | None = None,
-    provider_output_cap_tokens: int | None = None,
-    requested_response_tokens: int | None = None,
-    context_window_override_tokens: int | None = None,
-    context_window_verified: bool = True,
-) -> ConsoleRequestCapacity:
-    """Resolve input capacity without silently reserving only half a window."""
-
-    for name, value in (
-        ("context_window_tokens", context_window_tokens),
-        ("provider_input_cap_tokens", provider_input_cap_tokens),
-        ("provider_output_cap_tokens", provider_output_cap_tokens),
-        ("context_window_override_tokens", context_window_override_tokens),
-    ):
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, int) or value <= 0
-        ):
-            raise ValueError(f"{name} must be a positive integer when supplied.")
-
-    requested = (
-        DEFAULT_RESPONSE_RESERVATION
-        if requested_response_tokens is None
-        else requested_response_tokens
-    )
-    if isinstance(requested, bool) or not isinstance(requested, int) or requested <= 0:
-        raise ValueError("requested_response_tokens must be a positive integer.")
-    effective_response = (
-        min(requested, provider_output_cap_tokens)
-        if provider_output_cap_tokens is not None
-        else requested
-    )
-    effective_window = context_window_override_tokens or context_window_tokens
-    source: LimitSource
-    if context_window_override_tokens is not None:
-        source = "user_override"
-    elif context_window_tokens is not None:
-        source = "detected" if context_window_verified else "estimated"
-    elif provider_input_cap_tokens is not None:
-        source = "provider_input_cap"
-    else:
-        source = "unknown"
-    margin = (
-        request_safety_margin_tokens(effective_window)
-        if effective_window is not None
-        else 0
-    )
-    candidates: list[int] = []
-    if effective_window is not None:
-        candidates.append(effective_window - effective_response - margin)
-    if provider_input_cap_tokens is not None:
-        candidates.append(provider_input_cap_tokens)
-    ceiling = min(candidates) if candidates else None
-    return ConsoleRequestCapacity(
-        context_window_tokens=effective_window,
-        provider_input_cap_tokens=provider_input_cap_tokens,
-        provider_output_cap_tokens=provider_output_cap_tokens,
-        requested_response_tokens=requested,
-        effective_response_tokens=effective_response,
-        safety_margin_tokens=margin,
-        effective_input_ceiling_tokens=max(0, ceiling) if ceiling is not None else None,
-        limit_source=source,
-        safety_verified=(source == "detected" and effective_window is not None),
-    )
 
 
 def _project_runtime_guidance(

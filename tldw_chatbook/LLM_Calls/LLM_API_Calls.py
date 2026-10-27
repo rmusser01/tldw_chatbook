@@ -36,7 +36,6 @@ import requests
 from contextlib import nullcontext
 from loguru import logger
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 #
 # Import Local libraries
@@ -57,6 +56,7 @@ from tldw_chatbook.Provider_Contract import (
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
 from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
 from tldw_chatbook.config import (
+    DEFAULT_GOOGLE_CHAT_MODEL,
     get_cli_setting,
     get_runtime_config_snapshot,
     load_settings,
@@ -68,6 +68,8 @@ from tldw_chatbook.Utils.egress import (
     create_owned_default_session,
     create_pooled_default_session,
 )
+from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
+from tldw_chatbook.LLM_Calls.provider_reason import rate_limit_reason
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
@@ -951,6 +953,14 @@ def chat_with_openai(
         else:  # Non-streaming
             logger.debug("OpenAI: Posting request (non-streaming)")
 
+            retry_count = int(openai_config.get("api_retries", 3))
+            retry_delay = float(openai_config.get("api_retry_delay", 1.0))
+            # TASK-34100.2 AC#18: a 429 (OpenAI's insufficient_quota on a new
+            # account) reaches raise_for_status with OpenAI's body instead of
+            # an exhausted-retry 'Network error' 504.
+            retry_strategy = chat_transport_retry(
+                llm_retry_count(retry_count), retry_delay
+            )
             # ADR-222 (TASK-34418): deliberately NOT registry-backed --
             # openai_post() owns and closes the session via the guarded
             # recovery _Operation; see ADR-222 §5.
@@ -958,6 +968,13 @@ def chat_with_openai(
             # session, recovered mode sets trust_env=False) -- that must land
             # on a private session, never the shared pool entry.
             with create_owned_default_session() as session:
+                # The owned session is private (task-34387 C1), so mounting
+                # the retry here touches no shared pool entry. The C1 swap
+                # from the pooled session had dropped this mount, leaving
+                # ``retry_strategy`` unused and no transient-5xx retry.
+                adapter = HTTPAdapter(max_retries=retry_strategy)
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
                 response = _provider_recovery.openai_post(
                     session,
                     api_url,
@@ -1968,11 +1985,10 @@ def chat_with_anthropic(
     try:
         retry_count = int(anthropic_config.get("api_retries", 3))
         retry_delay = float(anthropic_config.get("api_retry_delay", 1))
-        retry_strategy = Retry(
-            total=llm_retry_count(retry_count),
-            backoff_factor=retry_delay,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["POST"],
+        # TASK-34100.2 AC#18: a 429 reaches the 429 branch below with
+        # Anthropic's reason, not an exhausted-retry 'Network error' 504.
+        retry_strategy = chat_transport_retry(
+            llm_retry_count(retry_count), retry_delay
         )
         def _anthropic_registry_session() -> requests.Session:
             # ADR-222 (TASK-34418): factory for the per-thread registry;
@@ -2448,12 +2464,19 @@ def chat_with_anthropic(
             ) from e
         elif status_code == 429:
             raise ChatRateLimitError(
-                provider="anthropic", message=f"Rate limit. Detail: {error_text[:200]}"
+                provider="anthropic",
+                message=f"Rate limit. Detail: {error_text[:200]}",
+                provider_reason=rate_limit_reason(
+                    error_text, secrets=(final_api_key, subscription_token)
+                ),
             ) from e
         elif 400 <= status_code < 500:
+            # TASK-34100.2 AC#2: carry the real 4xx -- a retired model's 404
+            # takes it out of Ready ('model not found'); a 400 would not.
             raise ChatBadRequestError(
                 provider="anthropic",
                 message=f"Bad request ({status_code}). Detail: {error_text[:200]}",
+                status_code=status_code,
             ) from e
         else:
             raise ChatProviderError(
@@ -3002,12 +3025,9 @@ def chat_with_cohere(
         cohere_config.get("api_retry_delay", 1.0)
     )  # Ensure float for backoff_factor
 
-    retry_strategy = Retry(
-        total=llm_retry_count(retry_count),
-        backoff_factor=retry_delay,
-        status_forcelist=[429, 500, 502, 503, 504],  # Standard retry statuses
-        allowed_methods=["POST"],  # Retry only for POST requests
-    )
+    # TASK-34100.2 AC#18: no 429 retry, and the last response is returned.
+    retry_strategy = chat_transport_retry(llm_retry_count(retry_count), retry_delay)
+
     def _cohere_registry_session() -> requests.Session:
         # ADR-222 (TASK-34418): factory for the per-thread registry; the
         # mount lives here so a cached session keeps its adapter (and warm
@@ -3439,6 +3459,7 @@ def chat_with_cohere(
             raise ChatRateLimitError(
                 provider="cohere",
                 message=f"Rate limit exceeded. Detail: {error_text[:200]}",
+                provider_reason=rate_limit_reason(error_text, secrets=(final_api_key,)),
             )
         elif 400 <= status_code < 500:
             raise ChatBadRequestError(
@@ -3642,7 +3663,7 @@ def chat_with_google(
             provider="google", message="Google API Key required."
         )
 
-    current_model = model or google_config.get("model", "gemini-1.5-flash-latest")
+    current_model = model or google_config.get("model", DEFAULT_GOOGLE_CHAT_MODEL)
     current_streaming_cfg = google_config.get("streaming", False)
     current_streaming = (
         streaming
@@ -3855,11 +3876,15 @@ def chat_with_google(
 
     response = None  # Initialize response to None for the finally block
     try:
-        google_retry = Retry(
-            total=llm_retry_count(int(google_config.get("api_retries", 3))),
-            backoff_factor=float(google_config.get("api_retry_delay", 1)),
-            status_forcelist=[429, 500, 503],
-            allowed_methods=["POST"],
+        # TASK-34100.2 AC#18: no 429 here -- Google's quotas are per minute
+        # or per day, which a 1-4 s backoff cannot outwait (it only spends
+        # more of the quota). And an exhausted 5xx retry returns Google's own
+        # answer: with raise_on_status on it raised RetryError, reported as
+        # 'Network error' 504.
+        google_retry = chat_transport_retry(
+            llm_retry_count(int(google_config.get("api_retries", 3))),
+            float(google_config.get("api_retry_delay", 1)),
+            statuses=(500, 503),
         )
 
 
@@ -4306,8 +4331,11 @@ def chat_with_google(
                 provider="google", message=f"Auth failed. Detail: {error_text[:200]}"
             ) from e
         elif status_code == 429:
+            reason = rate_limit_reason(error_text, secrets=(final_api_key,))
             raise ChatRateLimitError(
-                provider="google", message=f"Rate limit. Detail: {error_text[:200]}"
+                provider="google",
+                message=f"Rate limit. Detail: {reason or error_text[:200]}",
+                provider_reason=reason,
             ) from e
         else:
             raise ChatProviderError(
@@ -4809,15 +4837,12 @@ def chat_with_huggingface(
                 "HuggingFace: Posting non-streaming request to "
                 f"host={safe_llm_url_host(api_url)}"
             )
+            # TASK-34100.2 AC#18: no 429 retry, and the last response is
+            # returned to raise_for_status.
             adapter = HTTPAdapter(
-                max_retries=Retry(
-                    total=llm_retry_count(int(hf_config.get("api_retries", 3))),
-                    backoff_factor=float(hf_config.get("api_retry_delay", 1)),
-                    status_forcelist=[429, 500, 502, 503, 504],
-                    allowed_methods=[
-                        "POST"
-                    ],  # Should be allowed_methods for Retry v0.9.2+ (urllib3)
-                    # or method_whitelist for older versions.
+                max_retries=chat_transport_retry(
+                    llm_retry_count(int(hf_config.get("api_retries", 3))),
+                    float(hf_config.get("api_retry_delay", 1)),
                 )
             )
 
@@ -4934,6 +4959,7 @@ def chat_with_huggingface(
             raise ChatRateLimitError(
                 provider="huggingface",
                 message=f"Rate limit exceeded. Detail: {error_text[:200]}",
+                provider_reason=rate_limit_reason(error_text, secrets=(final_api_key,)),
             )
         elif 400 <= status_code < 500:  # Other 4xx
             raise ChatBadRequestError(

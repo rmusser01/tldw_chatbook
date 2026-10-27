@@ -5250,7 +5250,7 @@ async def test_settings_provider_test_checks_cloud_keys_by_listing_not_endpoint_
         assert probe_calls == []
         assert listed == ["Bearer sk-test-not-a-real-key"]
         message, kwargs = toasts[-1]
-        assert message.startswith("Ready · verified ")
+        assert message.startswith("Key verified ")  # TASK-34100.2 AC#2
         assert message.endswith(
             " — key accepted (1 model listed) · generation not tested."
         )

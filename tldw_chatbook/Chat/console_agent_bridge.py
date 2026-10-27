@@ -709,6 +709,59 @@ def console_run_budget() -> RunBudget:
     )
 
 
+def captured_run_budget(
+    run_budget: RunBudget | None, capture_mode: ConsoleTraceCaptureMode
+) -> RunBudget | None:
+    """A captured run never retries a failed model request (TASK-34100.2 AC#18).
+
+    TASK-25901 retries a transient model failure (a 429, a 5xx) in place. Under
+    trace capture that retry is the run's next call, but the call before it
+    bore no response, so the trace contract refuses to reserve it
+    (``trace_tool_chain_unavailable``) and the Console showed 'Trace capture
+    blocked -- The provider was not contacted' for a send the provider had
+    just answered with a 429. Until the trace contract can record a retry,
+    the provider's own error ends a captured run; Capture Off keeps the
+    configured retries.
+
+    Args:
+        run_budget: The admitted budget, or ``None`` for the live one.
+        capture_mode: The run's trace capture mode.
+
+    Returns:
+        The budget to plan the run with.
+    """
+    if capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON:
+        return run_budget
+    return dataclass_replace(
+        run_budget if run_budget is not None else console_run_budget(),
+        max_model_retries=0,
+    )
+
+
+def captured_fallback_providers(
+    capture_mode: ConsoleTraceCaptureMode,
+) -> tuple[str, ...] | None:
+    """A captured run plans no provider fallback (TASK-34100.2 review F7).
+
+    ADR-110's fallback call comes after a failed model request, exactly like
+    the TASK-25901 retry ``captured_run_budget`` turns off: under trace
+    capture it is the run's next call after one that bore no response, the
+    trace contract refuses to reserve it, and the Console showed 'Trace
+    capture blocked -- the provider was not contacted' instead of the
+    provider's own error. Until the trace contract can record that call
+    (TASK-34100.2.1), the provider's error ends a captured run.
+
+    Args:
+        capture_mode: The run's trace capture mode.
+
+    Returns:
+        ``()`` (no chain) under capture, else ``None``: the configured chain.
+    """
+    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+        return ()
+    return None
+
+
 def intersect_console_run_budget(
     maximum: RunBudget, live: RunBudget
 ) -> RunBudget:
@@ -4599,6 +4652,7 @@ def build_console_first_request_plan(
     workspace_write_binding_ids: tuple[str, ...] | None = None,
     workspace_binding_authority: tuple[Any, ...] | None = None,
     run_budget: RunBudget | None = None,
+    fallback_providers: tuple[str, ...] | None = None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
     scratch_root: Path | None,
@@ -4666,6 +4720,8 @@ def build_console_first_request_plan(
         agent_definitions: Named sub-agent definitions available this turn.
         fleet_max_live: Maximum simultaneously live agents for this run.
         run_budget: Optional precomputed run budget override.
+        fallback_providers: The provider fallback chain to plan with;
+            ``None`` reads ``[console] agent_fallback_providers``.
         persona_policy_rules: Optional persona rules applied to tool composition.
         profile_context_service: Optional profile snapshot builder for this turn.
         personal_context_snapshot: Optional prebuilt snapshot used verbatim.
@@ -4827,7 +4883,11 @@ def build_console_first_request_plan(
         # execution key used for capabilities and protocol preparation.
         provider=selected_provider,
         base_url=getattr(resolution, "base_url", None),
-        fallback_providers=console_fallback_providers(),
+        fallback_providers=(
+            console_fallback_providers()
+            if fallback_providers is None
+            else fallback_providers
+        ),
         allowed_tools=allowed_tools,
         budget=(
             intersect_console_run_budget(run_budget, console_run_budget())

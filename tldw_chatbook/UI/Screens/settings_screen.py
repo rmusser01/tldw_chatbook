@@ -135,7 +135,6 @@ from ...Chat.provider_setup_persistence import (
     resolve_remembered_provider_model,
 )
 from ...Chat.provider_test_evidence import (
-    PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
     ProviderDraftIdentity,
     ProviderProbeResult,
     ProviderReadinessSnapshot,
@@ -165,6 +164,7 @@ from ...Chat.console_session_settings import (
     settings_provider_catalog,
     verdict_readiness_words,
 )
+from ..Settings_Modules import provider_test_rows as test_rows  # TASK-34100.2
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...Sync_Interop.sync_promotion_state import (
@@ -17230,6 +17230,9 @@ class SettingsScreen(BaseAppScreen):
         env_var_invalid: bool = False,
         evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
         checking: bool = False,
+        max_tokens: int | None = None,
+        max_tokens_from_model_default: bool = False,
+        rejection_reason: str = "",
     ) -> tuple[tuple[str, str], ...]:
         """Return the Test result as (label, text) rows, one fact per row.
 
@@ -17250,6 +17253,7 @@ class SettingsScreen(BaseAppScreen):
             env_var_invalid: The Env var being typed is no variable's name.
             evidence: Stored evidence, or a settled probe, for this draft.
             checking: A model-listing probe is in flight.
+            max_tokens, max_tokens_from_model_default, rejection_reason: ``test_rows``.
 
         Returns:
             The rows as (label, text) pairs in display order.
@@ -17309,27 +17313,10 @@ class SettingsScreen(BaseAppScreen):
             key = f"missing — enter one in the API key field or set {name}"
         else:
             key = "missing — enter one in the API key field"
-        credential = getattr(evidence, "credential", "")
-        if source and credential == "listing_accepted":
-            key += f" · key accepted ({_listed_models_copy(model_ids)})"
-        elif source and credential == "authenticated":
-            key += " · accepted by a generation test"
-        elif (
-            source
-            and listing == "reachable"
-            and readiness.provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
-        ):
-            # ADR-020: this listing is public, so it proves nothing (AC#6).
-            key += " · models listed; key not checked"
-        elif (
-            source
-            and listing == "unreachable"
-            and getattr(evidence, "category", None) == "unauthorized"
-        ):
-            # Only a 401 rejects a key (Qodo #2958, owner ruling).
-            key += " · key rejected"
-        elif source:
-            key += " · present, not verified"
+        key += test_rows.key_verdict(  # TASK-34100.2: the key's last verdict
+            readiness, evidence=evidence, listing=listing,
+            listed=_listed_models_copy(model_ids), rejection_reason=rejection_reason,
+        )
 
         shown = safe_endpoint_display(endpoint)
         if issue == "endpoint_missing":
@@ -17364,6 +17351,11 @@ class SettingsScreen(BaseAppScreen):
                     else " · listed by the server"
                 )
 
+        capacity, model_blocked = test_rows.model_capacity(  # TASK-34100.2 AC#2
+            readiness.provider_key, model, max_tokens,
+            from_model_default=max_tokens_from_model_default,
+        )
+        model_text += capacity
         generation = getattr(evidence, "generation", "not_tested")
         failure = getattr(evidence, "generation_category", None) or "provider_error"
         generation_text = {
@@ -17379,7 +17371,7 @@ class SettingsScreen(BaseAppScreen):
             )
         elif listing == "unreachable":
             lead = "Endpoint"
-        elif not model or unlisted:  # TASK-33002.9: an unlisted model too
+        elif not model or unlisted or model_blocked:  # TASK-33002.9; TASK-34100.2
             lead = "Model"
         elif generation == "failed":
             lead = "Generation"
@@ -17406,6 +17398,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             evidence,
             subscription_status=readiness.subscription_status,
+            provider=readiness.provider_key, model=model, max_tokens=max_tokens,
         )
         return (("Readiness", word), *sorted(rows, key=lambda row: row[0] != lead))
 
@@ -17446,8 +17439,8 @@ class SettingsScreen(BaseAppScreen):
         return f"model listing failed ({failure}) — {next_step}"
 
     @staticmethod
-    def _provider_key_check_copy(display_name: str, evidence: object) -> str:
-        """Say what one cloud key-check listing proved (ADR-012 table)."""
+    def _provider_key_check_copy(display_name: str, evidence: object, reason: str = "") -> str:
+        """Say what one cloud key-check listing proved (ADR-012; ``reason``: F3)."""
         listing = getattr(evidence, "endpoint", None)
         category = getattr(evidence, "category", None)
         if listing == "reachable":
@@ -17455,6 +17448,8 @@ class SettingsScreen(BaseAppScreen):
             if getattr(evidence, "credential", "") == "listing_accepted":
                 return f"key accepted ({listed}) · generation not tested"
             return f"{listed}; key not checked · generation not tested"
+        if listing == "unreachable" and category == "unauthorized" and reason:
+            return test_rows.rejected_key_copy(display_name, reason)
         if listing == "unreachable" and category == "unauthorized":
             return (
                 f"{display_name} rejected the API key ("
@@ -17518,6 +17513,7 @@ class SettingsScreen(BaseAppScreen):
         # the family slot's ("provider default", "not required"). The rows are
         # plain text (the widget sets markup=False), so they take the plain name.
         entry = self._provider_registry_entry(provider)
+        extras = test_rows.test_row_extras(self, provider, model, evidence)
         rows = self._provider_test_rows(
             readiness,
             display_name=(
@@ -17529,6 +17525,7 @@ class SettingsScreen(BaseAppScreen):
             env_var_invalid=env_var_invalid,
             evidence=evidence,
             checking=checking,
+            **extras,
         )
         registry_rows: dict[str, str] = {}
         if entry is not None:
@@ -17565,7 +17562,8 @@ class SettingsScreen(BaseAppScreen):
             # outcome, led by the readiness word (it carries the time).
             summary = (
                 f"{rows[0][1]} — "
-                f"{self._provider_key_check_copy(display_name, evidence)}.{choose}"
+                f"{self._provider_key_check_copy(display_name, evidence, extras['rejection_reason'])}"
+                f".{choose}"
             )
         elif listing == "unreachable":
             failure = self._provider_listing_failure_copy(
@@ -17829,6 +17827,7 @@ class SettingsScreen(BaseAppScreen):
             key_sent=bool(api_key),
             model=str(self._provider_current_draft_values().get("model") or "").strip(),
         )
+        test_rows.remember_key_rejection(self, provider, api_key, result, probe)  # F3
         if probe is not None:
             return probe
         kind = getattr(getattr(result, "error", None), "kind", "")

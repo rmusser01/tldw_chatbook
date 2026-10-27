@@ -2926,3 +2926,11 @@ Tests/UI/test_console_skill_context_worker.py::test_eager_mount_discovery_closin
 # TASK-40720 (2026-11-13): native sync admission, rewritten off the profiler;
 # its publication case had never passed and no lane ran the file.
 Tests/UI/test_console_sync_worker_admission.py
+# TASK-34100.2 review round 1 (TE-9): the model switcher's 'window too small'
+# rows with Fix model limits, and the Get started card's env-key offers with
+# their one atomic commit. Appended, so no other file changes shard.
+Tests/UI/test_switcher_capacity_rows.py
+Tests/UI/test_console_env_key_card.py
+# TASK-34100.2 pass 3 review round 1 (TE-2): the switcher's template-sample
+# grouping (AC#9). Appended, so no other file changes shard.
+Tests/UI/test_template_sample_switcher.py

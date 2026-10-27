@@ -55,6 +55,10 @@ _BLOCKER_COPY = {
     "endpoint_unreachable": "endpoint unreachable",
     "active_run": "current run is active",
     "readiness_unknown": "review provider settings",
+    # TASK-34100.2 AC#2: model-level blockers.
+    "capacity_exhausted": "replies fill this model's whole context window",
+    "key_rejected_on_send": "the API key was rejected on the last message",
+    "model_unavailable": "the provider could not find this model",
 }
 _RECOVERY_COPY = {
     "select_provider": (
@@ -101,6 +105,13 @@ _RECOVERY_COPY = {
         "Run active",
         "hidden",
         "Wait for the current run to finish",
+    ),
+    # TASK-34100.2 AC#2: Conversation settings hold the model and the
+    # response maximum, the two inputs that size the reply reservation.
+    "adjust_model_limits": (
+        "Fix model limits",
+        "console",
+        "Lower the response maximum or choose another model",
     ),
 }
 _ENDPOINT_COPY = {
@@ -168,6 +179,8 @@ def build_console_readiness_presentation(
         detail = (
             "Settings changes wait for the current run to finish."
             if readiness.blocker == "active_run"
+            else f"Model not ready: {blocker_copy}"
+            if readiness.blocker in {"capacity_exhausted", "model_unavailable"}
             else f"Provider setup needed: {blocker_copy}"
         )
         action = _RECOVERY_COPY.get(

@@ -293,6 +293,10 @@ class SummaryStep(SetupStep):
             speech_runtime_installed=speech_runtime_installed,
         )
         row_states = {row.label: row.state for row in rows}
+        from tldw_chatbook.UI.Wizards.first_run_key_check import (
+            listing_key_verified,
+            mark_unchecked_listing_keys,
+        )
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (
             ROW_CONFIGURED,
             apply_probe_failure_to_summary_rows,
@@ -312,6 +316,15 @@ class SummaryStep(SetupStep):
         except Exception:
             logger.debug("Summary probe-failure lookup skipped", exc_info=True)
         rows = apply_probe_failure_to_summary_rows(rows, probe_failure)
+        # TASK-34100.2 AC#3: a key nothing could check (NVIDIA NIM, Novita)
+        # reads '– Provider — nvidia (key not checked)', never ✓; OpenRouter
+        # and Hugging Face only when their key check really passed.
+        rows = mark_unchecked_listing_keys(
+            rows,
+            key_verified_for=lambda provider: listing_key_verified(
+                self.wizard, provider
+            ),
+        )
 
         primary, _, _ = build_first_run_summary_actions(
             provider_configured=row_states.get("Provider") == ROW_CONFIGURED,

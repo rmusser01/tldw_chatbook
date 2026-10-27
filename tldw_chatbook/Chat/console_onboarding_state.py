@@ -12,6 +12,7 @@ from rich.cells import cell_len, set_cell_size
 
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_session_settings import (
+    SEND_OUTCOME_BLOCKERS,
     ConsoleSettingsReadiness,
     readiness_words,
 )
@@ -317,6 +318,30 @@ def build_console_setup_card_state(
     if has_messages or first_send_completed:
         return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
 
+    # TASK-34100.2 review round 2 (R2-2): a past send's 401 or 404 never
+    # refuses the next send (``console_send_gate_setup_copy``), so it must never cover
+    # the composer either. The one line says why the last send failed; the
+    # header and the empty chat's recovery action name the fix. Pass 2: a
+    # reply reservation that fills the window is the same kind of model-level
+    # fact -- the gate refuses that send with copy naming its fix, so the
+    # card explains it on this line instead of locking the composer.
+    if (
+        readiness.blocker in SEND_OUTCOME_BLOCKERS | {"capacity_exhausted"}
+        and has_model
+    ):
+        if guidance_dismissed:
+            return ConsoleSetupCardState(
+                mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
+            )
+        return ConsoleSetupCardState(
+            mode="ready_line",
+            body_copy=" — ".join(
+                part
+                for part in (readiness_words(readiness), readiness.detail.strip())
+                if part
+            ),
+        )
+
     if provider_done and has_model:
         if guidance_dismissed:
             return ConsoleSetupCardState(
@@ -417,3 +442,313 @@ def console_setup_is_blocking(
         guidance_dismissed=False,
     )
     return state.mode == "card"
+
+
+# --- TASK-34100.2 AC#7 / AC#12 (coverage-04, E2): env-key first launch ---
+#: At most this many "Found X · Use Y" offers on the Get started card; the
+#: rest stay reachable from Set up provider.
+CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT = 3
+CONSOLE_SETUP_ENV_KEY_WORKBENCH_ACTION_PREFIX = "use-env-key:"
+_RUN_SETUP_HINT = "Run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
+
+
+@dataclass(frozen=True)
+class EnvKeyedProvider:
+    """A provider whose API key was found in the environment."""
+
+    provider_key: str
+    env_var: str
+    display_name: str
+    model: str
+    #: The provider's table already holds a stored key (plain or still
+    #: encrypted). That key outranks the env var, and committing the env
+    #: offer would delete it (review round 1, F3), so it is never offered.
+    has_stored_key: bool = False
+
+
+def _holds_stored_key(table: Mapping[str, Any]) -> bool:
+    """Whether ``api_key`` holds a value a save could lose.
+
+    Any non-blank, non-placeholder string counts -- including ``enc:``
+    ciphertext, which the resolver reads as absent but persistence would
+    still delete.
+    """
+    from tldw_chatbook.config import PROVIDER_API_KEY_PLACEHOLDERS
+
+    raw = table.get("api_key")
+    if not isinstance(raw, str):
+        return False
+    value = raw.strip()
+    return bool(value) and value not in PROVIDER_API_KEY_PLACEHOLDERS
+
+
+@dataclass(frozen=True)
+class EnvKeyFirstLaunchNotice:
+    """The one first-launch notice for an install that env keys set up."""
+
+    title: str
+    message: str
+    ready: bool
+
+
+@dataclass(frozen=True)
+class ConsoleEnvKeyAction:
+    """Get started card offer: make an env-keyed provider the chat default."""
+
+    label: str
+    detail: str
+    tooltip: str
+    provider_key: str
+    env_var: str
+    model: str
+
+    @property
+    def workbench_action(self) -> str:
+        return f"{CONSOLE_SETUP_ENV_KEY_WORKBENCH_ACTION_PREFIX}{self.provider_key}"
+
+
+def env_keyed_providers(
+    app_config: Any, environ: Any, *, key_required_only: bool = True
+) -> tuple[EnvKeyedProvider, ...]:
+    """Name each provider whose declared env var holds a real key.
+
+    Config order; one entry per provider and per variable. A placeholder or
+    blank value is not a found key (the loader's own validity check).
+
+    Args:
+        app_config: The live configuration snapshot.
+        environ: The environment mapping to read (never written).
+        key_required_only: Only cloud providers that need a key (the ones a
+            card offer can make the chat default); ``False`` also names a
+            local server's optional key, so a launch it set up is not silent.
+
+    Returns:
+        The env-keyed providers, each with its curated default model.
+    """
+    from tldw_chatbook.Chat.provider_readiness import PROVIDERS_REQUIRING_API_KEY_KEYS
+    from tldw_chatbook.Chat.provider_setup_persistence import canonical_provider_key
+    from tldw_chatbook.config import is_valid_provider_api_key
+
+    api_settings = (
+        app_config.get("api_settings") if isinstance(app_config, Mapping) else None
+    )
+    if not isinstance(api_settings, Mapping) or not isinstance(environ, Mapping):
+        return ()
+    found: list[EnvKeyedProvider] = []
+    seen: set[str] = set()
+    for section, table in api_settings.items():
+        if not isinstance(table, Mapping):
+            continue
+        env_var = table.get("api_key_env_var")
+        if not isinstance(env_var, str) or not env_var.strip():
+            continue
+        env_var = env_var.strip()
+        try:
+            provider_key = canonical_provider_key(section)
+        except (TypeError, ValueError):
+            continue
+        if (
+            (key_required_only and provider_key not in PROVIDERS_REQUIRING_API_KEY_KEYS)
+            or provider_key in seen
+            or env_var in seen
+            or not is_valid_provider_api_key(environ.get(env_var))
+        ):
+            continue
+        seen.update((provider_key, env_var))
+        model = table.get("model")
+        found.append(
+            EnvKeyedProvider(
+                provider_key=provider_key,
+                env_var=env_var,
+                display_name=provider_display_name(provider_key),
+                model=model.strip() if isinstance(model, str) else "",
+                has_stored_key=_holds_stored_key(table),
+            )
+        )
+    return tuple(found)
+
+
+def _env_key_offers(
+    app_config: Any, environ: Any, current: str
+) -> tuple[EnvKeyedProvider, ...]:
+    """The env-keyed providers the Get started card offers (one rule for the
+    card and the notice that names its offers): a curated model, no stored
+    key a commit would delete, and not the provider new chats already use."""
+    return tuple(
+        entry
+        for entry in env_keyed_providers(app_config, environ)
+        if entry.provider_key != current and entry.model and not entry.has_stored_key
+    )
+
+
+def _new_chat_verdict(app_config: Any, environ: Any) -> tuple[str, str, str, Any]:
+    """The provider, display name, model and shared readiness of a new chat."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_default_console_session_settings,
+        provider_config_key,
+    )
+
+    settings = build_default_console_session_settings(app_config)
+    readiness = build_console_settings_readiness(
+        settings, app_config=app_config, environ=environ
+    )
+    provider_key = provider_config_key(settings.provider)
+    model = str(settings.model or "").strip()
+    return provider_key, provider_display_name(provider_key), model, readiness
+
+
+def build_env_key_first_launch_notice(
+    app_config: Any, environ: Any
+) -> EnvKeyFirstLaunchNotice | None:
+    """Build the honest first-launch notice for an install env keys set up.
+
+    'Ready to chat' is said only when the shared readiness verdict --
+    credentials, connection and context capacity -- is ready for the
+    provider and model new chats use. Otherwise the notice names the key it
+    found and why new chats cannot use it, pointing at the Get started
+    card's actions. Pure: nothing is written.
+
+    Args:
+        app_config: The live configuration snapshot.
+        environ: The environment mapping to read.
+
+    Returns:
+        The notice, or ``None`` when no env key was found.
+    """
+    named = env_keyed_providers(app_config, environ, key_required_only=False)
+    if not named:
+        return None
+    names = [entry.env_var for entry in named]
+    shown = ", ".join(names[:2]) + (" (and more)" if len(names) > 2 else "")
+    provider_key, display, model, readiness = _new_chat_verdict(app_config, environ)
+    pair = f"{display} · {model}" if model else display
+    if readiness.operability == "ready_to_send" and model:
+        return EnvKeyFirstLaunchNotice(
+            title="Provider key detected",
+            message=f"Found {shown} — you're ready to chat with {pair}. {_RUN_SETUP_HINT}",
+            ready=True,
+        )
+    own = next((entry for entry in named if entry.provider_key == provider_key), None)
+    if own is not None:
+        reason = readiness_words(readiness)
+        # Review round 1 (F10): these blockers render the empty chat's one
+        # line with its own action, not the Get started card.
+        if readiness.blocker == "capacity_exhausted":
+            fix = "Use Fix model limits on Console's empty chat."
+        elif readiness.blocker in SEND_OUTCOME_BLOCKERS:
+            fix = "Console's empty chat says what to change."
+        else:
+            fix = "Fix it from Console's Get started card."
+        message = (
+            f"Found {own.env_var}, but {pair} can't take a message yet "
+            f"({reason}). {fix}"
+        )
+    else:
+        reason = (
+            "which has no key"
+            if readiness.blocker in {"credential_missing", "credential_rejected"}
+            else f"which isn't ready ({readiness_words(readiness)})"
+        )
+        offered = _env_key_offers(app_config, environ, provider_key)
+        offers = "".join(f"Use {entry.display_name} or " for entry in offered[:2])
+        message = (
+            f"Found {shown}, but new chats use {display}, {reason}. "
+            f"On Console's Get started card choose {offers}Set up provider."
+        )
+    return EnvKeyFirstLaunchNotice(
+        title="Provider key found — setup needed", message=message, ready=False
+    )
+
+
+def build_console_env_key_actions(
+    app_config: Any, environ: Any, *, card_mode: str
+) -> tuple[ConsoleEnvKeyAction, ...]:
+    """Offer each env-keyed provider other than the one new chats use.
+
+    Only while the blocking card shows; the provider new chats already use
+    needs no offer (its key is already in use).
+
+    Args:
+        app_config: The live configuration snapshot.
+        environ: The environment mapping to read.
+        card_mode: The current ``ConsoleSetupCardState.mode``.
+
+    Returns:
+        Up to ``CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT`` offers, config order.
+    """
+    if card_mode != "card":
+        return ()
+    if not env_keyed_providers(app_config, environ):
+        return ()
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_default_console_session_settings,
+        provider_config_key,
+    )
+
+    current = provider_config_key(build_default_console_session_settings(app_config).provider)
+    actions = [
+        ConsoleEnvKeyAction(
+            label=f"Use {entry.display_name}",
+            detail=f"Found {entry.env_var}",
+            tooltip=(
+                f"Makes {entry.display_name}"
+                + (f" · {entry.model}" if entry.model else "")
+                + f" the chat default, using {entry.env_var} from your environment."
+            ),
+            provider_key=entry.provider_key,
+            env_var=entry.env_var,
+            model=entry.model,
+        )
+        for entry in _env_key_offers(app_config, environ, current)
+    ]
+    return tuple(actions[:CONSOLE_SETUP_ENV_KEY_ACTION_LIMIT])
+
+
+def build_env_key_provider_mutation(action: ConsoleEnvKeyAction, app_config: Any):
+    """One atomic setup mutation: the provider and model as the chat default,
+    ``credential_source = environment`` naming the variable (never its value).
+
+    Built by the shared provider-setup owner, so it commits through
+    ``persist_provider_setup`` exactly as Settings and setup do.
+
+    Args:
+        action: The card offer the user chose.
+        app_config: The live configuration snapshot.
+
+    Returns:
+        The ``ProviderSetupMutation`` to persist.
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import first_configured_endpoint
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        ProviderSetupDraft,
+        build_provider_setup_mutation,
+    )
+
+    if type(action) is not ConsoleEnvKeyAction:
+        raise ValueError("Env-key action is invalid.")
+    api_settings = (
+        app_config.get("api_settings") if isinstance(app_config, Mapping) else None
+    )
+    table = (
+        api_settings.get(action.provider_key)
+        if isinstance(api_settings, Mapping)
+        else None
+    )
+    endpoint = first_configured_endpoint(table) if isinstance(table, Mapping) else None
+    if endpoint:
+        resolution = resolve_provider_endpoint(action.provider_key, endpoint)
+        endpoint = None if resolution.errors else resolution.persisted_endpoint
+    return build_provider_setup_mutation(
+        ProviderSetupDraft(
+            provider=action.provider_key,
+            model=action.model,
+            endpoint=endpoint or "",
+            credential_source="environment",
+            credential_revision=0,
+            draft_generation=0,
+            credential_env_var=action.env_var,
+        ),
+        app_config,
+    )

@@ -83,6 +83,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
 from tldw_chatbook.config import (
     API_MODELS_BY_PROVIDER,
     DEFAULT_CONFIG_FROM_TOML,
+    DEFAULT_GOOGLE_CHAT_MODEL,
     RuntimeConfigSnapshot,
     save_setting_to_cli_config,
 )
@@ -1822,7 +1823,9 @@ def test_console_remote_defaults_use_smoke_verified_models() -> None:
     expected_defaults = {
         "anthropic": ("Anthropic", "claude-sonnet-5"),
         "cohere": ("Cohere", "command-a-03-2025"),
-        "google": ("Google", "gemini-2.5-flash"),
+        # TASK-34100.2 (gap-03): gemini-2.5-flash 404s for new keys; the
+        # shipped default is the rolling alias that answers a generate call.
+        "google": ("Google", DEFAULT_GOOGLE_CHAT_MODEL),
         "huggingface": ("HuggingFace", "openai/gpt-oss-120b"),
     }
 

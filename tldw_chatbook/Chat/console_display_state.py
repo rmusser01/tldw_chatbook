@@ -312,6 +312,18 @@ CONSOLE_BLOCKER_IMAGE_UNSUPPORTED = "image_unsupported"
 CONSOLE_BLOCKER_PROVIDER_SETUP = "provider_setup"
 CONSOLE_BLOCKER_LIBRARY_EVIDENCE = "library_evidence_unavailable"
 CONSOLE_BLOCKER_ARCHIVE_INFLIGHT = "archive_inflight"
+#: TASK-34100.2: a model whose reply reservation fills its context window.
+#: The gate refuses that send with copy naming its own fix, never "finish
+#: provider setup".
+CONSOLE_BLOCKER_MODEL_LIMITS = "model_limits"
+CAPACITY_SETUP_COPY = (
+    "Replies fill this model's context window. Fix model limits in "
+    "Chat settings before sending."
+)
+CAPACITY_SEND_COPY = (
+    "Console send blocked: Replies fill this model's context window. Lower the "
+    "response maximum or choose another model before sending."
+)
 #: The Send strip per blocker code. Chosen from the code the reason was
 #: built for, never from its words: "model" in "Providers & Models" and in
 #: "<model> can't accept images" both read "choose a model" before. A code
@@ -325,6 +337,9 @@ _SETUP_STRIP_COPY: Mapping[str, str] = {
     "model_missing": "Send blocked — choose a model to continue",
     "provider_missing": "Send blocked — choose a provider to continue",
     "endpoint_unreachable": "Send blocked — retry the connection to continue",
+    # TASK-34100.2 review F2/F6: names its fix; fits the strip whole
+    # (TASK-33005.7).
+    CONSOLE_BLOCKER_MODEL_LIMITS: "Send blocked — fix model limits to continue",
 }
 _SETUP_STRIP_FALLBACK = "Send blocked — finish provider setup to continue"
 
@@ -407,7 +422,10 @@ def console_setup_blocker(readiness: ConsoleSettingsReadiness) -> ConsoleBlocked
         owns admission; otherwise one sentence naming the setup step.
     """
     action = readiness.recovery_action
-    if readiness.operability == "ready_to_send" or action == "wait_for_active_run":
+    # TASK-34100.2 review F2: ``refuses_turn`` is False when ready, and when
+    # the only blocker is a past send's 401/404 (``SEND_OUTCOME_BLOCKERS``):
+    # every surface says why, and the next send is the retry.
+    if not readiness.refuses_turn or action == "wait_for_active_run":
         # The prompt-queue presentation owns active-run admission: it
         # blocks while a turn is preparing, then enables Queue once the
         # provider has accepted it. Settings readiness still blocks
@@ -439,6 +457,8 @@ def console_setup_blocker(readiness: ConsoleSettingsReadiness) -> ConsoleBlocked
     elif action == "retry_connection":
         text = "Provider unreachable. Retry connection before sending."
         code = "endpoint_unreachable"
+    elif action == "adjust_model_limits":  # TASK-34100.2
+        text, code = CAPACITY_SETUP_COPY, CONSOLE_BLOCKER_MODEL_LIMITS
     return ConsoleBlockedReason(text, code=code)
 
 
@@ -461,7 +481,8 @@ def console_send_gate_setup_copy(readiness: ConsoleSettingsReadiness) -> str:
     provider setup gaps belong in this gate.
     """
     action = readiness.recovery_action
-    if readiness.operability != "not_ready" or action == "wait_for_active_run":
+    # TASK-34100.2 review F2: a past send's 401/404 never refuses the retry.
+    if not readiness.refuses_turn or action == "wait_for_active_run":
         return ""
     if action == "configure_credential":
         if readiness.subscription_status == "pending":
@@ -475,6 +496,7 @@ def console_send_gate_setup_copy(readiness: ConsoleSettingsReadiness) -> str:
         "save_endpoint": "Console send blocked: Save the provider endpoint before sending.",
         "configure_endpoint": "Console send blocked: Enter a valid provider endpoint before sending.",
         "retry_connection": "Console send blocked: Retry the provider connection before sending.",
+        "adjust_model_limits": CAPACITY_SEND_COPY,  # TASK-34100.2
     }.get(action or "", "Console send blocked: Finish provider setup before sending.")
 
 

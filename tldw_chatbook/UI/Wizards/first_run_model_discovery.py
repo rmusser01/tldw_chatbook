@@ -121,6 +121,11 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     if code is not None:
         return [], "connection_failed", f"HTTP {code}" if code else "HTTP error"
     error_kind = result.error.kind if result.error is not None else ""
+    if error_kind == "missing_credentials" and result.error.category == "forbidden":
+        # TASK-34100.2 (R2-8): a 403 refuses the LISTING, not the key (a
+        # Gemini 403 is 'Google refused this request'); Settings shows it as
+        # 'listing not permitted', so setup offers a typed model id instead.
+        return [], "listing_unavailable", ""
     category = {
         "invalid_response": "invalid response",
         "missing_credentials": "authentication",
@@ -560,10 +565,16 @@ def staged_key_line(owner: Any) -> str:
     usable list keeps the line: Next still checks the key.
     """
 
+    from tldw_chatbook.UI.Wizards import first_run_key_check as key_check
+
+    # TASK-34100.2 AC#3: a key the shared discovery checks is offered that
+    # check (Enter); one a public model list cannot prove says so.
+    unchecked = key_check.unchecked_key_line(owner.selected_provider_key)
     key = owner._model_discovery_key(owner._effective_provider_draft())
     if key is None:
-        return STAGED_KEY_LINE
+        return unchecked or STAGED_KEY_LINE
     evidence = owner._test_evidence_for_discovery_key(key)
+    outcome = None
     if evidence is not None:
         refused = evidence.category == "unauthorized"
         answered = evidence.endpoint == "reachable"
@@ -572,14 +583,16 @@ def staged_key_line(owner: Any) -> str:
             outcome = owner._selected_provider_outcomes.get(key)
             _models, state, category = _model_discovery_ui_outcome(outcome)
         except ValueError:  # no listing of this key yet
-            return STAGED_KEY_LINE
+            return unchecked or STAGED_KEY_LINE
         refused = state == "connection_failed" and category == "authentication"
         answered = state in {"available", "empty"}
     if refused:
         return "Key staged — the server rejected it; update it above."
     if answered:
-        return "Key staged — the server did not refuse it."
-    return STAGED_KEY_LINE
+        return key_check.answered_key_line(
+            owner.selected_provider_key, outcome
+        ) or "Key staged — the server did not refuse it."
+    return unchecked or STAGED_KEY_LINE
 
 
 def auth_title(owner: Any, requires_api_key: bool) -> str:

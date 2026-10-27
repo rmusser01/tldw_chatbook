@@ -2434,3 +2434,61 @@ def test_execution_only_custom_hosted_stays_unowned(provider):
     """ADR-179 Phase 2: custom-hosted has no settings table of its own."""
     with pytest.raises(ValueError, match="Provider is not supported"):
         canonical_provider_key(provider)
+
+
+def test_saving_a_template_sample_table_writes_the_marker_false():
+    """TASK-34100.2 AC#9: Settings and setup share this builder, so saving a
+    provider the template marks ``template_sample = true`` makes it the
+    user's own. The marker is written ``false`` -- a deleted key would let
+    the template's ``true`` merge back on the next load."""
+    config = {
+        "api_settings": {
+            "tabbyapi": {
+                "template_sample": True,
+                "api_url": "http://localhost:8080/v1/chat/completions",
+                "model": "tabby-model",
+            }
+        }
+    }
+    draft = _draft(
+        provider="tabbyapi", model="my-tabby", endpoint="http://127.0.0.1:5000/v1"
+    )
+
+    mutation = build_provider_setup_mutation(draft, config)
+
+    assert mutation.section_values["api_settings.tabbyapi"]["template_sample"] is False
+    unmarked = build_provider_setup_mutation(draft, {})
+    assert "template_sample" not in unmarked.section_values["api_settings.tabbyapi"]
+
+
+def test_setup_streaming_is_written_only_as_true_and_validated():
+    """TASK-34100.2 AC#10: setup may turn a local server's streaming on in
+    the same mutation; the validator accepts only the exact values setup
+    writes (streaming true, template_sample false)."""
+    streamed = build_provider_setup_mutation(_draft(), {}, enable_streaming=True)
+    assert streamed.section_values["api_settings.llama_cpp"]["streaming"] is True
+    assert "streaming" not in (
+        build_provider_setup_mutation(_draft(), {}).section_values[
+            "api_settings.llama_cpp"
+        ]
+    )
+    with pytest.raises(ValueError):
+        build_provider_setup_mutation(_draft(), {}, enable_streaming="yes")
+
+    def rebuilt(**forged):
+        values = {
+            section: dict(table) for section, table in streamed.section_values.items()
+        }
+        values["api_settings.llama_cpp"].update(forged)
+        return replace(
+            streamed,
+            section_values=MappingProxyType(
+                {section: MappingProxyType(table) for section, table in values.items()}
+            ),
+        )
+
+    rebuilt()  # control: the same values rebuild cleanly
+    rebuilt(template_sample=False)
+    for forged in ({"streaming": False}, {"template_sample": True}):
+        with pytest.raises(ValueError):
+            rebuilt(**forged)

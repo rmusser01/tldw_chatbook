@@ -13,7 +13,8 @@ from typing import Any, Generator, Union, Dict, Optional, List
 from urllib.parse import urlsplit
 
 import requests
-from urllib3 import Retry
+
+from tldw_chatbook.LLM_Calls.chat_transport_retry import chat_transport_retry
 
 from tldw_chatbook.Provider_Contract import (
     ChatProviderError,
@@ -291,21 +292,15 @@ def _chat_with_openai_compatible_local_server(
         )
 
     try:
-        # Configure retries
-        retry_strategy = Retry(
-            total=llm_retry_count(api_retries),
-            # TASK-34100.5 review (B-F1): a read timeout means the server is
-            # still working on this prompt; re-sending makes it start over.
-            read=0,
-            backoff_factor=api_retry_delay,
-            status_forcelist=[
-                429,
-                500,
-                502,
-                503,
-                504,
-            ],  # Retry on these HTTP status codes
-            allowed_methods=["POST"],  # Important: Retry POST requests
+        # TASK-34100.2 review round 2 (R3-1): a 429 is never retried in the
+        # transport, and the last 5xx comes back to raise_for_status, so the
+        # dispatcher reads a rate limit with the server's reason (not the
+        # RetryError this block's RequestException branch called 'Network
+        # error' 503). TASK-34100.5 review (B-F1): a read timeout means the
+        # server is still working on this prompt; re-sending makes it start
+        # over, so read errors are never retried.
+        retry_strategy = chat_transport_retry(
+            llm_retry_count(api_retries), api_retry_delay, read=0
         )
         from tldw_chatbook.Chat.stream_stall_watchdog import (
             self_hosted_read_timeout,
@@ -1181,11 +1176,10 @@ def chat_with_kobold(
     )
 
     try:
-        retry_strategy = Retry(
-            total=llm_retry_count(api_retries),
-            backoff_factor=api_retry_delay,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["POST"],
+        # TASK-34100.2 review round 2 (R3-1): no 429 retry, and the last
+        # response reaches raise_for_status (see chat_transport_retry).
+        retry_strategy = chat_transport_retry(
+            llm_retry_count(api_retries), api_retry_delay
         )
         session = create_pooled_default_session(
             mount_retry=retry_strategy,

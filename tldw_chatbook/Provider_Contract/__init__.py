@@ -106,6 +106,11 @@ class ChatRateLimitError(ChatAPIError):
     `Agents/model_retry.retry_delay_seconds`, which honours it over computed
     backoff (TASK-25901 AC#2 -- previously the classifier honoured the
     attribute but nothing in the stack ever set it, review I3).
+
+    ``provider_reason`` is the provider's own explanation (which quota, when
+    to retry), already bounded and scrubbed by the handler that raised it;
+    Console shows it after the rate-limit category (TASK-34100.2 AC#18).
+    Empty when the provider gave none.
     """
 
     def __init__(
@@ -113,9 +118,11 @@ class ChatRateLimitError(ChatAPIError):
         message="Rate limit exceeded with the chat provider.",
         provider=None,
         retry_after=None,
+        provider_reason="",
     ):
         super().__init__(message, status_code=429, provider=provider)
         self.retry_after = retry_after
+        self.provider_reason = provider_reason if isinstance(provider_reason, str) else ""
 
 
 class ChatProviderError(ChatAPIError):

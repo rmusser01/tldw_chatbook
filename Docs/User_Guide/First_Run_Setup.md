@@ -252,6 +252,38 @@ soon as you edit that field.
 - **Full setup** — also walks through RAG/embeddings, built-in tools, notes
   sync, appearance, and key encryption.
 
+## How setup checks your key
+
+On the Provider step, press Enter in the key field (or **Test connection**)
+to check the key now; it is also checked when you press **Next →**. For
+most cloud providers the check is the provider's own model list, which only
+answers a valid key. Some providers need more than that, and setup words the
+result in the provider's own terms:
+
+- **Google Gemini**: Google's model list is the key check. "✓ Google
+  accepted this key — found 15 model(s)." A wrong key reads "✗ Google
+  rejected this key: API key not valid."
+- **Anthropic**: its authenticated model list. "✓ Anthropic accepted this
+  key — found 13 model(s)."
+- **OpenRouter** and **Hugging Face**: their model lists answer any key, so
+  setup asks each provider's key endpoint. "✓ OpenRouter accepted this key —
+  found 466 model(s)", or "✗ OpenRouter rejected this key: User not found."
+  The Model step quotes the same reason, and so does its **Continue
+  anyway?** question.
+- **NVIDIA NIM** and **Novita AI**: the model list answers without a valid
+  key and there is no key endpoint, so the key is not checked until your
+  first message. Setup says "key not checked" and never shows ✓; the summary
+  reads "– Provider — nvidia (key not checked)".
+
+The summary's Provider row shows ✓ for OpenRouter and Hugging Face only when
+their key check passed in this run of setup. If it didn't run (for example,
+you continued without one), the row reads "(key not checked)" too.
+
+The Model step also says what else the model is used for. While
+`[analysis_defaults]` still has its shipped values, it reads "Document
+analysis and summaries (Library import, Media, Reader) use this model too."
+If you set your own analysis model, it names that model instead.
+
 ## What each step does
 
 | Step | What it configures | Where to change it later |
@@ -704,6 +736,43 @@ setup with your choices intact.
   Carry it as described above instead.
 - A folder gets "Choose the archive file, not a folder."
 - Changing the archive path clears either message.
+
+## Local servers stream
+
+Setting up a local OpenAI-compatible server (llama.cpp, Ollama, vLLM, LM
+Studio through **Custom OpenAI-compatible**, and the other local servers)
+turns streaming on for it, so its first reply appears as it is written. The
+shipped Custom and Custom 2 sections also start with streaming on. A server
+that cannot stream still answers through the non-streaming path. Cloud
+providers keep their own streaming setting.
+
+## If a provider key is already exported
+
+If your shell already exports a provider key (for example
+`ANTHROPIC_API_KEY`), chatbook skips the wizard and opens Console. If it asks
+**Check model lists online?**, that question comes first; once you answer
+it, one notice says what it found:
+
+- "Found OPENAI_API_KEY — you're ready to chat with OpenAI · *model*" only
+  when new chats would actually work: their provider has a key, nothing else
+  blocks a send, and the model's context window has room for a message.
+- Otherwise it names the key and why new chats can't use it yet, for example
+  "Found ANTHROPIC_API_KEY, but new chats use OpenAI, which has no key", and
+  points at Console's **Get started** card, which offers **Use Anthropic**
+  (see [Console](console.md#first-run-the-get-started-card)) and **Set up
+  provider**. Choosing **Use Anthropic** removes this notice, since it is no
+  longer true. A provider whose key is already saved in your settings is not
+  offered; its saved key stays the one chats use.
+- When the key is for the provider new chats already use but something else
+  stops a send, the notice names that instead. If the model's replies would
+  fill its whole context window, it says "Use Fix model limits on Console's
+  empty chat." If a past message to that model was refused (a rejected key,
+  or a model that no longer exists), it says "Console's empty chat says what
+  to change."
+
+Your provider settings and chat default don't change until you choose one;
+the only thing saved at launch is that the notice was shown, so it appears
+once. The full setup is still in Settings ▸ Diagnostics ▸ Run setup wizard.
 
 ## Running it again
 

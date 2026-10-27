@@ -828,3 +828,42 @@ an outer coroutine task that propagates its exception. A real held provider fail
 after submit cancellation and produced `Task exception was never retrieved` even
 though the maintenance owner had consumed the inner error. Retaining the wrapper
 through that same owner preserves prompt Stop and observes its eventual outcome.
+## A send-side hook in `prepare_chat_request` never sees a default Agents send
+
+**TASK-34100.2 review round 2, 2026-10-04.** Readiness needed the context window
+a local server reports, so round 1 recorded it in
+`ConsoleProviderGateway.prepare_chat_request`, and a unit test called that
+method directly and passed. Live, llama.cpp at `-c 4096` under the shipped
+4,096 `max_tokens` kept the Console header at "Ready · not tested" while every
+send came back 400 from the server ("request (4712 tokens) exceeds the
+available context size (4096 tokens)"). The default first-chat send is an
+Agents run, and `ConsoleAgentBridge` calls `prepare_chat_request` only when
+trace capture is on (`_trace_request_factory`), so the hook never ran. The
+record moved to `resolve_for_send`, which the plain path and the Agents path
+both call.
+
+Before adding send-time bookkeeping, find the seam that every send path
+shares (`resolve_for_send`), not the one the plain path happens to use. Test
+it through that seam: calling the hooked method directly proves only that
+the method works, not that a real send reaches it.
+
+## A "Trace capture blocked — the provider was not contacted" card after a provider error is the retry, not the first call
+
+**TASK-34100.2 pass 2, 2026-10-04.** Three separate live runs showed the trace
+card right after a real provider failure: a Gemini 429/503 and an OpenRouter
+502. Each was filed as a separate capture-subsystem bug. The app log showed the
+actual sequence. The first call's trace reservation succeeded, the provider
+answered with an error, and then a **second** `phase=trace_reservation` failed
+with `error_category=trace_tool_chain_unavailable`. That second call was the
+Agents loop's TASK-25901 retry. The bridge routes every call after the first
+as `TOOL_LOOP`, and the trace contract only admits a tool-loop call whose
+predecessor bore a response, so it refused the retry. The card's "the provider
+was not contacted" is true of the refused retry and false of the send the user
+made. The fix is `captured_run_budget`: a captured run has no model retries,
+so the provider's own error ends it.
+**What to do:** when a trace card follows a provider error, read the log's
+`console_send_stage` lines for the attempt. Two `trace_reservation` phases for
+one send mean a second call, such as a retry or a fallback provider, and the
+card describes that call. Any new path that makes another model call inside a
+captured run needs a trace route that admits it. A configured ADR-110 fallback
+still makes such a call.

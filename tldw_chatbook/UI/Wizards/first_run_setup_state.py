@@ -394,8 +394,39 @@ def _resolve_first_run_provider_endpoints(
         discovery_resolution = resolve_provider_endpoint(owner_key, discovery_endpoint)
         if discovery_resolution.errors or discovery_resolution.chat_url is None:
             raise ValueError("Provider discovery endpoint is invalid.")
-        discovery_endpoint = discovery_resolution.chat_url
+        discovery_endpoint = _first_run_discovery_base(
+            owner_key, discovery_endpoint, discovery_resolution.chat_url
+        )
     return endpoint, discovery_endpoint or ""
+
+
+def _first_run_discovery_base(owner_key: str, raw: str, chat_url: str) -> str:
+    """The endpoint discovery is handed: the base URL where a send needs one.
+
+    TASK-34100.2 AC#4 (gap-01): every engine preset (NVIDIA NIM, Novita, ...)
+    failed discovery as ``invalid_provider_settings`` for a VALID key, because
+    the hosted engine refuses a ``/chat/completions`` base and setup staged the
+    chat URL. Engine presets get their API base -- what persistence writes
+    for them -- and Gemini keeps Google's own API base, which the generic
+    endpoint contract would otherwise rewrite to ``.../v1beta/v1/chat/
+    completions``. Every other provider keeps the chat URL it always staged.
+
+    Args:
+        owner_key: The shared owner key of the provider being set up.
+        raw: The validated discovery endpoint before contract rewriting.
+        chat_url: The contract's chat URL for ``raw``.
+
+    Returns:
+        The discovery endpoint to stage.
+    """
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    if owner_key == "google":
+        return raw.rstrip("/")
+    record = RECORDS_BY_KEY.get(owner_key)
+    if record is not None and record.engine_driven:
+        return chat_url.removesuffix("/chat/completions")
+    return chat_url
 
 
 def build_current_first_run_model_discovery_key(
@@ -457,6 +488,40 @@ def validate_first_run_model_id(model_id: object) -> str:
     return model
 
 
+#: Local registry records whose chat path cannot stream: KoboldCpp's native
+#: ``/api/v1/generate`` handler forces streaming off, so writing it on would
+#: record a choice the handler ignores.
+_LOCAL_NON_STREAMING_RECORD_KEYS = frozenset({"koboldcpp"})
+
+
+def _local_streaming_owner_keys() -> frozenset[str]:
+    """Owner keys of the local servers setup turns streaming on for.
+
+    TASK-34100.2 AC#10: derived from the provider registry's ``local``
+    records (Custom / Custom 2 are the LM Studio-style OpenAI-compatible
+    slots), so a local server added to the registry later streams too.
+    """
+    from tldw_chatbook.provider_registry import ALL_RECORDS
+
+    keys: set[str] = set()
+    for record in ALL_RECORDS:
+        if (
+            record.classification != "local"
+            or record.key in _LOCAL_NON_STREAMING_RECORD_KEYS
+        ):
+            continue
+        try:
+            keys.add(_first_run_provider_owner_key(record.key))
+        except ValueError:
+            continue  # a registry record setup cannot own (custom-hosted)
+    return frozenset(keys)
+
+
+#: TASK-34100.2 AC#10: local OpenAI-compatible providers whose setup commit
+#: turns streaming on.
+FIRST_RUN_LOCAL_STREAMING_PROVIDER_KEYS = _local_streaming_owner_keys()
+
+
 def build_first_run_provider_commit(
     provider_draft: FirstRunProviderDraft,
     model_id: object,
@@ -487,6 +552,12 @@ def build_first_run_provider_commit(
     credential = provider_draft.credential
     credential_value = _credential_value_for_boundary(credential)
     resolved_env_var = None
+    # TASK-34100.2 AC#10: a local OpenAI-compatible server streams its first
+    # reply (the Custom sections used to ship streaming off).
+    streams = (
+        _first_run_provider_owner_key(effective_draft.provider)
+        in FIRST_RUN_LOCAL_STREAMING_PROVIDER_KEYS
+    )
 
     def shared_draft(source: str) -> ProviderSetupDraft:
         return ProviderSetupDraft(
@@ -537,6 +608,7 @@ def build_first_run_provider_commit(
             config,
             preserve_credentials=readiness.subscription_status is not None,
             record_environment_credentials=True,
+            enable_streaming=streams,
         )
     else:
         # TASK-34100.6 AC#6 (coverage-08): every other exported key is recorded
@@ -550,6 +622,7 @@ def build_first_run_provider_commit(
             ),
             config,
             record_environment_credentials=True,
+            enable_streaming=streams,
         )
     if type(mutation) is not ProviderSetupMutation:
         raise ValueError("Provider setup mutation is invalid.")

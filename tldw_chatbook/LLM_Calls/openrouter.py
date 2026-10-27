@@ -89,11 +89,21 @@ _FINISH_POLICY = OpenRouterFinishPolicy()
 
 
 # Official response annotations, never universal hosted-parser fields.
+# Each is validated, then dropped -- never passed through -- and any other
+# unknown key still fails closed (no tolerant profile). TASK-34100.2 AC#16
+# recorded real replies (Tests/fixtures/openrouter_live_replies.json): the
+# message and stream delta also carry ``refusal`` (null), a reasoning model
+# sends ``reasoning_details`` as a list of objects (hosted_chat's
+# ``_LIST_OF_OBJECTS_ALLOWANCES`` rule), and a non-streaming tool call numbers
+# each ``message.tool_calls`` item with ``index`` (an int in range,
+# ``_TOOL_CALL_ALLOWANCE_RULES``). The stream's repeated terminal usage choice
+# is ``_OpenRouterWireNormalizer``'s.
 _OPENROUTER_RESPONSE_KEYS = frozenset(
     {"provider", "service_tier", "openrouter_metadata"}
 )
 _OPENROUTER_CHOICE_KEYS = frozenset({"native_finish_reason", "logprobs"})
-_OPENROUTER_MESSAGE_KEYS = frozenset({"reasoning", "reasoning_details"})
+_OPENROUTER_MESSAGE_KEYS = frozenset({"refusal", "reasoning", "reasoning_details"})
+_OPENROUTER_TOOL_CALL_KEYS = frozenset({"index"})
 
 
 class _OpenRouterWireNormalizer:
@@ -387,6 +397,7 @@ def chat_with_openrouter(
             allowed_extra_keys=_OPENROUTER_RESPONSE_KEYS,
             allowed_choice_keys=_OPENROUTER_CHOICE_KEYS,
             allowed_message_keys=_OPENROUTER_MESSAGE_KEYS,
+            allowed_tool_call_keys=_OPENROUTER_TOOL_CALL_KEYS,
             wire_normalizer=_OpenRouterWireNormalizer(streaming=current_streaming),
         )
     except HostedChatProtocolError:

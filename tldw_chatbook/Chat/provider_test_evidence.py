@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, get_args
 from unicodedata import category as unicode_category
 
 from ..Provider_Contract.provider_endpoint_contract import canonical_connection_identity
+from ..provider_registry import PUBLIC_MODEL_LISTING_KEYS, UNCHECKED_KEY_LISTING_KEYS
 
 if TYPE_CHECKING:
     from .console_session_settings import ConsoleSessionSettings
@@ -93,10 +94,17 @@ _PROBE_ENDPOINT_FACETS = frozenset(
 )
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
 _CREDENTIAL_FACETS = frozenset(get_args(CredentialFacet))
-#: Providers whose model listing answers without a valid key, so a listing
-#: never proves the key it was sent (ADR-012 amendment, spec §5): OpenRouter
-#: (ADR-020) and NVIDIA NIM (unauthenticated probe, provider_registry.py).
-PUBLIC_MODEL_LISTING_PROVIDER_KEYS = frozenset({"openrouter", "nvidia"})
+#: Providers whose model listing answers without a valid key (ADR-012
+#: amendment, spec §5). TASK-34100.2 (gap-01): one set, on the provider
+#: record (``ProviderRecord.public_model_listing``) -- OpenRouter (ADR-020),
+#: NVIDIA NIM, Hugging Face and Novita each answered a random key.
+PUBLIC_MODEL_LISTING_PROVIDER_KEYS = PUBLIC_MODEL_LISTING_KEYS
+#: ...and those with no authenticated key check (``key_check_url``): their
+#: listing never proves the key it was sent, so the record itself refuses to
+#: call it accepted. OpenRouter and Hugging Face are NOT here: discovery
+#: checks their key at /api/v1/key and whoami-v2, and a listing only
+#: accepts a key when that check passed (``key_check_probe_result``).
+UNCHECKED_KEY_LISTING_PROVIDER_KEYS = UNCHECKED_KEY_LISTING_KEYS
 _GENERATION_FACETS = frozenset(
     {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
 )
@@ -479,6 +487,11 @@ class ProviderProbeResult:
     category: EndpointFailureCategory | None = None
     #: TASK-33005.3: the listing authenticated the key it was sent.
     key_accepted: bool = False
+    #: TASK-34100.2 review (C8): the provider's authenticated key check
+    #: (``ProviderRecord.key_check_url``) accepted that key. A public listing
+    #: (OpenRouter, Hugging Face) answers any key, so only this lets it
+    #: accept one (``_evidence_from_exact_outcome``).
+    key_check_passed: bool = False
 
     def __post_init__(self) -> None:
         _validate_probe_result(self.endpoint, self.model_ids, self.category)
@@ -486,6 +499,10 @@ class ProviderProbeResult:
             self.key_accepted and self.endpoint != "reachable"
         ):
             raise ValueError("Only a listing that answered can accept a key.")
+        if type(self.key_check_passed) is not bool or (
+            self.key_check_passed and not self.key_accepted
+        ):
+            raise ValueError("Only an accepted key can have passed its key check.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,7 +618,7 @@ class ProviderTestEvidence:
         )
         if (
             normalized_credential == "listing_accepted"
-            and self.identity.provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+            and self.identity.provider_key in UNCHECKED_KEY_LISTING_PROVIDER_KEYS
         ):
             normalized_credential = "present_unverified"  # Spec §5, AC#4.
         object.__setattr__(self, "credential", normalized_credential)
@@ -1714,12 +1731,18 @@ def _evidence_from_exact_outcome(
         return outcome
     if type(outcome) is not ProviderProbeResult:
         raise ValueError("Provider probe result type is invalid.")
+    # Spec §5 (TASK-34100.2 review C8): a public listing answers any key, so
+    # it accepts one only through the provider's own key check.
+    accepted = outcome.key_accepted and (
+        identity.provider_key not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+        or outcome.key_check_passed
+    )
     return ProviderTestEvidence(
         identity,
         outcome.endpoint,
         outcome.model_ids,
         outcome.category,
-        credential="listing_accepted" if outcome.key_accepted else "not_required",
+        credential="listing_accepted" if accepted else "not_required",
     )
 
 
