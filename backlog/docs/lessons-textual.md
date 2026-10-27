@@ -1462,11 +1462,14 @@ other restyles the whole subtree and compares every computed style.
 **Third instance (TASK-33620.15.1.4, 2026-10-27).** The Console's edge focus cue
 (`console-edge-region-focused`) was still a plain `set_class` on each rail, so every
 focus move into or out of the Inspect rail restyled its ~160 nodes (the Context rail
-~140, conversation browser included). Live at 235x52 that was a median 47-50 ms of CPU
-per rail open and close, up to 293 ms of wall in one callback at load 12-16, found only
-by timing `sync_console_focus_paint` around Alt+I. The fix is the same two-node update;
+~140, conversation browser included). Live at 235x52 that was a median 47 ms of wall
+(39 ms CPU) per rail open and 62 ms of wall (43 ms CPU) per close, up to 293 ms of wall
+in one callback at load 12-16, found only by timing `sync_console_focus_paint` around
+Alt+I. The fix is the same two-node update, now one shared helper in
+`UI/Console_Modules/frame.py` (`_set_class_restyling_only`) that both cues call;
 `Tests/UI/test_console_edge_focus_restyle_scope.py` pins it and its fidelity. When you
-scope one cue, grep the same helper for its siblings.
+scope one cue, grep the same helper for its siblings, and route a fourth through that
+helper rather than writing the pattern by hand again.
 
 ## A batch of new widgets is laid out two or three times; pace by settled layout, not by size (TASK-33628.5.1, 2026-10-09)
 
