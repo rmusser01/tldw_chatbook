@@ -19,8 +19,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SEND_OUTCOMES,
     ConsoleSessionSettings,
     build_console_settings_readiness,
+    model_readiness_words,
     readiness_words,
-    readiness_words_for_model,
     verdict_readiness_words,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
@@ -478,18 +478,20 @@ def test_a_window_too_small_explains_itself_without_locking_the_composer() -> No
 def test_switcher_rows_judge_capacity_per_model() -> None:
     provider = _readiness(max_tokens=128_000)  # the representative row is blocked
 
-    assert readiness_words_for_model(provider, "openai", "gpt-4o", max_tokens=128_000) == (
+    assert model_readiness_words(
+        provider, "gpt-4o", provider="openai", max_tokens=128_000
+    ) == (
         "Not ready · window too small"
     )
-    assert readiness_words_for_model(
-        provider, "openai", "gpt-4.1-2025-04-14", max_tokens=128_000
+    assert model_readiness_words(
+        provider, "gpt-4.1-2025-04-14", provider="openai", max_tokens=128_000
     ) == "Ready · not tested"
 
 
 def test_a_provider_level_blocker_reads_the_same_on_every_row() -> None:
     provider = _readiness(config={"api_settings": {"openai": {}}})
 
-    assert readiness_words_for_model(provider, "openai", "gpt-4o") == (
+    assert model_readiness_words(provider, "gpt-4o", provider="openai") == (
         "Not ready · no key"
     )
 
