@@ -1754,6 +1754,14 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # nodes errored in setup on a clean dev export (4de437a5c5) and
             # all 31 pass enrolled. It never re-selects a config.
             "test_model_artifact_widgets.py",
+            # TASK-34100.14 review F9: the model-browser state suite (plan
+            # rows, inventory, install-failure copy, transfer readout) hits
+            # the same signature through the same Tests/UI/conftest.py
+            # fixture: all 28 nodes errored in setup (2026-10-27, on dev
+            # 0923ec0ca2 plus this branch) and all 28 pass enrolled, so its
+            # repinned busy-copy assertion now runs locally. It never
+            # re-selects a config.
+            "test_model_browser_state.py",
         }
     )
     test_data_dir = (
