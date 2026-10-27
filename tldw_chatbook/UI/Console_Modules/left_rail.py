@@ -546,6 +546,9 @@ class ConsoleLeftRail(Vertical):
         self._active_reveal_generation = 0
         self._pending_active_reveal: tuple[int, str, str | None, bool] | None = None
         self._allocation_reconcile_scheduled = False
+        # TASK-35970: opened Character renders still mounting the snapshot
+        # deferred while collapsed; allocation passes wait for all of them.
+        self._character_renders_pending = 0
         self._last_allocation_state: (
             tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
         ) = None
@@ -1456,7 +1459,8 @@ class ConsoleLeftRail(Vertical):
     def _prepare_allocation_reconcile(self) -> None:
         """Let every bounded body commit its own ceiling before outer geometry."""
 
-        if not self.is_mounted:
+        if not self.is_mounted or self._character_renders_pending:
+            # The settled render requests the pass this one would have been.
             self._allocation_reconcile_scheduled = False
             return
         # The two peer list sections grow to fill the rail: each gets half
@@ -1500,6 +1504,11 @@ class ConsoleLeftRail(Vertical):
         """Snapshot committed complete sections and reconcile the outer owner."""
 
         try:
+            if self._character_renders_pending:
+                # A pass measuring the half-mounted Character body read zero
+                # rows and moved the active section off it, dropping the
+                # open's reveal (TASK-35970). The settled render re-requests.
+                return
             self._reconcile_character_avatar_geometry()
             descriptors = self._mounted_descriptors()
             if not descriptors:
@@ -1799,7 +1808,10 @@ class ConsoleLeftRail(Vertical):
             except QueryError:
                 continue
             if widget.content != copy:
-                widget.update(copy)
+                # TASK-35970: the name caption is a hidden seam that is never
+                # displayed; its new copy needs no layout. The painter's
+                # first write of a session lands on its first send.
+                widget.update(copy, layout=widget.display)
 
     @staticmethod
     def character_avatar_spec_is_blank(spec: dict | None) -> bool:
@@ -2933,6 +2945,14 @@ class ConsoleLeftRail(Vertical):
         self.post_message(self.SectionToggled(section_id=section_id, opened=opened))
         self.call_after_refresh(self._restore_section_toggle_focus, button_id)
 
+    def _character_render_settled(self) -> None:
+        """Measure the opened Character section once its render has mounted."""
+
+        # A reopen before an earlier render settled has one still mounting.
+        self._character_renders_pending = max(0, self._character_renders_pending - 1)
+        if not self._character_renders_pending and self.is_mounted:
+            self.request_allocation_reconcile()
+
     def _restore_section_toggle_focus(self, button_id: str) -> None:
         """Retain pointer focus after the toggle's layout reconciliation."""
 
@@ -3023,6 +3043,15 @@ class ConsoleLeftRail(Vertical):
         # deliberately preserves scroll state while hidden, so reopening can
         # clamp the prior local offset against the newly measured geometry.
         if section_open:
+            if section_id == "character" and not body.display:
+                # TASK-35970: a collapsed browser kept its newest snapshot
+                # unrendered; start that render before the body shows, and
+                # hold allocation passes until it has mounted.
+                for browser in body.query(ConsoleCharacterContext):
+                    if browser.render_deferred(
+                        on_rendered=self._character_render_settled
+                    ):
+                        self._character_renders_pending += 1
             body.styles.display = "block"
             bounded.set_presented(True)
         else:

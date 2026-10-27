@@ -102,7 +102,9 @@ While a reply is running, the section checks saved character chats for
 changes about once a second (a different open chat or character is picked up
 at once), and it catches up as soon as the reply ends. When one of these
 checks finds new or changed saved chats, the list usually updates in place
-without first showing "Refreshing local character chats…". **Retry** reloads
+without first showing "Refreshing local character chats…". While the section
+is collapsed, those checks still run but the hidden list is not redrawn;
+expanding the section shows the latest result straight away. **Retry** reloads
 directly and shows "Refreshing local character chats…" while it works, or
 "Searching local character chats…" when a Context search is active.
 When a Context search is active, **Continue search in Character chats** opens

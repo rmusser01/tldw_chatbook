@@ -510,13 +510,11 @@ async def test_held_run_poll_ticks_request_no_layout_outside_their_owners(
             while len(ticks) < 3 and time.monotonic() < deadline:
                 await pilot.pause(0.05)
             # The transcript streams; its rows may legitimately re-lay out.
-            # The Character section recomposes on its own refresh cycle
-            # (Refreshing... then the result), collapsed or not -- a separate
-            # cost, left to TASK-35970.
-            exempt = (
-                console.query_one("#console-native-transcript"),
-                console.query_one("#console-character-context"),
-            )
+            # The Character section is collapsed here: its refresh cycle
+            # (Refreshing... then the result) renders nothing until it opens
+            # (TASK-35970), so it gets no exemption.
+            assert not console.query_one("#console-rail-section-body-character").display
+            exempt = (console.query_one("#console-native-transcript"),)
             with requests.counting() as calls:
                 start = len(ticks)
                 deadline = time.monotonic() + 10

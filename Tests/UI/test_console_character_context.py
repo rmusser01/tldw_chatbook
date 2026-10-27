@@ -522,6 +522,12 @@ async def test_production_avatar_repaint_never_overwrites_identity_variants() ->
     )
     async with make_console_pilot(size=(120, 40)) as pilot:
         screen = pilot.app.screen
+        # The identity line lives in the Character body, which renders only
+        # while it can be seen (TASK-35970); open it so every variant shows.
+        if not screen.query_one("#console-rail-section-body-character").display:
+            from Tests.UI.test_console_left_rail import _click_rail_toggle
+
+            await _click_rail_toggle(pilot, "character")
         for current, open_id, expected in variants:
             character_id = None if current is None else current[0]
             character_label = "" if current is None else current[1]

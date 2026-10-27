@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
@@ -101,6 +102,12 @@ class ConsoleCharacterContext(Vertical):
         self._recompose_generation = 0
         self._focus_intent_generation = 0
         self._pending_focus_restore: ConsoleCharacterFocusIdentity | None = None
+        # TASK-35970: a snapshot arrived while the browser could not be seen
+        # and is not rendered yet. compose() renders the newest one.
+        self._render_deferred = False
+        # The event loop keeps only weak references to tasks: hold each render
+        # until it finishes, so its done-callback (the rail's settle) runs.
+        self._render_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def state(self) -> ConsoleCharacterContextState:
@@ -141,6 +148,10 @@ class ConsoleCharacterContext(Vertical):
             return
         screen = self.screen
         if screen is None or screen is not self.app.screen:
+            return
+        # A collapsed section's rows wait for it to open (TASK-35970); a
+        # count written now would request a layout no one can see.
+        if not self._presented():
             return
         for button in self.query(CharacterConversationButton):
             count = self._controller.pending_progress_count(button.character_row)
@@ -204,10 +215,73 @@ class ConsoleCharacterContext(Vertical):
         identity = getattr(widget, "character_focus_identity", None)
         return identity if isinstance(identity, ConsoleCharacterFocusIdentity) else None
 
+    def _presented(self) -> bool:
+        """Whether the browser can be seen: it and every ancestor are displayed."""
+        return all(node.display for node in self.ancestors_with_self)
+
+    def on_show(self) -> None:
+        """Render a snapshot deferred while an ancestor hid the browser."""
+        self.render_deferred()
+
+    def render_deferred(self, on_rendered: Callable[[], None] | None = None) -> bool:
+        """Render the newest snapshot if one arrived while the browser was hidden.
+
+        TASK-35970. The rail calls this as the Character section opens, before
+        its body is displayed, so the first frame already shows the newest
+        snapshot; ``on_show`` covers any other ancestor that hid it.
+
+        Args:
+            on_rendered: Called once the render has finished (or given up).
+
+        Returns:
+            True when a render was started, and ``on_rendered`` will be called.
+        """
+        if not self._render_deferred or not self.is_attached:
+            return False
+        if not self.app.screen_stack:
+            return False
+        self._render_deferred = False
+        self._sync_identity_line()
+        self._recompose_generation += 1
+        task = self._spawn_render(
+            self._render_deferred_snapshot(
+                self._recompose_generation, self._focus_intent_generation
+            )
+        )
+        if on_rendered is not None:
+            task.add_done_callback(lambda _task: on_rendered())
+        return True
+
+    async def _render_deferred_snapshot(
+        self, generation: int, focus_intent_generation: int
+    ) -> None:
+        await self._recompose_and_restore(
+            generation, None, None, focus_intent_generation
+        )
+        # The sweep paused while hidden; the new rows start at 0 until its
+        # next tick. Write the counts now so the opened section is current.
+        self._sync_progress_counts()
+
+    def _spawn_render(self, coroutine: Any) -> asyncio.Task[None]:
+        task = asyncio.create_task(coroutine)
+        self._render_tasks.add(task)
+        task.add_done_callback(self._render_tasks.discard)
+        return task
+
     def sync_state(self, state: ConsoleCharacterContextState) -> None:
         """Apply one complete snapshot and semantically restore focus/scroll."""
 
         if not self.is_attached or not self.app.screen_stack or state == self._state:
+            return
+        if not self._presented():
+            # TASK-35970: every send ends with a Character refresh that
+            # publishes Refreshing..., then its result. Recomposing for each
+            # while the section is collapsed cost two whole-screen reflows
+            # per send for a browser no one could see. Keep the newest
+            # snapshot (``state`` and the controller stay current) and render
+            # it when the section opens.
+            self._state = state
+            self._render_deferred = True
             return
         current_focus = (
             self._focus_identity(self.app.focused) if self.is_mounted else None
@@ -220,7 +294,7 @@ class ConsoleCharacterContext(Vertical):
         self._pending_focus_restore = restore
         self._recompose_generation += 1
         generation = self._recompose_generation
-        asyncio.create_task(
+        self._spawn_render(
             self._recompose_and_restore(
                 generation,
                 restore,
@@ -242,6 +316,11 @@ class ConsoleCharacterContext(Vertical):
             return
         focused = self.app.focused
         if focused is not None and self in focused.ancestors:
+            if focus is None:
+                # Focus entered the browser after this render was scheduled
+                # (a Roleplay/Library return focuses search as it opens the
+                # section, TASK-35970): keep it rather than prune it to None.
+                focus = self._focus_identity(focused)
             # Avoid Textual's automatic external fallback while pruning the
             # old node. A real subsequent external focus still advances intent.
             self.screen.set_focus(None)
@@ -499,6 +578,7 @@ class ConsoleCharacterContext(Vertical):
             yield button
 
     def compose(self) -> ComposeResult:
+        self._render_deferred = False  # This renders the newest snapshot.
         self._sync_identity_line()
 
         search = Input(

@@ -545,7 +545,16 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # locally, under the lane's 30 s per-file budget): dev's 905 + 1 = 906. It
 # also drops a dead first `MINIMUM_FILES = 906` assignment dev carried
 # above the live 905.
-MINIMUM_FILES = 906
+# TASK-35970 (2026-10-26) appends 1 whole-file entry at the tail: a collapsed
+# Character section renders nothing while a send refreshes it (three cases,
+# about 15 s locally), so no existing entry changes shard: 906 -> 907.
+# Character section renders nothing while a send refreshes it (four cases,
+# about 18 s locally), so no existing entry changes shard: 906 -> 907.
+# TASK-35970 (2026-10-26) appends 1 whole-file entry at the tail: a collapsed
+# Character section renders nothing while a send refreshes it (seven cases,
+# about 29 s locally), so no existing entry changes shard: 906 -> 907. It also
+# drops the dead 906 assignment that stood above dev's effective 905.
+MINIMUM_FILES = 908
 
 
 def read_census(path: Path) -> list[str]:
