@@ -874,3 +874,115 @@ async def test_a_roleless_capture_in_the_trash_falls_back_to_the_owed_row() -> N
             fake, grip_capture
         )
         assert target is app.query_one("#library-notes-trash-restore-0", Button)
+
+
+# -- TASK-34000.29 Task 8 fix round 1 (review R0 minors) -----------------
+
+
+def test_a_one_row_page_names_its_one_row_without_a_range() -> None:
+    """m-8: one row reads "21 of 21", not the range "21–21 of 21"."""
+    state = build_library_notes_trash_state(
+        _deleted_records(21, 22), total=21, page=2, now=NOW
+    )
+
+    assert state.pager.range_copy == "21 of 21"
+    assert build_library_notes_trash_state(
+        _deleted_records(1, 2), total=1, now=NOW
+    ).pager.range_copy == "1 of 1"
+
+
+class _FailingPagedTrashService(_PagedTrashService):
+    """Raises on one offset, the way a locked or failing read does."""
+
+    def __init__(self, total: int, *, fail_offset: int) -> None:
+        super().__init__(total)
+        self.fail_offset = fail_offset
+
+    async def list_deleted_notes(self, *, scope, user_id, limit, offset):
+        if offset == self.fail_offset:
+            self.offsets.append(offset)
+            raise RuntimeError("database is locked")
+        return await super().list_deleted_notes(
+            scope=scope, user_id=user_id, limit=limit, offset=offset
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_page_read_leaves_the_view_on_the_page_it_paints() -> None:
+    """m-1: the page the view asks for never runs ahead of the page it shows.
+
+    Base (c677c8a89a): ``trash_page`` stayed 2 over a painted page 1, so the
+    next Next counted from 2, found no page 3 and did nothing -- the user was
+    stuck until the view was reopened.
+    """
+    service = _FailingPagedTrashService(total=25, fail_offset=20)
+    fake = _trash_loader_fake(service)
+    await LibraryNotesController._load_library_notes_trash(fake)
+    assert fake._library_notes_trash.page == 1
+
+    requests: list[dict] = []
+    fake._refresh_library_notes_trash = lambda **kwargs: requests.append(kwargs)
+    fake._library_notes_mutation_fenced = lambda: False
+    fake._page_library_notes_trash = MethodType(
+        LibraryNotesController._page_library_notes_trash, fake
+    )
+    press = SimpleNamespace(stop=lambda: None)
+
+    LibraryNotesController.handle_library_notes_trash_next(fake, press)
+    await LibraryNotesController._load_library_notes_trash(fake, **requests[-1])
+
+    assert service.offsets == [0, 20]
+    assert fake._library_notes_trash.page == 1
+    assert fake._library_notes_trash_page == 1
+    assert not fake._library_notes_trash.pager.next_disabled
+
+    # Next still works: the second press asks for page 2 again.
+    LibraryNotesController.handle_library_notes_trash_next(fake, press)
+    assert len(requests) == 2
+    await LibraryNotesController._load_library_notes_trash(fake, **requests[-1])
+    assert service.offsets == [0, 20, 20]
+
+
+def test_reopening_the_trash_never_paints_the_page_left_from_the_last_visit(
+    monkeypatch,
+) -> None:
+    """m-7: Back then Recently deleted again starts on page 1, never page N.
+
+    Leaving resets the page the view asks for; opening over a snapshot of
+    another page paints page 1's loading state (the Media Trash's own entry:
+    a fresh state, then the read) and owes focus to the first row once it
+    lands. Base (c677c8a89a): the reopened view painted "21–25 of 25 · Page
+    2 of 2" until the page-1 read replaced it.
+    """
+    fake = _view_fake(monkeypatch, view="trash")
+    fake._library_notes_trash = build_library_notes_trash_state(
+        _deleted_records(21, 26), total=25, page=2, now=NOW
+    )
+    fake._library_notes_trash_page = 2
+    fake._library_notes_mutation_fenced = lambda: False
+    reloads: list[dict] = []
+    fake._refresh_library_notes_trash = lambda **kwargs: reloads.append(kwargs)
+    press = SimpleNamespace(stop=lambda: None)
+
+    LibraryNotesController.handle_library_notes_trash_back(fake, press)
+    assert fake._library_notes_trash_page == 1
+
+    LibraryNotesController.handle_library_notes_trash_open(fake, press)
+    shown = fake._library_notes_trash
+    assert (shown.page, shown.rows, shown.loading, shown.total) == (1, (), True, 25)
+    assert reloads == [{"focus_role": "trash-restore:0"}]
+    assert fake._trash_focus_role == "trash-restore:0"
+
+
+@pytest.mark.asyncio
+async def test_a_loading_trash_says_so_instead_of_claiming_it_is_empty() -> None:
+    """m-7: page 1's loading state is not the empty Trash's sentence."""
+    app = _CanvasApp(
+        pane_width=100,
+        mode="trash",
+        trash=LibraryNotesTrashState(total=25, page=1, loading=True),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await _until_painted(pilot, app, "Loading recently deleted notes")
+        assert "Nothing deleted recently" not in _painted(app)
+        assert app.query_one("#library-notes-trash-back", Button)
