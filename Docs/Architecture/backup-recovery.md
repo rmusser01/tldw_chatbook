@@ -547,7 +547,11 @@ Active continuation beside a checkpoint, terminal owners, stale versions/states
 and stranded pointers produce exact prewrite conflicts with originals retained;
 the planner never reconciles, deletes a checkpoint or invents a historical
 version. Checkpoint-free accepted/dispatched and valid continuation history is
-supported separately. Stored machine receipts omit acceptance-time source-message
+supported separately. For checkpoint-free conversations, multiple nondeleted
+assistant owners with active continuations on the captured selected path produce
+`duplicate_active_path_owner` before any C2b proof is discharged. Active
+continuations on other historical branches do not count toward this conflict.
+Stored machine receipts omit acceptance-time source-message
 versions: their historical ancestry is readable, but no fresh admission proof is
 reconstructed from the current message version.
 

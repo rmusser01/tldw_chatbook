@@ -279,6 +279,7 @@ def _plan_content_workflows(reads):
     from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
     from tldw_chatbook.Chat.provider_continuation import (
         parse_provider_continuation_json,
+        read_provider_continuation_json,
     )
 
     from .mobile_captured_sqlite import _CapturedSQLite
@@ -668,12 +669,40 @@ def _plan_content_workflows(reads):
                     row["assistant_message_id"],
                 )
             )
+    checkpoint_conversations = {
+        row["conversation_id"] for row in builder.source[_TABLES[0]]
+    }
+    conflicting_owner_paths = set()
+    for conversation_id in originals["conversations"]:
+        if conversation_id in checkpoint_conversations:
+            continue
+        active_owners = 0
+        for message_id in active_path(conversation_id):
+            candidate = originals["messages"][message_id]
+            if candidate["role"] != "assistant" or candidate["deleted"] != 0:
+                continue
+            continuation = read_provider_continuation_json(
+                candidate["provider_continuation_json"]
+            ).checkpoint
+            if continuation is not None and continuation.state == "active":
+                active_owners += 1
+        # Native checkpoint-free recovery rejects multiple active owners before
+        # returning any individual owner. Off-path/deleted history is not counted.
+        if active_owners > 1:
+            conflicting_owner_paths.add(conversation_id)
+            builder.blockers.append(
+                _ContentBlocker(
+                    "conversations", (conversation_id,), "duplicate_active_path_owner"
+                )
+            )
     for item in settings.successors:
         if item.handler != "C2b":
             successors.append(item)
             continue
         if item.domain in {"dispatch_owner", "provider_continuation"}:
             message = originals["messages"][item.original_id]
+            if message["conversation_id"] in conflicting_owner_paths:
+                continue
             private = message["provider_continuation_json"]
             continuation = (
                 None if private is None else parse_provider_continuation_json(private)

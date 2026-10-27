@@ -639,3 +639,129 @@ def test_captured_checkpoint_conflicts_and_checkpoint_free_history(
         )
         with pytest.raises(ValueError, match="handlers_pending"):
             plan.require_complete()
+
+
+def test_captured_checkpoint_free_owner_cardinality_matches_native_path(
+    tmp_path, monkeypatch
+):
+    from Tests.ChaChaNotesDB.test_console_dispatch_checkpoint_repository import (
+        _active_continuation_json,
+    )
+    from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+
+    native_states = {}
+    source_ids = {}
+
+    def populate(db, purpose):
+        for case in ("duplicate", "single", "off-path"):
+            cid = "owner-" + case
+            user, first, second = cid + "-user", cid + "-first", cid + "-second"
+            db.add_conversation({"id": cid})
+            db.add_message(
+                {
+                    "id": user,
+                    "conversation_id": cid,
+                    "sender": "User",
+                    "role": "user",
+                    "content": "historical user",
+                }
+            )
+            db.add_message(
+                {
+                    "id": first,
+                    "conversation_id": cid,
+                    "parent_message_id": user,
+                    "sender": "Assistant",
+                    "role": "assistant",
+                    "content": "historical first",
+                    "provider_continuation_json": _active_continuation_json(),
+                }
+            )
+            source_ids[case] = [first]
+            leaf = first
+            if case != "single":
+                parent = user
+                if case == "duplicate":
+                    parent = cid + "-next-user"
+                    db.add_message(
+                        {
+                            "id": parent,
+                            "conversation_id": cid,
+                            "parent_message_id": first,
+                            "sender": "User",
+                            "role": "user",
+                            "content": "historical next",
+                        }
+                    )
+                    leaf = second
+                db.add_message(
+                    {
+                        "id": second,
+                        "conversation_id": cid,
+                        "parent_message_id": parent,
+                        "sender": "Assistant",
+                        "role": "assistant",
+                        "content": "historical second",
+                        "provider_continuation_json": _active_continuation_json(),
+                    }
+                )
+                source_ids[case].append(second)
+            with db.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+                    (leaf, cid),
+                )
+                state = ConsoleDispatchRepository(db)._reconcile_checkpoint_free_owner(
+                    cursor, cid
+                )
+                native_states[purpose, case] = (
+                    state.kind.value,
+                    state.error_code,
+                    state.actions,
+                )
+                assert state.actions == ()
+                if case == "duplicate":
+                    assert state.error_code == "duplicate_active_path_owner"
+                else:
+                    assert state.error_code is None
+                    assert state.assistant_message_id == first
+
+    with content_reads(
+        tmp_path, monkeypatch, lambda connection, purpose: None, native_seed=populate
+    ) as reads:
+        plan = reads.content_workflow_plan()
+        assert not plan.settings.blockers
+        assert {
+            (b.original, b.reason) for b in plan.blockers if b.table == "conversations"
+        } == {(("owner-duplicate",), "duplicate_active_path_owner")}
+        retained = {
+            r.original[0]: dict(r.values) for r in plan.rows if r.table == "messages"
+        }
+        original = {
+            r.original[0]: dict(r.values)
+            for r in plan.settings.source_rows
+            if r.table == "messages"
+        }
+        for identity in source_ids["duplicate"]:
+            assert identity not in retained
+            assert (
+                original[identity]["provider_continuation_json"]
+                == _active_continuation_json()
+            )
+            assert plan.identities.mapped("message", identity)
+            assert not any(
+                s.original == (identity,) for s in (*plan.discharged, *plan.successors)
+            )
+        for case in ("single", "off-path"):
+            for identity in source_ids[case]:
+                assert (
+                    retained[identity]["provider_continuation_json"]
+                    == original[identity]["provider_continuation_json"]
+                )
+                assert any(
+                    s.original == (identity,) and s.handler == "S"
+                    for s in plan.successors
+                )
+            assert native_states["legacy", case][1:] == (None, ())
+        with pytest.raises(ValueError, match="handlers_pending"):
+            plan.require_complete()
