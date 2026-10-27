@@ -205,6 +205,9 @@ async def test_a_modal_keeps_its_input_and_typing_after_it_closes_lands_in_the_d
         console, composer = await _arrived(host, pilot)
         arrival = console.focused
 
+        # A guard, not a pin: the pushed modal receives the keys itself and
+        # `ChatScreen.on_key` never sees them, with or without the claim.
+        # The second half, after the modal closes, is the regression case.
         await host.push_screen(ModelCatalogConsentModal())
         await pilot.pause()
         _type(host, "x")

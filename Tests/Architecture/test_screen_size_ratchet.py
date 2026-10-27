@@ -200,7 +200,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: workbench_restore_target, which saved 6 lines); the screen keeps one
     #: call in on_key and a ScreenResume handler (+1 method), which arms
     #: only on a real activation, never on the attach reconcile's direct
-    #: replay of on_screen_resume. Dev a2b7104d1e measured 24319/736; with
+    #: replay of on_screen_resume. Dev 0923ec0ca2 measured 24319/736; with
     #: the fix, 24321/737, the exact measurement.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was

@@ -219,11 +219,12 @@ tool, code, and link styling keeps priority over immersive coloring.
 
 - Printable keys go straight into the draft; click anywhere in the draft to
   place the caret; Left/Right and Home/End move it.
-- You can start typing as soon as the Console appears. For up to a couple
-  of seconds after it opens, the nav bar's Home button still holds focus,
-  but letters typed then land in the draft, in order, and the caret moves
-  there with the first one. Keys still go where you put focus yourself, to
-  an open dialog, or to the setup card while it is showing.
+- When the app starts on the Console, you can type as soon as it appears.
+  For up to a couple of seconds after that first frame, the nav bar's Home
+  button still holds focus, but letters typed then land in the draft, in
+  order, and the caret moves there with the first one. Keys still go where
+  you put focus yourself, to an open dialog, or to the setup card while it
+  is showing.
 - **Enter sends or queues.** During an accepted agent turn, **Send** becomes
   **Queue** and Enter adds the exact text draft after that turn. For a newline
   inside the draft use **Ctrl+J** (works in
