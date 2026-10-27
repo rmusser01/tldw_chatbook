@@ -63,14 +63,14 @@ class ScopedServices[L, S, C]:
 - **Optional fields.** A field is `T | None` with default `None` if it can be unavailable at runtime today, for example a database that failed to open or a local backend that failed to build. Other fields have no default. A test builds only the slice its subject receives.
 - **What the bundle holds.** Only objects that exist when composition ends and are never reassigned after it. Everything else is excluded by name (section 2, rules 4 and 5).
 - **No app references (end state; pending Q1).** A new member never receives the app or a closure over it. It receives a slice or a narrow callable. Members that capture the app today stay as they are in TASK-36947.2, and each consumer migration removes its own. Those members are:
-  - Study, Quiz and Research, through `notification_app=self` (`app_service_wiring.py:2404`, `:2413`, `:2463`);
+  - Study, Quiz and Research, through `notification_app=self` (`app_service_wiring.py:2404`, `:2413`, `:2463`), and `media.local` and `watchlists.local`, through `notification_app = self` (`:3294`, `:3298`);
   - `LibraryLocalRagSearchService(self)` (`:2448`);
   - the `lambda: self` getters at `:2521`, `:2682`, `:2724` and `:2742`;
   - the provider's credential-store lambda (`:1390`).
 
 ### 2. Which attributes go where
 
-Here, a service is an app attribute whose name ends in `_service`, `_db`, `_provider`, `_repository`, `_store`, `_owner`, `_coordinator`, `_controller`, `_manager`, `_runtime`, `_registry` or `_enforcer`. There are 168 at base.
+Here, a service is an app attribute whose name ends in `_service`, `_db`, `_provider`, `_repository`, `_store`, `_owner`, `_coordinator`, `_controller`, `_manager`, `_runtime`, `_registry` or `_enforcer`. There are 168 at base. A name defined on the class, whether a method or a property, is not a service; for example `get_dreams_db` is not.
 
 | Slice | Current app attributes, and the field each becomes |
 | --- | --- |
@@ -92,26 +92,29 @@ Rules for the rest. Rules 4 and 5 take precedence over rules 1 to 3.
 2. **Other members.** Any other member of feature `<f>` goes into that feature's slice, with the feature prefix dropped from its name.
 3. **Storage.** `storage` holds the three databases that config keeps as singletons (ChaChaNotes, Media and Prompts) and the two that the mobile engine also opens (workspaces and agent runs). Every other database stays in its feature's slice. A database that a second root starts opening moves into `storage` when that root migrates. The one case today is the MCP server's read-only `SubscriptionsDB` (`MCP/local_server_tools.py:116`).
 4. **Never in the bundle:**
-   - the app's own runtime objects, which are built around the app: `ConsoleRuntime(self)` (`app.py:1196`), `DBStatusManager(self)` (`:1296`) and `WorkerHandlerRegistry(self)` (`:2215`);
+   - the app's own runtime objects, which are built around the app: `ConsoleRuntime(self)` (`app.py:1196`), `DBStatusManager(self)` (`:1296`), `WorkerHandlerRegistry(self)` (`:2215`) and `raw_cli_runtime` (`:1154`);
    - configuration that is reloaded at runtime: `app_config` (`:1153`, replaced at `:2038`) and the runtime policy;
    - UI and session state: reactives, flags, timers, worker and process handles, and the ADR-033 session owners such as `screen_state_store`;
    - objects that feature modules attach to the app after boot, such as the one at `RAG_Search/semantic_availability.py:242`.
-5. **Not in the bundle in TASK-36947.2**, because they do not exist yet when it is published, are replaced afterwards, or are pinned in place (pending Q3):
-   - **Built on first access,** which covers every lazy property:
+5. **Not in the bundle in TASK-36947.2**, because they do not exist yet when it is published, are replaced afterwards, or are pinned in place:
+   - **Built on first access,** which covers every lazy property and every first-use getter method:
      - `server_credential_store` and its unavailable reason;
      - `notes_sync_runtime_owner`, `terminal_session_manager`, `persona_buddy_controller`, and the Kanban and RAG-admin trios;
-     - `recovery_service` (`app_lifecycle.py:123`), `meeting_session_owner` (`:609`), `daily_report_demo_service` (`app_service_wiring.py:2508`) and `llamacpp_snapshot_service` (`:3638`).
+     - `recovery_service` (`app_lifecycle.py:123`), `meeting_session_owner` (`:609`), `daily_report_demo_service` (`app_service_wiring.py:2508`) and `llamacpp_snapshot_service` (`:3638`);
+     - `artifact_share_controller`, which `_get_artifact_share_controller()` sets on first use and shutdown clears (`app_lifecycle.py:975`, `:995`).
    - **Composed in `on_mount` or later:**
      - `watchlists_operation_coordinator` and `watchlists_command_service` (`app.py:3307-3312`);
      - tool packs (`app_service_wiring.py:1868-1999`);
      - workspace agent provisioning (`:1800`).
    - **Pinned in place:** the lazily built skills stack (`local_skill_trust_service`, `local_skills_service` and `skills_scope_service`) and the eagerly built `server_skills_service`. The Console's off-loop trust proof checks those exact app slots, the mixin properties and the trust factory's closure over the app (`app_skill_wiring.py:144-496`). Bundling them, or narrowing that closure, would silently send trust preparation back onto the event loop.
-   - **Opened on first use:** `dreams_db` (`:3322`), `guardian_db` (`:3353`) and the TUI's agent-runs database (`Chat/console_runtime.py:4629`).
+   - **Opened on first use:** `dreams_db` (`app_service_wiring.py:3322`), `guardian_db` (`:3353`) and the TUI's agent-runs database (`Chat/console_runtime.py:4629`).
    - **Reset and rebuilt:**
-     - Collections capture (`app_collections_wiring.py:411-534`);
+     - Collections capture: `collections_capture_scope_service`, `server_collections_capture_service`, `local_collections_capture_service`, `collections_capture_repository`, `collections_offline_store` and `collections_legacy_recovery_service` (built at `app_collections_wiring.py:411-534`, reset at `:795-804`, activated at `:916`);
      - the Notes-sync wiring, with `notes_organization_repository` and `notes_organization_sync_service`. It is wired at `app_service_wiring.py:476` and `:645`, and `app.py:2049` re-runs it on every source switch.
 
-TASK-36947.2 adds a coverage test. It collects every service name that production code reads from an app-like receiver (`app`, `app_instance`, `self.app` or `self.app_instance`), by attribute or by literal `getattr`/`hasattr`. Each such name must be either a bundle field, reached through its alias, or on the rule 4 and rule 5 exclusion list. The exclusion list shrinks as consumers migrate. It may grow only by a new service that is built after composition (pending Q3).
+An app-like receiver is any expression whose last name segment is `app`, `app_instance`, `tldw_app`, `_app` or `_app_instance`, the definition TASK-36942.4 uses. That covers `self._app` in ConsoleRuntime, for example.
+
+TASK-36947.2 adds a coverage test. It collects every service name that production code reads from an app-like receiver, by attribute or by literal `getattr`/`hasattr`. Each such name must be either a bundle field, reached through its alias, or on the rule 4 and rule 5 exclusion list. The exclusion list shrinks as consumers migrate. It may grow only by a new service that is built after composition (pending Q3).
 
 ### 3. Construction in the TUI
 
@@ -160,7 +163,7 @@ def open_profile_storage(
   - The factory and the openers are added by the first PR that calls them.
   - The TUI's own opens (`app.py:2085`, `:2144`) switch to the openers in TASK-36947.6.
   - Paths still come from config's path helpers.
-- **Scope.** For the roots in the table below, the openers are the only code that constructs these databases. About 30 other ad hoc constructions inside the app stay as they are (pending Q2). Examples are the Chatbooks importer and creator, `Tools/workspace_file_roots.py:622` and `Workspaces/change_retention.py:224`.
+- **Scope.** For the roots in the table below, the openers are the only code that constructs these databases. About 30 other ad hoc constructions inside the app stay as they are (pending Q2). Examples are the Chatbooks importer and creator, `Tools/workspace_file_roots.py:621` and `Workspaces/change_retention.py:224`.
 
 Who moves each root is pending Q5.
 
@@ -211,7 +214,7 @@ Who moves each root is pending Q5.
 
 1. **Q1, app references.** Should TASK-36947.2 leave today's app-capturing members unchanged, so that "no member receives the app" binds new members and each consumer migration (section 1)? Answer: yes or no. Recommended: yes.
 2. **Q2, in-app ad hoc databases.** Should the roughly 30 ad hoc profile-database constructions inside the app stay out of this stream, with a census holding their count instead (section 6)? Answer: yes or no. Recommended: yes.
-3. **Q3, services built after composition.** Should rule 5's services stay on the app in TASK-36947.2, with the exclusion list allowed to grow only by a new service built after composition (section 2)? Answer: yes or no. Recommended: yes.
+3. **Q3, new late services.** May the exclusion list grow when a new service is built after composition (section 2)? Answer: yes or no. Recommended: yes.
 4. **Q4, screens.** Should screens read `app_instance.services`, rather than receive slices through constructors that the navigation registry would have to supply per screen (section 7)? Answer: yes or no. Recommended: yes.
 5. **Q5, roots outside the TUI.** Should one follow-up task, rather than TASK-36947.2, move the MCP server, the mobile service and the backfill CLI onto the factory (section 6)? Answer: yes or no. Recommended: yes.
 
