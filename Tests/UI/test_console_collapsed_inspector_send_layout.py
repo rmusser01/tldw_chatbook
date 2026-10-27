@@ -14,9 +14,13 @@ during a send. Re-measured headless on origin/dev 3be493413a (2026-10-27,
   summary becomes "Run history", recomposed as well and set its own
   ``display`` inside the hidden rail;
 * every send, start and end: the run inspector's auto-height "Live work"
-  row re-wrote its copy with a layout.
+  row re-wrote its copy with a layout;
+* a chat's first agent run: it publishes the MCP catalog, and the sync tick
+  re-wrote the readiness card's MCP row with a layout. Found live (pf2probe,
+  160x45, one request per launch on base and branch alike); this harness
+  runs without the agent runtime, so the send publishes the catalog itself.
 
-That last display write also lost the section: the rail's collapse cascade
+The Agents section's display write also lost the section: the rail's collapse cascade
 keeps each child's own display in ``_console_rail_prior_display`` and
 restores it when the rail opens, so a section that showed itself inside the
 hidden rail was hidden again by the opening cascade. A rail opened after a
@@ -67,11 +71,21 @@ async def _wait_for(pilot, predicate, what: str, timeout: float = 15.0) -> None:
     assert predicate(), what
 
 
-async def _send(console, composer, pilot, gateway, text: str, requests=None):
+_MCP_TOOLS = 4
+_MCP_ROW = "MCP: Connected - 4 tools ready."
+
+
+async def _send(
+    console, composer, pilot, gateway, text: str, requests=None, *, mcp=False
+):
     """One held send; return the requesters of its start and end windows.
 
     The start window runs from Send to the first streamed chunk, the end
-    window from the stream's release to the run poll stopping.
+    window from the stream's release to the run poll stopping. With ``mcp``,
+    the run publishes an MCP catalog as a chat's first agent run does live
+    (``_publish_mcp_inspector_counts``; this harness runs without the agent
+    runtime), and the start window lasts until the sync tick has written the
+    readiness card's MCP row.
     """
     store = console._ensure_console_chat_store()
     send = console.query_one("#console-send-message", Button)
@@ -92,8 +106,19 @@ async def _send(console, composer, pilot, gateway, text: str, requests=None):
 
     async def start() -> None:
         send.press()
+        if mcp:
+            console._ensure_console_chat_controller()._publish_mcp_inspector_counts(
+                _MCP_TOOLS, 0
+            )
         await _wait_for(pilot, lambda: _assistant_turns(store) > before, "no chunk")
         await _wait_for(pilot, lambda: stop.display, "Stop never displayed")
+        if mcp:
+            row = console.query_one("#console-live-work-source-mcp", Static)
+            await _wait_for(
+                pilot,
+                lambda: str(row.render()) == _MCP_ROW,
+                "the sync tick never wrote the MCP readiness row",
+            )
         await pilot.pause()
         await pilot.pause()
 
@@ -193,7 +218,7 @@ async def test_a_send_asks_no_layout_of_the_collapsed_inspector(
         assert not rail.display, "the layout under test is a collapsed Inspector"
         before = inspector.state
         first = await _send(
-            console, composer, pilot, gateway, "stream and hold 0", requests
+            console, composer, pilot, gateway, "stream and hold 0", requests, mcp=True
         )
         # Readers of the inspector see the persisted chat at once: the
         # dictionary row and its enabled Attach action are in its state,
@@ -276,7 +301,7 @@ async def _rail_after_first_send(
         assert not rail.display
         if open_first:
             await _open_inspector(console, pilot)
-        await _send(console, composer, pilot, gateway, "stream and hold 0")
+        await _send(console, composer, pilot, gateway, "stream and hold 0", mcp=True)
         if not open_first:
             recording[0] = True
             await _open_inspector(console, pilot)
@@ -318,7 +343,11 @@ async def test_an_inspector_opened_after_a_send_matches_one_open_throughout(
         "console-inspector-dictionaries-attach",
         "console-inspector-worldbooks-attach",
         "console-agent-section-subagents",
+        "console-live-work-source-mcp",
     } <= ids
+    assert ("Static", "console-live-work-source-mcp", _MCP_ROW) in {
+        row[:3] for row in open_throughout
+    }
     assert opened_late == open_throughout
     # Not one painted frame of the opening showed the held rows: the rebuild
     # lands before the opened rail's first paint (Attach enabled, the Agents
