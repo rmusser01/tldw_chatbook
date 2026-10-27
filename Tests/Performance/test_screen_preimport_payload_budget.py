@@ -126,7 +126,8 @@ MAX_PASS_ADDED_MODULES = 558
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
 #: 2026-10-26 TASK-34000.28/.40 polish-1a + TASK-34000.29 polish-1b Task 6: 425,347 -> 425,954 (paired arms; dev 424,643 + 1,159, then ddb9693e3b + 90, then fix round 1 + 18 + 15; rebased onto polish-1a's CI fix: dev 424,643 + 1,311 = 425,954) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 425_954
+#: 2026-10-27 TASK-34000.29 polish-1b Task 7 (N-14 + TASK-34000.82): 425,954 -> 426,403 (paired arms: base 9097b11dd7 425,954 + 449; dev 424,643 + 1,760) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_403
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
