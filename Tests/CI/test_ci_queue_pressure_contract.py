@@ -119,6 +119,10 @@ FAST_LANE_TARGETS = (
     # one shared bundle for every title: 52 tests in 3.3 s at load 24-31,
     # measured 2026-10-24).
     "Tests/Chatbooks/test_note_frontmatter_round_trip.py",
+    # TASK-34000.40 (N-33): Ctrl+S is bound once in Library, as the editor
+    # Save, and every other ctrl+s binding is on TASK-34000.43's allowlist
+    # (AST scan of tldw_chatbook/, no app import, about a second).
+    "Tests/Architecture/test_ctrl_s_binding_contract.py",
     # TASK-34000.49: binding.note_version is never a precondition against
     # the live note (AST scan of the executor, under a second).
     "Tests/Architecture/test_notes_sync_version_proxy_sites.py",

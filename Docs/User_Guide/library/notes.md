@@ -547,10 +547,16 @@ the editor alone, so keystrokes never land in the wrong box and focus never
 jumps away as you type or after you move to another field. The next refresh
 that arrives once your hands are off the field paints normally.
 
-Notes does not use **Ctrl+S**, and there is no replacement Notes save
-shortcut. Use the visible **Save** button when you want an immediate Library
-notes save; normal Tab navigation and **F6** can reach it. Autosave continues to
-handle ordinary typing.
+**Ctrl+S** saves the open note now, without waiting for the 2-second autosave,
+from anywhere in the note's pane: the body, Title, Keywords, the
+Edit/Preview/Info buttons or Info. It does what the **Save** button does, and
+focus stays where it was. With nothing unsaved it says "Saved — nothing to
+flush." on the status line, with no pop-up. Where a save is held it says why on
+the status line instead and moves nothing: "Save locked — finish or cancel the
+destructive action." while the Delete confirmation is open, "Save locked —
+resolve the note conflict below." in a conflict. With focus on the Notes list,
+the filter or the folder tree, Ctrl+S does nothing, even with a note open
+beside it. Autosave still handles ordinary typing.
 
 #### Editor keys
 
@@ -559,6 +565,7 @@ handle ordinary typing.
 | **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Keywords, Body, and back round to "‹ Notes". Tab out of the body stays inside that cycle, never wrapping round to the "Library notes / Folder files" switch above the pane. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
 | **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
 | **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
+| **Ctrl+S** | Save the note now (see above). The footer shows `ctrl+s save now` (`ctrl+s save` on a compact terminal) while the key would save. |
 | **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
 
 Arriving in the **Title** by keyboard puts the caret at the end of the
@@ -1568,10 +1575,10 @@ only one chip there. In select mode the tier becomes
 `space toggle | enter select note | e export selected | esc done`, with the
 **space** chip present only while a note row has focus and the **e** chip only
 while something is checked; with the Actions… strip open it reads
-`enter choose action | esc cancel`. Notes does not register **Ctrl+S** and does not replace it with
-another save shortcut. Use the visible
-Library notes **Save** button for an immediate save; Folder files saves
-automatically. Global navigation keys live in the [guide index](../index.md).
+`enter choose action | esc cancel`. **Ctrl+S** belongs to the note's pane, not
+the list: the list's footer never shows it, and pressing it there does nothing
+(see Editor keys). In Folder files it writes the file now. Global navigation
+keys live in the [guide index](../index.md).
 
 ## Related settings & docs
 

@@ -1572,8 +1572,8 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
             # F-019: the editor's ctrl+s/escape accelerators (task-424),
             # advertised inline -- the file-notes git panel's guide-line
             # pattern. Hidden during the conflict banner and the delete
-            # confirmation, where ctrl+s is gated off and the hint would
-            # be a lie.
+            # confirmation, where ctrl+s refuses rather than saves
+            # (TASK-34000.40) and "ctrl+s Save" would be a lie.
             yield Static(
                 SKILL_EDITOR_SHORTCUT_HINTS,
                 id="library-skill-editor-hints",

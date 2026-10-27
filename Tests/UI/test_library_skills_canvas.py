@@ -3880,30 +3880,56 @@ def _bind_editor_active(fake):
     return fake
 
 
-def test_check_action_gates_skill_editor_keys_to_editor():
+def _skill_save_target_fake(row_id: str, pane_id: str):
+    """A fake whose focused control sits inside ``pane_id``, with the real
+    ``_library_editor_save_target`` and ``_library_focus_within`` bound."""
+    from types import MethodType
+
+    focused = SimpleNamespace(id="library-skill-description")
+    focused.ancestors_with_self = [focused, SimpleNamespace(id=pane_id)]
     fake = _bind_editor_active(
         SimpleNamespace(
             _skills_state=SimpleNamespace(view="editor"),
-            _library_selected_row_id="browse-media",
+            _library_selected_row_id=row_id,
+            focused=focused,
+            _file_notes_active=lambda: False,
+            _media_state=SimpleNamespace(editing=False, editing_analysis=False),
+            _library_prompt_editor_active=lambda: False,
         )
     )
-    assert LibraryScreen.check_action(fake, "library_skill_save", ()) is False
-    fake_editor = _bind_editor_active(
-        SimpleNamespace(
-            _skills_state=SimpleNamespace(
-                view="editor",
-                dirty=True,
-                selected_skill_name="demo",
-                conflict=False,
-                confirming_delete=False,
-                mutation_in_flight=False,
-            ),
-            _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
-        )
+    fake._library_focus_within = MethodType(LibraryScreen._library_focus_within, fake)
+    fake._library_editor_save_target = MethodType(
+        LibraryScreen._library_editor_save_target, fake
     )
-    assert LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is True
-    fake_editor._skills_state.dirty = False
-    assert LibraryScreen.check_action(fake_editor, "library_skill_save", ()) is False
+    # The notes branch is the last test; no note is open here.
+    fake.check_action = lambda action, params: (
+        False
+        if action == "library_notes_save"
+        else LibraryScreen.check_action(fake, action, params)
+    )
+    return fake
+
+
+def test_check_action_gates_skill_editor_keys_to_editor():
+    """task-424's two editor keys, gated to the open skill editor.
+
+    TASK-34000.40 (N-33), rewritten 2026-10-27: the skill's Ctrl+S is now the
+    screen's one ``library_editor_save`` binding, gated on the skill editor
+    holding FOCUS (ADR-031 rule (d)) -- clean or dirty, since a clean editor
+    answers "Saved — nothing to flush." The old ``library_skill_save`` gate
+    ("a save is available", focus anywhere, the Skills list included) went
+    with its binding. Pinned live by
+    ``test_library_ctrl_s_saves_in_every_editor_skills.py``.
+    """
+    in_editor = _skill_save_target_fake(
+        LIBRARY_ROW_BROWSE_SKILLS, "library-skill-work-pane"
+    )
+    assert LibraryScreen.check_action(in_editor, "library_editor_save", ()) is True
+    beside_it = _skill_save_target_fake(LIBRARY_ROW_BROWSE_SKILLS, "library-skills-canvas")
+    assert LibraryScreen.check_action(beside_it, "library_editor_save", ()) is False
+    on_media = _skill_save_target_fake("browse-media", "library-skill-work-pane")
+    assert LibraryScreen.check_action(on_media, "library_editor_save", ()) is False
+    assert LibraryScreen.check_action(on_media, "library_skill_back", ()) is False
     fake_list = _bind_editor_active(
         SimpleNamespace(
             _skills_state=SimpleNamespace(view="list"),

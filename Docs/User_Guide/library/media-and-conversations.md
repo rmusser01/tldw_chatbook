@@ -851,6 +851,11 @@ layout the Reader still has a real exit from. In the three-pane layout the rail
 row is the last stop, and the footer drops the `esc` chip there rather than
 advertise a key that does nothing. No step lands in a text box.
 
+**Ctrl+S** is each form's **Save**: in the Analysis form it saves the
+analysis as a new version, in the Edit metadata form it saves the fields --
+only while focus is in that form, so a form left open on the other Reader tab
+is never written by it. The footer shows `ctrl+s save` while a form has focus.
+
 **Unsaved text is never dropped by a key.** While the Analysis form or the
 Edit metadata form holds text that differs from what is saved, Escape keeps
 the form and says so ("Unsaved analysis — Save or Discard changes first." /

@@ -369,6 +369,7 @@ from ...Library.library_prompts_state import (
     require_artifact_save_supported,
 )
 from ...Library.library_shell_state import (
+    LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
     library_choice_label,
@@ -3036,13 +3037,73 @@ class LibraryPromptsController:
             event: Button press event emitted by the editor's "Save" action.
         """
         event.stop()
+        self._save_library_prompt_from_editor()
+
+    def _save_library_prompt_from_editor(self, *, reveal_receipt: bool = False) -> bool:
+        """Run the prompt editor's Save -- the button handler's body, event-free.
+
+        TASK-34000.40 (N-33): the Save press and Ctrl+S
+        (``_save_library_prompt_from_key``) share this one seam.
+
+        Args:
+            reveal_receipt: Scroll the status line's receipt into view once
+                the save settles. Ctrl+S is pressed from a field, and on a
+                short pane that line sits below the fold (measured at 160x45:
+                one row under the scroll viewport).
+
+        Returns:
+            Whether a save worker was started.
+        """
         if self._library_prompts_mutation_in_flight:
-            return
+            return False
         self.run_worker(
-            self._await_library_prompt_save_call(self._save_library_prompt()),
+            self._run_library_prompt_editor_save(reveal_receipt=reveal_receipt),
             exclusive=True,
             group="library_prompt_save",
         )
+        return True
+
+    async def _run_library_prompt_editor_save(self, *, reveal_receipt: bool) -> None:
+        await self._await_library_prompt_save_call(self._save_library_prompt())
+        if reveal_receipt:
+            self.call_after_refresh(
+                lambda: self._update_library_prompt_status_static(
+                    self._library_prompt_status, reveal=True
+                )
+            )
+
+    def _library_prompt_save_key_refusal(self) -> str:
+        """Why Ctrl+S would not run the prompt's Save now, or "" (N-33);
+        the editor canvas owns the reading (``save_key_refusal``)."""
+        try:
+            canvas = self.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
+        except (NoMatches, QueryError):
+            return ""
+        return canvas.save_key_refusal()
+
+    def _save_library_prompt_from_key(self) -> None:
+        """Ctrl+S in the prompt editor (TASK-34000.40 N-33, ADR-031 a/c).
+
+        A held Save says why on the editor's status line; the conflict
+        banner, which replaces that line and already names the way out, is
+        brought into view; a hidden Save means nothing is unsaved. No focus
+        moves on any branch.
+        """
+        try:
+            save = self.query_one("#library-prompt-save", Button)
+        except (NoMatches, QueryError):
+            return
+        refusal = self._library_prompt_save_key_refusal()
+        if refusal == "conflict":
+            for copy in self.query("#library-prompt-conflict-copy"):
+                copy.scroll_visible(animate=False)
+            return
+        if refusal or not save.display:
+            self._update_library_prompt_status_static(
+                refusal or LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH, reveal=True
+            )
+            return
+        self._save_library_prompt_from_editor(reveal_receipt=True)
 
     async def _save_library_prompt(
         self,

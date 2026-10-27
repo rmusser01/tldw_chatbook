@@ -632,8 +632,15 @@ you're on:
   Cancel reads **Discard changes** — the one way to drop the text (see
   [Media and conversations](library/media-and-conversations.md)).
 
-Escape and Ctrl+S are also bound inside the skill editor specifically
-(back to list / save) — see [Skills](library/skills.md). Escape also
+Ctrl+S saves in every Library editor — notes (flushes the autosave now),
+prompts, skills, Folder files, and the Media analysis and metadata forms; it
+does nothing outside an editor. It acts on the editor that holds focus, so
+with focus on a list, a filter or the rail beside an open editor it does
+nothing; with nothing unsaved it says "Saved — nothing to flush." on that
+editor's status line; where the editor's Save is held it says why there, and
+it never moves focus. The footer shows `ctrl+s` with the editor's verb only
+while the key would save. Escape is also bound inside the skill editor
+(back to list) — see [Skills](library/skills.md). Escape also
 returns Notes ▸ Folder files mode to the Library notes view, and is live
 inside the File Notes surface's own panels and dialogs — see
 [File Notes](library/file-notes.md). On the Study screen (reached via

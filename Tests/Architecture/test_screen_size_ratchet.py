@@ -1181,7 +1181,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-27, Task 8 fix round 2 (review R1 N-2; same owner decision):
     #: the Trash failure line's Retry delegator and its portable role:
     #: 38474 -> 38484 lines, 1383 -> 1384 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38484, 1384),
+    #: 2026-10-27, TASK-34000.40 polish-1b Task 9 (N-33, one Ctrl+S rule;
+    #: same owner decision -- expand limits, don't contort code): the one
+    #: ``ctrl+s`` binding, ``_EDITOR_SAVE_TARGETS``, the focus-decided target
+    #: (``_library_editor_save_target``, ``_library_focus_within``), its
+    #: refusal reading and the one chip seam (``_library_ctrl_s_chip``) at
+    #: every editor tier, the dispatcher (``action_library_editor_save``),
+    #: the notes refusal/clean branches, the skill and Folder files key
+    #: seams and the event-free metadata-form Save: 38484 -> 38735 lines,
+    #: 1384 -> 1394 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38735, 1394),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

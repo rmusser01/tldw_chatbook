@@ -590,6 +590,10 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._library_typing_field_footer = MethodType(
         LibraryScreen._library_typing_field_footer, fake
     )
+    # TASK-34000.40 (N-33, 2026-10-27): the editor tiers ask the one Ctrl+S
+    # chip seam; nothing holds focus in this fake, so it adds nothing
+    # (pinned on its own by test_ctrl_s_chip_appears_in_every_editor_tier_...).
+    fake._library_ctrl_s_chip = lambda target: ()
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))
@@ -635,32 +639,78 @@ def _binding_parts(entry) -> tuple[str, str, str]:
     return str(entry[0]), str(entry[1]), str(entry[2])
 
 
-def test_notes_ctrl_s_is_absent_from_binding_footer_and_f1_while_skill_keeps_it():
-    """Notes uses visible Save/autosave; only the Skill editor owns Ctrl+S."""
-    bindings = tuple(_binding_parts(entry) for entry in LibraryScreen.BINDINGS)
-    assert not any(action == "library_notes_save" for _key, action, _label in bindings)
-    assert any(
-        key == "ctrl+s" and action == "library_skill_save"
-        for key, action, _label in bindings
+def _ctrl_s_fake(target, *, refusal="", compact=False, prompt_id=7):
+    """The state ``_library_ctrl_s_chip`` reads, with the target stubbed."""
+    return SimpleNamespace(
+        _library_editor_save_target=lambda: target,
+        _library_editor_save_refusal=lambda _target: refusal,
+        _notes_state=SimpleNamespace(compact=compact),
+        _prompts_state=SimpleNamespace(selected_prompt_id=prompt_id),
     )
-    assert ("ctrl+s", "save skill") in LibraryScreen.LIBRARY_SKILL_EDITOR_SHORTCUTS
-    for shortcuts in (
-        LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
-        LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS_COMPACT,
-    ):
-        assert all(key != "ctrl+s" for key, _label in shortcuts)
 
-    fake = _f1_fake(
-        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS,
-        binding_extras=tuple(
-            (key, label)
-            for key, action, label in bindings
-            if action == "library_notes_save"
-        ),
+
+def test_ctrl_s_chip_appears_in_every_editor_tier_and_nowhere_else():
+    """TASK-34000.40 (N-33), ADR-031 rule (e): ONE chip seam for six editors.
+
+    Rewritten 2026-10-27 from ``test_notes_ctrl_s_is_absent_from_binding_
+    footer_and_f1_while_skill_keeps_it``, which pinned the split the owner
+    ruled out (no Notes Ctrl+S, a Skill-only binding). Each editor tier asks
+    ``_library_ctrl_s_chip`` with its own name and gets its verb only while
+    that editor is the one Ctrl+S acts on and the key would save there;
+    every other tier -- and every tier outside an editor -- gets nothing. F1
+    reads the same gate through the binding's ``check_action``. Which editor
+    holds focus is pinned on the real app by
+    ``test_library_ctrl_s_saves_in_every_editor.py``.
+    """
+    bindings = tuple(_binding_parts(entry) for entry in LibraryScreen.BINDINGS)
+    assert [(key, action) for key, action, _label in bindings if key == "ctrl+s"] == [
+        ("ctrl+s", "library_editor_save")
+    ]
+
+    verbs = {
+        "notes": "save now",
+        "prompt": "save changes",
+        "skill": "save skill",
+        "file_notes": "save file",
+        "media_analysis": "save",
+        "media_edit": "save",
+    }
+    chip = LibraryScreen._library_ctrl_s_chip
+    for target, verb in verbs.items():
+        assert chip(_ctrl_s_fake(target), target) == (("ctrl+s", verb),), target
+        for other in verbs:
+            if other != target:
+                assert chip(_ctrl_s_fake(target), other) == (), (target, other)
+        # Where the key refuses (it still says why, at the editor), no chip.
+        assert chip(_ctrl_s_fake(target, refusal="Save locked"), target) == ()
+        # Outside every editor -- the Notes list, the landing -- none at all.
+        assert chip(_ctrl_s_fake(None), target) == ()
+    assert chip(_ctrl_s_fake("notes", compact=True), "notes") == (("ctrl+s", "save"),)
+    assert chip(_ctrl_s_fake("prompt", prompt_id=None), "prompt") == (
+        ("ctrl+s", "save prompt"),
+    )
+
+    # F1: the binding is active exactly where a target exists.
+    assert LibraryScreen.check_action(_ctrl_s_fake("notes"), "library_editor_save", ())
+    assert not LibraryScreen.check_action(
+        _ctrl_s_fake(None), "library_editor_save", ()
+    )
+    in_editor = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_EDITOR_SHORTCUTS
+        + (("ctrl+s", "save now"),),
+        binding_extras=(("ctrl+s", "Save"),),
         row_id="browse-notes",
     )
-    LibraryScreen.action_show_workbench_help(fake)
-    (panel,) = fake._pushed
+    LibraryScreen.action_show_workbench_help(in_editor)
+    (panel,) = in_editor._pushed
+    assert [key for key, _label in panel.state.shortcuts].count("ctrl+s") == 1
+    outside = _f1_fake(
+        footer_shortcuts=LibraryScreen.LIBRARY_NOTES_NAVIGATOR_SHORTCUTS,
+        binding_extras=(),
+        row_id="browse-notes",
+    )
+    LibraryScreen.action_show_workbench_help(outside)
+    (panel,) = outside._pushed
     assert all(key != "ctrl+s" for key, _label in panel.state.shortcuts)
 
 

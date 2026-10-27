@@ -509,6 +509,7 @@ prompt to the Library. See
 
 | Key | Action |
 |---|---|
+| Ctrl+S (in the prompt editor) | Run **Save prompt** / **Save changes**. With nothing unsaved it says "Saved — nothing to flush."; while Save is held it says why on the status line ("Save unavailable — …"). In Advanced mode, inside the block editor, Ctrl+S opens that editor's own **Save…** menu instead |
 | Enter (in the Prompt filter) | Apply the pending debounced Prompt search immediately |
 | Enter (in collection search) | Run the collection-name search from page 1 |
 | Escape (in the collection manager) | Cancel the manager unless a create/rename is still settling |

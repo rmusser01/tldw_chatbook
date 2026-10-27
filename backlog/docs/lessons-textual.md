@@ -1722,6 +1722,28 @@ nor doing it *before* the snapshot landed.
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
 
+## Library Notes' "focus region" is the open VIEW, not the focus — a key gated on it fires from the list (TASK-34000.40, 2026-10-27)
+
+`_library_notes_focus_region()` answers `editor` / `preview` / `context`
+whenever a note is open (`_library_notes_view == "editor"`), wherever focus
+actually is; in the three-pane reader the Notes list, its filter and the folder
+tree sit beside that note. `check_action("library_notes_save")` is built on it,
+so the first cut of the one Ctrl+S binding (TASK-34000.40) saved from the list:
+with the note's focus test removed, the Pilot pin reads `Ctrl+S on
+LibraryRailSearchInput(id='library-notes-filter') wrote the note open beside
+it`. The skill editor had the same shape since task-424: the old
+`library_skill_save` gate ("a save is available", focus anywhere) saved the
+open skill from the Skills filter (`Ctrl+S on Input(id='library-skills-filter')
+saved the skill open beside it`).
+
+- A key that must act only where the user is (ADR-031 rule (d)) needs a FOCUS
+  test — an id on an ancestor of `screen.focused`
+  (`LibraryScreen._library_focus_within("library-note-work-pane")`, the
+  `_library_note_work_pane_owns_tab` idiom) — on top of any view flag.
+- The Notes footer tier follows the same region, so with focus on the tree
+  beside an open note it still reads `esc back to notes`; a chip that must
+  follow focus has to ask focus itself (`_library_ctrl_s_chip`).
+
 ## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix rounds 1-2, 2026-10-25)
 
 Enter on the Notes tree's "more" pager loaded the next page and left focus in

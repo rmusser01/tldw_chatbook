@@ -47,6 +47,7 @@ from tldw_chatbook.Library.library_structural_wait import (
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
+    LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH,
     back_cue_label,
     library_disabled_action_label,
 )
@@ -6854,6 +6855,33 @@ class LibraryFileNotesWorkspace(Vertical):
         if self._mutation_blocks_flush(binding):
             return False
         return self.leave_allowed
+
+    def report_key_save(self, before: SaveState, ok: bool) -> None:
+        """Say what a Ctrl+S flush did, on this pane's own action line.
+
+        TASK-34000.40 (N-33), ADR-031 rules (b)/(c): the key flushes the
+        pending autosave now (``flush_pending_work``); this names the
+        outcome where the pane already reports actions, and moves no focus.
+        A refusal ``flush_pending_work`` already explained (a Git mutation
+        holding the folder) keeps that explanation.
+
+        Args:
+            before: ``save_state`` when the key was pressed.
+            ok: ``flush_pending_work``'s result.
+        """
+        state = self._save_state
+        if state == "conflict":
+            self._set_action_status("Save refused — resolve the conflict below.")
+        elif state == "error":
+            self._set_action_status(
+                "Save refused — the last save failed; your draft is kept."
+            )
+        elif ok and state not in {"dirty", "saving"}:
+            self._set_action_status(
+                "Saved."
+                if before in {"dirty", "saving"}
+                else LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH
+            )
 
     async def _rescan_after_action(self) -> bool:
         service = self._service

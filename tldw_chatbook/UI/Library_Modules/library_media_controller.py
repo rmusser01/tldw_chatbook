@@ -5156,6 +5156,11 @@ class LibraryMediaController:
                 "Save" action.
         """
         event.stop()
+        self._save_library_media_analysis_from_form()
+
+    def _save_library_media_analysis_from_form(self) -> None:
+        """The analysis form's Save, event-free: the press and Ctrl+S share it
+        (TASK-34000.40 N-33; TASK-34000.22 AC#7)."""
         media_id = self._library_media_reader_target_id()
         if not media_id:
             self._library_media_editing_analysis = False

@@ -2540,7 +2540,15 @@ def test_register_footer_shortcuts_advertises_skill_editor_working_keys():
     _source, shortcuts = screen._footer_shortcut_registration
     shortcut_dict = dict(shortcuts)
     assert shortcut_dict["esc"] == "back to skills list"
-    assert shortcut_dict["ctrl+s"] == "save skill"
+    # TASK-34000.40 (N-33, 2026-10-27): Ctrl+S is chipped only while the skill
+    # editor HOLDS FOCUS (ADR-031 rule (e)); nothing has focus on this
+    # unmounted screen. The focus test itself is pinned live by
+    # ``test_library_ctrl_s_saves_in_every_editor_skills.py``.
+    assert "ctrl+s" not in shortcut_dict
+    screen._library_editor_save_target = lambda: "skill"
+    screen._register_footer_shortcuts()
+    _source, shortcuts = screen._footer_shortcut_registration
+    assert dict(shortcuts)["ctrl+s"] == "save skill"
 
     # The plain skills LIST is unaffected -- it still advertises "focus
     # rail", never the editor's keys.
@@ -2563,6 +2571,10 @@ def test_action_show_workbench_help_includes_skill_editor_keys(monkeypatch):
     screen = LibraryScreen(app)
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
     screen._skills_state.view = "editor"
+    # TASK-34000.40 (N-33, 2026-10-27): Ctrl+S is live -- footer chip and F1
+    # row alike -- only while the skill editor holds focus; that focus test
+    # is pinned live by ``test_library_ctrl_s_saves_in_every_editor_skills.py``.
+    screen._library_editor_save_target = lambda: "skill"
 
     pushed = []
 
@@ -2582,9 +2594,15 @@ def test_action_show_workbench_help_includes_skill_editor_keys(monkeypatch):
     assert len(pushed) == 1
     panel = pushed[0]
     assert isinstance(panel, WorkbenchHelpPanel)
-    shortcut_keys = {key for key, _description in panel.state.shortcuts}
-    assert "ctrl+s" in shortcut_keys
+    shortcut_keys = [key for key, _description in panel.state.shortcuts]
+    assert shortcut_keys.count("ctrl+s") == 1
     assert "esc" in shortcut_keys
+
+    # Focus anywhere else: neither the footer set nor the binding offers it.
+    screen._library_editor_save_target = lambda: None
+    pushed.clear()
+    screen.action_show_workbench_help()
+    assert all(key != "ctrl+s" for key, _description in pushed[0].state.shortcuts)
 
 
 def test_check_action_gates_note_editor_back_to_active_editor():

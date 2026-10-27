@@ -34,6 +34,9 @@ from tldw_chatbook.Library.library_pager_state import (
     library_pager_layout,
 )
 from tldw_chatbook.Library.library_shell_state import (
+    LIBRARY_EDITOR_SAVE_BUSY_COPY,
+    LIBRARY_PROMPT_SAVE_BULK_PREVIEW_COPY,
+    LIBRARY_PROMPT_SAVE_NOT_LOADED_COPY,
     library_choice_label,
     library_choice_tooltip,
     library_disabled_action_label,
@@ -47,7 +50,10 @@ from tldw_chatbook.Widgets.Library.library_choice_strip import (
 from tldw_chatbook.UI.Library_Modules.prompt_history_region import (
     LibraryPromptHistoryRegion,
 )
-from tldw_chatbook.Widgets.Prompts.prompt_block_editor import PromptBlockEditor
+from tldw_chatbook.Widgets.Prompts.prompt_block_editor import (
+    UPDATE_ORIGINAL_UNAVAILABLE_COPY,
+    PromptBlockEditor,
+)
 from tldw_chatbook.Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
     add_block,
@@ -557,6 +563,31 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         for button in self.query("#library-prompt-more-actions-region Button"):
             if isinstance(button, Button):
                 button.disabled = busy
+
+    def save_key_refusal(self) -> str:
+        """Why Ctrl+S would not run this editor's Save now, or "".
+
+        TASK-34000.40 (N-33): read off the live Save button -- the visible
+        commit the key stands for (ADR-031 rule (a)) -- and, only while it is
+        shown but held, off the flags ``sync_lifecycle_actions`` builds its
+        disabled rule from. ``"conflict"`` is a marker, never painted: the
+        conflict banner already says what to do.
+        """
+        if self.conflict:
+            return "conflict"
+        try:
+            save = self.query_one("#library-prompt-save", Button)
+        except NoMatches:
+            return ""
+        if not (save.display and save.disabled):
+            return ""
+        if self.mutation_in_flight or self.write_in_flight:
+            return LIBRARY_EDITOR_SAVE_BUSY_COPY
+        if self.bulk_read_only:
+            return LIBRARY_PROMPT_SAVE_BULK_PREVIEW_COPY
+        if self.identity_mismatch:
+            return LIBRARY_PROMPT_SAVE_NOT_LOADED_COPY
+        return UPDATE_ORIGINAL_UNAVAILABLE_COPY
 
     @on(Button.Pressed, "#library-prompt-more-actions")
     def _toggle_more_actions(self, event: Button.Pressed) -> None:

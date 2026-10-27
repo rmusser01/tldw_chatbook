@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved 07:49 · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list    Scratch                         Library notes
+       e   In the Library database only — no file on disk
+       s   Saved
+              Edit     Preview     Info
+--->        ┃ Save ┃   Use in Console
+           Title     Scratch
+     --->  Keywords  Comma-separated keywords
+           Body
+          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+--->      ▊ scratch                                                            ▎
+          ▊  ctrl-s testx                                                      ▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊                                                                    ▎
+          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+                                                                 3 words · 2:14
+  esc notes | ctrl+s save | enter save note | F1 · F6 · Ctrl+P · Ctrl+Q

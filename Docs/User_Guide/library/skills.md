@@ -416,7 +416,7 @@ parentheses when something differs from the trusted baseline.
 
 | Key | Action |
 |---|---|
-| Ctrl+S | Save — only when the open Skill is new or has changes |
+| Ctrl+S | Save the open Skill when it is new or has changes; with nothing unsaved it says "Saved — nothing to flush." on the status line. Only while focus is in the skill editor — from the Skills list beside it the key does nothing |
 | Esc | Close More actions first; otherwise return to the Skills list |
 | Tab / Shift+Tab | Move through the current Basic or Advanced controls |
 | Arrow keys / Space | Move and toggle items in the Advanced tool checklist |

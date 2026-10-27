@@ -4880,6 +4880,10 @@ class LibraryNotesController:
     def handle_library_note_save(self, event: Button.Pressed) -> None:
         """Explicitly save the open note, bypassing the autosave debounce."""
         event.stop()
+        self._begin_library_note_explicit_save()
+    def _begin_library_note_explicit_save(self) -> None:
+        """The Save button's commit, event-free; Ctrl+S runs exactly this
+        (TASK-34000.40 N-33, ADR-031 rule (a))."""
         # LIB-14: an explicit Save is the user's own deliberate "keep it"
         # act, even if the note is still blank -- never GC a note the user
         # just told the app to save (unlike autosave, which is not a
