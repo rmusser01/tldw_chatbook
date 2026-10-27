@@ -11,6 +11,8 @@ from rich.cells import get_character_cell_size
 
 from tldw_chatbook.Library.library_pager_state import (
     LibraryPagerDisplay,
+    LibraryPagerLayout,
+    library_pager_layout,
     simple_library_pager_display,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
@@ -484,12 +486,16 @@ class LibraryNotesTrashState:
             -- the count the "Recently deleted (N)" row names.
         page: The 1-based page ``rows`` is (TASK-34000.29, N-29).
         page_size: Rows per page.
+        loading: Page 1 is being read over a snapshot of another page
+            (reopening the view, review R0 m-7): the view says so instead
+            of painting the old page or claiming the Trash is empty.
     """
 
     rows: tuple[LibraryNotesTrashRow, ...] = ()
     total: int = 0
     page: int = 1
     page_size: int = LIBRARY_NOTES_TRASH_PAGE_SIZE
+    loading: bool = False
 
     @property
     def pager(self) -> LibraryPagerDisplay:
@@ -502,15 +508,20 @@ class LibraryNotesTrashState:
         pages = library_notes_trash_last_page(self.total, self.page_size)
         first = (self.page - 1) * self.page_size + 1
         last = (self.page - 1) * self.page_size + len(self.rows)
+        # Review R0 m-8: one row is "21 of 21", not the range "21–21 of 21".
+        span = f"{first}–{last}" if last > first else f"{first}"
         return simple_library_pager_display(
-            range_copy=(
-                f"{first}–{last} of {self.total}" if self.rows else f"0 of {self.total}"
-            ),
+            range_copy=f"{span} of {self.total}" if self.rows else f"0 of {self.total}",
             page=self.page,
             total_pages=pages,
             has_previous=self.page > 1,
             has_next=self.page < pages,
         )
+
+    @property
+    def pager_layout(self) -> LibraryPagerLayout:
+        """``library_pager_layout``'s one-page rule over :attr:`pager`."""
+        return library_pager_layout(self.pager)
 
 
 def build_library_notes_trash_state(
