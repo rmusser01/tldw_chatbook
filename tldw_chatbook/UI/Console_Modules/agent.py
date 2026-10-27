@@ -2557,10 +2557,13 @@ class ConsoleAgentController:
         computes them again to render them. While drilled into a sub-agent
         each computation read that run's durable record, so a projecting
         tick read it twice. The tick (``config_sync.project_console_tick``)
-        runs both inside this scope, which hands the render the record the
-        input read, so the lines it renders are the ones the cadence
-        recorded. Nothing awaits inside a tick; outside one, every
-        computation reads the record afresh, as before.
+        runs both inside this scope, which hands the render the durable
+        record the input read, so the lines it renders come from the record
+        the cadence recorded. Only that record is shared: the live-slot
+        fallback (``live_run_snapshot``, used while the record has no steps
+        yet) is still read on each computation, and the next tick
+        re-projects whatever moved. Nothing awaits inside a tick; outside
+        one, every computation reads the record afresh, as before.
         """
         if self._tick_drill_reads is not None:  # The outer tick owns them.
             yield
