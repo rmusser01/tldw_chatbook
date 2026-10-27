@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-26 12:30'
-updated_date: '2026-10-27 23:02'
+updated_date: '2026-10-27 23:14'
 labels:
   - console
   - performance
@@ -82,4 +82,13 @@ Review follow-ups (2026-10-27, review verdict ship, no blocking findings)
 - The pending-facts helper reads mounted rows unless a rebuild is actually held, and then projects with the inspector's own ownership, not STRICT.
 - New full-app case test_an_inspector_opened_after_chat_switches_matches_one_open_throughout: after a collapsed first send, a new tab, a temporary tab and the saved chat again, each met collapsed, match a rail open throughout. It leaves the outer fold hint out, because a rail opened late after a switch drops that hint on dev as well (TASK-37000.5). It is not in the UI PR census: it took 170 s here at host load about 70, too slow for that lane.
 - Filed: TASK-37000.1 widened to the Context rail's agent-section display writes; TASK-37000.3 (one rail module for the cascade and helpers); TASK-37000.4 (a larger paired sample of first-send full reflows; r4 had two launches per arm); TASK-37000.5 (fold hint after a switch).
+
+Merge evidence (2026-10-27, head after the review follow-ups, base origin/dev 773cc9729c, no rebase needed)
+- New tests, plain command: test_console_inspector_rail_deferral 6/6; test_console_collapsed_inspector_send_layout 3/3 (113 s at host load about 70).
+- On a detached origin/dev worktree: the deferral file fails 6/6 (the four layout cases; the focus pin only because dev holds no rebuild). The chat-switch case fails at 'back to the saved chat': the late-opened rail lacks the Agents section. A first dev run failed earlier at 'new tab' on the staged-context tray's height (4 rows against 3); the branch matched there in every run that reached that step.
+- Mutation: with the cascade's rebuild_if_deferred call removed, the chat-switch case fails at 'new tab' (the run inspector keeps its held rows).
+- Neighbours on the branch: pending_interrupt_projection 15/15, both cold-readiness files 1/1, first_persistence 1/1. By test id against dev, no branch-only reds: inspector_section 3 failed on both, run_inspector 79 setup errors on both, right_rail 34 failed on both, run_tick_layout_requests 14/14 on both.
+- Ratchets: test_screen_size_ratchet 4/4 (ChatScreen 24325). test_module_size_ratchet: the same 8 rows fail on dev, none for a touched file. ui-ready census: 1032 against 1031 on dev and branch alike, identical output. Boot CSS budget passes; no CSS changed.
+- ./scripts/preflight.sh exit 0 (UI census 968, floor 968).
+- No new live round: this session's code changes rename a marker to a constant of the same value and correct a comment, so runtime behaviour is unchanged from the live-verified head.
 <!-- SECTION:NOTES:END -->
