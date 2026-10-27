@@ -489,7 +489,16 @@ async def test_a_pane_key_during_a_pending_down_keeps_the_users_focus(
         )
 
         # R2-3: with a note open, F6 to its Save -- a control with a portable
-        # role -- and after the landing focus is on that same control.
+        # role -- and after the landing focus is on that same control. The
+        # return from the dialog reloads the tree, so wait for the Thesis row
+        # to be mounted again before pressing it (a slow runner can be
+        # mid-redraw here).
+        await _wait(
+            pilot,
+            lambda: (row := _row_titled(screen, THESIS)) is not None
+            and row.is_attached,
+            "the tree to repaint the Thesis row after the dialog",
+        )
         _row_titled(screen, THESIS).press()
         await _armed_editor(screen, pilot, seeded.thesis_id)
         held = await _held_down("index")
