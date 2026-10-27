@@ -33,6 +33,8 @@ from Tests.UI.test_library_ctrl_s_saves_in_every_editor import (
     NO_CHANGES,
     _footer,
     _painted,
+    _press_processed,
+    _record_resolved_keys,
     _within,
 )
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
@@ -62,6 +64,7 @@ async def test_ctrl_s_saves_the_focused_skill_and_nothing_from_its_list(
         local_service=local, server_service=None, policy_enforcer=None
     )
     toasts = _record_toasts(monkeypatch, app)
+    resolved = _record_resolved_keys(monkeypatch, app)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
@@ -131,8 +134,8 @@ async def test_ctrl_s_saves_the_focused_skill_and_nothing_from_its_list(
                 "Shift+F6 to leave the skill editor",
             )
             moved_to = screen.focused
-            await pilot.press("ctrl+s")
-            await pilot.pause(0.5)
+            # Review R1 N-1: the key fully processed, then what it did not do.
+            await _press_processed(pilot, resolved, "ctrl+s")
             assert "fast" not in skill_file.read_text(encoding="utf-8"), (
                 f"Ctrl+S on {moved_to!r} saved the skill open beside it"
             )
