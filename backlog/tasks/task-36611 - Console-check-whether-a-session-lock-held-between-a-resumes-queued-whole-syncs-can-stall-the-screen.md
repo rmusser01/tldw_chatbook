@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-24 07:50'
-updated_date: '2026-10-27 16:23'
+updated_date: '2026-10-27 17:03'
 labels:
   - console
   - reliability
@@ -27,7 +27,7 @@ Nobody has checked whether production can reach the same state, where a session 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Why the test's wait timed out is diagnosed and recorded in the task notes
-- [x] #2 A deterministic test either reproduces the stall through production code paths or shows that no production caller holds the session lock across a resume's queued whole syncs
+- [x] #2 A deterministic test either reproduces the stall through production code paths or shows that a production holder of the session lock releases it without the screen's pump, so a whole sync queued on the screen's pump waits for one tab publication only
 - [x] #3 If the stall is reproducible, the Console keeps processing messages while the lock is held, and the test fails on the base build
 <!-- AC:END -->
 
@@ -68,17 +68,19 @@ New pin `Tests/UI/test_console_session_lock_screen_pump.py`:
   - the screen's task suspended in `MessagePump._get_message`, with its message queue, `_next_callbacks` and `_callbacks` empty;
   - no sync requested, in progress or replaying, and no tab publication open;
   - the projection not pending, and no Console worker running.
-- Nothing awaits between the predicate and the lock acquire.
+- Nothing awaits between the predicate and the lock acquire, and each pin re-asserts `_publication_quiet` synchronously right before its `acquire()`, so setup done after the settle (a session switch, new sessions) is checked too.
 - Waits made while the test holds the lock poll the event loop (`_loop_wait`), not Pilot. The replaced-controller pin ends with a `pilot.pause()` after release, so a stall still fails it.
 - My first version checked `_callbacks` but not the queue or the pump. The forced probe failed it 1 of 1, because the callback was still an `InvokeLater` in the screen's message queue. The final version passed 4 of 4 under the same forced probe.
 - Repeats: the maintenance file passed 8 of 8 runs (24 tests) under 4 parallel lanes.
 
 **Other changes**
-- Census: the new file is appended at the tail (about 9 s locally), and `MINIMUM_FILES` goes from 908 to 909 with a dated comment.
+- Census: the new file is appended at the tail (9-24 s per call locally depending on load, most of it the private-profile child process starting up; the test body itself takes about 8 s), and `MINIMUM_FILES` goes from 908 to 909 with a dated comment.
 - Lesson added to `lessons-testing-evidence.md`.
 - Not changed: `Tests/UI/test_console_tab_publication_read_barrier.py` takes the surface lock after a settle as weak as the old one and clicks while holding it. It passed 3 of 3 here, and the same hazard applies to it. Filed as TASK-37040.
 
 Files: `Tests/UI/test_console_tab_publication_maintenance.py`, `Tests/UI/test_console_session_lock_screen_pump.py` (new), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
 
 Rebased onto dev a2b7104d1e (docs-only changes since the base). On the rebased head, with preflight running alongside: the maintenance file passed 3 of 3, and the new pin passed 1 of 1.
+
+Merge evidence (2026-10-27, head after review follow-ups; dev a2b7104d1e unchanged since the base). Review follow-ups applied: AC #2 reworded to the outcome shown; every pin re-asserts _publication_quiet synchronously right before its acquire() (negative control: a call_after_refresh whole sync queued there trips the assertion, 1 of 1); the predicate docstring now says it covers the screen's pump only, with timers left out and why; Textual and CPython internals noted; census timing comment corrected. Plain command, one file each: test_console_tab_publication_maintenance.py 3 passed (twice); test_console_session_lock_screen_pump.py 1 passed (twice, 19-24 s per call under load ~38); test_ui_pr_gate_census_checker.py 80 passed and test_ui_lane_shard_count_statements.py 11 passed. Detached origin/dev: the maintenance file 3 passed and the census checker 80 passed, so no new failures by test id. Production code unchanged, so the new pin cannot fail on dev; its RED is the recorded sync_sessions mutation. Live: the real app from this branch with claude-haiku-4-5. Five Ctrl+T new tabs in a burst all rendered, the composer took typing right away, and a real send got its reply with the tab retitled. The app log had no errors.
 <!-- SECTION:NOTES:END -->
