@@ -362,10 +362,10 @@ class LibraryNotesOperationState:
             is open. Next: open a note, then try again."). Rendered verbatim
             in place of the generic "{action} failed — …" line when set.
         origin_control: TASK-34000.29 (N-12) -- the ``#``-less id of the
-            control that had focus when the operation began. The running
-            operation disables that control, so Textual moves focus on to
-            the next enabled stop (Delete, in Info); focus goes back here
-            once the operation ends. Empty when nothing had focus.
+            control that had focus when the operation began. That control
+            stays enabled while the operation runs; disabling it moved focus
+            on to the next enabled stop (Delete, in Info). Focus is put back
+            here once the operation ends. Empty when nothing had focus.
     """
 
     kind: Literal["import", "export", "copy", "console"]
