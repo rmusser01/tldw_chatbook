@@ -14513,6 +14513,9 @@ wrong, not evidence the test needs help.
 
 When extracting a screen helper, check whether it belongs on screen preloading or only on the action path, and run the existing preimport guard along with the owner size check. ADR-097 governs this cost even when behavior and total code size barely change.
 
+**Repeat incident, TASK-33910.35 / PR #3251, 2026-10-27.** A cohesive pure window-state extraction and stateless completion helper kept the screen under its size ratchet, but their eager imports took the registry walk to 560/558 modules. The guard was missed before pushing and found the regression in hosted Perf Guard 40535679039. The existing test reproduced the exact RED locally. Ordinary first-use completion imports plus deferring the adjacent style-picker modal restored 558/558 modules and 424,407/425,347 LOC; first-send remained 93/94. The screen stayed 16,859 lines by deleting its genuine single-use forwarding method. Both boot guards and 17 runtime controls/two private children passed, and hosted Perf Guard 40540997830 confirmed the same counts. No threshold, snapshot or guard allowance changed. Check the preimport budget before pushing an extraction even when the code is pure and the total line count does not grow.
+
+
 ## Two ratchets can measure the same cost, so paying one breaches the other
 
 **What happened.** 2026-08-29, task-24458. Deferring modules off the boot import path made
