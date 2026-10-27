@@ -344,8 +344,8 @@ unless project instructions explicitly select one binding; that selected
 binding then remains their single working root and keeps its read-only or
 read-write guard. In plain chat both are off until you turn them on: the
 local `fs_*` and Git tools come with **Full agent tools**, and each built-in
-file tool has its own switch, under **MCP ▸ Servers ▸ built-in row ▸ Tool
-gates** (see
+file tool has its own switch, under **Settings ▸ Tools & MCP ▸ Servers ▸
+built-in row ▸ Tool gates** (see
 [Agent runs and tools](agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)).
 
 Project instructions are local per-session state. A new session starts
