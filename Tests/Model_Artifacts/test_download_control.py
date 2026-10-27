@@ -399,6 +399,44 @@ def test_second_install_waits_for_the_first_and_then_both_install(
     assert phases.index("queued") < phases.index("fetch")
 
 
+def test_a_download_started_without_a_control_is_named_as_its_host_shows_it(
+    tmp_path: Path,
+) -> None:
+    """TASK-34100.14 review F2-b: Lab ▸ Models (and Library) start installs
+    without a DownloadControl, so an install queued behind one used to read
+    "Waiting for the parakeet-v3 download to finish…" -- the internal
+    artifact id. It is named by the root descriptor's model id, the name
+    Lab ▸ Models titles the model with.
+    """
+    gate = threading.Event()
+    with FixtureArtifactServer() as srv:
+        (first_ref, first_service, first_consent), (
+            second_ref,
+            second_service,
+            second_consent,
+        ), catalog, core = _two_artifacts(tmp_path, srv, gate)
+        first = _ThreadedProvision(first_service, first_ref, first_consent, catalog)
+        second = _ThreadedProvision(
+            second_service,
+            second_ref,
+            second_consent,
+            catalog,
+            control=_download_control("Parakeet v2 (English, INT8)", wait_if_busy=True),
+        )
+        try:
+            first.start().wait_fetching()
+            second.start().wait_queued()
+        finally:
+            gate.set()
+        first.join()
+        second.join()
+
+    queued = next(event for event in second.events if event.phase == "queued")
+    model_id = catalog.descriptor(first_ref).model_id
+    assert model_id != first_ref.artifact_id
+    assert queued.waiting_for == model_id
+
+
 def test_cancel_while_queued_leaves_the_running_download_alone(tmp_path: Path) -> None:
     gate = threading.Event()
     with FixtureArtifactServer() as srv:

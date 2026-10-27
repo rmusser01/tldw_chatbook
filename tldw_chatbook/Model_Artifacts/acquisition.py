@@ -1452,7 +1452,7 @@ class ArtifactAcquisitionService:
                         label=(
                             scope.control.label
                             if scope.control is not None
-                            else root.artifact_id
+                            else self._holder_label(root, catalog)
                         ),
                     )
                 )
@@ -1508,6 +1508,23 @@ class ArtifactAcquisitionService:
                         await self._settle_native(loop.run_in_executor(None, lease.release))
                     finally:
                         self._maintenance_session = None
+
+    @staticmethod
+    def _holder_label(root: ArtifactRef, catalog: ArtifactCatalog) -> str:
+        """Name a download started without a ``DownloadControl``.
+
+        TASK-34100.14 review F2-b: Lab ▸ Models and Library start installs
+        without a control, and an install waiting for one used to name it by
+        its internal artifact id ("parakeet-v3"). The root descriptor's
+        model id is the name Lab ▸ Models titles the model with; a catalog
+        that cannot answer (the closure walk raises properly right after)
+        falls back to the artifact id.
+        """
+        try:
+            model_id = catalog.descriptor(root).model_id
+        except (KeyError, CatalogError):
+            return root.artifact_id
+        return model_id or root.artifact_id
 
     async def _provision_closure(
         self,
