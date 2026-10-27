@@ -124,6 +124,9 @@ def test_actual_runs_preflight_preserves_operational_facts_and_native_history(
         build = getattr(reads, "runs_preflight", None)
         assert callable(build), "actual captured scope needs fixed all-owner preflight"
         plan = build()
+        assert all(
+            proof.relative_path not in repr(plan) for proof in plan.history_observations
+        )
         from tldw_chatbook.Backup_Recovery.mobile_plan_manifest import _TABLES
 
         assert plan.field_ownership is plan.integrated.field_ownership
@@ -278,12 +281,56 @@ def test_actual_runs_preflight_preserves_operational_facts_and_native_history(
 def test_native_run_projection_requires_all_of_its_retained_steps(
     tmp_path, monkeypatch
 ):
+    import json
+
     from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from tldw_chatbook.Agents.run_log_format import RunLogRecord, encode_record
+    from tldw_chatbook.Chat.console_remote_models import ConsoleTarget
+    from tldw_chatbook.DB.console_command_receipts import (
+        ConsoleCommandReceipt,
+        ConsoleCommandReceiptRepository,
+    )
 
     original_seed = mobile_consolidation_fixture._seed
     source = {}
 
     def native(db, legacy, ids):
+        original = ids["artifact_file"]
+        parent = original.parent.with_name(ids["parent_run_id"])
+        original.parent.rename(parent)
+        logfile = parent / "logs.0001.txt"
+        (parent / original.name).rename(logfile)
+        logfile.write_bytes(
+            encode_record(
+                RunLogRecord(
+                    1, ids["child_run_id"], "subagent", "model", "old", "retained child"
+                )
+            )
+        )
+        (parent / "MANIFEST").write_text(
+            json.dumps({"run_id": ids["parent_run_id"], "segments": ["logs.0001.txt"]})
+        )
+        (parent / "logs.0002.txt").write_bytes(b"")
+        ConsoleCommandReceiptRepository(db).claim(
+            ConsoleCommandReceipt(
+                command_id="lost-child-command",
+                server_epoch="old",
+                console_id="old",
+                action="subagent_stop",
+                target=ConsoleTarget(
+                    server_epoch="old",
+                    console_id="old",
+                    session_id="opaque",
+                    incarnation_id="opaque",
+                    run_id=ids["child_run_id"],
+                ),
+                payload_fingerprint="a" * 64,
+                state="pending",
+                issued_ns=10,
+                expires_ns=20,
+                native_id=ids["child_run_id"],
+            )
+        )
         if legacy:
             source.update(ids)
 
@@ -309,6 +356,48 @@ def test_native_run_projection_requires_all_of_its_retained_steps(
             r.table == "agent_runs" and r.original == (source["parent_run_id"],)
             for r in plan.rows
         )
+
+        assert not any(source["child_run_id"] in p.run_ids for p in plan.history)
+        assert not any(p.relative_path.endswith("/MANIFEST") for p in plan.history)
+        empty = next(
+            p for p in plan.history if p.relative_path.endswith("logs.0002.txt")
+        )
+        assert empty.run_ids == () and empty.owner_run_id == source["parent_run_id"]
+        assert any(
+            b.reason == "native_history_segment_dependency_blocked"
+            for b in plan.blockers
+        )
+        assert any(
+            source["child_run_id"] in p.run_ids
+            and not p.associations
+            and p.owner_association is None
+            for p in plan.history_observations
+        )
+        receipt = next(
+            h for h in plan.operational_history if h.table == "console_command_receipts"
+        )
+        assert dict(receipt.values)["native_id"] == source["child_run_id"]
+        assert receipt.associations == ()
+        assert any(
+            b.reason == "native_operational_run_dependency_blocked"
+            and b.original == ("lost-child-command",)
+            for b in plan.blockers
+        )
+        assert any(
+            b.reason == "native_history_run_dependency_blocked" for b in plan.blockers
+        )
+        accepted = {(r.table, r.original) for r in plan.rows}
+        assert all(
+            not d.original
+            or d.table in {"automatic_work_runtime_owner", "console_command_receipts"}
+            or (d.table, d.original) in accepted
+            for d in plan.pending_duties
+        )
+        assert any(
+            d.requirement == "native_passive_command_history_retention"
+            for d in plan.pending_duties
+        )
+        assert any(not d.original and d.table == "*" for d in plan.pending_duties)
 
 
 def test_actual_runs24_preflight_preserves_authenticated_receipt_absence(

@@ -822,6 +822,10 @@ historical facts. They do not prove current files, permission, freshness, or res
 approval. Removed Goals retain their erased request and non-resumable accounting.
 Native Goal-coupled `goal:<id>` work-submission identities remain coupled to the
 mapped Goal; arbitrary opaque launch/submission strings are not parsed as IDs.
+`mobile_runs_goal_budget.py` admits installed model defaults, derived roots/sets,
+path representations, internal canonical/report serialization (including nested
+reports), and caller clones/encoding before native validation or serialization.
+Native models remain the acceptance and output authority.
 
 Source runtime-owner and command-receipt rows are retained separately as original
 operational history. The canonical singleton is unchanged. Original command
@@ -847,6 +851,15 @@ produce exact prewrite blockers. This seam neither publishes files nor relaxes t
 separate HistoryFiles/SQLite lifetime exclusion. A RunLog digest cannot prove Git
 objects or worktree authority.
 
+Header admission accounts for native split/partition tokens and dictionary fields
+before the decoder. File-owning primary roots remain separate from framed Run
+membership: empty segments and segments containing only descendants retain their
+actual owner. A MANIFEST supersession declaration can prove only a recorded
+historical reference to a distinct source primary in the same conversation,
+including a still-running prior Run. It proves no successful supersession or file
+ownership. Declared segments must be regular native `logs.[0-9]+.txt` members with
+independently qualified framing; a stale manifest need not enumerate every log.
+
 Retained change notes may legitimately reference snapshots already pruned by the
 native retention owner. The outer snapshot domain reserves both partitions' live
 IDs and retained non-null locators, preserving NULL and exact per-note provenance.
@@ -861,7 +874,11 @@ Outer closure includes actual Run/Goal dependencies and the original qualified
 trace/Canvas inputs. Losing an originally present required step or Goal child
 removes its owning candidate and propagates through the existing fixed-point
 closure; originally absent/partial history is not fabricated. Final Sync frontiers
-and semantic discharges retain only accepted owners. All native holds, passive
+and semantic discharges retain only accepted owners. Final qualified history,
+its owner/segment dependencies, operational mapped references and row duties close
+against those same accepted owners. Separate historical observations retain source
+facts with mapped associations cleared; global and passive retention duties stay.
+All native holds, passive
 history, current binding/authority/advertising gates, file access and atomic
 rows/maps/receipts remain explicit pending duties. `require_complete()` always
 refuses, including on saved or replaced plan data. This foundation performs no

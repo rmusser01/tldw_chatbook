@@ -272,3 +272,210 @@ def test_captured_goal_binding_requires_its_actual_workspace(tmp_path, monkeypat
             r.table == "goal_runs" and r.original == (source["goal"],)
             for r in plan.rows
         )
+
+
+@pytest.mark.parametrize("kind", ["request", "checkpoint"])
+def test_actual_goal_internal_serializers_are_admitted_on_one_consumed_budget(
+    tmp_path, monkeypatch, kind
+):
+    import json
+    import time
+    from uuid import uuid4
+
+    from Tests.Backup_Recovery import mobile_consolidation_fixture
+    from tldw_chatbook.Agents.agent_models import RunOutcome, RunTerminationReason
+    from tldw_chatbook.Agents.goal_models import (
+        GoalIterationResult,
+        GoalRequest,
+        IterationReport,
+    )
+    from tldw_chatbook.Backup_Recovery.mobile_runs_goals import _plan_goal_rows
+    from tldw_chatbook.Chat.console_trace_read_budget import (
+        _TraceReadBudget,
+        _TraceReadLimit,
+    )
+
+    monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "true")
+    seed = mobile_consolidation_fixture._seed
+    marker = "FIX1-INTERNAL-"
+
+    def native(db, legacy, ids):
+        goal = db.goal_runs.get(ids["goal_id"])
+        if kind == "request":
+            data = goal.request.model_dump(mode="json")
+            data["objective"] = marker + "x" * (8192 - len(marker))
+            data["criteria"] = "y" * 8192
+            data["verifiers"] = [
+                {
+                    "id": "native-check",
+                    "executor_tool_id": "run_skill_script",
+                    "verifier_path": "/trusted/native-verifier.py",
+                    "verifier_sha256": "a" * 64,
+                    "input_paths": ["input.txt"],
+                    "arguments": ["arg" + "x" * 4090] * 20,
+                }
+            ]
+            # Native historical JSON may omit defaults; immutable launch rows are
+            # inserted before preview, with exact native validation/hash/chain.
+            for key in ("policy", "source_bindings", "human_review_required"):
+                data.pop(key)
+            data["tool_scope"].pop("mcp_bindings")
+            raw = json.dumps(data)
+            request = GoalRequest.model_validate_json(raw)
+            goal_id, conversation = str(uuid4()), str(uuid4())
+            chain = db.automatic_work.create_chain(
+                conversation,
+                root_submission_id="goal:" + goal_id,
+                limits=request.policy.chain_limits(),
+            )
+            with db.transaction() as connection:
+                connection.execute(
+                    "INSERT INTO goal_runs (id,launch_id,payload_hash,request_json,conversation_id,chain_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        goal_id,
+                        "large-native-request",
+                        hashlib.sha256(raw.encode()).hexdigest(),
+                        raw,
+                        conversation,
+                        chain,
+                        time.time(),
+                        time.time(),
+                    ),
+                )
+            ids["extra_goal_conversation"] = conversation
+        else:
+            goal = db.goal_runs.set_provisioning(goal, status="ready")
+            attempt = db.automatic_work.prepare_goal_iteration(
+                goal.id, owner_id="owner"
+            )
+            assert db.automatic_work.accept_goal_iteration(attempt.id, owner_id="owner")
+            run = db.create_run(
+                conversation_id=goal.conversation_id,
+                agent_kind="primary",
+                work_chain_id=goal.chain_id,
+            )
+            with db.transaction() as connection:
+                connection.execute(
+                    "UPDATE goal_iterations SET run_id=? WHERE attempt_id=?",
+                    (run, attempt.id),
+                )
+            report = IterationReport(summary=marker + "z" * 60000)
+            db.set_status(run, "done", result="retained")
+            db.goal_runs.checkpoint(
+                GoalIterationResult(
+                    goal.id,
+                    attempt.ordinal,
+                    attempt.id,
+                    run,
+                    RunOutcome(
+                        status="done", steps=[], final_text=report.model_dump_json()
+                    ),
+                    RunTerminationReason.DONE,
+                )
+            )
+
+    def linked(db, legacy, ids):
+        if "extra_goal_conversation" in ids:
+            db.add_conversation(
+                {
+                    "id": ids["extra_goal_conversation"],
+                    "title": "Native large Goal",
+                    "workspace_id": ids["workspace_id"],
+                }
+            )
+
+    monkeypatch.setattr(
+        mobile_consolidation_fixture,
+        "_seed",
+        lambda stores, **kw: seed(
+            stores, **kw, runs_seed=native, linked_chat_seed=linked
+        ),
+    )
+    with content_reads(tmp_path, monkeypatch, lambda c, p: None) as reads:
+        identities = reads.identity_plan()
+        budget = _TraceReadBudget()
+        json_charge = _TraceReadBudget.json
+        pending = []
+        observations = []
+        shortfalls = []
+        method = (
+            GoalRequest.canonical_json
+            if kind == "request"
+            else IterationReport.model_dump_json
+        )
+
+        def charged(self, raw):
+            if (
+                self is budget
+                and marker in (raw.decode() if isinstance(raw, bytes) else raw)
+                and not pending
+            ):
+                pending.append(self._remaining)
+            return json_charge(self, raw)
+
+        def internal(self, *args, **kwargs):
+            text = (
+                self.objective
+                + self.criteria
+                + "".join(
+                    argument
+                    for verifier in self.verifiers
+                    for argument in verifier.arguments
+                )
+                if kind == "request"
+                else self.summary
+            )
+            if marker in text and pending:
+                consumed = pending.pop() - budget._remaining
+                # Even one model string clone, serialized Unicode and UTF-8 output
+                # require 4+4+1 units per ASCII character before the native call.
+                if consumed < 9 * len(text):
+                    shortfalls.append((consumed, 9 * len(text)))
+                observations.append(budget._remaining)
+            return method(self, *args, **kwargs)
+
+        monkeypatch.setattr(_TraceReadBudget, "json", charged)
+        monkeypatch.setattr(
+            GoalRequest if kind == "request" else IterationReport,
+            "canonical_json" if kind == "request" else "model_dump_json",
+            internal,
+        )
+        # Real captured transformations consume this one original allowance.
+        # Neither a replacement budget nor an artificial smaller cap is injected.
+        with pytest.raises(_TraceReadLimit):
+            for _ in range(256):
+                plan = _plan_goal_rows(reads, identities, _read_budget=budget)
+                assert any(
+                    marker
+                    in dict(row.values).get(
+                        "request_json" if kind == "request" else "payload_json", ""
+                    )
+                    for row in plan.rows
+                ), "native valid Goal must survive admitted validation"
+                assert not shortfalls, (
+                    "native internal serialization entered before admission"
+                )
+        assert not shortfalls, "native internal serialization entered before admission"
+        assert observations and min(observations) < 4 * 1024 * 1024
+    assert not reads.active and not reads.roots
+
+
+def test_goal_remap_json_admits_native_escape_width_before_encoding(monkeypatch):
+    from tldw_chatbook.Agents.goal_models import GoalCheck
+    from tldw_chatbook.Backup_Recovery import mobile_runs_goal_budget
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+    data = GoalCheck(criterion_id="\x7f" * 50_000).model_dump(mode="json")
+    codec = mobile_runs_goal_budget.json.dumps
+    expected = codec(data)
+    budget = _TraceReadBudget()
+    before = budget._remaining
+    observations = []
+
+    def encode(value):
+        observations.append(before - budget._remaining)
+        return codec(value)
+
+    monkeypatch.setattr(mobile_runs_goal_budget.json, "dumps", encode)
+    assert mobile_runs_goal_budget._goal_json(data, budget) == expected
+    assert observations and observations[0] >= 64 + 4 * len(expected)

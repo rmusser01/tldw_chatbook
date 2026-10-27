@@ -98,6 +98,7 @@ class _RunsPreflight:
     source_rows: tuple[_ContentRow, ...] = field(repr=False)
     operational_history: tuple[_OperationalHistory, ...] = field(repr=False)
     history: tuple = field(repr=False)
+    history_observations: tuple = field(repr=False)
     goal_provenance: tuple
     note_provenance: tuple
     snapshot_allocator: object
@@ -534,8 +535,20 @@ def _plan_runs(reads):
     discharges = tuple(
         p for p in integrated.semantic_discharges if (p.table, p.original) in accepted
     )
+    budget.container((len(history) + len(historical) + len(duties)) * 4)
+    history_observations = tuple(
+        replace(p, associations=(), owner_association=None) for p in history
+    )
+    qualified_history = []
     for proof in history:
-        if any(("agent_runs", (run,)) not in accepted for run in proof.run_ids):
+        if (
+            proof.owner_run_id is not None
+            and ("agent_runs", (proof.owner_run_id,)) not in accepted
+        ) or any(
+            ("agent_runs", (run,)) not in accepted
+            for group in (proof.run_ids, proof.historical_run_ids)
+            for run in group
+        ):
             blockers.append(
                 _ContentBlocker(
                     "agents.history",
@@ -543,6 +556,51 @@ def _plan_runs(reads):
                     "native_history_run_dependency_blocked",
                 )
             )
+        else:
+            qualified_history.append(proof)
+    budget.container(len(qualified_history) * 2)
+    qualified_members = {proof.logical_id for proof in qualified_history}
+    retained_history = []
+    for proof in qualified_history:
+        if any(segment not in qualified_members for segment in proof.segment_ids):
+            budget.container(3)
+            blockers.append(
+                _ContentBlocker(
+                    "agents.history",
+                    (proof.logical_id,),
+                    "native_history_segment_dependency_blocked",
+                )
+            )
+        else:
+            retained_history.append(proof)
+    history = tuple(retained_history)
+    closed_history = []
+    for fact in historical:
+        associations = []
+        budget.container(len(fact.associations) * 3)
+        for domain, original, mapped in fact.associations:
+            if ("agent_runs", (original,)) in accepted:
+                associations.append((domain, original, mapped))
+            else:
+                blockers.append(
+                    _ContentBlocker(
+                        fact.table,
+                        fact.original,
+                        "native_operational_run_dependency_blocked",
+                        domain,
+                        original,
+                    )
+                )
+        closed_history.append(replace(fact, associations=tuple(associations)))
+    historical = closed_history
+    historical_owners = {(h.table, h.original) for h in historical}
+    duties = [
+        d
+        for d in duties
+        if not d.original
+        or (d.table, d.original) in accepted
+        or (d.table, d.original) in historical_owners
+    ]
     for frontier in integrated.sync.frontiers:
         if frontier.owner not in accepted:
             blockers.append(
@@ -553,7 +611,7 @@ def _plan_runs(reads):
                 )
             )
     for row in goals.source_rows:
-        if row.table == "goal_runs":
+        if row.table == "goal_runs" and (row.table, row.original) in accepted:
             budget.container(10)
             duties.extend(
                 _PendingOwnerDuty("owner-write", row.table, row.original, requirement)
@@ -589,6 +647,7 @@ def _plan_runs(reads):
         all_originals,
         tuple(historical),
         history,
+        history_observations,
         goals.provenance,
         note_provenance,
         snapshot_allocator,

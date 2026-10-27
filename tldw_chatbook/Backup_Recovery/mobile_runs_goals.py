@@ -11,6 +11,7 @@ from .mobile_content_graph import (
     _UnprovedReference,
 )
 from .mobile_identity_plan import _Domain, _reserve, _rows
+from .mobile_runs_goal_budget import _goal_json, _validate_goal
 
 
 @dataclass(frozen=True)
@@ -116,8 +117,7 @@ def _plan_goal_rows(reads, identities, *, _read_budget):
                     raise ValueError("removed_goal_body")
             else:
                 raw = original["request_json"]
-                budget.json(raw)
-                request = GoalRequest.model_validate_json(raw)
+                request = _validate_goal(GoalRequest, raw, budget)
                 budget.value(raw)
                 if (
                     hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -137,7 +137,7 @@ def _plan_goal_rows(reads, identities, *, _read_budget):
                     binding["binding_id"] = ref("binding", binding["binding_id"])
                 budget.value(data, text_copies=3)
                 # JSON validation preserves strict tuple fields and native version defaults.
-                mapped = GoalRequest.model_validate_json(json.dumps(data))
+                mapped = _validate_goal(GoalRequest, _goal_json(data, budget), budget)
                 budget.value(data, text_copies=3)
                 values["request_json"] = mapped.canonical_json()
                 values["payload_hash"] = hashlib.sha256(
@@ -237,14 +237,13 @@ def _plan_goal_rows(reads, identities, *, _read_budget):
                     return ref("goal_evidence", value)
 
                 def mapped_payload(model, raw):
-                    budget.json(raw)
-                    parsed = model.model_validate_json(raw)
+                    parsed = _validate_goal(model, raw, budget)
                     budget.json(raw)
                     return parsed.model_dump(mode="json")
 
                 def dump(model, data):
                     budget.value(data, text_copies=4)
-                    parsed = model.model_validate_json(json.dumps(data))
+                    parsed = _validate_goal(model, _goal_json(data, budget), budget)
                     budget.value(data, text_copies=3)
                     return parsed.model_dump_json()
 
@@ -318,14 +317,14 @@ def _plan_goal_rows(reads, identities, *, _read_budget):
                         else:
                             checked = []
                             for item in data:
-                                check = GoalCheck.model_validate_json(
-                                    json.dumps(item)
+                                check = _validate_goal(
+                                    GoalCheck, _goal_json(item, budget), budget
                                 ).model_dump(mode="json")
                                 check["evidence_id"] = evidence_id(check["evidence_id"])
                                 checked.append(check)
                             data = checked
                         budget.value(data, text_copies=3)
-                        values[column] = json.dumps(data)
+                        values[column] = _goal_json(data, budget)
                 budget.container(len(values) * 2 + len(dependencies) * 2)
                 rows.append(
                     _ContentRow(

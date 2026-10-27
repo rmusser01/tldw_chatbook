@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from tldw_chatbook.Agents.run_log_format import decode_record_header
+from tldw_chatbook.Agents.run_log_paging import _SEGMENT
 
 from . import archive_reader
 from .limits import ArchiveLimits
@@ -24,6 +25,32 @@ class _RunHistory:
     sha256: str
     run_ids: tuple[str, ...]
     associations: tuple[tuple[str, str], ...]
+    historical_run_ids: tuple[str, ...] = ()
+    owner_run_id: str | None = None
+    owner_association: tuple[str, str] | None = None
+    segment_ids: tuple[str, ...] = ()
+
+
+def _admit_header(raw, start, end, budget):
+    """Account for the installed split/partition parser before its first slice."""
+    size = end - start
+    budget.reserve(64 + size)  # Byte slice passed to the native decoder.
+    budget.reserve(64 + 4 * size)  # UTF-8 replacement decode.
+    tokens = raw.count(b" ", start, end) + 1
+    budget.container(tokens)  # split list, including repeated empty tokens.
+    budget.container(max(0, tokens - 2))  # Native parts[2:] slice.
+    budget.container(tokens)  # Prospective dictionary entries, including extras.
+    position = start
+    for _ in range(tokens):
+        stop = raw.find(b" ", position, end)
+        if stop < 0:
+            stop = end
+        length = stop - position
+        budget.reserve(64 + 4 * length)  # Split token.
+        budget.container(3)  # partition('=') result tuple.
+        budget.reserve(128 + 4 * length)  # Partition key and value strings.
+        position = stop + 1
+    budget.container(12)  # Native record fields and integer conversion results.
 
 
 def _frame_runs(raw, runs, primary, budget):
@@ -35,7 +62,7 @@ def _frame_runs(raw, runs, primary, budget):
         newline = raw.find(b"\n", position)
         if newline < 0 or not raw.startswith(b"#@# ", position):
             raise ValueError("native_history_partial")
-        budget.reserve(1024 + 12 * (newline - position))
+        _admit_header(raw, position, newline, budget)
         decoded = decode_record_header(raw[position:newline])
         if decoded is None:
             raise ValueError("native_history_partial")
@@ -96,6 +123,12 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
     budget.container((len(members) + len(document.files)) * 5)
     payloads = {p.logical_id: p for p in document.files}
     proofs, blockers = [], []
+    budget.container(len(members) * 3)
+    by_path = {}
+    manifest_segments = {}
+    for member in members:
+        budget.container(2)
+        by_path[member.root_id, member.relative_path] = member
     with archive_reader._regular(sealed.path, _custody=reads.custody) as stream:
         central = archive_reader._central_preflight(stream, ArchiveLimits())
         budget.container((len(document.files) + 1) * 16)
@@ -149,14 +182,12 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
                         len(parts) != 2
                         or parts[0] not in runs
                         or runs[parts[0]]["parent_run_id"] is not None
+                        or runs[parts[0]]["agent_kind"] != "primary"
                     ):
                         raise ValueError("native_history_owner_unproved")
                     primary, filename = parts
-                    if (
-                        filename.startswith("logs.")
-                        and filename.endswith(".txt")
-                        and filename[5:-4].isdigit()
-                    ):
+                    historical_run_ids = ()
+                    if _SEGMENT.fullmatch(filename):
                         run_ids = _frame_runs(raw, runs, primary, budget)
                     elif filename == "MANIFEST":
                         budget.json(raw)
@@ -169,29 +200,54 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
                         run_ids = (primary,)
                         superseded = metadata.get("superseded_run_id")
                         if superseded:
-                            if superseded not in runs:
-                                raise ValueError("native_history_foreign_run")
-                            run_ids += (superseded,)
+                            previous = runs.get(superseded)
+                            if (
+                                previous is None
+                                or superseded == primary
+                                or previous["parent_run_id"] is not None
+                                or previous["agent_kind"] != "primary"
+                                or previous["conversation_id"]
+                                != runs[primary]["conversation_id"]
+                            ):
+                                raise ValueError("native_history_owner_unproved")
+                            # The authenticated declaration proves a recorded reference,
+                            # not successful supersession or ownership of this file.
+                            budget.container(1)
+                            historical_run_ids = (superseded,)
                         segments = metadata.get("segments")
-                        if not isinstance(segments, list) or any(
-                            not isinstance(s, str)
-                            or not any(
-                                m.root_id == member.root_id
-                                and PurePosixPath(m.relative_path).parent
-                                == PurePosixPath(member.relative_path).parent
-                                and PurePosixPath(m.relative_path).name == s
-                                for m in members
-                            )
-                            for s in segments
-                        ):
+                        if not isinstance(segments, list):
                             raise ValueError("native_history_missing_member")
+                        budget.container(len(segments))
+                        budget.container(len(segments))
+                        declared = []
+                        for segment in segments:
+                            if not isinstance(segment, str) or not _SEGMENT.fullmatch(
+                                segment
+                            ):
+                                raise ValueError("native_history_segment_unproved")
+                            budget.value(member.relative_path, text_copies=4)
+                            budget.value(segment, text_copies=2)
+                            budget.container(3)  # rpartition result.
+                            budget.container(2)  # Lookup key.
+                            relative = (
+                                member.relative_path.rpartition("/")[0] + "/" + segment
+                            )
+                            actual = by_path.get((member.root_id, relative))
+                            if actual is None or actual.sha256 is None:
+                                raise ValueError("native_history_missing_member")
+                            declared.append(actual.logical_id)
+                        manifest_segments[member.logical_id] = tuple(declared)
                     else:
                         raise ValueError("native_history_format_unproved")
                     budget.value(member)
-                    budget.container(len(run_ids) * 4)
+                    budget.container((len(run_ids) + len(historical_run_ids)) * 4)
                     associations = tuple(
-                        (r, identities.mapped("run", r)) for r in run_ids
+                        (r, identities.mapped("run", r))
+                        for group in (run_ids, historical_run_ids)
+                        for r in group
                     )
+                    budget.container(2)
+                    owner_association = (primary, identities.mapped("run", primary))
                     proofs.append(
                         _RunHistory(
                             member.logical_id,
@@ -202,6 +258,10 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
                             member.sha256,
                             run_ids,
                             associations,
+                            historical_run_ids,
+                            primary,
+                            owner_association,
+                            manifest_segments.get(member.logical_id, ()),
                         )
                     )
                 except (ValueError, KeyError, TypeError) as error:
@@ -214,6 +274,7 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
                             "native_history_owner_unproved",
                             "native_history_missing_member",
                             "native_history_format_unproved",
+                            "native_history_segment_unproved",
                         }
                         else "native_history_metadata_invalid"
                     )
@@ -221,6 +282,25 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
                     blockers.append(
                         _ContentBlocker("agents.history", (member.logical_id,), reason)
                     )
+    budget.container(len(proofs) * 3)
+    qualified = {proof.logical_id for proof in proofs}
+    retained = []
+    for proof in proofs:
+        if any(
+            segment not in qualified
+            for segment in manifest_segments.get(proof.logical_id, ())
+        ):
+            budget.container(3)
+            blockers.append(
+                _ContentBlocker(
+                    "agents.history",
+                    (proof.logical_id,),
+                    "native_history_segment_unproved",
+                )
+            )
+        else:
+            retained.append(proof)
+    proofs = retained
     budget.json(sealed.manifest_bytes)
     archive_reader.verify_sealed(sealed, reads.cancel, _custody=reads.custody)
     reads.check()
