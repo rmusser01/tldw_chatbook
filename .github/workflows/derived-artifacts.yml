@@ -456,6 +456,8 @@ jobs:
     # Environment panel's consent reads stay off the UI loop (three tests)
     # and one helper answers every reader of a session's admitted roots (two
     # tests), about 10-15 s each serial.
+    # TASK-33620.15.1.4 appends the rail edge focus restyle file (two mounted
+    # Console tests, ~18 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -557,6 +559,7 @@ jobs:
             Tests/Chat/test_console_durable_commit_window.py \
             Tests/UI/test_console_environment_root_reads.py \
             Tests/UI/test_console_session_admitted_roots.py \
+            Tests/UI/test_console_edge_focus_restyle_scope.py \
             --timeout=300 \
             --tb=short
 
