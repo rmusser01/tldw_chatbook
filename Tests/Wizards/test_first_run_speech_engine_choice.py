@@ -320,6 +320,35 @@ async def test_arriving_at_speech_leaves_the_keyboard_on_the_engine_choice(
 
 
 @pytest.mark.asyncio
+async def test_after_arrival_a_rebuild_leaves_the_keyboard_where_the_user_put_it(
+    monkeypatch,
+) -> None:
+    """The arrival hand-back happens once. A step that arrived while the
+    keyboard was still on Next gets the engine radio on its first rebuild;
+    once the user moves to Next, a later rebuild (an install, a reload) must
+    not pull the keyboard back into the step."""
+    wizard = _wizard_with_facts(monkeypatch)
+    async with _WizardHost(wizard).run_test(size=(120, 40)) as pilot:
+        step = await _speech_in_wizard(pilot, wizard, monkeypatch)
+        next_button = wizard.query_one("#wizard-next")
+        step._arriving = True  # arrived; the wizard's focus call has not landed
+        next_button.focus()
+        await pilot.pause()
+        await step.recompose()
+        await pilot.pause()
+        handed_back = wizard.app.focused
+        engine = step.query_one("#setup-speech-engine")
+        on_engine = handed_back is not None and engine in handed_back.ancestors_with_self
+        next_button.focus()  # the user tabs on to Next
+        await pilot.pause()
+        await step.recompose()
+        await pilot.pause()
+        after = wizard.app.focused
+    assert on_engine, f"arrival left the focus on {handed_back!r}"
+    assert after is next_button, f"focus moved to {after!r}"
+
+
+@pytest.mark.asyncio
 async def test_a_rebuilt_engine_radio_keeps_its_highlight_on_the_choice(
     monkeypatch,
 ) -> None:

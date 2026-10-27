@@ -1025,6 +1025,11 @@ class SpeechSetupStep(SetupStep):
         if self._download is not None:  # review F4: never start after setup
             self._download.cancel_if_waiting()
 
+    _arriving: bool = False  # shown, keyboard not yet handed into the step
+
+    def on_descendant_focus(self) -> None:
+        self._arriving = False  # the keyboard reached the step
+
     async def recompose(self) -> None:
         """Rebuild, keeping the keyboard in the step if it was there."""
         focused_id = speech_layout.focus_inside(self)
