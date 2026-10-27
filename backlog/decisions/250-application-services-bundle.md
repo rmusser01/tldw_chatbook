@@ -1,8 +1,9 @@
 # ADR-250: Application services bundle
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-27
-Related tasks: [TASK-36947.1](<../tasks/task-36947.1 - Record-the-application-services-bundle-decision-as-an-ADR-ADR-036-follow-up.md>) (this record), [TASK-36947.2](<../tasks/task-36947.2 - Application-services-are-built-once-into-a-typed-bundle.md>) (implements it), TASK-36947.3 to TASK-36947.6 (first consumers)
+Accepted: 2026-10-27 by the owner, with yes to Q1 to Q5 (see "Owner rulings").
+Related tasks: [TASK-36947.1](<../tasks/task-36947.1 - Record-the-application-services-bundle-decision-as-an-ADR-ADR-036-follow-up.md>) (this record), [TASK-36947.2](<../tasks/task-36947.2 - Application-services-are-built-once-into-a-typed-bundle.md>) (implements it), TASK-36947.3 to TASK-36947.6 (first consumers), [TASK-36947.7](<../tasks/task-36947.7 - The-MCP-server-mobile-service-and-RAG-backfill-open-profile-databases-through-the-shared-factory.md>) (the other roots, Q5)
 Amends: [ADR-036](036-application-service-composition-lifecycle.md), its deferral sentence only ("A future extraction may use a typed immutable `ApplicationServices` bundle only after ...").
 Source: owner decision 2026-10-25; architecture review 2026-10-25, [report](../../Docs/QA/architecture-review-2026-10-25/report.md) §F1 and §F9, and its [verification ledger](../../Docs/QA/architecture-review-2026-10-25/verification.md).
 
@@ -62,7 +63,7 @@ class ScopedServices[L, S, C]:
 - **Slices.** Every slice is a frozen, slotted, keyword-only dataclass with typed fields. A feature with more members than `ScopedServices` holds gets its own class.
 - **Optional fields.** A field is `T | None` with default `None` if it can be unavailable at runtime today, for example a database that failed to open or a local backend that failed to build. Other fields have no default. A test builds only the slice its subject receives.
 - **What the bundle holds.** Only objects that exist when composition ends and are never reassigned after it. Everything else is excluded by name (section 2, rules 4 and 5).
-- **No app references (end state; pending Q1).** A new member never receives the app or a closure over it. It receives a slice or a narrow callable. Members that capture the app today stay as they are in TASK-36947.2, and each consumer migration removes its own. Those members are:
+- **No app references (end state; Q1).** A new member never receives the app or a closure over it. It receives a slice or a narrow callable. Members that capture the app today stay as they are in TASK-36947.2, and each consumer migration removes its own. Those members are:
   - Study, Quiz and Research, through `notification_app=self` (`app_service_wiring.py:2404`, `:2413`, `:2463`), and `media.local` and `watchlists.local`, through `notification_app = self` (`:3294`, `:3298`);
   - `LibraryLocalRagSearchService(self)` (`:2448`);
   - the `lambda: self` getters at `:2521`, `:2682`, `:2724` and `:2742`;
@@ -114,7 +115,7 @@ Rules for the rest. Rules 4 and 5 take precedence over rules 1 to 3.
 
 An app-like receiver is any expression whose last name segment is `app`, `app_instance`, `tldw_app`, `_app` or `_app_instance`, the definition TASK-36942.4 uses. That covers `self._app` in ConsoleRuntime, for example.
 
-TASK-36947.2 adds a coverage test. It collects every service name that production code reads from an app-like receiver, by attribute or by literal `getattr`/`hasattr`. Each such name must be either a bundle field, reached through its alias, or on the rule 4 and rule 5 exclusion list. The exclusion list shrinks as consumers migrate. It may grow only by a new service that is built after composition (pending Q3).
+TASK-36947.2 adds a coverage test. It collects every service name that production code reads from an app-like receiver, by attribute or by literal `getattr`/`hasattr`. Each such name must be either a bundle field, reached through its alias, or on the rule 4 and rule 5 exclusion list. The exclusion list shrinks as consumers migrate. It may grow only by a new service that is built after composition (Q3).
 
 ### 3. Construction in the TUI
 
@@ -163,9 +164,9 @@ def open_profile_storage(
   - The factory and the openers are added by the first PR that calls them.
   - The TUI's own opens (`app.py:2085`, `:2144`) switch to the openers in TASK-36947.6.
   - Paths still come from config's path helpers.
-- **Scope.** For the roots in the table below, the openers are the only code that constructs these databases. About 30 other ad hoc constructions inside the app stay as they are (pending Q2). Examples are the Chatbooks importer and creator, `Tools/workspace_file_roots.py:621` and `Workspaces/change_retention.py:224`.
+- **Scope.** For the roots in the table below, the openers are the only code that constructs these databases. About 30 other ad hoc constructions inside the app stay as they are, and a census holds their count so that no new one is added (Q2). Examples are the Chatbooks importer and creator, `Tools/workspace_file_roots.py:621` and `Workspaces/change_retention.py:224`.
 
-Who moves each root is pending Q5.
+The MCP server, mobile and backfill rows move in one follow-up task, [TASK-36947.7](<../tasks/task-36947.7 - The-MCP-server-mobile-service-and-RAG-backfill-open-profile-databases-through-the-shared-factory.md>), not in TASK-36947.2 (Q5). That task also adds the Q2 census. The `doctor` and in-app delegate rows are part of TASK-36947.6.
 
 | Entry point | How it gets its services |
 | --- | --- |
@@ -180,7 +181,7 @@ Who moves each root is pending Q5.
 
 - **Non-UI code** receives its slices as constructor or function parameters and never receives the app.
 - **UI capabilities** are not services. These include `notify`, `call_from_thread`, `query_one` and the screen stack. A consumer that needs one receives that one callable.
-- **Screens** read `self.app_instance.services.<slice>`, which is typed through `BaseAppScreen` (`UI/Navigation/base_app_screen.py:101`), and pass slices to whatever they build (pending Q4).
+- **Screens** read `self.app_instance.services.<slice>`, which is typed through `BaseAppScreen` (`UI/Navigation/base_app_screen.py:101`), and pass slices to whatever they build (Q4).
 - **First migrations:**
   - RAG (TASK-36947.3) receives `storage`, `workspace` and `chat.citation_trace_repository`.
   - The Console controller (TASK-36947.4) receives its slices, plus `notify` and `call_from_thread`.
@@ -210,13 +211,15 @@ Who moves each root is pending Q5.
 - **Shared options.** Every root that uses the factory opens a profile database with the same options. The mobile reading path gets the migration seed it is missing.
 - **Two ways to reach a service.** During the alias period a service is reachable through the app and through the bundle, and the identity test keeps both pointing at the same object. However, a test that assigns an alias does not reach a consumer that has already migrated.
 
-## Open questions for the owner
+## Owner rulings
 
-1. **Q1, app references.** Should TASK-36947.2 leave today's app-capturing members unchanged, so that "no member receives the app" binds new members and each consumer migration (section 1)? Answer: yes or no. Recommended: yes.
-2. **Q2, in-app ad hoc databases.** Should the roughly 30 ad hoc profile-database constructions inside the app stay out of this stream, with a census holding their count instead (section 6)? Answer: yes or no. Recommended: yes.
-3. **Q3, new late services.** May the exclusion list grow when a new service is built after composition (section 2)? Answer: yes or no. Recommended: yes.
-4. **Q4, screens.** Should screens read `app_instance.services`, rather than receive slices through constructors that the navigation registry would have to supply per screen (section 7)? Answer: yes or no. Recommended: yes.
-5. **Q5, roots outside the TUI.** Should one follow-up task, rather than TASK-36947.2, move the MCP server, the mobile service and the backfill CLI onto the factory (section 6)? Answer: yes or no. Recommended: yes.
+The owner answered yes to all five questions on 2026-10-27.
+
+1. **Q1, app references.** Should TASK-36947.2 leave today's app-capturing members unchanged, so that "no member receives the app" binds new members and each consumer migration (section 1)? Ruling: yes.
+2. **Q2, in-app ad hoc databases.** Should the roughly 30 ad hoc profile-database constructions inside the app stay out of this stream, with a census holding their count instead (section 6)? Ruling: yes.
+3. **Q3, new late services.** May the exclusion list grow when a new service is built after composition (section 2)? Ruling: yes.
+4. **Q4, screens.** Should screens read `app_instance.services`, rather than receive slices through constructors that the navigation registry would have to supply per screen (section 7)? Ruling: yes.
+5. **Q5, roots outside the TUI.** Should one follow-up task, rather than TASK-36947.2, move the MCP server, the mobile service and the backfill CLI onto the factory (section 6)? Ruling: yes.
 
 ## Links
 

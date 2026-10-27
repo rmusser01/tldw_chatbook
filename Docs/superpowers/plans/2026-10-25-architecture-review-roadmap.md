@@ -31,7 +31,7 @@ Every structural PR lowers the ratchet it affects in the same commit.
 - **Owner decisions (all made 2026-10-25) are not reopened by implementers:**
   - TASK-36941.3: keep ADR-012 and align the hosted engine to it (stored key before the environment variable when no credential source is recorded). Re-confirmed with ADR-012 in view. Custom endpoints (owner, 2026-10-26): keep ADR-146's order, the entry's `api_key_env` reference then its stored `api_key`; no ADR-146 amendment.
   - TASK-36943.2/.3: on an ADR-number collision the oldest file keeps the number and each younger file is renumbered with provenance.
-  - TASK-36947.1: adopt a frozen, typed, per-feature services bundle built once in `app_service_wiring`, with a shared factory for the other entry points and no DI container. TASK-36947.1 writes the ADR; TASK-36947.2 waits for the owner to accept it.
+  - TASK-36947.1: adopt a frozen, typed, per-feature services bundle built once in `app_service_wiring`, with a shared factory for the other entry points and no DI container. TASK-36947.1 wrote it as ADR-250, which the owner accepted on 2026-10-27 with yes to all five open questions.
 - **Defer to existing owners:** TASK-32807.5 (dead Chat modules and `_chat_api_kwargs`), TASK-32898 (Interop helpers), TASK-34905 and TASK-33132 (transaction consolidation), TASK-34906 (migration registry), TASK-32463 (over-budget screens). Do not re-solve their scope inside these tasks.
 
 ## Review Focus
@@ -100,6 +100,7 @@ The failure modes most likely to bite users that no single task's tests cover by
 | TASK-36947.4 Console controller without the app | 36947.2 | Land before TASK-36951.3 (same file) |
 | TASK-36947.5 ConsoleRuntime hook-review state | — | Independent; can start in phase 2 |
 | TASK-36947.6 config exposes no DB instances | 36947.2, 36945.4 | Every entry point gets its DB from the bundle or the shared factory |
+| TASK-36947.7 MCP server, mobile service and backfill onto the shared factory | 36947.1 | ADR-250 Q5; also adds the Q2 census of ad hoc in-app database opens |
 | TASK-1378.1 → TASK-1378.2 Settings panel registry | — | Network proves the registry, then Providers & Models; pin the settings commit-model behaviour (ADR-033 `033-settings-commit-models-three-honestly-labeled.md`) first |
 | TASK-36948.1 participant declarations, TASK-36948.3 unsaved-editor state | — | Both touch `Backup_Recovery/`; serialize |
 | TASK-36949.2 learning repository | 36949.1 | ~45 call sites in two Study_Interop services |
