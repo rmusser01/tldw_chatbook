@@ -5,7 +5,7 @@ from ANYWHERE on the screen while a save was available, and did nothing,
 silently, on a clean skill -- though the editor's own hint line said
 "ctrl+s Save". Under the owner's rule (ADR-031 refinement 2026-10-03; settled
 2026-10-27) the key belongs to the editor that holds focus: it saves a dirty
-skill, says "Saved — nothing to flush." on a clean one, and does nothing from
+skill, says "Saved — no changes." on a clean one, and does nothing from
 the Skills list beside it.
 
 The production ``TldwCli`` booted into Library over a real
@@ -30,7 +30,7 @@ from Tests.UI.library_quit_guard_support import (
 )
 from Tests.UI.test_library_shell import _wait_for_condition
 from Tests.UI.test_library_ctrl_s_saves_in_every_editor import (
-    NOTHING_TO_FLUSH,
+    NO_CHANGES,
     _footer,
     _painted,
     _within,
@@ -99,19 +99,29 @@ async def test_ctrl_s_saves_the_focused_skill_and_nothing_from_its_list(
             def _status() -> str:
                 return _painted(app, screen.query_one("#library-skill-save-status"))
 
-
-            # Clean: the key answers on the status line (was: silence).
+            # Clean: Save is hidden, so no chip (ruling T9-j), and the key
+            # answers on the status line (was: silence).
+            await _until(
+                pilot,
+                lambda: "back to skills list" in _footer(app),
+                "the skill editor's footer",
+            )
+            assert "ctrl+s" not in _footer(app), f"clean skill chipped: {_footer(app)}"
             await pilot.press("ctrl+s")
             await _until(
                 pilot,
-                lambda: NOTHING_TO_FLUSH in _status(),
-                "a clean skill's Ctrl+S to say nothing was pending",
+                lambda: NO_CHANGES in _status(),
+                "a clean skill's Ctrl+S to say there were no changes",
             )
 
             await pilot.press("end")
             await _type(pilot, " fast")
             await _until(pilot, lambda: screen._skills_state.dirty, "a dirty skill")
-            assert "ctrl+s save skill" in _footer(app), _footer(app)
+            await _until(
+                pilot,
+                lambda: "ctrl+s save skill" in _footer(app),
+                "a dirty skill (Save shown) to chip Ctrl+S",
+            )
             # Off the editor -- the Skills list beside it -- the key does nothing.
             await pilot.press("shift+f6")
             await _until(
