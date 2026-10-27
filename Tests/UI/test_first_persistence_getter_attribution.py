@@ -5,7 +5,6 @@ import inspect
 import json
 
 import pytest
-from textual.widgets import Static
 
 from Tests.Performance._first_persistence_main_getter import (
     AttributedOriginalColdRead as _OriginalColdRead,
@@ -201,9 +200,7 @@ async def test_first_persisted_conversation_keeps_pending_count_during_cold_conf
                     held_original_raw_lease_count=len(gate.leases),
                     original_full_return_still_deferred=True,
                 )
-                rendered = "\n".join(
-                    str(row.render()) for row in inspector.query(Static)
-                )
+                rendered = original._inspector_rows_text(inspector)
                 if inspector.state.pending_approval_count != 1:
                     violations.append("current count1 hidden after first persistence")
                 if "Approvals: 1 pending" not in rendered:
