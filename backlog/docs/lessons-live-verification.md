@@ -1,5 +1,25 @@
 # Lessons: verifying against the real thing
 
+## On a loaded host, one blocking read left on the UI loop still costs 100+ ms: move it, do not just count it (TASK-33620.15.1.6, 2026-10-27)
+
+**Incident.** Each Console Environment refresh made two or three Change
+Review consent reads (one SQLite SELECT each, median 2 ms) on the UI loop.
+The first fix cut that to one read per refresh, which is what the task's
+first criterion asked for. Live at load 36-47 on 14 cores, that one read
+still held a rail open 104.5 ms and two poll ticks 145-146 ms, with only
+2-14 ms of thread CPU: the thread released the GIL for the query and then
+waited to be scheduled again. Moving the read onto a worker took the rail
+open to 0.3 ms and every Environment callback under 8 ms at load 29-41
+(16 rail opens, 10 run completions, 26 polls).
+
+**What to do.** When a UI-loop hold is I/O (a query, a stat, a subprocess
+wait), judge a fix by its worst case on a loaded host, not by how many
+calls it removed: under oversubscription the wait to get the CPU back is
+the cost, and it does not shrink with the count. Move the call off the loop
+when the criterion is a ceiling; keep a read on the loop only where its
+answer is needed before the callback returns (here, the Refresh press's
+acknowledgment), and say so.
+
 ## On a quiet host, 4 ms stack samples cannot rank the parts of a 20 ms callback: time the suspects (TASK-33620.15.8, 2026-10-23)
 
 **Incident.** TASK-33620.15.8 was filed from samples taken at load averages of
