@@ -42,6 +42,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
 )
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
+from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -461,6 +462,56 @@ async def test_at_100x30_tab_reaches_next_and_a_resync_keeps_the_scroll(
         assert _visible_in(listing, _one(screen, "#library-notes-trash-restore-17"))
         assert "Deleted 38" in _painted(host)
 
+        # R2-1 (fix round 3): a failed Next lands focus on Retry, on screen
+        # (the Media Trash's own rule). Base (db6910e4f6): focus stayed on
+        # Next, one row below the fold once the line shrank the list.
+        service = _seed.profile.scope_service
+        real_read = service.list_deleted_notes
+        failing = {"on": True}
+
+        async def flaky_read(*args, **kwargs):
+            if failing["on"] and kwargs.get("offset") == 40:
+                raise RuntimeError("database is locked")
+            return await real_read(*args, **kwargs)
+
+        service.list_deleted_notes = flaky_read
+        following = screen.query_one("#library-notes-trash-next", Button)
+        screen.set_focus(following)
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: screen.focused is following,
+            "Next to take focus",
+        )
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: _one(screen, "#library-notes-trash-error") is not None
+            and _focused_id(screen) == "library-notes-trash-retry",
+            lambda: f"the failure line with focus on Retry "
+            f"(focus: {_focused_id(screen)!r}): {_painted(host)}",
+        )
+        retry = screen.focused
+        canvas = screen.query_one("#library-notes-trash-list").parent
+        assert _visible_in(canvas, retry), (tuple(canvas.region), tuple(retry.region))
+        assert "21–40 of 45 · Page 2 of 3" in _painted(host)
+
+        # Retry with the read working: page 3, the line gone, the first row.
+        failing["on"] = False
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: "41–45 of 45 · Page 3 of 3" in _painted(host)
+            and _focused_id(screen) == "library-notes-trash-restore-0",
+            lambda: f"Retry to land (focus: {_focused_id(screen)!r})",
+        )
+        assert "Couldn't load recently deleted notes." not in _painted(host)
+
 
 async def test_at_100x30_previous_back_to_a_full_page_keeps_the_pager_in_view(
     tmp_path,
@@ -516,6 +567,59 @@ async def test_at_100x30_previous_back_to_a_full_page_keeps_the_pager_in_view(
             lambda: _focused_id(screen) == "library-notes-trash-next"
             and _one(screen, "#library-notes-trash-restore-19") is not None,
             lambda: f"page 1 on Next (focus: {_focused_id(screen)!r})",
+        )
+        listing = screen.query_one("#library-notes-trash-list")
+        assert _visible_in(listing, screen.focused), (
+            listing.scroll_y,
+            tuple(listing.region),
+            tuple(screen.focused.region),
+        )
+        assert "1–20 of 25 · Page 1 of 2" in _painted(host)
+
+        # R2-2 (fix round 3): the same Previous with ONE default Notes sync
+        # injected the moment the page change's recompose has mounted the new
+        # list, before its replay -- a worker's sync landing in that window.
+        # That sync found the new list as the scroll owner and replayed offset
+        # 0 over the landing. Deterministic: hooked on the mount completion of
+        # the canvas that owns the trash list, no timing. Base (db6910e4f6):
+        # Next at y=33 under a list ending at y=28.
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: "21–25 of 25 · Page 2 of 2" in _painted(host)
+            and _focused_id(screen) == "library-notes-trash-previous",
+            lambda: f"page 2 again (focus: {_focused_id(screen)!r})",
+        )
+        owner = screen.query_one("#library-notes-trash-list").parent
+        real_mount_all = owner.mount_all
+        injected: list[bool] = []
+
+        def mount_all_then_sync(*args, **kwargs):
+            mounted = real_mount_all(*args, **kwargs)
+            if injected:
+                return mounted
+
+            async def then_sync():
+                result = await mounted
+                if not injected:
+                    injected.append(True)
+                    _sync_library_canvas(screen, "notes")
+                return result
+
+            return then_sync()
+
+        owner.mount_all = mount_all_then_sync
+        await pilot.press("enter")
+        await _settled_on(
+            pilot,
+            host,
+            screen,
+            lambda: bool(injected)
+            and _focused_id(screen) == "library-notes-trash-next"
+            and _one(screen, "#library-notes-trash-restore-19") is not None,
+            lambda: f"page 1 after the injected sync (focus: {_focused_id(screen)!r})",
         )
         listing = screen.query_one("#library-notes-trash-list")
         assert _visible_in(listing, screen.focused), (
