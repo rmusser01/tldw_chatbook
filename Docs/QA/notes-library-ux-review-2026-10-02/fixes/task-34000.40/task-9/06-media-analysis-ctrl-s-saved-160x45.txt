@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  Garden plan 2027                                         │
+│ │ Navigation                     │  a  │ Media (23)      Sets                                 │  t  Seed                                                     │
+│ │     Import…                    │  v  │ Media · 23 of 23 · all types · sort: Newest          │  e    Find  Note  Read later  Use in Console  More           │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    Read  Analysis (selected)  Highlights  Info            │
+│ │ ▊ Search Library…        ▎▊x▎  │     │  ▊  Title/keyword…                  ▎                │  s  ┌──────────────────────────────────────────────────────┐ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     │ Plant early.                                         │ │
+│ │                                │     │    type: All types    sort: Newest                   │     └──────────────────────────────────────────────────────┘ │
+│ │ ─────────────────────────────  │     │                                                      │                                                              │
+│ │ Browse                    ▾    │     │    Export…     Trash     Select                      │        Edit analysis     ○ Regenerate                        │
+│ │  ▸ Media (23) — your files     │     │    Review these                                      │     OpenAI is not ready (Missing API key).                   │
+│ │    Conversations (0)           │     │ █  Workshop handout                                  │                                                              │
+│ │    Notes (122)                 │     │ █    pdf · updated 7m                                │                                                              │
+│ │    Prompts (1) — reuse         │     │  ▸ Garden plan 2027                                  │                                                              │
+│ │    Skills (2) — AI add-ons     │<--- │      document · updated 7m · analysed · loaded       │                                                              │
+│ │    Collections (0)             │     │    Interview with a librarian                        │                                                              │
+│ │    Search / RAG — find all     │     │      audio · updated 7m                              │                                                              │
+│ │ ─────────────────────────────  │     │    Changelog 2026-09                                 │                                                              │
+│ │ Artifacts                 ▾    │     │      plaintext · updated 7m                          │                                                              │
+│ │    All artifacts               │     │    Conference talk notes                             │<---                                                          │
+│ │    Chatbooks                   │     │      document · updated 7m                           │                                                              │
+│ │    Reports                     │     │    Thesis proposal v3                                │                                                              │
+│ │    Dreams                      │     │      pdf · updated 7m                                │                                                              │
+│ │ ─────────────────────────────  │     │    Birdsong field recording                          │                                                              │
+│ │ Create                    ▾    │     │      audio · updated 7m                              │                                                              │
+│ │    New note                    │<--- │    Onboarding checklist                            ▄ │                                                              │
+│ │    New prompt                  │     │      document · updated 7m                           │                                                              │
+│ │    New skill                   │     │    City council minutes 2026-09                      │                                                              │
+│ │ ─────────────────────────────  │     │      document · updated 7m                           │                                                              │
+│ │ Study                     ▾    │     │    Kitchen timer manual                              │                                                              │
+│ │    Study decks (0)             │     │      document · updated 7m                           │                                                              │
+│ │    Flashcards due: 0           │     │    paper-retrieval-practice                          │                                                              │
+│ │    Quizzes (0)                 │     │      pdf · updated 7m                                │                                                              │
+│ │ ─────────────────────────────  │     │    Q3 planning memo                                  │                                                              │
+│ │ Import / Export           ▾    │     │      document · updated 7m                           │                                                              │
+│ │    Import…                     │     │               1-20 of 23 · Page 1 of 2               │                                                              │
+│ │    Export                    ▇ │     │              Already on the first page.              │                                                              │
+│ │  ▾ scroll for more             │     │                 ○ Previous     Next                  │                                                              │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | [ prev item | ctrl+f find | n note | l read later | c use in Console | t trash | F1 · Ctrl+P · Ctrl+Q
