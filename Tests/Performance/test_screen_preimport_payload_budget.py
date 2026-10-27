@@ -185,6 +185,7 @@ MAX_PASS_ADDED_MODULES = 558
 #: 2026-10-27 Task 7 fix round 1 (review R0): 426,403 -> 426,480 (paired arms: base 9a95797a2b 426,403 + 77; library route 132,527 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-27 TASK-34000.29 polish-1b Task 8, part 8a (N-29, Recently deleted pages): 426,480 -> 426,651 (paired arms: base 734e632f07 426,480 + 171; library route 132,698 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-27 Task 8 fix round 1 (review R0 minors): 426,651 -> 426,667 (paired arms: base c677c8a89a 426,651 + 16; library route 132,714 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
+#: 2026-10-27 Task 8 fix round 2 (review R1 N-1/N-2/N-3): 426,667 -> 426,720 (paired arms: base 739adc11c8 426,667 + 53; library route 132,767 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 MAX_PASS_ADDED_LOC = 427_830
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
