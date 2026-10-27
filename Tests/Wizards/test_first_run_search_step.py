@@ -323,6 +323,16 @@ def test_an_openai_model_on_a_loopback_server_is_local() -> None:
 
 
 # -- AC#5: the extras are missing ---------------------------------------------
+# Owner ruling 2026-10-20: the auto-retrieve control is shown as UNAVAILABLE
+# and says why (Console's automatic search needs the extras); the extras
+# package is a secondary line with a copy action, no pip, the real Settings
+# path. A keyword fallback for Console is TASK-34100.35, not this task.
+
+
+def _children_ids(step) -> list[str]:
+    """The ids of the Search step's top-level rows, top to bottom."""
+    body = step.query_one(".setup-rag")
+    return [child.id or "" for child in body.children]
 
 
 @pytest.mark.asyncio
@@ -343,6 +353,108 @@ async def test_missing_extras_keep_the_control_and_demote_the_package_name() -> 
     assert rag_state.RAG_EXTRAS_PACKAGE in body
     assert "pip" not in body.lower()
     assert "Settings ▸ Domain Defaults ▸ RAG" in body
+
+
+@pytest.mark.asyncio
+async def test_without_the_extras_automatic_search_reads_unavailable_and_says_why() -> None:
+    _wizard, step = _rag_step({}, deps=False)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        automatic = step.query_one("#setup-rag-auto-retrieve-automatic", RadioButton)
+        label, disabled = str(automatic.label), automatic.disabled
+        rows = _children_ids(step)
+        why = str(step.query_one("#setup-rag-unavailable", Static).render())
+    assert disabled
+    assert label == "Search my Library automatically — unavailable"
+    # The reason sits directly under the control it explains.
+    assert rows[rows.index("setup-rag-auto-retrieve") + 1] == "setup-rag-unavailable"
+    assert why.startswith("Unavailable: Console's automatic search needs the")
+    assert "optional search extras, which aren't installed" in why
+    assert "Library ▸ Search / RAG" in why
+
+
+@pytest.mark.asyncio
+async def test_without_the_extras_the_package_is_a_secondary_line_after_the_reason() -> None:
+    _wizard, step = _rag_step({}, deps=False)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        rows = _children_ids(step)
+        package = str(step.query_one("#setup-rag-extras-package", Static).render())
+        hint = str(step.query_one("#setup-rag-extras", Static).render())
+        body = _rendered(step)
+    assert (
+        rows.index("setup-rag-unavailable")
+        < rows.index("setup-rag-extras-row")
+        < rows.index("setup-rag-extras")
+    )
+    assert package == rag_state.RAG_EXTRAS_PACKAGE
+    assert "with the tool you installed chatbook with" in hint
+    assert "restart chatbook" in hint
+    assert "Automatic retrieval in Settings ▸ Domain Defaults ▸ RAG" in hint
+    assert "pip" not in body.lower()
+
+
+@pytest.mark.asyncio
+async def test_without_the_extras_a_saved_automatic_reads_unavailable_and_can_be_turned_off() -> None:
+    """A re-run where automatic search was saved before the extras went away:
+    each Console send stops at "Library search failed" (the search runs in
+    rag mode, which is blocked without the runtime)."""
+    wizard, step = _rag_step(
+        {"chat_defaults": {"rag_auto_retrieve_on_send": True}}, deps=False
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        automatic = step.query_one("#setup-rag-auto-retrieve-automatic", RadioButton)
+        pressed, label = automatic.value, str(automatic.label)
+        why = str(step.query_one("#setup-rag-unavailable", Static).render())
+        download_shown = step.query_one("#setup-rag-download", Static).display
+        step.query_one("#setup-rag-auto-retrieve-on-request", RadioButton).value = True
+        await pilot.pause()
+        ok, _ = await step.commit()
+    assert pressed and label == "Search my Library automatically — unavailable"
+    assert why.startswith("Unavailable: automatic search is on, but")
+    assert '"Library search failed"' in why
+    assert '"only when I ask"' in why
+    assert not download_shown  # nothing is downloaded without the extras
+    assert ok
+    wizard.commit_config.assert_awaited_once_with(
+        {"chat_defaults": {"rag_auto_retrieve_on_send": False}}
+    )
+
+
+@pytest.mark.asyncio
+async def test_with_the_extras_automatic_search_is_offered_plainly() -> None:
+    _wizard, step = _rag_step({}, deps=True)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        automatic = step.query_one("#setup-rag-auto-retrieve-automatic", RadioButton)
+        label, disabled = str(automatic.label), automatic.disabled
+        rows = _children_ids(step)
+    assert (label, disabled) == (rag_state.SEARCH_AUTOMATIC_LABEL, False)
+    assert "setup-rag-unavailable" not in rows
+    assert "setup-rag-extras-row" not in rows
+
+
+def test_summary_search_row_says_automatic_search_is_unavailable_without_the_extras() -> None:
+    def row(auto):
+        config = {"chat_defaults": {"rag_auto_retrieve_on_send": auto}}
+        rows = wizard_state.build_summary_rows(
+            config, {}, rag_deps_installed=False, rag_model=LOCAL_MODEL
+        )
+        return next(r for r in rows if r.label == "Search")
+
+    off, on = row(False), row(True)
+    assert off.state == wizard_state.ROW_DEFAULT
+    assert off.detail == (
+        "only when you ask · automatic search unavailable: the optional "
+        "search extras aren't installed"
+    )
+    # A saved "automatic" that cannot run is not a tick.
+    assert on.state == wizard_state.ROW_ATTENTION
+    assert on.detail == (
+        "automatic when you chat — unavailable: the optional search extras "
+        "aren't installed"
+    )
 
 
 @pytest.mark.asyncio
