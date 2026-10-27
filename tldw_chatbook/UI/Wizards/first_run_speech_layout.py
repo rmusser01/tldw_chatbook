@@ -71,9 +71,8 @@ def focus_inside(step: "SpeechSetupStep") -> str | None:
     """
     focused = step.app.focused if step.is_attached else None
     if focused is not None and step in focused.ancestors_with_self:
-        step._arriving = False  # the keyboard reached the step: arrival is over
         return focused.id or ""
-    return "" if getattr(step, "_arriving", False) else None
+    return "" if step._arriving else None
 
 
 def restore_focus(step: "SpeechSetupStep", focused_id: str | None) -> None:
@@ -83,6 +82,11 @@ def restore_focus(step: "SpeechSetupStep", focused_id: str | None) -> None:
     arrival, then the first-show reload rebuilt the step and the focus fell
     to Next, so Down and Space did nothing on the step's one choice. The
     rebuilt widget with the same id gets it back, else the engine radio.
+    The arrival hand-back happens once: the step's ``DescendantFocus``
+    handler ends the arrival when the keyboard actually lands inside it
+    (``focus()`` is deferred, so clearing it here would race the next
+    rebuild), and after that a rebuild leaves a focus the user moved out of
+    the step where it is.
     """
     if focused_id is None or not step.display or step.has_class("hidden"):
         return
