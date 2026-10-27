@@ -45,6 +45,18 @@ glob is `Library_Modules/*_controller.py`, which matches none of these, and
 that needs a decomposition plan to be meaningful — hence the module ratchet,
 following the `personas_screen.py` precedent already there.
 
+**Ratchet coverage, checked 2026-10-26 at `origin/dev` `2b296e60b3`.** Of the
+modules in the sections below, only **`DB/ChaChaNotes_DB.py`** (25,693 lines) has
+no row in any size ratchet (`test_module_size_ratchet.py`,
+`test_screen_size_ratchet.py`, `test_library_modules_size_ratchet.py`). Rows
+exist for `chat_screen.py` (screen ratchet), `console_chat_controller.py`,
+`console_chat_store.py`, `app.py`, `personas_screen.py`, `console_transcript.py`,
+`console_settings_modal.py` and `mcp_workbench.py` (module ratchet). The
+ChaChaNotes entries elsewhere in `Tests/Architecture` (diagnostic inventory,
+path privacy) are not size budgets. TASK-36942.1 pins every module of 4,000+
+lines, which will close that gap; re-check this paragraph against the ratchet
+files before relying on it.
+
 ---
 
 ## `UI/Screens/chat_screen.py` — `ChatScreen`, ~25k lines

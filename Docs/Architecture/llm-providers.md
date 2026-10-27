@@ -8,6 +8,8 @@ This document describes how chat requests reach providers: the `chat_api_call` d
 | --- | --- |
 | `Chat/Chat_Functions.py` | THE dispatcher: `API_CALL_HANDLERS` (endpoint → handler map), `chat_api_call()`, `PROVIDER_PARAM_MAP`, `chat_reply_text()` |
 | `Chat/Chat_Deps.py` | The `ChatAPIError` hierarchy (`ChatAuthenticationError`, `ChatRateLimitError`, `ChatBadRequestError`, `ChatProviderError`, …) |
+| `provider_registry.py` (package root) | Single source of provider identity and engine-preset data (`ProviderRecord`, `ALL_RECORDS`, `RECORDS_BY_KEY`, `ENGINE_RECORDS`; ADR-179). Stdlib-only leaf module so `config.py` can import it |
+| `LLM_Calls/hosted_provider_engine.py` | Generic strict Chat-Completions engine: `build_hosted_chat_handler(record)` builds one handler per preset record (resolve, payload, transport, response layers) |
 | `LLM_Calls/LLM_API_Calls.py` | Hosted provider handlers, one `chat_with_<provider>()` each; `get_openai_embeddings()` |
 | `LLM_Calls/LLM_API_Calls_Local.py` | Local/self-hosted handlers over a shared OpenAI-compatible engine |
 | `LLM_Calls/hosted_chat.py` + `hosted_chat_streaming.py` | Provider-neutral hosted transport and SSE handling shared by the strict adapters |
@@ -31,9 +33,27 @@ There is no unified `chat_with_provider()`. Every caller goes through `chat_api_
 7. Usage accounting runs against dict/string results through the active usage recorder (OpenAI-style token names win over provider names; absent usage falls back to ~4-chars/token estimates, with base64 image parts excluded). Accounting is wrapped — it must never break a call.
 8. Errors map into the `ChatAPIError` taxonomy (below).
 
+### Provider registry and engine presets (ADR-179)
+
+`provider_registry.py` holds one frozen `ProviderRecord` per provider (`ALL_RECORDS`, 56 records at `2b296e60b3`; `RECORDS_BY_KEY` also maps the legacy spellings in `ALIASES`, e.g. `mistralai`, `local_vllm`). Identity fields (key, `[providers]` config key, display name, cloud/local classification, env-var candidates, default base URL, native-tools and auto-refresh flags) cover every provider; parity tests in `Tests/test_provider_registry.py` compare them with `config.py`, the readiness sets and the other hand-kept lists. Behavior never lives in a record.
+
+Records with `engine_driven` set (`ENGINE_RECORDS`) are *presets*: their preset fields (`settings_defaults`, `payload_flags`, `auth_scheme`, `base_url_suffix`, `reasoning_effort*`, `thinking_toggle_models`, `extra_body_fields`, `response_allowances`) drive the shared engine, so a preset provider has no `chat_with_<provider>()` function. `API_CALL_HANDLERS` registers each as `_LazyHostedChatHandler(<RECORD>)` (`Chat/Chat_Functions.py`), which imports the engine on first call so it stays off the UI-ready import budget, and `PROVIDER_PARAM_MAP` points the key at the shared `ENGINE_PROVIDER_PARAM_MAP`. The `custom-hosted` key is the same engine over user-registered custom endpoints (`[console] custom_endpoints_use_engine`, default on); those use the `bearer_optional` auth scheme so keyless endpoints execute. `moonshot`, `zai` and `qwencloud` are registry records but keep their own adapter modules (ADR-063).
+
+Adding an OpenAI-compatible hosted provider is a record, a dispatch line and a param-map line, plus the tests; some auxiliary sites (endpoint maps, readiness, labels) still repeat record data by hand.
+
+### Credential precedence (differs by resolver)
+
+| Resolver | Order | Where |
+| --- | --- | --- |
+| Engine presets | explicit, then **env**, then stored `api_key` | `LLM_Calls/hosted_provider_engine.py::_resolve_api_key` |
+| `moonshot.py`, `zai.py`, `qwencloud.py` | explicit, then **stored**, then env | each module's `_resolve_api_key` |
+| Custom-endpoint registry | env, then stored | `Chat/custom_endpoint_registry.py::resolve_entry_credential` (ADR-146) |
+
+ADR-012's 2026-09-19 amendment rules that the stored `api_settings` key outranks the environment variable; the engine currently orders them the other way and the owner decided (2026-10-25) to keep ADR-012 for the hosted engine, so this row is expected to change under TASK-36941.3. Custom endpoints keep ADR-146's order by the owner's 2026-10-26 decision. A user with both set can therefore get a different key per provider family.
+
 ### Implemented providers
 
-Hosted: openai, anthropic, cohere, groq, openrouter, deepseek, mistral(+`mistralai`), google, huggingface, moonshot, zai, qwencloud. Local/self-hosted: llama_cpp, koboldcpp, oobabooga, tabbyapi, vllm, local-llm (llamafile), ollama, aphrodite, custom-openai-api(+`-2`), mlx_lm — plus `local_*` aliases onto the same handlers.
+Hosted (bespoke handlers): openai, anthropic, cohere, groq, openrouter, deepseek, mistral(+`mistralai`), google, huggingface, moonshot, zai, qwencloud. Hosted (engine presets): every `ENGINE_RECORDS` entry (33, e.g. databricks, together, fireworks, cerebras, and `custom-hosted`). Local/self-hosted: llama_cpp, koboldcpp, oobabooga, tabbyapi, vllm, local-llm (llamafile), ollama, aphrodite, custom-openai-api(+`-2`), mlx_lm — plus `local_*` aliases onto the same handlers.
 
 ## Handler internals (OpenAI as the reference)
 
