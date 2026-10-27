@@ -13,6 +13,11 @@ share one cause, so their fix shares this module:
   the palette entries below give the viewed tab's run keyboard routes that do
   not depend on the row's geometry.
 
+TASK-33620.15.17 adds the arrival case of the same key routing: keys typed
+right after the Console opens, before its focus restore lands, reached the
+nav bar's Home button and were dropped (`arm_arrival_focus`,
+`claim_arrival_key`).
+
 `ChatScreen` keeps only the wiring Textual resolves by name (the
 ``stop_console_run`` binding action, `check_action`, `on_key`); the policy
 lives here.
@@ -21,8 +26,10 @@ lives here.
 from __future__ import annotations
 
 import sys
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from loguru import logger
 from textual.css.query import QueryError
 from textual.dom import DOMNode
 from textual.widgets import Button
@@ -194,6 +201,113 @@ def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
     focused = screen.app.focused
     if focused is not composer:
         composer.focus_draft_from(focused)
+
+
+#: The panes `ChatScreen._restore_console_workbench_focus` tries, after the
+#: pane the user last focused, when focus sits outside every Console pane.
+_RESTORE_FALLBACK_PANES = ("console-native-composer", "console-transcript-surface")
+
+
+def workbench_restore_target(screen: Any) -> str | None:
+    """Return the pane the focus restore picks for focus outside the panes.
+
+    One source for the restore and for `claim_arrival_key`, which must make
+    the choice the restore is about to make.
+
+    Args:
+        screen: The Console screen.
+
+    Returns:
+        The first displayed of the last-focused pane, the composer and the
+        transcript, or None when none of them is displayed.
+    """
+
+    for widget_id in (
+        screen._last_console_workbench_focus_id,
+        *_RESTORE_FALLBACK_PANES,
+    ):
+        if widget_id and screen._is_console_widget_displayed(widget_id):
+            return widget_id
+    return None
+
+
+def arm_arrival_focus(screen: Any) -> None:
+    """Remember where an activation found focus, until focus first moves.
+
+    TASK-33620.15.17: when the Console is pushed, Textual focuses the first
+    focusable widget (the nav bar's Home button), and the activation's
+    restore moves focus to the composer only after the first attach sync --
+    live, 0.1-1.9 s after the first frame. Printable keys typed in between
+    reached Home and were dropped. `claim_arrival_key` lets them land where
+    that restore is about to put focus.
+
+    Called from ChatScreen's own ``ScreenResume`` handler, so only a real
+    activation arms -- never the attach reconcile's direct replay of
+    ``on_screen_resume`` (by then any focus change is the user's). A focus
+    already inside a Console pane is kept by the restore, so there is
+    nothing to claim.
+
+    Args:
+        screen: The Console screen being activated.
+    """
+
+    focused = screen.focused
+    if (
+        focused is not None
+        and screen._console_workbench_focus_id_for_widget(focused) is not None
+    ):
+        focused = None
+    screen._console_arrival_focus = focused
+    if focused is None or getattr(screen, "_console_arrival_watched", False):
+        return
+    screen._console_arrival_watched = True
+    screen.watch(screen, "focused", partial(_end_arrival_focus, screen), init=False)
+
+
+def _end_arrival_focus(screen: Any, focused: Any) -> None:
+    """Close the arrival window once focus lands anywhere else."""
+    if focused is not screen._console_arrival_focus:
+        screen._console_arrival_focus = None
+
+
+def claim_arrival_key(screen: Any, composer: ConsoleComposerBar, event: Key) -> None:
+    """Focus the draft for a key typed before the activation restore lands.
+
+    TASK-33620.15.17. Runs in `ChatScreen.on_key` before the capture check.
+    When a printable key arrives while focus still sits where the activation
+    found it, and the activation's restore would pick the composer, the draft
+    takes focus now (synchronously), so this key and the ones queued behind
+    it are typed there, in order. Everything else keeps its input: a focus
+    the user moved, an explicit Resume (it owns its own focus), a collapsed
+    composer, and the setup card -- also before its first sync has shown it.
+    (A modal above the Console receives the keys itself.)
+
+    Args:
+        screen: The Console screen routing the key.
+        composer: The mounted composer.
+        event: The key being routed.
+    """
+
+    arrival = getattr(screen, "_console_arrival_focus", None)
+    if arrival is None or screen.focused is not arrival:
+        return
+    if not ConsoleComposerBar.is_text_entry_key(event):
+        return
+    if screen._resume_navigation_startup_in_progress or composer.collapsed:
+        return
+    if workbench_restore_target(screen) != "console-native-composer":
+        return
+    try:
+        blocked = screen._build_console_setup_card_state().mode == "card"
+    except Exception as error:  # noqa: BLE001 - a key must not crash the app
+        logger.debug(
+            "Console arrival key left unclaimed: setup state unreadable "
+            "(exception_type={})",
+            type(error).__name__,
+        )
+        return
+    if not blocked:
+        composer.focus_draft_from(arrival)
 
 
 def stop_available(screen: Any) -> bool:

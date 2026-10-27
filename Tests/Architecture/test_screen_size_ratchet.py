@@ -191,7 +191,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: its import; the stamp lives in Console_Modules/wiring.py::
     #: environment_scope_stamp). Dev 416feb50ee measures 24319/736; with the
     #: fix, 24321/736, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24327, 736),
+    #: Raised 24319/736 -> 24321/737 2026-10-27 by TASK-33620.15.17, owner
+    #: rule (a fix over a size ratchet raises the row with a dated comment;
+    #: never move or reflow code to make it fit): keys typed before the
+    #: composer's first focus now land in the draft. The logic lives in
+    #: Console_Modules/composer_run_controls.py (arm_arrival_focus,
+    #: claim_arrival_key, and the restore's fallback-pane order as
+    #: workbench_restore_target, which saved 6 lines); the screen keeps one
+    #: call in on_key and a ScreenResume handler (+1 method), which arms
+    #: only on a real activation, never on the attach reconcile's direct
+    #: replay of on_screen_resume. Dev a2b7104d1e measured 24319/736; with
+    #: the fix, 24321/737, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

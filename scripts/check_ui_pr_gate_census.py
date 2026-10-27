@@ -577,7 +577,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Environment panel's worker root reads through the real registry, and consent
 # revoked in the hop before a landing (one private-profile journey each), so
 # no existing entry changes shard: 964 -> 966.
-MINIMUM_FILES = 972
+# TASK-33620.15.17 (2026-10-27) appends 1 node entry at the tail: keys typed
+# before the Console composer's first focus land in the draft, in order (one
+# private-profile case), so no existing entry changes shard: dev's 964 + 1
+# = 965.
+MINIMUM_FILES = 973
 
 
 def read_census(path: Path) -> list[str]:

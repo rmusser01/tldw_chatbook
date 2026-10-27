@@ -41,6 +41,7 @@ from textual.events import (
     MouseUp,
     Paste,
     Resize,
+    ScreenResume,
 )
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
@@ -4981,14 +4982,9 @@ class ChatScreen(BaseAppScreen):
         if current is not None and self._is_console_widget_displayed(current):
             self._last_console_workbench_focus_id = current
             return
-        for widget_id in (
-            self._last_console_workbench_focus_id,
-            "console-native-composer",
-            "console-transcript-surface",
-        ):
-            if widget_id and self._is_console_widget_displayed(widget_id):
-                self._focus_console_workbench_target(widget_id)
-                return
+        target = run_controls.workbench_restore_target(self)
+        if target is not None:
+            self._focus_console_workbench_target(target)
 
     def _register_console_footer_shortcuts(self) -> None:
         """Register Console Workbench shortcuts with this screen's own footer.
@@ -21735,6 +21731,7 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             event.prevent_default()
             return
+        run_controls.claim_arrival_key(self, composer, event)
         if not self._should_capture_console_input(composer):
             return
         if run_controls.route_composer_control_key(self, composer, event):
@@ -22708,6 +22705,11 @@ class ChatScreen(BaseAppScreen):
             rack.display = False
         # Capture fix 3 finding 3: a dialog over the Console takes its keys.
         self._register_console_footer_shortcuts()
+
+    @on(ScreenResume)
+    def _arm_console_arrival_focus(self) -> None:
+        """Hold the arrival focus for keys typed before the restore (TASK-33620.15.17)."""
+        run_controls.arm_arrival_focus(self)
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
