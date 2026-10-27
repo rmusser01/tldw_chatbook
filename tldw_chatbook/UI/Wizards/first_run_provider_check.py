@@ -500,11 +500,17 @@ class ProviderCheckStep(ProviderListStep):
 
         Drafts are kept per provider while setup is open, but only the chosen
         provider is saved; moving away from a typed key used to drop it
-        silently.
+        silently. A typed key the config already holds for its provider (an
+        earlier Next saved it, then Back) loses nothing, so it gets no note
+        (live 2026-10-27, g6bv5-key/11).
         """
         from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
         typed = getattr(self._provider_drafts.get(left), "api_key", "") if left else ""
+        if typed.strip() and typed.strip() == str(
+            self._provider_settings(left).get("api_key") or ""
+        ).strip():
+            typed = ""  # saved already: moving on removes nothing
         try:
             note = self.query_one("#setup-provider-unsaved-note")
         except NoMatches:
