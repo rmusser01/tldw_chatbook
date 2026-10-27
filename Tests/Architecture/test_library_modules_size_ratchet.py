@@ -653,6 +653,10 @@ _BUDGETS: dict[str, int] = {
     # Restore (``_trash_reload_owed``), the Trash focus roles and their
     # resolution (``_library_notes_trash_focus_target``) and the owed landing
     # (``_trash_focus_role``): 8044 -> 8271 (measured).
+    # 2026-10-27, Task 8 fix round 1 (review R0 m-1, m-3, m-6, m-7; same
+    # decision): the Trash list as a scroll owner, a failed page read keeping
+    # the painted page, page 1's loading state on a reopen, the owed landing's
+    # lifetime comment: 8271 -> 8305 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7423,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
