@@ -70,7 +70,7 @@ class ScopedServices[L, S, C]:
 
 ### 2. Which attributes go where
 
-Here, a service is an app attribute whose name ends in `_service`, `_db`, `_provider`, `_repository`, `_store`, `_owner`, `_coordinator`, `_controller`, `_manager`, `_runtime`, `_registry` or `_enforcer`. There are 168 at base. A name defined on the class, whether a method or a property, is not a service; for example `get_dreams_db` is not.
+Here, a service is an app attribute whose name ends in `_service`, `_db`, `_provider`, `_repository`, `_store`, `_owner`, `_coordinator`, `_controller`, `_manager`, `_runtime`, `_registry` or `_enforcer`. There are 168 at base. A method defined on the class, such as `get_dreams_db`, is not a service. A lazy property is a service, and rule 5 excludes it.
 
 | Slice | Current app attributes, and the field each becomes |
 | --- | --- |
