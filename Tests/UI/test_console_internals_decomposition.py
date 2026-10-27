@@ -1,6 +1,7 @@
 # ruff: noqa: F811
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -33,7 +34,6 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
-from tldw_chatbook.Chat.chat_models import ChatSessionData
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ACTION_SAVE_CHATBOOK,
 )
@@ -3390,7 +3390,7 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.sync_session_data(
-            ChatSessionData(
+            SimpleNamespace(
                 tab_id="metadata",
                 title="[red]Injected[/red]\n\tforged title",
                 runtime_backend="[blue]server[/blue]",
