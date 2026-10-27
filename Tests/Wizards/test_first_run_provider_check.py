@@ -244,6 +244,47 @@ async def test_a_forbidden_check_is_explained_and_never_blocks_next(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_after_a_forbidden_check_the_tracker_keeps_provider_at_attention(
+    monkeypatch,
+):
+    """Review v3r1, G6-BV3-03 (live: a real Baseten 403): Provider said '!
+    … won't list models for this key (HTTP 403)', Next advanced as ruled --
+    and the tracker then showed ✓ on Provider over the step's own '!'.
+    Provider wears '!' after Next and on every later step, while the 403
+    still never blocks: Model asks no 'Continue anyway?' and Next goes on."""
+    wizard, _calls = _wizard(
+        monkeypatch, lambda kw: _failed("openai", "missing_credentials", "forbidden")
+    )
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _c, step = current_step(wizard)
+        await pick_provider(pilot, step, "openai")
+        await _type_key(pilot, step, "sk-proj-" + "a" * 40)
+        await pilot.click("#setup-provider-check-key")
+        await wait_until(pilot, lambda: "(HTTP 403)" in static_text(step, _STATUS))
+
+        await pilot.press("ctrl+n")
+        await wait_for_step(pilot, wizard, STEP_MODEL)
+        container, model_step = current_step(wizard)
+        await wait_until(
+            pilot, lambda: bool(model_step.query("#setup-model-listing-unavailable"))
+        )
+        await wait_until(pilot, lambda: tracker_states(wizard)[STEP_PROVIDER] == "attention")
+        assert container.provider_probe_failure() == ""  # still no failure: no gate
+        assert model_step.confirm_before_advance() is None
+
+        model_step.query_one("#setup-model-custom", Input).value = "gpt-4.1-mini"
+        await pilot.pause()
+        await pilot.press("ctrl+n")
+        await wait_for_step(pilot, wizard, STEP_VOICE)
+        assert pinned_error(wizard) == ""
+        states = tracker_states(wizard)
+        assert states[STEP_PROVIDER] == "attention"
+        assert states[STEP_MODEL] == "complete"
+
+
+@pytest.mark.asyncio
 async def test_after_a_rejected_key_ctrl_u_works_where_the_refusal_says(monkeypatch):
     """Live 2026-10-04 (AC#1 path by keyboard): after Back from a rejected key,
     focus sat on the list, so the 'clear it (Ctrl+U)' the copy names did

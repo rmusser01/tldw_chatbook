@@ -494,7 +494,11 @@ _BUDGETS: dict[str, int] = {
     # glyphs from first_run_setup_state, the refusal suffix rule lives in the
     # guard, and the skip, key entry and discovery moved to
     # first_run_provider_*.py helpers; merged onto dev -> 3,130.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3130,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +2.
+    # 2026-10-27, review v3r1 G6-BV3-03: the tracker's attention set also
+    # reads a 403 to Provider's check (provider_warned), in _rebuild_progress
+    # where the set is built -> 3,132.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3132,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -539,7 +543,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-34100.6: Model's failed-discovery copy moved to
     # first_run_model_discovery.connection_failed_text and the evidence
     # category mapping there too; rebased onto dev -> 973.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 973,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +2.
+    # 2026-10-27, review v3r1 G6-BV3-03: Model keeps the rendered failure
+    # category beside its rendered probe failure, so a 403 still marks
+    # Provider '!' after Model hides -> 975.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of

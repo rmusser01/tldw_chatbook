@@ -613,19 +613,58 @@ def handed_off_probe_failure(model_step: object) -> str:
     Returns:
         A ``PROVIDER_PROBE_*`` classification, or "" while nothing failed.
     """
+    outcome = _handed_off_outcome(model_step)
+    if outcome is None:
+        return ""
+    return classify_render(model_step, *outcome)[1]  # as Model will (TASK-33008)
+
+
+def _handed_off_outcome(model_step: object) -> tuple[str, str] | None:
+    """(state, category) of Provider's settled check for Model's identity."""
     owner = getattr(getattr(model_step, "wizard", None), "_first_run_provider_discovery_owner", None)
     try:
         discovery_key = model_step._current_discovery_key()  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 - no identity yet means nothing failed.
-        return ""
+        return None
     outcomes = getattr(owner, "_selected_provider_outcomes", None)
     if discovery_key is None or not isinstance(outcomes, Mapping) or discovery_key not in outcomes:
-        return ""
+        return None
     try:
         _models, state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
     except ValueError:
-        return ""
-    return classify_render(model_step, state, category)[1]  # as Model will (TASK-33008)
+        return None
+    return state, category
+
+
+def provider_check_forbidden(wizard: Any) -> bool:
+    """Whether Provider's last check for the live identity answered HTTP 403.
+
+    TASK-34100.6 review v3r1, G6-BV3-03 (live: a real Baseten 403). A 403 is
+    explained on Provider ('! … won't list models for this key (HTTP 403)')
+    and never blocks Next (owner ruling 2026-10-02), so it is no
+    ``PROVIDER_PROBE_*`` failure -- and the tracker then showed ✓ on Provider
+    over the step's own '!'. The tracker marks Provider '!' from this, while
+    Model's gate, its Retry and the Summary's actions, which read failures
+    only, are unchanged. It reads the 403 the way
+    ``ModelStep.current_probe_failure`` reads a failure: Model's rendered
+    outcome for the live identity, else Provider's settled check (dropped
+    once Model hides, which is why Model keeps its own record).
+
+    Args:
+        wizard: The setup wizard container whose Model step is asked.
+
+    Returns:
+        True when the live identity's last listing answered 403.
+    """
+    try:
+        step = wizard.steps[wizard._step_index_for_id(wizard_state.STEP_MODEL)]
+        current = step._current_discovery_key()
+    except Exception:  # noqa: BLE001 - no Model step or no identity: no 403.
+        return False
+    if current is not None and current == getattr(step, "_rendered_discovery_key", None):
+        return getattr(step, "_rendered_failure_category", "") == "forbidden"
+    outcome = _handed_off_outcome(step)
+    return outcome is not None and outcome[1] == "forbidden"
 
 
 def _resolves_through_hosted_engine(provider_key: str) -> bool:

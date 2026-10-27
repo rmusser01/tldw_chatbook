@@ -1586,7 +1586,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 self.active_ids,
                 self._active_position(self.current_step or 0),
                 attention_ids=wizard_state.setup_attention_ids(
-                    self.wizard_data, probe_failed=bool(self.provider_probe_failure())
+                    self.wizard_data,
+                    probe_failed=bool(self.provider_probe_failure()),
+                    provider_warned=model_discovery.provider_check_forbidden(self),
                 ),
                 skipped_ids=wizard_state.setup_skipped_ids(self.wizard_data),
             )
