@@ -4244,6 +4244,7 @@ class PersonasScreen(BaseAppScreen):
             offset=0,
             page_size=max(1, len(self._profiles)),
         )
+        self._window_state.reload_started()
         fence = self._list_fence()
         async with self._render_lock:
             if not self._library_render_snapshot_is_current(
@@ -4531,6 +4532,7 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
+        self._window_state.reload_started()
         fence = self._list_fence()
         self._dictionary_lore_request_generation += 1
         request_generation = self._dictionary_lore_request_generation
@@ -4636,6 +4638,7 @@ class PersonasScreen(BaseAppScreen):
             expected_mode=expected_mode,
         ):
             return
+        self._window_state.reload_started()
         fence = self._list_fence()
         self._dictionary_lore_request_generation += 1
         request_generation = self._dictionary_lore_request_generation

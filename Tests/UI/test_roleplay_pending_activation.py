@@ -268,3 +268,80 @@ async def test_superseded_dictionary_search_waits_for_authoritative_publication(
                     await refresh
     finally:
         db.close_connection()
+
+
+async def test_dictionary_reload_retires_activation_queued_after_publication(
+    tmp_path_factory, tmp_path, mock_app_instance, monkeypatch
+):
+    """A newer same-query Dictionary read revokes a published activation before receipt."""
+    db = open_volume_db(tmp_path, volume_db_path(tmp_path_factory, 348))
+    local = LocalChatDictionaryService(db)
+    local.create_dictionary({"name": "Old first"})
+    target = local.create_dictionary({"name": "Target fresh"})
+    service = ChatDictionaryScopeService(local_service=local, server_service=None)
+    actual_list = service.list_dictionaries
+    search_reading, search_release = asyncio.Event(), asyncio.Event()
+    refresh_reading, refresh_release = asyncio.Event(), asyncio.Event()
+    reads = 0
+    refresh = None
+
+    async def held_list(**kwargs):
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            search_reading.set()
+            await search_release.wait()
+        elif reads == 3:
+            refresh_reading.set()
+            await refresh_release.wait()
+        return await actual_list(**kwargs)
+
+    monkeypatch.setattr(service, "list_dictionaries", held_list)
+    mock_app_instance.chat_dictionary_scope_service = service
+    try:
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=(120, 36), character_db=db
+        ) as pilot:
+            screen = pilot.app.screen
+            assert await pilot.click("#personas-mode-dictionaries")
+            await settle(pilot)
+            selected_before = screen.state.selected_entity_id
+            library = screen.query_one("#personas-library-pane")
+            post = library.post_message
+            queued = []
+
+            def hold_selection(message):
+                if isinstance(message, PersonaEntitySelected):
+                    queued.append(message)
+                    return True
+                return post(message)
+
+            monkeypatch.setattr(library, "post_message", hold_selection)
+            monkeypatch.setattr(module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0)
+            try:
+                await pilot.press("ctrl+f", *"Target", "enter", "enter")
+                await wait_until(
+                    pilot, search_reading.is_set, what="held Dictionary search"
+                )
+                search_release.set()
+                await wait_until(
+                    pilot, lambda: bool(queued), what="published queued activation"
+                )
+                assert queued[0].entity_id == str(target["id"])
+                refresh = asyncio.create_task(
+                    screen._render_dictionary_rows(query="Target")
+                )
+                await wait_until(
+                    pilot, refresh_reading.is_set, what="newer Dictionary read"
+                )
+                post(queued.pop())
+                await pilot.pause()
+                await pilot.pause()
+                assert screen.state.selected_entity_id == selected_before
+            finally:
+                search_release.set()
+                refresh_release.set()
+                if refresh is not None:
+                    await refresh
+    finally:
+        db.close_connection()
