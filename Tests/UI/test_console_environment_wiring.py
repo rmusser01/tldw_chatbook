@@ -111,6 +111,7 @@ async def _until(pilot, predicate) -> None:
         if predicate():
             return
         await pilot.pause(0.02)
+    raise AssertionError("timed out waiting for the Environment refresh to land")
 
 
 # ---------------------------------------------------------------------------
@@ -181,10 +182,15 @@ async def test_first_open_without_workspace_paints_empty_state_and_reuses_owner(
         assert "env-unbound" in _row_ids(section)
         screen._set_console_rail_preference(right_open=False)
         await pilot.pause()
+        # The reopen lands again; the rows alone would already match the
+        # first open's paint, so wait for the landing itself.
+        relanded: list = []
+        paint = owner._on_snapshot
+        owner._on_snapshot = lambda snapshot: (relanded.append(snapshot), paint(snapshot))
         screen.notify_terminal_focus_regained()
         screen._set_console_rail_preference(right_open=True)
         await pilot.pause()
-        await _until(pilot, lambda: "env-unbound" in _row_ids(section))
+        await _until(pilot, lambda: relanded)
         assert screen._console_environment is owner
         assert section.display
         assert "env-unbound" in _row_ids(section)
