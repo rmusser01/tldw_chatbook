@@ -14,6 +14,10 @@ It complements the other doc families:
 
 ## Index
 
+### Cross-cutting rules
+
+- [layer-map.md](./layer-map.md) — the four layers (kernel, DB, domain, presentation), the import-direction rule, and the shrink-only allowlist its architecture test enforces
+
 ### Shell and surfaces
 
 - [app-shell.md](./app-shell.md) — `TldwCli` composition root, startup phases, screen-based navigation, destinations, events/workers/reactives, CSS build and design tokens, splash, settings surface
