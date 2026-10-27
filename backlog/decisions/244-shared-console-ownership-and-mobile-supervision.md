@@ -702,3 +702,36 @@ complete input closure. An omitted native dependency could change history or exp
 content, and a mistaken historical identity or key assumption could misattribute
 ownership; any such gap must therefore refuse before effects. Plans remain private
 and noninsertable pending integrated, run-owner and owning-write qualification.
+
+
+### Opaque trace grouping and normalized legacy reconstruction
+
+A normalized call's whole nonempty run_id is an opaque historical grouping
+identity, separate from AgentRuns execution ownership. Runtime UUIDs, paired
+runtime tags and already-normalized legacy tags share this native string grammar;
+no colon parsing or textual equality creates an execution reference. Each source
+group receives one deterministic reservation against canonical groups and every
+source/reserved target, preserving call_sequence and typed original/mapped history.
+Explicit AgentRuns dependencies retain their separate owner domain.
+
+The fixed retained-connection reader also invokes the native LegacyTraceNormalizer
+read_calls consumer for already-normalized legacy_snapshot calls. It uses the same
+immutable native cursors, custody checks and original resource budgets, without
+normalization, batch state, migrations or writes. Closed-input proof covers all
+legacy metadata/request/response artifacts with exact bytes and native omissions,
+uncertainty, verification, legacy_snapshot provenance and recorded_call_only
+chronology. Historical metadata run_tag remains exact audit data inside its BLOB.
+
+Original and mapped raw reader order remain auditable. Group reservations may change
+lexical cross-group iteration without inventing cross-group chronology. Recorded
+timestamps, within-group sequence, native lineage/event order and actual
+ConsoleTraceProjection selection must survive mapping. Native semantic-key,
+selection, ordering, tie and duplicate controls must establish that remapped groups
+or call identities lose or merge no captures. Originally unavailable or uncertain
+history remains so. A concrete collision that cannot preserve consumer behavior
+with this fixed map and exact bytes produces an exact prewrite conflict; it does
+not license a generic remapper, BLOB rewriting or invented chronology.
+
+This prevents trace grouping from acquiring execution authority and prevents silent
+history loss through viewer deduplication. It grants no source mutation,
+insertability, normalization permission or later lifecycle-trigger bypass.
