@@ -661,3 +661,83 @@ def test_vad_catalog_rejects_every_parakeet_root_reference() -> None:
     )
     with pytest.raises(KeyError):
         catalog.descriptor(artifact.parakeet_v2_reference())
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.14 final review T1: the caller's DownloadControl reaches
+# provision(). It carries the wizard's Cancel and the wait-in-line; a wrapper
+# that drops it still downloads, so only a test that looks for it can tell.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wrapper", ["parakeet_root", "parakeet_vad"])
+async def test_provision_wrappers_hand_the_caller_control_to_provision(
+    wrapper: str, monkeypatch
+) -> None:
+    import tldw_chatbook.Model_Artifacts.acquisition as acquisition
+
+    calls: list = []
+
+    class FakeAcquisition:
+        def __init__(self, service, **kwargs):
+            pass
+
+        async def provision(
+            self,
+            ref,
+            grant,
+            catalog,
+            *,
+            sources=None,
+            progress=None,
+            activate=True,
+            control=None,
+        ):
+            calls.append((ref, grant, type(catalog).__name__, activate, control))
+            return ref
+
+    class FakeReport:
+        def grant(self):
+            return "GRANT"
+
+    class FakeService:
+        def artifact_path(self, ref):
+            return Path("/managed") / ref.artifact_id
+
+    monkeypatch.setattr(acquisition, "ArtifactAcquisitionService", FakeAcquisition)
+    control = object()
+
+    if wrapper == "parakeet_root":
+        model, precision = "nemo-parakeet-tdt-0.6b-v2", "int8"
+        await artifact.run_parakeet_provision(
+            model,
+            precision,
+            FakeReport(),
+            core=FakeService(),
+            credential_resolver=object(),
+            control=control,
+        )
+        expected = (
+            artifact.parakeet_reference(model, precision),
+            "GRANT",
+            "ParakeetCatalog",
+            True,
+        )
+    else:
+        await artifact.run_parakeet_vad_provision(
+            FakeReport(),
+            core=FakeService(),
+            credential_resolver=object(),
+            control=control,
+        )
+        expected = (
+            artifact.parakeet_vad_reference(),
+            "GRANT",
+            "ParakeetVadCatalog",
+            False,
+        )
+
+    assert len(calls) == 1
+    assert calls[0][:4] == expected
+    assert calls[0][4] is control
