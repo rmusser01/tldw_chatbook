@@ -582,7 +582,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # private-profile case), so no existing entry changes shard: dev's 964 + 1
 # = 965.
 # Textual audit controls retain every dev entry plus 167 tail entries.
-MINIMUM_FILES = 1140
+# TASK-36611 (2026-10-27) appends 1 whole-file entry at the tail: a tab
+# publication holding the session locks finishes while the Console screen's
+# pump waits for it (one mounted case, about 9 s locally), so no existing
+# entry changes shard: 908 -> 909.
+MINIMUM_FILES = 1159
 
 
 def read_census(path: Path) -> list[str]:

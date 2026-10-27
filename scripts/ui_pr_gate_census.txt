@@ -1571,3 +1571,35 @@ Tests/UI/test_console_assistant_turn.py::test_transcript_refresh_lock_resume_sto
 Tests/UI/test_console_fewer_permission_prompts_command.py
 Tests/UI/test_notifications_inbox_responsiveness.py::test_memory_inbox_preserves_rows_and_mutations_on_owning_thread
 Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
+Tests/UI/test_study_quiz_submit_lifetime.py::test_submit_history_completion_cannot_publish_after_runtime_reset[failure]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[scope-away-back-failure]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[panel-replaced-failure]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_submit_history_completion_cannot_publish_after_runtime_reset[success]
+Tests/UI/test_notifications_inbox_responsiveness.py::test_each_admitted_inbox_mutation_refreshes_after_its_native_commit[dismiss]
+Tests/UI/test_notifications_inbox_responsiveness.py::test_inbox_awaitable_overrides_keep_callers_loop_and_return_values
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[attempt-replaced-success]
+Tests/UI/test_personas_lore_save_responsiveness.py::test_ordinary_save_reports_real_sqlite_result[True]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[runtime-away-back-failure]
+Tests/UI/test_study_quiz_submit_lifetime.py::test_obsolete_submit_preserves_current_attempt_and_exact_draft[scope-away-back-success]
+
+# TASK-33162.1: both ingestion prompt editors survive a stale MouseMove after detach.
+Tests/UI/test_library_ingest_option_event_order.py::test_mouse_move_over_removed_ingest_prompt_keeps_replacement_editable
+# TASK-33620.15.15 (2026-10-27): TASK-33620.15.5's first-send warm-up pins,
+# appended at the tail after dev's 964 entries, in the order a replay of seven
+# green 17-shard runs preferred: the warm-up's own file (8 s alone at load ~5,
+# 25 s at load ~38 locally) in shard 13, the lighter shard; the import-cycle
+# check (3 s and 11 s) in shard 14. Existing shard slots stay fixed.
+Tests/UI/test_console_first_send_preimport.py
+Tests/UI/test_console_first_send_import_cycles.py
+
+# TASK-37000: collapsed-Inspector pins, appended at the tail.
+Tests/UI/test_console_inspector_rail_deferral.py
+Tests/UI/test_console_collapsed_inspector_send_layout.py::test_a_send_asks_no_layout_of_the_collapsed_inspector
+Tests/UI/test_console_collapsed_inspector_send_layout.py::test_an_inspector_opened_after_a_send_matches_one_open_throughout
+# TASK-33620.15.1.6: the Environment panel's worker root reads go through the
+# real registry and consent service and land a bound folder; a landing whose
+# consent was revoked in the hop is dropped (one private-profile journey each,
+# 13-15 s each locally), appended at the tail; existing shard slots stay fixed.
+Tests/UI/test_console_environment_bound_registry.py
+Tests/UI/test_console_environment_consent_revoked_hop.py
+Tests/UI/test_console_session_lock_screen_pump.py
