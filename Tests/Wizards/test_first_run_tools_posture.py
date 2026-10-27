@@ -111,10 +111,29 @@ async def test_master_switch_off_names_no_local_tool_as_available() -> None:
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         also = str(step.query_one("#setup-tools-also-available", Static).render())
-    for name in ("web search", "character cards", "questions for you"):
-        assert name not in also.replace("Web search", "")
     assert not also.startswith("Also available")
     assert "switched off" in also
+    assert also == posture_mod.also_available_line(
+        posture_mod.ToolsPosture(switch_total=8, switched_on=(), also_available=())
+    )
+
+
+def test_the_all_off_line_claims_only_what_the_request_drops() -> None:
+    """Live (TASK-34100.13 resume, g13v5-a120/25): with the master off the
+    real request still carried the app's own MCP server's
+    ``list_characters`` and ``chat_with_character`` (no native twin; whether
+    that server belongs in plain chat is TASK-34100.5's call). The line said
+    "character and question tools are switched off"; what goes is every tool
+    that edits a character card (character_save, and the MCP create/update
+    twins)."""
+    line = posture_mod.also_available_line(
+        posture_mod.ToolsPosture(switch_total=8, switched_on=(), also_available=())
+    )
+    assert "character and question tools" not in line
+    assert line.startswith(
+        "Web search, Watchlists, questions for you and the tools that edit "
+        "character cards are switched off."
+    )
 
 
 def test_master_switch_off_leaves_no_local_group_in_the_posture() -> None:
