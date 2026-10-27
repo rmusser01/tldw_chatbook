@@ -82,7 +82,6 @@ from ...Evals.skill_eval.storage import (
     save_skill_eval_bench,
 )
 from ...Evals.skill_eval.subject import (
-    SubjectError,
     subject_from_directory,
     subject_from_store,
 )
@@ -496,6 +495,7 @@ class EvalsScreen(LabScreen):
         kind: SelectionKind,
         id: Optional[str] = None,
         rail_dirty: bool = True,
+        saved: Optional[BenchEditor.Saved] = None,
     ) -> None:
         """Set the workbench's active selection and refresh dependent panes.
 
@@ -522,6 +522,7 @@ class EvalsScreen(LabScreen):
             id: The selected object's id. Only meaningful for a non-
                 ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
                 "none"``, or a caller clearing the selection).
+            saved: Successful word-bench publication; conditionally reload its form.
             rail_dirty: Whether the rail's ROWS (not just which one is
                 active) may have changed. Defaults to ``True``, the safe
                 answer for every mutation caller -- a save, a finished run, a
@@ -539,10 +540,14 @@ class EvalsScreen(LabScreen):
         # superseded by a rail-click one before either swap runs, the rail
         # still has to be rebuilt.
         self._selection_rail_dirty = self._selection_rail_dirty or rail_dirty
-        self._selection_swap_revision += 1
+        # Save refresh shares the selection revision: it must not supersede
+        # a pending user selection whose detail still needs to mount.
+        if saved is None:
+            self._selection_swap_revision += 1
         self.run_worker(
             self._swap_selection_regions(
                 revision=self._selection_swap_revision,
+                saved=saved,
             ),
             group="evals-selection-regions",
             # NOT exclusive. An exclusive group cancels the in-flight swap,
@@ -558,51 +563,20 @@ class EvalsScreen(LabScreen):
             exit_on_error=False,
         )
 
-    async def _swap_selection_regions(self, *, revision: int) -> None:
-        """Rebuild the Lab regions that read the selection, and only those.
+    async def _swap_selection_regions(
+        self, *, revision: int, saved: Optional[BenchEditor.Saved] = None
+    ) -> None:
+        """Serialize region swaps; superseded revisions do no work.
 
-        The three regions are the frame's (``lab_frame.LabScreen``):
-        ``#lab-rail``, ``#lab-body``, ``#lab-inspector``. Everything outside
-        them -- the header row and its status chips (static for this mode),
-        the mode strip, the nav bar and the footer -- is unaffected by a
-        selection, so it now survives one.
+        Removals are awaited before mounting reused ids, within a single
+        batch. Rail rows rebuild only when dirty; shell chrome stays mounted.
+        Save publication also refreshes the Inspector but reloads the detail
+        only while its originating form and selection remain unchanged. Check
+        after the rail await, immediately before any detail replacement.
 
-        Removals are awaited before the replacements mount: Textual's
-        ``remove`` is deferred, and every id here (``#evals-detail-pane``,
-        ``#evals-inspector-pane``, the rail's row ids) is re-used by the
-        replacement, so mounting early raises ``DuplicateIds``.
-
-        The whole swap runs inside ``self.batch()`` -- the same lock-plus-
-        ``batch_update`` ``Widget.recompose`` uses. Not a nicety: two
-        separately-awaited region swaps each drove their own layout/repaint
-        pass, and batching them cut the swap's own cost from a median of
-        105 ms to 88 ms on the isolated harness.
-
-        Serialized by a lock and superseded by revision, never cancelled --
-        see ``select`` for why an exclusive worker group was the wrong tool.
-
-        Focus is captured before the teardown and restored after IF it was
-        inside a region this swap rebuilds and its id still resolves. Ids are
-        stable across a rebuild (the rail's row ids, the detail pane's field
-        ids), so this beats what the whole-screen recompose managed -- it left
-        focus wherever Textual's ``_reset_focus`` happened to drop it, which
-        on a rail rebuild is a section TOGGLE, one Space away from collapsing
-        the section the user is working in.
-
-        The restore is deferred and yields to the body: a freshly mounted body
-        may claim focus ON PURPOSE (``ResultsGrid.on_mount`` focuses its
-        DataTable so the ``l``/``b``/``s``/``e`` keys the footer advertises
-        actually work). Anything focused inside ``#lab-body`` after the swap is
-        that deliberate claim and is left alone; anything else is Textual's
-        automatic reset, which the captured identity overrides.
-
-        Args:
-            revision: The ``select`` call this swap belongs to. A swap whose
-                revision is no longer current returns without touching a
-                single widget.
-
-        Returns:
-            None.
+        Capture focus before teardown and restore its stable id afterward,
+        yielding to deliberate body focus (such as ResultsGrid's table).
+        Release mouse capture both before and after deferred removals.
         """
         async with self._selection_swap_lock:
             if revision != self._selection_swap_revision or not self.is_mounted:
@@ -631,8 +605,15 @@ class EvalsScreen(LabScreen):
                         # swap below is still worth doing if they are there.
                         pass
 
-                body = self.build_lab_body()
-                await self._replace_region("#lab-body", [] if body is None else [body])
+                if saved is None or (
+                    self._selection == EvalsSelection(kind="bench", id=saved.bench_id)
+                    and saved.editor in self.query(BenchEditor)
+                    and saved.editor.save_publication_state() == saved.form_state
+                ):
+                    body = self.build_lab_body()
+                    await self._replace_region(
+                        "#lab-body", [] if body is None else [body]
+                    )
                 await self._replace_region(
                     "#lab-inspector", list(self.compose_lab_inspector())
                 )
@@ -948,15 +929,9 @@ class EvalsScreen(LabScreen):
 
     @on(BenchEditor.Saved)
     def _on_bench_editor_saved(self, event: BenchEditor.Saved) -> None:
-        """A successful `BenchEditor` Save re-selects the same bench --
-        `select()`'s recompose reloads the form from what `save_bench`
-        actually persisted (see `BenchEditor.Saved`'s own docstring for why
-        that can differ from what was typed, e.g. `_clean_task_name`'s
-        control-character strip), and refreshes the rail row and inspector
-        alongside it for free, the same way any other selection change
-        does."""
+        """Refresh persisted metadata without discarding later edits/navigation."""
         event.stop()
-        self.select(kind="bench", id=event.bench_id)
+        self.select(kind=self._selection.kind, id=self._selection.id, saved=event)
 
     @on(CharacterBenchEditor.Saved)
     def _on_character_bench_editor_saved(

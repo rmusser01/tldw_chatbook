@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 from loguru import logger as loguru_logger
 from rich.markup import escape as escape_markup
-from textual.app import App
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -37,6 +36,11 @@ from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.snippet_editor import import_snippets_into_dataset
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+# TASK-37031: mounted Lab rails read the collection-bound config source.
+# Per-test profile redirects refused startup with raw_source_selection_changed.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: The real bundled stylesheet (mirrors HomeHarness in test_home_screen.py
 #: and CanvasAppWithBundledCSS in test_mcp_servers_mode.py). This is not what
@@ -730,9 +734,9 @@ async def test_import_button_stays_in_its_pane_and_pilot_click_opens_the_picker(
 
         pane = screen.query_one("#evals-detail-pane")
         button = screen.query_one("#evals-import-snippets")
-        assert pane.region.contains_region(button.region), (
-            f"import button {button.region} escapes detail pane {pane.region}"
-        )
+        assert pane.region.contains_region(
+            button.region
+        ), f"import button {button.region} escapes detail pane {pane.region}"
 
         stack_depth_before = len(evals_app.screen_stack)
         await pilot.click("#evals-import-snippets")
@@ -1399,9 +1403,9 @@ async def test_inspector_reports_an_unexpected_load_bench_failure_instead_of_goi
         loguru_logger.remove(sink_id)
 
     assert records, "the failure must be logged, not just rendered"
-    assert any(seeded_bench in r["message"] for r in records), (
-        f"the log line must name which bench failed: {[r['message'] for r in records]}"
-    )
+    assert any(
+        seeded_bench in r["message"] for r in records
+    ), f"the log line must name which bench failed: {[r['message'] for r in records]}"
 
 
 @pytest.mark.asyncio
@@ -1584,9 +1588,9 @@ async def test_inspector_pane_widens_at_a_wide_terminal_instead_of_staying_fixed
 
     assert 30 <= widths[80] <= 50
     assert 30 <= widths[200] <= 50
-    assert widths[80] < widths[200], (
-        f"inspector did not scale with the terminal: {widths}"
-    )
+    assert (
+        widths[80] < widths[200]
+    ), f"inspector did not scale with the terminal: {widths}"
 
 
 @pytest.mark.asyncio
@@ -2283,9 +2287,9 @@ async def test_pressing_duplicate_creates_and_selects_a_copy(evals_app, seeded_b
         assert screen._selection.id == new_id
 
         new_bench = screen._view_model.bench_by_id(new_id)
-        assert re.fullmatch(r"loaded-nouns v1 copy [0-9a-f]{8}", new_bench["name"]), (
-            new_bench["name"]
-        )
+        assert re.fullmatch(
+            r"loaded-nouns v1 copy [0-9a-f]{8}", new_bench["name"]
+        ), new_bench["name"]
 
         notifications = evals_app.app_instance.notifications
         assert notifications
@@ -3198,9 +3202,9 @@ async def test_new_character_bench_reuses_an_existing_unsteered_target_over_a_ne
             "UPDATE eval_models SET created_at = ? WHERE id = ?",
             ("2030-01-01 00:00:00", steered_id),
         )
-    assert evals_db.list_models(provider="llama_cpp")[0]["id"] == steered_id, (
-        "sanity: the steered row must be newest"
-    )
+    assert (
+        evals_db.list_models(provider="llama_cpp")[0]["id"] == steered_id
+    ), "sanity: the steered row must be newest"
 
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
     app = EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
@@ -3380,9 +3384,9 @@ async def test_the_character_bench_estimate_pushes_the_primary_action_down_but_i
             control = screen.query_one(f"#{control_id}", Button)
             control.scroll_visible(animate=False)
             await pilot.pause()
-            assert control.region.width > 0 and control.region.height > 0, (
-                f"#{control_id} has an empty region at {size[0]}x{size[1]}"
-            )
+            assert (
+                control.region.width > 0 and control.region.height > 0
+            ), f"#{control_id} has an empty region at {size[0]}x{size[1]}"
             assert lab_inspector.region.contains_region(control.region), (
                 f"#{control_id} at {control.region} escapes the inspector's "
                 f"own visible viewport {lab_inspector.region} at "
@@ -3481,9 +3485,9 @@ async def test_new_character_bench_button_and_its_neighbours_stay_hit_testable(
         screen = pilot.app.screen
         for button_id in ("evals-rail-new-bench", "evals-rail-new-character-bench"):
             control = screen.query_one(f"#{button_id}", Button)
-            assert control.region.width > 0 and control.region.height > 0, (
-                f"#{button_id} has an empty region at {size[0]}x{size[1]}"
-            )
+            assert (
+                control.region.width > 0 and control.region.height > 0
+            ), f"#{button_id} has an empty region at {size[0]}x{size[1]}"
             center = control.region.center
             hit, _offset = screen.get_widget_at(int(center[0]), int(center[1]))
             assert hit is control, (
@@ -3492,9 +3496,9 @@ async def test_new_character_bench_button_and_its_neighbours_stay_hit_testable(
             )
 
         row = screen.query_one("#evals-rail-row-benches-0", Button)
-        assert row.region.width > 0 and row.region.height > 0, (
-            f"the word-bench row has an empty region at {size[0]}x{size[1]}"
-        )
+        assert (
+            row.region.width > 0 and row.region.height > 0
+        ), f"the word-bench row has an empty region at {size[0]}x{size[1]}"
         center = row.region.center
         hit, _offset = screen.get_widget_at(int(center[0]), int(center[1]))
         assert hit is row, (

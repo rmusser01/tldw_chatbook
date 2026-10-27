@@ -63,6 +63,27 @@ Only explicit Rename validates and writes the name; a successful Rename posts
 or unreadable imports leave the name edit unchanged. This follows ADR-033's
 narrow state ownership and the existing ADR-150/161 layout contracts.
 
+## Word-bench Save publication
+
+`BenchEditor.Saved` carries the successful write's originating editor and raw
+form snapshot. The serialized Evals region swap refreshes Catalog and Inspector
+from persisted data, then replaces the detail only if that editor and bench
+selection still apply and its form is unchanged. Applicability is checked after
+the awaited Catalog replacement, immediately before detail replacement. Save
+refresh shares the current selection revision so it cannot supersede a pending
+user selection whose detail has not mounted yet.
+
+Later accepted input therefore retains the actual child widgets, focus, caret
+and selection; it stays unsaved until another Save. The editor advances its
+dirty baseline on successful writes so later edits are compared with the
+submitted snapshot. An unchanged ordinary Save still reloads cleaned persisted
+values and discards pre-existing uncreated target mini-form text. Validation,
+write failure and explicit Revert retain their existing paths. This follows
+[ADR-011](../../backlog/decisions/011-chatbook-workbench-ui-system.md),
+[ADR-033](../../backlog/decisions/033-application-session-state-ownership.md),
+[ADR-150](../../backlog/decisions/150-design-token-system-and-design-language.md)
+and [ADR-161](../../backlog/decisions/161-component-pattern-library.md).
+
 ## Evals keyboard scope
 
 ResultsGrid owns `l` (lens), `b` (baseline), `s` (sort) and `e` (export).
