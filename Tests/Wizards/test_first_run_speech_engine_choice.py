@@ -192,6 +192,37 @@ def test_a_rerun_with_cloud_saved_starts_on_cloud_and_writes_nothing_unchanged()
     )
 
 
+def test_faster_whisper_writes_the_shipped_template_model() -> None:
+    """Dev's TASK-32755.4 made ``base`` the shipped ``[transcription]`` model
+    (it is also TranscriptionService's own faster-whisper fallback). Picking
+    "Already available -- faster-whisper" on a fresh profile changes nothing,
+    and from another engine writes that same model, never the larger
+    ``distil-large-v3`` the old template named."""
+    import tomllib
+
+    from tldw_chatbook import config as config_module
+
+    shipped = tomllib.loads(config_module.CONFIG_TOML_CONTENT)["transcription"]
+    facts = engines.EngineFacts(installed_engine="faster-whisper", parakeet_mib=633)
+    fresh = {"default_provider": "faster-whisper", "default_model": shipped["default_model"]}
+    assert (
+        engines.build_engine_commit(
+            engines.ENGINE_INSTALLED, facts=facts, transcription=fresh
+        )
+        == {}
+    )
+    assert engines.build_engine_commit(
+        engines.ENGINE_INSTALLED,
+        facts=facts,
+        transcription={"default_provider": "remote-whisper", "default_model": "whisper-1"},
+    ) == {
+        "transcription": {
+            "default_provider": "faster-whisper",
+            "default_model": shipped["default_model"],
+        }
+    }
+
+
 def test_installed_engine_follows_console_dictations_resolver() -> None:
     installed = ("parakeet-onnx", "parakeet-mlx", "faster-whisper")
     assert engines.pick_installed_engine("faster-whisper", installed) == "faster-whisper"
