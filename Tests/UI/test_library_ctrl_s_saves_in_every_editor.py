@@ -68,6 +68,43 @@ def _within(widget, selector_id: str) -> bool:
     )
 
 
+def _focused_id(screen) -> str | None:
+    """The focused widget's id: a rebuild may replace the widget, not the id."""
+    return getattr(screen.focused, "id", None)
+
+
+def _record_resolved_keys(monkeypatch, app) -> list[str]:
+    """Record each key whose NON-priority binding check has completed.
+
+    Review R1 N-1: a check that a key did NOT do something needs a positive
+    signal that the key was fully processed, not a fixed pause (which can
+    only ever give a false green). ``App._on_key`` resolves non-priority
+    bindings after the key has bubbled through every widget, and awaits the
+    bound action, so a key listed here has been handled end to end.
+    """
+    resolved: list[str] = []
+    check_bindings = app._check_bindings
+
+    async def recording(key: str, priority: bool = False) -> bool:
+        try:
+            return await check_bindings(key, priority)
+        finally:
+            if not priority:
+                resolved.append(key)
+
+    monkeypatch.setattr(app, "_check_bindings", recording)
+    return resolved
+
+
+async def _press_processed(pilot, resolved: list[str], key: str) -> None:
+    """Press ``key``, then wait until its binding check has completed."""
+    before = resolved.count(key)
+    await pilot.press(key)
+    await _until(
+        pilot, lambda: resolved.count(key) > before, f"{key} to be fully processed"
+    )
+
+
 async def _f1_keys(pilot, app, screen) -> set[str]:
     """Open F1, read the keys it lists, close it again.
 
@@ -92,6 +129,12 @@ async def _click_into_body(pilot, screen) -> TextArea:
     return body
 
 
+def _body_text(screen) -> str | None:
+    """The live body's text, re-queried: never a widget held across a save."""
+    matches = screen.query("#library-note-body")
+    return matches.first().text if matches else None
+
+
 async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkeypatch):
     """Rule (b): the key writes the draft now, not when the debounce fires.
 
@@ -109,7 +152,7 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
             await _open_note(screen, pilot, _TITLE, profile.note_id)
-            body = await _click_into_body(pilot, screen)
+            await _click_into_body(pilot, screen)
             await _until(
                 pilot,
                 lambda: "esc back to notes" in _footer(app),
@@ -136,7 +179,7 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
             await pilot.press("ctrl+s")
             await _until(
                 pilot,
-                lambda: profile.note(profile.note_id)["content"] == body.text,
+                lambda: profile.note(profile.note_id)["content"] == _body_text(screen),
                 "Ctrl+S to write the typed body to the database",
                 timeout=3.0,
             )
@@ -148,7 +191,9 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
                 lambda: _painted(app, status).startswith("Saved"),
                 "the status line to say Saved",
             )
-            assert screen.focused is body, f"Ctrl+S moved focus to {screen.focused!r}"
+            assert _focused_id(screen) == "library-note-body", (
+                f"Ctrl+S moved focus to {screen.focused!r}"
+            )
             await _until(
                 pilot,
                 lambda: "ctrl+s" not in _footer(app),
@@ -161,7 +206,7 @@ async def test_ctrl_s_in_the_note_body_flushes_the_autosave_now(tmp_path, monkey
                 lambda: NO_CHANGES in _painted(app, status),
                 "a clean note's Ctrl+S to say there were no changes",
             )
-            assert screen.focused is body
+            assert _focused_id(screen) == "library-note-body"
             assert not [toast for toast in toasts if "Saved" in toast], toasts
 
             # A real key still types after both saves (lessons-textual :680).
@@ -186,6 +231,7 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
     _no_autosave(monkeypatch)
     app, profile = _library_app(tmp_path, monkeypatch, [], lambda notes: None)
     toasts = _record_toasts(monkeypatch, app)
+    resolved = _record_resolved_keys(monkeypatch, app)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
@@ -196,8 +242,12 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
             delete = await _until_selector(pilot, screen, "#library-note-delete")
             # Setup, not the subject: Delete sits below Info's fold at 160x45.
             delete.press()
-            cancel = await _until_selector(pilot, screen, "#library-note-delete-cancel")
-            await _until(pilot, lambda: screen.focused is cancel, "focus on Cancel")
+            await _until_selector(pilot, screen, "#library-note-delete-cancel")
+            await _until(
+                pilot,
+                lambda: _focused_id(screen) == "library-note-delete-cancel",
+                "focus on Cancel",
+            )
             await pilot.press("ctrl+s")
             status = screen.query_one("#library-note-status")
             await _until(
@@ -205,12 +255,12 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
                 lambda: "Save locked" in _painted(app, status),
                 "the Delete confirm to refuse Ctrl+S at the editor",
             )
-            assert screen.focused is cancel
+            assert _focused_id(screen) == "library-note-delete-cancel"
             assert profile.note(profile.note_id)["content"] == _BODY
             assert not [toast for toast in toasts if "Save locked" in toast], toasts
             assert "ctrl+s" not in await _f1_keys(pilot, app, screen)
             # (F1's push and pop may rebuild the confirm row: same control.)
-            assert getattr(screen.focused, "id", None) == "library-note-delete-cancel"
+            assert _focused_id(screen) == "library-note-delete-cancel"
             await pilot.press("enter")
             await _until(
                 pilot,
@@ -256,8 +306,9 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
                         "Down to move focus onto the folder tree",
                     )
                 moved_to = screen.focused
-                await pilot.press("ctrl+s")
-                await pilot.pause(0.5)
+                # Review R1 N-1: wait until the key is fully processed, then
+                # check what it did not do (a fixed pause only false-greens).
+                await _press_processed(pilot, resolved, "ctrl+s")
                 assert profile.note(profile.note_id)["content"] == _BODY, (
                     f"Ctrl+S on {moved_to!r} wrote the note open beside it"
                 )

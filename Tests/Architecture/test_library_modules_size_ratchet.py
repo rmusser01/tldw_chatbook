@@ -467,7 +467,10 @@ _BUDGETS: dict[str, int] = {
     # saving." and writes nothing; the worker clears the flag in a
     # ``finally`` (``_run_library_media_analysis_form_save``): 5286 -> 5313
     # (measured with ``_measure``).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5313,
+    # 2026-10-27, Task 9 fix round 2 (review R1 N-6; same owner decision):
+    # opening a row, an external detail and Discard each reset the analysis
+    # save guard with the form: 5313 -> 5316 (measured with ``_measure``).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5316,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -672,7 +675,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-27, Task 9 fix round 1 (ruling T9-g; same owner decision): a
     # clean note's commit answers "Saved — no changes." on the status line
     # for the key and the button alike: 8425 -> 8432 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8432,
+    # 2026-10-27, Task 9 fix round 2 (review R1 N-3; same decision): only an
+    # explicit Save is answered "Saved — no changes." -- the outcome learns
+    # who asked: 8432 -> 8441 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8441,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

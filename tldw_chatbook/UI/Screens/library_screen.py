@@ -17553,6 +17553,11 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.mutation_scope = None
         self._media_state.mutation_authority = None
         self._media_state.bulk_delete_in_flight = False
+        # TASK-34000.40 review R1 N-2: the metadata form's "Media change in
+        # progress." refusal ends with the interlock it named.
+        viewer = self._mounted_library_media_viewer()
+        if viewer is not None:
+            viewer.show_form_status("edit", "")
         if not committed and not remove_ids and not upsert_items:
             if has_authority:
                 self._sync_library_media_browse_state(None)
@@ -17685,6 +17690,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
+        self._media_state.saving_analysis = False  # see the field (N-6)
         # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
         # were typed for -- a reset that cleared the flags but left the
         # drafts kept the dirty predicate true for a form nobody could see.
@@ -22430,8 +22436,12 @@ class LibraryScreen(BaseAppScreen):
     def _focus_library_note_conflict_callout(self) -> None:
         return self._notes_controller._focus_library_note_conflict_callout()
 
-    def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
-        return self._notes_controller._apply_library_note_save_outcome(outcome)
+    def _apply_library_note_save_outcome(
+        self, outcome: NoteSaveOutcome, *, explicit: bool = False
+    ) -> None:
+        return self._notes_controller._apply_library_note_save_outcome(
+            outcome, explicit=explicit
+        )
 
     async def _save_library_note(
         self,
@@ -22472,7 +22482,7 @@ class LibraryScreen(BaseAppScreen):
         outcome = await self._library_note_session.request_save(explicit=explicit)
         # TASK-34000.1 (N-07): a refused AUTOSAVE never moves a typing user.
         if explicit or not autosave.keep_autosave_veto_in_place(self, outcome):
-            self._apply_library_note_save_outcome(outcome)
+            self._apply_library_note_save_outcome(outcome, explicit=explicit)
 
     async def _flush_library_note_save(
         self, *, gc_untouched_blank: bool = True
@@ -23976,6 +23986,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing = False
             self._media_state.edit_draft = None
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = False  # see the field (N-6)
             self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
         self._close_library_media_find()
@@ -33337,6 +33348,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.edit_draft = None
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
+        self._media_state.saving_analysis = False  # see the field (N-6)
         self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -33396,6 +33408,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._media_state.editing_analysis:
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = False  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._sync_library_media_viewer_or_recompose()
             return
@@ -35072,6 +35085,7 @@ class LibraryScreen(BaseAppScreen):
                 self._media_state.composed_detail = None
                 self._media_state.highlights = []
                 self._media_state.editing_analysis = False
+                self._media_state.saving_analysis = False  # see the field (N-6)
                 self._media_state.analysis_draft = None
                 self._close_library_media_find()
                 self._media_state.content_mode = "raw"
@@ -37483,6 +37497,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.confirming_delete = False
             self._media_state.highlights = []
             self._media_state.editing_analysis = False
+            self._media_state.saving_analysis = False  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._close_library_media_find()
             self._media_state.content_mode = "raw"

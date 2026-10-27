@@ -515,7 +515,10 @@ class LibraryMediaState:
     # TASK-34000.40 review I-3: the analysis form's own Save is in flight.
     # One save per form at a time -- a double or held Ctrl+S (or a double
     # click; the press shares the seam) answers "Already saving." instead
-    # of writing a second analysis version.
+    # of writing a second analysis version. Review R1 N-6: every reset of
+    # ``editing_analysis`` resets this too, so a save worker cancelled before
+    # its first step (its ``finally`` never runs) cannot strand the guard
+    # and refuse every later analysis Save.
     saving_analysis: bool = False
 
     # task-28006: an LLM analysis generation is in flight for the open item.

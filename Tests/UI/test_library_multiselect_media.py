@@ -91,6 +91,9 @@ def _bind_media_mutation_seams(fake):
     fake._library_media_mutation_summary = types.MethodType(
         LibraryScreen._library_media_mutation_summary, fake
     )
+    # TASK-34000.40 review R1 N-2: the release clears the metadata
+    # form's refusal line on the mounted viewer (none mounted here).
+    fake._mounted_library_media_viewer = lambda: None
     fake._complete_library_media_mutation = types.MethodType(
         LibraryScreen._complete_library_media_mutation, fake
     )

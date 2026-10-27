@@ -5030,8 +5030,14 @@ class LibraryNotesController:
             "saved" if is_current_clean_revision else "idle"
         )
         self._update_library_note_meta_static(content=snapshot.body)
-    def _apply_library_note_save_outcome(self, outcome: NoteSaveOutcome) -> None:
-        """Translate one typed coordinator save outcome into screen presentation."""
+    def _apply_library_note_save_outcome(
+        self, outcome: NoteSaveOutcome, *, explicit: bool = False
+    ) -> None:
+        """Translate one typed coordinator save outcome into screen presentation.
+
+        ``explicit``: a Save press or Ctrl+S asked, not the autosave. Only
+        that request is answered "Saved — no changes." (review R1 N-3).
+        """
         snapshot = self._library_note_session.snapshot
         if outcome.kind is NoteSaveOutcomeKind.STALE or snapshot is None:
             return
@@ -5041,12 +5047,15 @@ class LibraryNotesController:
             NoteSaveOutcomeKind.SAVED,
             NoteSaveOutcomeKind.ACKNOWLEDGED,
         }:
-            if outcome.kind is NoteSaveOutcomeKind.ACKNOWLEDGED and outcome.message:
+            acknowledged = explicit and outcome.kind is NoteSaveOutcomeKind.ACKNOWLEDGED
+            if acknowledged and outcome.message:
                 # TASK-34000.40 ruling T9-g: a Save (press or Ctrl+S) with
-                # nothing unsaved says so on the status line, no toast.
+                # nothing unsaved says so on the status line, no toast. An
+                # autosave can reach ACKNOWLEDGED only by racing a save that
+                # landed first; it says nothing (review R1 N-3).
                 self._library_note_shortcut_status = outcome.message
             self._apply_library_note_saved_presentation(outcome)
-            if outcome.kind is NoteSaveOutcomeKind.ACKNOWLEDGED and self.is_mounted:
+            if acknowledged and self.is_mounted:
                 self._apply_library_note_presentation_state()
             return
         if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
