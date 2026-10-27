@@ -616,6 +616,15 @@ ADMISSION_2_TARGETS = (
     # commit window while it runs on its thread, and closes it after success,
     # failure and a cancelled caller (bootstrap_profile, three cases, ~7 s).
     "Tests/Chat/test_console_durable_commit_window.py",
+    # TASK-33620.15.1.6: the Environment panel's automatic refreshes and its
+    # landings read Change Review consent off the UI loop, and the stale-scope
+    # guard still drops an old root's landing (the mounted Console;
+    # bootstrap_profile, three tests).
+    "Tests/UI/test_console_environment_root_reads.py",
+    # TASK-33620.15.1.5: the snapshot builder, hook authority and the
+    # Environment / Change Review accessor answer from one helper, as str
+    # (the mounted Console; bootstrap_profile, two tests).
+    "Tests/UI/test_console_session_admitted_roots.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

@@ -568,7 +568,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # deferral file (four widget cases, about 8 s locally) and the two mounted
 # Console cases of its send file as node ids (about 21 s and 30 s locally at
 # load ~15), so no existing entry changes shard: 965 -> 968.
-MINIMUM_FILES = 970
+# TASK-33620.15.1.6 (2026-10-27) appends 1 whole-file entry at the tail: the
+# Environment panel's worker root reads through the real registry (one
+# private-profile journey), so no existing entry changes shard: 964 -> 965.
+MINIMUM_FILES = 971
 
 
 def read_census(path: Path) -> list[str]:
