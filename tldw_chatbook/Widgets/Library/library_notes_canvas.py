@@ -1540,6 +1540,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: another binding read.
         self._note_location: tuple[str, str, bool] = ("", "", False)
         self._tree_focus_intent_generation: Callable[[], int] | None = None
+        #: Advances of that generation the screen traced to Textual's own
+        #: reset landing inside this recompose's prune window (the screen
+        #: counts them, ``_library_notes_reset_landing_canvas``): not the
+        #: user's move, so the list-mode refocus gate discounts them.
+        self.reset_landing_intents = 0
         self.add_class("w-fill")
         self.styles.min_width = 40
         self.add_class(f"library-notes-mode-{mode}")
@@ -1608,8 +1613,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Preserve a newer in-canvas focus when pager authority expires."""
         newest_focus_id: str | None = None
         focus_generation = self._tree_pager_focus_generation
-        focus_intent_generation: int | None = None
         focus_intent_generation_getter = self._tree_focus_intent_generation
+        # One reading of the user-intent generation before the prune, for
+        # both the pager path and the same-id refocus below (review R0 M-3):
+        # a user's own move inside this recompose advances it, and then
+        # neither may move focus back.
+        focus_intent_generation: int | None = (
+            focus_intent_generation_getter()
+            if focus_intent_generation_getter is not None
+            else None
+        )
         pager_focus_id = self._tree_pager_focus_id
         if pager_focus_id and not self._tree_pager_authority_is_current(
             self._tree_pager_focus_guard,
@@ -1623,8 +1636,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 and self in focused.ancestors_with_self
             ):
                 newest_focus_id = focused.id
-                if focus_intent_generation_getter is not None:
-                    focus_intent_generation = focus_intent_generation_getter()
         if self.is_attached and not self._pruning:
             self._children_ready = False
         # TASK-34000.29 (N-12, ruling T6-a): the focused child this recompose
@@ -1639,6 +1650,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             focused_child = self.screen.focused
         except Exception:  # noqa: BLE001 - a detached canvas has no screen
             focused_child = None
+        self.reset_landing_intents = 0
         pruned = self.focus_before_prune = (
             (focused_child, self._predicted_reset_target(focused_child), self.mode)
             if focused_child is not None and self in focused_child.ancestors
@@ -1648,7 +1660,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             await super().recompose()
         finally:
             self.focus_before_prune = None
-        if pruned is not None:
+        # Review R0 M-3: a list resync's refocus yields to the user's own
+        # move inside this window -- the generation advanced for anything but
+        # Textual's reset landing. (The editor-mode refocus is TASK-34000.29
+        # N-12's, unchanged.)
+        user_moved = (
+            focus_intent_generation is not None
+            and focus_intent_generation_getter is not None
+            and focus_intent_generation_getter() - self.reset_landing_intents
+            != focus_intent_generation
+        )
+        if pruned is not None and not (pruned[2] == "list" and user_moved):
             self._refocus_pruned_child(*pruned)
         if (
             not newest_focus_id

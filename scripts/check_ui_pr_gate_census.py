@@ -1256,10 +1256,13 @@ MINIMUM_FILES = 2520
 # - task 7: Tests/UI/test_library_notes_select_mode_counts_and_bulk.py (four
 #   real-Library boots, ~27 s) and its `_extended` sibling (three boots,
 #   ~25 s alone, so it is gated too -- the task 5 R2-1 precedent): 918 -> 920.
+# - task 7 fix round 1 (2026-10-27): Tests/UI/test_library_notes_deferred_
+#   visit_reload.py (one real-Library boot, ~6 s; review R0 M-1, ruling
+#   T7-f): 920 -> 921.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 4 = 2461.
-MINIMUM_FILES = 2461
+# moves; the floor is the measured entry count: 2457 + 5 = 2462.
+MINIMUM_FILES = 2462
 
 
 MINIMUM_FILES = 2038

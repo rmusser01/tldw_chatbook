@@ -17,11 +17,12 @@ TASK-34000.82, verified on ``9097b11dd7``:
   selected cut off at the pane edge; at 120x36 it was gone entirely. The
   compact rule followed the terminal width, not the pane the strip lives in.
 
-Three boots of the real ``LibraryScreen`` with the production stylesheet over
-a real ChaChaNotes database (``library_notes_bulk_support``). Every gesture
-is a real key or click; every claim is painted text or the database read back
-through a second connection. The keyword arms live in the ``_extended``
-sibling (a fourth boot would cost the PR lane its 30-second budget).
+Four boots (one per test) of the real ``LibraryScreen`` with the production
+stylesheet over a real ChaChaNotes database (``library_notes_bulk_support``).
+Every gesture is a real key or click, or a focus asserted before its key;
+every claim is painted text or the database read back through a second
+connection. The keyword arms live in the ``_extended`` sibling, to keep this
+file inside the PR lane's 30-second budget.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from Tests.UI.library_notes_bulk_support import (
     RENDERED,
     TRIP_TITLES,
     enter_select_mode,
+    folder_row,
     mounted,
     note_rows,
     notes_ready,
@@ -191,105 +193,88 @@ async def test_space_toggles_the_focused_note_row_and_nothing_else(tmp_path) -> 
         assert _selected(screen) == 1
         assert screen._notes_state.select_mode
 
-        # A Notes pane grip: Space is claimed and does nothing -- it never
-        # collapses a pane under a footer that says "space toggle".
-        grips = [
-            grip
-            for grip in screen.query(".library-adaptive-reader-pane-grip")
-            if any(a.has_class("library-notes-route") for a in grip.ancestors)
-        ]
-        assert grips, "no Notes pane grip"
-        canvas_region = screen.query_one("#library-notes-canvas").region
-        grips[0].focus()
-        await pilot.pause()
-        await pilot.press("space")
-        await pilot.pause(0.3)
-        assert screen.query_one("#library-notes-canvas").region == canvas_region
+        # A Notes pane grip keeps its own Space (ruling T7-c): it toggles its
+        # pane in select mode exactly as outside it, and checks nothing.
+        await _space_toggles_the_grip(pilot, screen)
         assert screen._notes_state.select_mode and _selected(screen) == 1
 
         # Done: Space is not claimed there (a Textual Button presses on Enter
         # only), so nothing toggles; Enter, a real key, leaves select mode.
-        screen.query_one("#library-notes-select-toggle", Button).focus()
-        await pilot.pause()
+        done = screen.query_one("#library-notes-select-toggle", Button)
+        done.focus()
+        await until(pilot, lambda: screen.focused is done, "focus on Done")
         await pilot.press("space")
         await pilot.pause(0.2)
         assert screen._notes_state.select_mode and _selected(screen) == 1
         await pilot.press("enter")
         await until(pilot, lambda: not screen._notes_state.select_mode, "Enter on Done")
 
+        # ...and outside select mode the grip's Space does the same thing.
+        await _space_toggles_the_grip(pilot, screen)
+
+
+async def _space_toggles_the_grip(pilot, screen) -> None:
+    """Space on the first Notes pane grip flips its pane, then flips it back."""
+    grip = next(
+        grip
+        for grip in screen.query(".library-adaptive-reader-pane-grip")
+        if any(a.has_class("library-notes-route") for a in grip.ancestors)
+    )
+    for _ in range(2):
+        grip.focus()
+        await until(pilot, lambda: screen.focused is grip, "focus on the Notes grip")
+        was_open = grip.pane_open
+        canvas = screen.query_one("#library-notes-canvas")
+        before = canvas.region
+        await pilot.press("space")
+        # Wait on the layout, not only the flag: the pane has really moved.
+        await until(
+            pilot,
+            lambda: grip.pane_open is (not was_open) and canvas.region != before,
+            lambda: f"Space on the {grip.pane} grip to toggle its pane "
+            f"(open={grip.pane_open}, select mode={screen._notes_state.select_mode})",
+        )
+        await pilot.pause(0.2)
+
 
 async def test_actions_move_moves_every_selected_note_and_names_the_count(
     tmp_path,
 ) -> None:
-    """AC#5: one action moves every checked note; Escape at each step writes nothing."""
+    """AC#5: one action moves every checked note and names the count.
+
+    Three unfiled notes and one FILED note (Bread, in Recipes): the filed one
+    is what proves Move is a move -- placed in the destination AND lifted out
+    of its source folder (review R0 I-2). Escape at each step (the chooser,
+    the picker) writes nothing: the ``_extended`` sibling's partial-move test,
+    moved there to keep this file inside its 30-second budget.
+    """
     host, seed = mounted(tmp_path)
-    picked = ("Ideas inbox", "Reading list", "Trip Oslo")
+    picked = ("Ideas inbox", "Reading list", "Trip Oslo", "Bread")
     async with host.run_test(size=WIDE) as pilot:
         screen = await notes_ready(host, pilot)
+        await pilot.click(f"#{folder_row(screen, 'Recipes').id}")
+        await until(
+            pilot,
+            lambda: any("Bread" in str(row.label) for row in note_rows(screen)),
+            lambda: f"Recipes to open: {painted(host)}",
+        )
         await enter_select_mode(host, pilot, screen)
         for title in picked:
             await pilot.click(f"#{row_for(screen, title).id}")
-        await until(pilot, lambda: _selected(screen) == 3, "three checked rows")
-        before = seed.memberships()
+        await until(pilot, lambda: _selected(screen) == 4, "four checked rows")
+        bread_in_recipes = seed.placement_rows("Recipes", "Bread")
+        assert [deleted for deleted, _ in bread_in_recipes] == [0], bread_in_recipes
 
-        # Escape on the open chooser closes it; focus returns to Actions….
-        await pilot.click("#library-notes-select-actions")
-        await until(
-            pilot,
-            lambda: bool(screen.query(".library-notes-select-action-choice"))
-            and screen.focused is not None
-            and screen.focused.has_class("library-notes-select-action-choice"),
-            lambda: f"the Actions chooser with focus in it: {painted(host)}",
-        )
-        for label in ("Move to folder…", "Add keyword…", "Remove keyword…"):
-            assert label in painted(host), label
-        await pilot.press("escape")
-        await until(
-            pilot,
-            lambda: not screen.query(".library-notes-select-action-choice")
-            and getattr(screen.focused, "id", "") == "library-notes-select-actions",
-            lambda: f"Escape to close the chooser (focus {screen.focused!r})",
-        )
-        assert screen._notes_state.select_mode and _selected(screen) == 3
-
-        # Escape in the picker writes nothing and keeps the selection.
-        await pilot.press("enter")
-        await until(
-            pilot,
-            lambda: getattr(screen.focused, "id", "")
-            == "library-notes-select-action-move",
-            "Enter on Actions… to focus Move to folder…",
-        )
-        await pilot.press("enter")
-        await until(
-            pilot,
-            lambda: isinstance(host.screen, LibraryNoteFolderTargetDialog),
-            "the folder picker",
-        )
-        await until(
-            pilot,
-            lambda: "Move 3 notes to…" in painted(host),
-            lambda: f"the picker title: {painted(host)}",
-        )
-        await pilot.press("escape")
-        await until(pilot, lambda: host.screen is screen, "the picker to close")
-        await pilot.pause(0.3)
-        assert seed.memberships() == before
-        assert screen._notes_state.select_mode and _selected(screen) == 3
-        # Focus is back on the opener (Actions…), not in a text field.
-        await until(
-            pilot,
-            lambda: getattr(screen.focused, "id", "") == "library-notes-select-actions",
-            lambda: f"focus back on Actions…, got {screen.focused!r}",
-        )
-
-        # Choose Projects / Thesis: every checked note lands there.
+        # Actions… opens the three choices; Move to folder… opens the
+        # all-folders picker. (Escape at each step: the ``_extended`` sibling.)
         await pilot.click("#library-notes-select-actions")
         await until(
             pilot,
             lambda: bool(screen.query("#library-notes-select-action-move")),
-            "the chooser again",
+            lambda: f"the Actions chooser: {painted(host)}",
         )
+        for label in ("Move to folder…", "Add keyword…", "Remove keyword…"):
+            assert label in painted(host), label
         await pilot.click("#library-notes-select-action-move")
         await until(
             pilot,
@@ -310,7 +295,7 @@ async def test_actions_move_moves_every_selected_note_and_names_the_count(
         await pilot.press("down", "enter")
         await until(
             pilot,
-            lambda: "Moved 3 of 3 notes to Projects / Thesis" in painted(host),
+            lambda: "Moved 4 of 4 notes to Projects / Thesis" in painted(host),
             lambda: f"the receipt: {painted(host)}",
         )
         moved = {seed.note_ids[title] for title in picked}
@@ -318,10 +303,11 @@ async def test_actions_move_moves_every_selected_note_and_names_the_count(
             seed.note_ids["Thesis outline"]
         }
         assert not screen._notes_state.select_mode
-        assert seed.placed_in("Recipes") == {
-            seed.note_ids["Soup"],
-            seed.note_ids["Bread"],
-        }
+        # Bread left Recipes: its one placement there is no longer live, and
+        # the detach bumped that placement's version; Soup stayed.
+        assert seed.placed_in("Recipes") == {seed.note_ids["Soup"]}
+        (old_version,) = [version for _, version in bread_in_recipes]
+        assert seed.placement_rows("Recipes", "Bread") == [(1, old_version + 1)]
 
         # Focus lands on Select (the strip it came from is gone) and stays
         # there through the tree refresh; a real key then works: Enter
