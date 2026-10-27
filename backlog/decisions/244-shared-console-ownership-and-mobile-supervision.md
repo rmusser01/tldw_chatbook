@@ -770,3 +770,35 @@ becoming another character's live chat. No generic adapter, caller cursor or SQL
 indexing, repair, key provisioning, capture widening, owning write or authority
 activation is granted; every existing retained-scope fence and resource limit
 continues to apply.
+
+
+### Preconstruction bounds for captured native trace reads
+
+The captured trace operation owns one nonrenewable aggregate 16 MiB budget for
+inputs, proof and native materialization. One fixed private budget object propagates
+explicitly through its actual native reader, service, semantic projection and legacy
+read paths. Optional private parameters default to None so ordinary native consumers
+retain their existing behavior; no product option, caller callback, generic factory,
+global state, cache, per-call allowance or budget renewal is introduced.
+
+Budget reservations precede decoding, cloning, concatenation and repeated-reference
+materialization, and every list, dictionary and result accumulation. Coverage includes
+header components, semantic envelopes and batches, continuations, thinking, media and
+base64, system composition, legacy messages and call tuples. A bounded raw value may
+be inspected; charging an already completed unbounded reconstruction is insufficient.
+Nested consumers receive the identical shared object and cannot silently use an
+unbudgeted path.
+
+A distinct body-free exhaustion exception propagates as a resource refusal. Native
+reconstruction-unavailable handling, sanitizers and uncertainty conversion never
+swallow it or represent exhausted resources as uncertain historical content. Existing
+custody, context, schema, authorizer, cancellation, deadline and step restrictions
+remain independent and unchanged. Fixed trace tuple acquisition uses actual retained
+cursors in batches no larger than 1000, with full installed metadata and all six
+members' complete pre/post checks; there is no general reader or mapped SQL writer.
+
+Repeated-reference and pre-decode refusal controls must exercise the real captured
+entry. Bounded complete, partial and normalized legacy output and ordinary unbudgeted
+native callers require focused preservation controls. A missed nested path risks
+excess allocation; overcharging or catching exhaustion risks false historical loss.
+These are implementation qualification requirements, never new import authority.
