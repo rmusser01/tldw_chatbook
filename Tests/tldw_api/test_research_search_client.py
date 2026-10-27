@@ -427,7 +427,8 @@ async def test_paper_search_accepts_raw_passthrough_list_shapes(monkeypatch, bod
     monkeypatch.setattr(client, "_request", AsyncMock(return_value=body))
     result = await client.paper_search(PaperSearchRequest(endpoint="medrxiv/raw/pubs"))
     assert result.items == (body["items"] if isinstance(body, dict) else [])
-    assert result.raw == (None if isinstance(body, dict) else body)
+    assert ("non_dict_body" in result.model_dump()) == (not isinstance(body, dict))
+    assert result.model_extra.get("non_dict_body") == (None if isinstance(body, dict) else body)
 
 
 @pytest.mark.asyncio
@@ -438,7 +439,7 @@ async def test_paper_search_detail_accepts_int_id_and_raw_bodies(monkeypatch, bo
     result = await client.paper_search_detail(
         PaperSearchDetailRequest(endpoint="medrxiv/raw/pub")
     )
-    assert (result.id == 123) if isinstance(body, dict) else (result.raw == body)
+    assert (result.id == 123) if isinstance(body, dict) else (result.non_dict_body == body)
 
 
 @pytest.mark.asyncio
@@ -449,3 +450,15 @@ async def test_paper_search_ingest_accepts_list_data(monkeypatch):
         PaperSearchIngestRequest(endpoint="arxiv/ingest")
     )
     assert result.data == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_paper_search_dict_body_with_raw_key_does_not_collide(monkeypatch):
+    client = TLDWAPIClient("http://localhost:8000")
+    monkeypatch.setattr(
+        client, "_request", AsyncMock(return_value={"raw": "upstream", "items": []})
+    )
+    result = await client.paper_search(PaperSearchRequest(endpoint="medrxiv/raw/pubs"))
+    dumped = result.model_dump()
+    assert dumped["raw"] == "upstream"
+    assert "non_dict_body" not in dumped

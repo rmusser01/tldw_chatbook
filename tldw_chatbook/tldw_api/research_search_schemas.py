@@ -345,12 +345,13 @@ class PaperSearchListResponse(BaseModel):
     page: int | None = None
     results_per_page: int | None = None
     total_pages: int | None = None
-    raw: Any = None
 
     @model_validator(mode="before")
     @classmethod
     def wrap_non_dict_body(cls, value: Any) -> Any:
-        return value if isinstance(value, dict) else {"raw": value}
+        # Undeclared extra: present in dumps only for a non-dict body, and a
+        # dict body's own "raw" key (a different name) cannot collide with it.
+        return value if isinstance(value, dict) else {"non_dict_body": value}
 
 
 class PaperSearchDetailResponse(BaseModel):
@@ -368,12 +369,13 @@ class PaperSearchDetailResponse(BaseModel):
     url: Any = None
     pdf_url: Any = None
     provider: Any = None
-    raw: Any = None
 
     @model_validator(mode="before")
     @classmethod
     def wrap_non_dict_body(cls, value: Any) -> Any:
-        return value if isinstance(value, dict) else {"raw": value}
+        # Undeclared extra: present in dumps only for a non-dict body, and a
+        # dict body's own "raw" key (a different name) cannot collide with it.
+        return value if isinstance(value, dict) else {"non_dict_body": value}
 
 
 class PaperSearchOperationResponse(BaseModel):

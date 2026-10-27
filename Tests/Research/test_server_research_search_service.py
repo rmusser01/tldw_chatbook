@@ -333,9 +333,12 @@ async def test_paper_search_detail_and_ingest_use_public_client_methods():
 
 def test_no_interop_module_calls_private_client_request():
     root = pathlib.Path(research_search_module.__file__).parents[1]
+    private = re.compile(r"\._request\(|getattr\([^)]*[\"']_request[\"']")
+    # getattr(<client-ish>, <non-literal>): a variable name can hide "_request".
+    dynamic = re.compile(r"getattr\(\s*[\w.]*client\w*\s*,\s*[^\"'\s]")
     offenders = [
         str(p.relative_to(root))
         for p in root.glob("*_Interop/**/*.py")
-        if re.search(r"\._request\(|getattr\([^)]*[\"']_request[\"']", p.read_text())
+        if private.search(p.read_text()) or dynamic.search(p.read_text())
     ]
     assert offenders == []
