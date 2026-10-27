@@ -1,0 +1,21 @@
+from pathlib import Path
+import json, os, subprocess, sys, xml.etree.ElementTree as ET
+root=Path.cwd(); sys.path.insert(0,str(root))
+from tldw_chatbook.Utils import platform_files
+parent=root/'.test-tmp/textual-after3251/audit-merged/workflows-schedules'
+run=parent/sys.argv[1]
+platform_files.os.mkdir(run,0o700)
+for name in ('tmp','bootstrap'): platform_files.os.mkdir(run/name,0o700)
+env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONIOENCODING='utf-8',PYTHONUTF8='1',TEMP=str(run/'tmp'),TMP=str(run/'tmp'),TLDW_TEST_CONFIG_ROOT=str(run/'bootstrap'),PYTEST_DISABLE_PLUGIN_AUTOLOAD='1')
+args=[sys.executable,'-X','utf8','-m','pytest',*sys.argv[2:],'-p','pytest_asyncio.plugin','-p','pytest_timeout','-q','--tb=short','--timeout=120','-o','cache_dir='+str(run/'cache'),'--basetemp='+str(run/'pytest'),'--junitxml='+str(run/'result.xml')]
+(run/'command.json').write_text(json.dumps(args,indent=2),encoding='utf-8')
+p=subprocess.run(args,cwd=root,env=env,capture_output=True,text=True,encoding='utf-8',errors='replace')
+(run/'run.log').write_text(p.stdout+'\n'+p.stderr,encoding='utf-8')
+reports=[]
+for report in run.rglob('*.xml'):
+ try: cases=list(ET.parse(report).iter('testcase'))
+ except ET.ParseError: continue
+ reports.append(dict(path=str(report.relative_to(run)),cases=len(cases),failures=sum(len(c.findall('failure')) for c in cases),errors=sum(len(c.findall('error')) for c in cases),skips=sum(len(c.findall('skipped')) for c in cases)))
+receipt=dict(exit_code=p.returncode,reports=reports)
+(run/'verification.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8')
+print(json.dumps(receipt,indent=2)); print(p.stdout[-6000:]); print(p.stderr[-1200:]);sys.exit(p.returncode)

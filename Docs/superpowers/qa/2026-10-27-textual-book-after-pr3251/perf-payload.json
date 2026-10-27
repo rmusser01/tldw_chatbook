@@ -1,0 +1,11 @@
+{
+  "head": "6746d7e4ba897eaffc4c9f47427b510464b0fd89",
+  "run": 40540997830,
+  "job": 122319017342,
+  "conclusion": "success",
+  "raw_sha256": "5b65e92a23fe54ca98d95feb1cf8b8e4443797f6e6877f32168a34f0bee59d73",
+  "payload_rows": [
+    "2026-10-27T16:32:40.7185050Z   /home/runner/work/tldw_chatbook/tldw_chatbook/Tests/Performance/test_screen_preimport_payload_budget.py:450: UserWarning: preimport-payload: 558/558 modules (headroom 0); 424407/425347 LOC (headroom 940); 130690/135111 LOC fattest-route (library) (headroom 4421)",
+    "2026-10-27T16:32:40.7187988Z   /home/runner/work/tldw_chatbook/tldw_chatbook/Tests/Performance/test_screen_preimport_payload_budget.py:583: UserWarning: first-send-warmup: 93/94 modules (headroom 1)"
+  ]
+}

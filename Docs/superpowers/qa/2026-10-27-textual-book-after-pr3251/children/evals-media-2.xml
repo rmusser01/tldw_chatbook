@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="4.955" timestamp="2026-10-27T10:37:28.339563-07:00" hostname="DESKTOP-BISU2HE"><testcase classname=".test-tmp.textual-after3251.audit-merged.evals-media.test_book3251_evals_media" name="test_evals_save_completion_preserves_later_child_input[queued-later-input]" time="4.585"><failure message="AssertionError: queued Save completion replaced newer accepted child input&#10;assert 'Saved' == 'Saved-new'&#10;  &#10;  - Saved-new&#10;  + Saved">request = &lt;FixtureRequest for &lt;Coroutine test_evals_save_completion_preserves_later_child_input[queued-later-input]&gt;&gt;
+later_edit = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('later_edit', [False, True], ids=['ordinary', 'queued-later-input'])
+    @private_profile_test
+    async def test_evals_save_completion_preserves_later_child_input(request, later_edit):
+        from textual import on
+        from textual.message import Message
+        from textual.widgets import Input, Button
+        from Tests.UI.test_evals_screen import EvalsHarness, _FakeAppInstance
+        from tldw_chatbook.DB.Evals_DB import EvalsDB
+        from tldw_chatbook.Evals.word_bench.models import BenchConfig
+        from tldw_chatbook.Evals.word_bench.storage import save_bench, load_bench
+        from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
+        from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+        identity('evals-' + str(later_edit), [EvalsScreen, BenchEditor, EvalsDB, load_bench])
+        class Hold(Message):
+            pass
+        class GatedScreen(EvalsScreen):
+            @on(Hold)
+            async def hold(self, event):
+                event.stop()
+                self.entered.set()
+                await self.release.wait()
+        from Tests.UI.consolidated_css import ConsolidatedCSSApp
+        class Host(ConsolidatedCSSApp):
+            CSS_PATH = EvalsHarness.CSS_PATH
+            def __init__(self, instance):
+                super().__init__()
+                self.app_instance = instance
+            async def on_mount(self):
+                screen = GatedScreen(self.app_instance)
+                screen.entered = asyncio.Event()
+                screen.release = asyncio.Event()
+                await self.push_screen(screen)
+        db = EvalsDB(db_path=':memory:', client_id='book3251-evals')
+        try:
+            dataset_id = db.create_dataset(name='snippets', format='custom', source_path='inline:snippets', metadata={'sample_count': 1})
+            target_id = db.create_model(name='target', provider='llama_cpp', model_id='test')
+            bench_id = save_bench(db, BenchConfig(name='Original', dataset_id=dataset_id, target_ids=(target_id,), prompt_mode='raw', top_k=10, probes=(' x',)))
+            app = Host(_FakeAppInstance(db))
+            async with app.run_test(size=(160, 45)) as pilot:
+                screen = app.screen
+                screen.select(kind='bench', id=bench_id)
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                editor = screen.query_one(BenchEditor)
+                field = editor.query_one('#evals-bench-name', Input)
+                field.focus()
+                await pilot.press('home', 'shift+end', 'backspace', *'Saved')
+                assert field.value == 'Saved'
+                if later_edit:
+                    screen.post_message(Hold())
+                    await until(screen.entered.is_set)
+                before = None
+                try:
+                    # Actual Button.Pressed dispatch on the owning editor; parent Saved queues.
+                    editor.query_one('#evals-bench-save', Button).press()
+                    await until(lambda: load_bench(db, bench_id).name == 'Saved')
+                    if later_edit:
+                        field.focus()
+                        # Send through the live focused child, without waiting for the held parent to idle.
+                        from textual.events import Key
+                        for char in '-new':
+                            field.post_message(Key(char, char))
+                        await until(lambda: field.value == 'Saved-new')
+                        before = {'text': field.value, 'focus': field.has_focus, 'cursor': field.cursor_position, 'dirty': editor.is_dirty()}
+                        assert before['focus'] and before['dirty']
+                finally:
+                    screen.release.set()
+                    await until(lambda: bool(screen.query("#evals-bench-name")) and screen.query_one("#evals-bench-name", Input) is not field)
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                current = screen.query_one('#evals-bench-name', Input)
+                observation = {'later_edit': later_edit, 'before': before, 'after': {'text': current.value, 'same_input': current is field, 'focus': current.has_focus, 'cursor': current.cursor_position}, 'stored': load_bench(db, bench_id).name}
+                (OUT / f'evals-{later_edit}-observation.json').write_text(json.dumps(observation, indent=2), encoding='utf8')
+                assert load_bench(db, bench_id).name == 'Saved'
+&gt;               assert current.value == ('Saved-new' if later_edit else 'Saved'), 'queued Save completion replaced newer accepted child input'
+E               AssertionError: queued Save completion replaced newer accepted child input
+E               assert 'Saved' == 'Saved-new'
+E                 
+E                 - Saved-new
+E                 + Saved
+
+.test-tmp\textual-after3251\audit-merged\evals-media\test_book3251_evals_media.py:101: AssertionError</failure></testcase></testsuite></testsuites>
