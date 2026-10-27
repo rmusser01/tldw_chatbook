@@ -132,7 +132,8 @@ MAX_PASS_ADDED_MODULES = 558
 #: 2026-10-27 Task 8 fix round 1 (review R0 minors): 426,651 -> 426,667 (paired arms: base c677c8a89a 426,651 + 16; library route 132,714 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-27 Task 8 fix round 2 (review R1 N-1/N-2/N-3): 426,667 -> 426,720 (paired arms: base 739adc11c8 426,667 + 53; library route 132,767 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-27 TASK-34000.40 polish-1b Task 9 (N-33, one Ctrl+S rule across the six Library editors): 426,720 -> 427,002 (paired arms: base 500d09c43a 426,720 + 282; library route 133,049 of 135,111; modules 558 and ui-ready 1030/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 427_002
+#: 2026-10-27 Task 9 fix round 1 (review R0, rulings T9-g..j): 427,002 -> 427,100 (paired arms: base 67b7b485d9 427,002 + 98; library route 133,147 of 135,111; modules 558 and ui-ready 1031/1031 unchanged, both arms) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 427_100
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
