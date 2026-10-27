@@ -172,7 +172,9 @@ async def test_a_send_asks_no_layout_of_the_collapsed_inspector(
 ) -> None:
     """A first and a later send, Inspector collapsed: nothing inside it asks.
 
-    Fails on the base build at the first send's start window (the run
+    The later send follows an open-and-close of the rail, so no rebuild is
+    held and the run inspector re-writes its rows in place inside the hidden
+    rail. Fails on the base build at the first send's start window (the run
     inspector's and the Agents section's recomposes); its later windows fail
     there on the "Live work" row alone.
     """
@@ -202,8 +204,22 @@ async def test_a_send_asks_no_layout_of_the_collapsed_inspector(
         assert not _action(
             before.dictionary_actions, "console-inspector-dictionaries-attach"
         ).enabled
+        # Open and close: the opening runs what the hidden rail held, so the
+        # later send meets a rail with nothing pending.
+        await _open_inspector(console, pilot)
+        assert (
+            console.query_one("#console-inspector-dictionaries-attach", Button).disabled
+            is False
+        )
+        await console.action_toggle_console_inspector_rail()
+        await _wait_for(pilot, lambda: not rail.display, "the Inspector never closed")
+        await pilot.pause(0.3)
+        settled = inspector.recompose_count
         later = await _send(
             console, composer, pilot, gateway, "stream and hold 1", requests
+        )
+        assert inspector.recompose_count == settled, (
+            "the later send rebuilt the hidden inspector"
         )
         for send, windows in (("first", first), ("later", later)):
             for window, calls in windows.items():
