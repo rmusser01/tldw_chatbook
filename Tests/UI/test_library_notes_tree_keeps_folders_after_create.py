@@ -179,6 +179,41 @@ def _assert_folders_above_unfiled(painted: str, *, note_title: str = "") -> None
         assert painted.index(note_title) > unfiled, painted
 
 
+async def _painted_folders_above_unfiled(
+    host, screen, pilot, *, note_title: str = ""
+) -> str:
+    """Wait for the painted list to show every folder above Unfiled; assert it.
+
+    TASK-34000.95: the root slices can settle in state a frame before the
+    compositor paints them, so one read on a slow CI runner saw an empty list
+    (``assert '▾ Unfiled' in ''``). This retries the same assertion against
+    fresh paints. If it never holds -- the TASK-34000.14 defect, a tree of
+    Unfiled plus the new note -- the assertion runs once more after the wait,
+    so the failure still names the missing folder rather than a timeout.
+    """
+
+    def holds() -> bool:
+        if not screen.query("#library-notes-list"):
+            return False
+        try:
+            _assert_folders_above_unfiled(
+                _painted_list(host, screen), note_title=note_title
+            )
+        except AssertionError:
+            return False
+        return True
+
+    try:
+        await _until(
+            pilot, holds, "the painted list to show every folder", timeout=10.0
+        )
+    except AssertionError:
+        pass
+    painted = _painted_list(host, screen)
+    _assert_folders_above_unfiled(painted, note_title=note_title)
+    return painted
+
+
 async def _title_then_escape(screen, pilot, title: str) -> None:
     """Give the blank note a title (so it is kept) and leave the editor."""
     screen.query_one("#library-note-title", Input).focus()
@@ -247,8 +282,7 @@ async def test_palette_new_note_then_blank_then_escape_shows_every_top_level_fol
         await _title_then_escape(screen, pilot, TITLE)
         await _tree_settled(screen, pilot)
 
-        painted = _painted_list(host, screen)
-        _assert_folders_above_unfiled(painted, note_title=TITLE)
+        await _painted_folders_above_unfiled(host, screen, pilot, note_title=TITLE)
         # Fix round 1 (M-1): the locator already loads root placements for
         # the new note; the create arrival must not fetch them a second time.
         assert len(root_placement_pages) == 1, root_placement_pages
@@ -276,7 +310,7 @@ async def test_rail_new_note_then_escape_shows_the_folders_and_add_to_folder_lis
         assert prompts == list(FOLDERS), (
             f"Add note to folder lists {prompts!r}; tree: {_painted_list(host, screen)}"
         )
-        _assert_folders_above_unfiled(_painted_list(host, screen), note_title=TITLE)
+        await _painted_folders_above_unfiled(host, screen, pilot, note_title=TITLE)
 
 
 async def test_a_template_create_lands_in_a_tree_with_its_folders(tmp_path) -> None:
@@ -300,7 +334,7 @@ async def test_a_template_create_lands_in_a_tree_with_its_folders(tmp_path) -> N
         await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
         await _tree_settled(screen, pilot)
 
-        _assert_folders_above_unfiled(_painted_list(host, screen))
+        await _painted_folders_above_unfiled(host, screen, pilot)
 
 
 async def test_loading_row_paints_while_the_root_slice_loads_and_g_is_not_advertised_on_unfiled(
@@ -372,9 +406,10 @@ async def test_loading_row_paints_while_the_root_slice_loads_and_g_is_not_advert
             lambda: len(_folder_rows(screen)) == len(FOLDERS),
             "the folder rows to paint",
         )
-        await pilot.pause(0.1)
-        _assert_folders_above_unfiled(_painted_list(host, screen), note_title=TITLE)
-        assert "Loading folders…" not in _painted_list(host, screen)
+        painted = await _painted_folders_above_unfiled(
+            host, screen, pilot, note_title=TITLE
+        )
+        assert "Loading folders…" not in painted
         assert screen.check_action("library_notes_focus_folders", ()) is True
         assert dict(screen._library_notes_footer_shortcuts()).get("g") == "go to folder"
 
