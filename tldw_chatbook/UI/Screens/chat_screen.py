@@ -20777,13 +20777,13 @@ class ChatScreen(BaseAppScreen):
         # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
         # the task-251 report: the brief's Change 3 asked to skip this
         # build+push entirely while the right rail is hidden. Measured
-        # against the actual test suite, that broke real behavior --
-        # Console keeps the inspector's mounted content fresh in the
-        # background regardless of paint visibility (selecting a message,
-        # a setup blocker appearing, resuming a conversation, etc. all
-        # still need `#console-run-inspector-state`'s children to reflect
-        # the latest state even while collapsed, and several existing
-        # tests assert exactly that). The audit's actual measured
+        # against the actual test suite, that broke real behavior: the
+        # inspector's state must stay current while collapsed (selecting a
+        # message, a setup blocker, resuming a conversation). TASK-37000:
+        # the hidden inspector re-writes rows in place without a layout and
+        # holds a rebuild for the rail's opening, so this push is cheap
+        # there; read `inspector.state`, not its children, for the latest
+        # facts while the rail is collapsed. The audit's actual measured
         # complaint -- "streaming-excerpt selection = 5 teardowns/s" -- is
         # already fixed below by `_selected_console_message_inspector_rows`
         # rendering a stable "Streaming…" placeholder: the built state stops
