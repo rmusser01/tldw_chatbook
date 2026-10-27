@@ -15,6 +15,12 @@
 - A double that resolves unknown names off the real class needs instance answers for class-default data fields too, not only for the owners `__init__` sets.
 - To claim a double's answer is exercised, remove it and watch a case go red. If a broad `except` swallows its absence, assert on the state the swallowed path skips.
 
+## A harness with the agent runtime off cannot see what a first agent run publishes (TASK-37000, 2026-10-27)
+
+**Incident.** TASK-37000's mounted send test counted layout requests from inside the collapsed Inspector rail and read zero on the branch. Its harness sets `[console] agent_runtime = false`, as most Console send harnesses do. The live paired spot-check (pf2probe, 160x45) still found one in-rail request per launch, on base and branch alike: a chat's first agent run calls `_publish_mcp_inspector_counts`, and the sync tick then re-wrote the readiness card's MCP row with a layout. The harness never ran `_compose_mcp_provider`, so the test could not see the write it was meant to forbid.
+
+**What to do.** When a test switches off a subsystem that the live path runs, list what that subsystem publishes to the UI during the window the test measures. Drive each of those seams in the test (here the controller's own publish call), and confirm the count once live.
+
 ## A held rebuild makes later updates skip the path a test meant to cover (TASK-37000, 2026-10-27)
 
 **Incident.** TASK-37000 made the collapsed Inspector hold its rebuilds until the rail opens and re-write row copy without a layout. A mounted test counted layout requests from inside the hidden rail across a chat's first send and a later send: zero on the branch, 56 on dev. Mutation M3 put the layout back on the hidden in-place row update, and the test stayed green. The first send had left a rebuild held, and while one is held every later sync skips the in-place path and waits for the rebuild. The later send never reached the code M3 changed. Two changes caught it: opening and closing the rail between the sends, so the later send meets nothing held, and widget-level cases that drive each path (held rebuild, in-place patch) through the production collapse cascade directly.
