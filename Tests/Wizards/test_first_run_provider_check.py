@@ -463,6 +463,53 @@ async def test_leaving_a_typed_key_says_it_is_not_saved_unless_chosen(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_a_key_setup_already_saved_is_never_called_unsaved(monkeypatch):
+    """Live 2026-10-27 (g6bv5-key/11): a Baseten key was saved when Model's
+    Next committed it; Back to Provider and a move to another provider then
+    said '! Your Baseten key won't be saved unless you choose Baseten.' --
+    the config already held it, and choosing another provider removes
+    nothing. A typed key equal to the one saved for its provider is no
+    unsaved key (coverage-08 names only keys that would be lost)."""
+    typed = "sk-proj-" + "a" * 40
+    wizard, _calls = _wizard(monkeypatch, lambda kw: _listed("openai", "gpt-4.1-mini"))
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _c, step = current_step(wizard)
+        await pick_provider(pilot, step, "openai")
+        await _type_key(pilot, step, typed)
+        await pilot.press("ctrl+n")
+        await wait_for_step(pilot, wizard, STEP_MODEL)
+        _c, model_step = current_step(wizard)
+        model_step.query_one("#setup-model-custom", Input).value = "gpt-4.1-mini"
+        await pilot.pause()
+        await pilot.press("ctrl+n")
+        await wait_for_step(pilot, wizard, STEP_VOICE)
+        saved = wizard.app_instance.app_config["api_settings"]["openai"]
+        assert saved.get("api_key") == typed  # the commit saved it
+
+        await pilot.press("ctrl+b")
+        await wait_for_step(pilot, wizard, STEP_MODEL)
+        await pilot.press("ctrl+b")
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _c, step = current_step(wizard)
+        await pick_provider(pilot, step, "ollama")
+        await pilot.pause(0.2)
+        note = "#setup-provider-unsaved-note"
+        assert "won't be saved" not in static_text(step, note)
+        assert not step.query_one(note).display
+
+        # A different key typed over the saved one would be lost: still said.
+        await pick_provider(pilot, step, "openai")
+        await _type_key(pilot, step, "sk-proj-" + "b" * 40)
+        await pick_provider(pilot, step, "ollama")
+        await pilot.pause(0.2)
+        assert static_text(step, note) == (
+            "! Your OpenAI key won't be saved unless you choose OpenAI."
+        )
+
+
+@pytest.mark.asyncio
 async def test_an_http_error_names_its_status_and_an_extra_path_gets_a_hint():
     """provider-15: 'HTTP 500 — …', and a 404 under /api suggests removing it."""
     from unittest.mock import AsyncMock
