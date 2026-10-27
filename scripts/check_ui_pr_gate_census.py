@@ -555,7 +555,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # about 29 s locally), so no existing entry changes shard: 906 -> 907. It also
 # drops the dead 906 assignment that stood above dev's effective 905.
 # PR #3251 retains all 908 live dev slots plus 56 exact controls.
-MINIMUM_FILES = 964
+# TASK-33162.1 gates both ingestion prompt MouseMove cases in one node entry.
+MINIMUM_FILES = 965
 
 
 def read_census(path: Path) -> list[str]:

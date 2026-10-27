@@ -56,6 +56,7 @@ from tldw_chatbook.Library.library_ingest_state import (
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
 )
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
 
 
 def _command_short_name(command: str) -> str:
@@ -1609,7 +1610,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     )
                 )
                 if field.type == "textarea":
-                    input_widget = TextArea(
+                    input_widget = DetachSafeTextArea(
                         str(value),
                         # Prompts must keep newlines; a single-line Input
                         # would silently flatten the instructions the user
