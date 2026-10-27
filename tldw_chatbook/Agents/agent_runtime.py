@@ -1,6 +1,14 @@
 """Pure agent control loop + fence-first text tool protocol.
 
-No Textual, app, DB, or I/O imports.
+Intended to carry no Textual, app, DB, or I/O imports, but importing it does
+not meet that today. A fresh `import tldw_chatbook.Agents.agent_runtime` loads
+`textual`, `httpx` and `sqlite3` plus ~200 tldw_chatbook modules (`config`,
+`DB.ChaChaNotes_DB`, `Chat` and its `__init__`, `LLM_Calls`, `RAG_Search`,
+`Library`). The chains: `EPHEMERAL_ORIGIN_KEY` from
+`Chat.console_project_instructions` (httpx; runs `Chat/__init__`);
+provider-type imports from `Chat`; and `project_instruction_runtime` ->
+`tool_catalog`. `Tests/Architecture/test_agent_runtime_import_footprint.py` pins
+that set so it can only shrink; full purity is TASK-36944.10.
 """
 
 from __future__ import annotations
