@@ -17,7 +17,7 @@ the back of a review finding:
 
 Line ranges are the review's, measured at the review commit; re-measure before
 acting (the files have grown since — see the ratchet re-pins in
-TASK-32809.1/.2). Size ratchets now guard all of these (except `ChaChaNotes_DB.py`, see below): screens in
+TASK-32809.1/.2). Size ratchets now guard all of these, with `ChaChaNotes_DB.py` covered since TASK-36942.1 (see below): screens in
 `Tests/Architecture/test_screen_size_ratchet.py`, `Library_Modules/*_controller.py`
 in `test_library_modules_size_ratchet.py`, and the rest in
 `test_module_size_ratchet.py`. `settings_screen.py` (31,781 lines) is **not**
@@ -45,17 +45,17 @@ glob is `Library_Modules/*_controller.py`, which matches none of these, and
 that needs a decomposition plan to be meaningful — hence the module ratchet,
 following the `personas_screen.py` precedent already there.
 
-**Ratchet coverage, checked 2026-10-26 at `origin/dev` `2b296e60b3`.** Of the
-modules in the sections below, only **`DB/ChaChaNotes_DB.py`** (25,693 lines) has
+**Ratchet coverage, checked at `origin/dev` `2b296e60b3` (2026-10-27).** Of the
+modules in the sections below, only **`DB/ChaChaNotes_DB.py`** (25,693 lines) had
 no row in any size ratchet (`test_module_size_ratchet.py`,
 `test_screen_size_ratchet.py`, `test_library_modules_size_ratchet.py`). Rows
 exist for `chat_screen.py` (screen ratchet), `console_chat_controller.py`,
 `console_chat_store.py`, `app.py`, `personas_screen.py`, `console_transcript.py`,
 `console_settings_modal.py` and `mcp_workbench.py` (module ratchet). The
 ChaChaNotes entries elsewhere in `Tests/Architecture` (diagnostic inventory,
-path privacy) are not size budgets. TASK-36942.1 pins every module of 4,000+
-lines, which will close that gap; re-check this paragraph against the ratchet
-files before relying on it.
+path privacy) are not size budgets. TASK-36942.1 pins `ChaChaNotes_DB.py`
+along with every other module of 4,000+ lines, so that gap is closed once it
+lands.
 
 ---
 
