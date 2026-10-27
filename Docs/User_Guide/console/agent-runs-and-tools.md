@@ -39,7 +39,8 @@ are a helpful assistant." when it is off — not the agent operating prompt.
 
 To turn more on:
 
-- **Full agent tools** — **MCP ▸ Servers ▸ built-in row ▸ Tool gates**, or
+- **Full agent tools** — **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸
+  Tool gates**, or
   setup's Tools step (`[tools] full_agent_tools_enabled`). It brings back
   everything this page describes: sub-agents and the fleet, skills, the
   local workspace, web and Watchlists tools, character tools, Canvas, chat

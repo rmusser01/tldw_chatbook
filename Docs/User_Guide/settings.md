@@ -1615,8 +1615,8 @@ external directory. `[console] workspace_root` is retained for compatibility
 outside this Console authority path and never grants a Console Chat access.
 Those file tools are off in plain chat until you turn them on: the local
 `fs_*` and Git tools come with **Full agent tools**, and each built-in file
-tool (Read file, List directory, …) has its own switch, both under **MCP ▸
-Servers ▸ built-in row ▸ Tool gates** (see
+tool (Read file, List directory, …) has its own switch, both under **Settings
+▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates** (see
 [Agent runs and tools](console/agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)).
 
 | Control | What it does |
@@ -1730,8 +1730,8 @@ this page writes config.
 
 Named sub-agent definitions the Console supervisor can spawn (Ctrl+2 ▸ ask it
 to delegate). The supervisor delegates only with **Full agent tools** on
-(MCP ▸ Servers ▸ built-in row ▸ Tool gates); plain chat's light tool surface
-has no sub-agents. A definition is a reusable persona: a name, a one-line
+(Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates); plain chat's
+light tool surface has no sub-agents. A definition is a reusable persona: a name, a one-line
 description the supervisor reads when deciding who to delegate to, and
 instructions — plus optional narrowing of tools and model. It opens with a
 one-line scope note: "Named sub-agents the Console supervisor can spawn.
