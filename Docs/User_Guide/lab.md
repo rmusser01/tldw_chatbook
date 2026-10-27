@@ -14,13 +14,16 @@ evaluation runs) are reached from within that screen.
 
 Install review and progress are shared with the first-run wizard. The review
 leads with the download size, where the model installs and the free space
-there, and each component's licence; source, pinned revision, provenance,
-staging figures and file hashes are under **Details**. If an earlier download
-of the same model was interrupted, the review says how far it got ("A
-previous download stopped at X of Y MiB") and its button reads **Resume
-download**. The progress line shows the bytes received, the speed and the
-time left. Only one model downloads at a time: an install started while
-another is running says which model is still downloading.
+there, and each component's licence; source, pinned revision hash,
+provenance and staging figures are under **Details** (a Hugging Face GGUF or
+audio.cpp package install also lists each selected file's SHA-256 there, and
+a model whose licences are stated on its model card links it as "Licence
+terms (model card)"). If an earlier download of the same model was
+interrupted, the review says how far it got ("A previous download stopped at
+X of Y MiB") and its button reads **Resume download**. The progress line
+shows the bytes received, the speed and the time left. Only one model
+downloads at a time: an install started while another is running says which
+model is still downloading, by the name this screen shows for it.
 
 ## Getting there
 
