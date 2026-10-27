@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import check_adr_numbers as adr_numbers
 from scripts import check_backlog_task_files as backlog_files
 from scripts import check_backlog_task_ids as backlog_ids
 from scripts import check_persistent_diagnostic_inventory as inventory
@@ -853,3 +854,48 @@ def test_old_schema_committed_file_reports_the_schema_change():
 
     assert "~ schema_version:" in report
     assert "--write" in report
+
+
+def _adr_run(tmp_path, files, frozen_text, capsys):
+    decisions = tmp_path / "decisions"
+    decisions.mkdir(parents=True)
+    for name in files:
+        (decisions / name).write_text("# adr\n", encoding="utf-8")
+    frozen = tmp_path / "frozen.txt"
+    frozen.write_text(frozen_text, encoding="utf-8")
+    code = adr_numbers.main(
+        ["--decisions-dir", str(decisions), "--frozen-file", str(frozen)]
+    )
+    return code, capsys.readouterr().out
+
+
+def test_adr_numbers_pass_when_unique(tmp_path, capsys):
+    code, out = _adr_run(
+        tmp_path, ["000-template.md", "001-a.md", "003-b.md"], "", capsys
+    )
+    assert code == 0, out
+    assert "Next free: 004" in out
+
+
+def test_adr_new_collision_fails_and_names_next_free_number(tmp_path, capsys):
+    code, out = _adr_run(tmp_path, ["001-a.md", "001-b.md", "005-c.md"], "", capsys)
+    assert code == 1
+    assert "ADR-001" in out
+    assert "Next free ADR number: 006" in out
+
+
+def test_adr_frozen_collision_passes_but_cannot_grow(tmp_path, capsys):
+    files = ["001-a.md", "001-b.md"]
+    assert _adr_run(tmp_path / "ok", files, "001 2\n", capsys)[0] == 0
+    code, out = _adr_run(tmp_path / "grow", [*files, "001-c.md"], "001 2\n", capsys)
+    assert code == 1 and "ADR-001" in out
+
+
+def test_adr_frozen_entry_must_be_removed_once_no_longer_shared(tmp_path, capsys):
+    code, out = _adr_run(tmp_path, ["001-a.md"], "001 2\n", capsys)
+    assert code == 1
+    assert "no longer shared" in out
+
+
+def test_adr_numbers_of_the_real_repo_pass():
+    assert adr_numbers.main([]) == 0

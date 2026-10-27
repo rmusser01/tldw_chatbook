@@ -202,6 +202,21 @@ Use numeric filenames:
 
 Do not reuse numbers.
 
+## Numbering rule
+
+One number per decision. A new ADR takes the next free number, which is the
+highest number in use plus 1 -- gaps are never backfilled.
+
+If two files end up with the same number, the oldest file (by its `Date:`
+field, else its add-commit time) keeps it. Each younger file takes the next
+free number and gains a renumbering-provenance note naming its old number.
+
+`scripts/check_adr_numbers.py` (run by `./scripts/preflight.sh` and the
+required `derived-artifacts.yml` job) fails on any collision outside the frozen
+list in `scripts/adr_shared_numbers_frozen.txt`, and names the next free number.
+The frozen list can only shrink; TASK-36943.3 renumbers the existing
+collisions and empties it.
+
 | [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
 | [ADR-206](206-shared-ssrf-address-classification.md) | Accepted | One shared `Utils.egress.address_is_fetchable` predicate classifies resolved addresses for every fetch-side SSRF guard (egress pipeline and skill remote fetch); NAT64 `64:ff9b::/96` reconciled to rejected on both layers. |
 | [ADR-208: DB migration .sql files are the executed source of truth](208-migration-sql-files-are-the-executed-source.md) | Migration .sql files execute; decorative twins deleted; packaging pins the file-backed set. |
