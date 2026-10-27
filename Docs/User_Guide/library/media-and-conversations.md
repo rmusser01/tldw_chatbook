@@ -855,6 +855,10 @@ advertise a key that does nothing. No step lands in a text box.
 analysis as a new version, in the Edit metadata form it saves the fields --
 only while focus is in that form, so a form left open on the other Reader tab
 is never written by it. The footer shows `ctrl+s save` while a form has focus.
+One save runs at a time: a second press (or a held key) while the analysis is
+still saving says "Already saving." under the form and writes nothing, and
+while another Media change is running the metadata form says "Media change in
+progress." instead of saving.
 
 **Unsaved text is never dropped by a key.** While the Analysis form or the
 Edit metadata form holds text that differs from what is saved, Escape keeps

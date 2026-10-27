@@ -369,7 +369,7 @@ from ...Library.library_prompts_state import (
     require_artifact_save_supported,
 )
 from ...Library.library_shell_state import (
-    LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH,
+    LIBRARY_EDITOR_SAVE_NO_CHANGES,
     LIBRARY_ROW_BROWSE_PROMPTS,
     LIBRARY_ROW_CREATE_PROMPT,
     library_choice_label,
@@ -3100,7 +3100,7 @@ class LibraryPromptsController:
             return
         if refusal or not save.display:
             self._update_library_prompt_status_static(
-                refusal or LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH, reveal=True
+                refusal or LIBRARY_EDITOR_SAVE_NO_CHANGES, reveal=True
             )
             return
         self._save_library_prompt_from_editor(reveal_receipt=True)
@@ -4281,12 +4281,15 @@ class LibraryPromptsController:
         self._set_library_prompt_discard_enabled(
             self._library_prompt_dirty, write_in_flight=True
         )
+        # TASK-34000.40: the held Save drops the Ctrl+S chip, and gets it back.
+        self._register_footer_shortcuts()
         try:
             return await self._await_library_prompt_durable_call(awaitable)
         finally:
             self._set_library_prompt_discard_enabled(
                 self._library_prompt_dirty, write_in_flight=False
             )
+            self._register_footer_shortcuts()
 
     def _sync_library_prompt_mutation_presentation(self) -> None:
         """Project mutation ownership into the currently mounted Prompt canvas.

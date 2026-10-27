@@ -47,7 +47,7 @@ from tldw_chatbook.Library.library_structural_wait import (
 )
 from tldw_chatbook.Library.library_shell_state import (
     LIBRARY_DISABLED_ACTION_MARKER,
-    LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH,
+    LIBRARY_EDITOR_SAVE_NO_CHANGES,
     back_cue_label,
     library_disabled_action_label,
 )
@@ -146,6 +146,7 @@ from tldw_chatbook.Widgets.Library.library_file_notes_events import (
     FileNotesIdentityCleared,
     FileNotesReloadConfirmationChanged,
     FileNotesRootChanged,
+    FileNotesSaveStateChanged,
 )
 
 FileNotesPathTask = Literal["none", "new", "move", "save_copy"]
@@ -285,6 +286,13 @@ def resolve_file_note_status_channels(
 
 
 SaveState = Literal["idle", "dirty", "saving", "saved", "conflict", "error"]
+#: TASK-34000.40 (N-33): what Ctrl+S says on the action line when it cannot
+#: write (ADR-031 rule (c): at the editor, no focus moved).
+FILE_NOTES_KEY_SAVE_CONFLICT_COPY = "Save refused — resolve the conflict below."
+FILE_NOTES_KEY_SAVE_ERROR_COPY = "Save refused — the last save failed; your draft is kept."
+FILE_NOTES_KEY_SAVE_TRANSITION_COPY = (
+    "Save refused — the folder is changing; try again in a moment."
+)
 _SAVE_STATE_COPY: dict[SaveState, str] = {
     "idle": "Auto-save to local folder: idle",
     "dirty": "Auto-save pending for local folder",
@@ -5520,8 +5528,11 @@ class LibraryFileNotesWorkspace(Vertical):
             self._start_git_refresh()
 
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
+        changed = state != self._save_state
         self._save_state = state
         self._save_detail = detail
+        if changed and self.is_attached:
+            self.post_message(FileNotesSaveStateChanged(state))
         if state != "conflict":
             self._conflict_resolution_active = False
         if self._active and self.is_mounted:
@@ -6863,7 +6874,8 @@ class LibraryFileNotesWorkspace(Vertical):
         pending autosave now (``flush_pending_work``); this names the
         outcome where the pane already reports actions, and moves no focus.
         A refusal ``flush_pending_work`` already explained (a Git mutation
-        holding the folder) keeps that explanation.
+        holding the folder) keeps that explanation; a folder or path change
+        under way says so (review M-4: it used to refuse in silence).
 
         Args:
             before: ``save_state`` when the key was pressed.
@@ -6871,16 +6883,16 @@ class LibraryFileNotesWorkspace(Vertical):
         """
         state = self._save_state
         if state == "conflict":
-            self._set_action_status("Save refused — resolve the conflict below.")
+            self._set_action_status(FILE_NOTES_KEY_SAVE_CONFLICT_COPY)
         elif state == "error":
-            self._set_action_status(
-                "Save refused — the last save failed; your draft is kept."
-            )
+            self._set_action_status(FILE_NOTES_KEY_SAVE_ERROR_COPY)
+        elif not ok and (self._root_transitioning or self._path_transitioning):
+            self._set_action_status(FILE_NOTES_KEY_SAVE_TRANSITION_COPY)
         elif ok and state not in {"dirty", "saving"}:
             self._set_action_status(
                 "Saved."
                 if before in {"dirty", "saving"}
-                else LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH
+                else LIBRARY_EDITOR_SAVE_NO_CHANGES
             )
 
     async def _rescan_after_action(self) -> bool:

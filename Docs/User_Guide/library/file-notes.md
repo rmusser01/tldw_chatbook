@@ -236,13 +236,16 @@ is named explicitly. Closing Compare returns to the conflict without resolving
 it or changing any side.
 
 **Ctrl+S** in the file body writes the file now instead of waiting for
-autosave, and the pane's action line says "Saved." ("Saved — nothing to flush."
-when nothing was pending). If the file changed on disk under your draft, it
-says "Save refused — resolve the conflict below.", writes nothing, and leaves
-the caret where it was. Otherwise keep typing and autosave writes the file. When the file body has keyboard focus,
-only its boundary becomes more prominent; its background and size do not
-change. Compact inputs such as a named target path keep their usual filled
-focus treatment.
+autosave, and the pane's action line says "Saved." ("Saved — no changes."
+when nothing was pending). It never writes over trouble and never moves the
+caret: if the file changed on disk under your draft it says "Save refused —
+resolve the conflict below."; after a failed save, "Save refused — the last
+save failed; your draft is kept."; while the folder is changing, "Save refused
+— the folder is changing; try again in a moment." Otherwise keep typing and
+autosave writes the file. When the file body has keyboard focus, only its
+boundary becomes more prominent; its background and size do not change.
+Compact inputs such as a named target path keep their usual filled focus
+treatment.
 
 **Resolve conflict** keeps **Compare** available and opens three explicit safe
 choices:
@@ -470,7 +473,8 @@ not available.
 | Esc (folder change running) | Leaves Folder files for Library notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Library notes** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
 
 **Ctrl+S** in the file body writes a pending edit now (the footer shows
-`ctrl+s save file` there); outside the body it does nothing. File edits
+`ctrl+s save file` while the draft has unsaved changes, and drops it on a
+conflict or a failed save); outside the body it does nothing. File edits
 otherwise save automatically, and **Ctrl+Q** writes a pending
 edit to the file before Chatbook exits. If that write cannot finish (the file
 changed on disk, or the write fails), Chatbook asks 'Quit and discard unsaved

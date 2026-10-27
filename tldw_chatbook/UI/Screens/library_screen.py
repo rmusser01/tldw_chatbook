@@ -330,7 +330,9 @@ from ...Library.library_rail_state import (
 from ...Library.library_shell_state import (
     LIBRARY_CANVAS_LANDING_COPY,
     LIBRARY_EDITOR_SAVE_BUSY_COPY,
-    LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH,
+    LIBRARY_EDITOR_SAVE_NO_CHANGES,
+    LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY,
+    LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY,
     LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY,
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -466,6 +468,7 @@ from ...Widgets.Library.library_file_notes_events import (
     FileNotesIdentityCleared,
     FileNotesReloadConfirmationChanged,
     FileNotesRootChanged,
+    FileNotesSaveStateChanged,
 )
 from ...Widgets.Library.library_media_content import LibraryMediaContentBody
 from ...Widgets.Library.library_media_canvas import (
@@ -1422,23 +1425,6 @@ class LibraryScreen(BaseAppScreen):
         ("/", "focus search"),
         ("F6", "next pane"),
         ("esc", "close"),
-    )
-
-    #: task-3020 AC4: the skill editor's own working keys -- Ctrl+S saves,
-    #: Escape returns to the skills list (``action_library_skill_save``/
-    #: ``action_library_skill_back``, both gated to
-    #: ``_library_skill_editor_active()``). Previously unadvertised: with
-    #: no branch for this state, ``_library_footer_shortcuts_for_current_
-    #: state`` fell through to ``_library_list_canvas_showing_list()``,
-    #: which is False here (the skills view is "editor", not "list"), and
-    #: landed on the bare ``LIBRARY_GENERAL_SHORTCUTS`` -- an asymmetry
-    #: beside the note/prompt editors, which already advertise their own
-    #: "esc" hint via ``LIBRARY_DETAIL_BACK_SHORTCUTS``.
-    LIBRARY_SKILL_EDITOR_SHORTCUTS = (
-        ("/", "focus search"),
-        ("F6", "next pane"),
-        ("ctrl+s", "save skill"),
-        ("esc", "back to skills list"),
     )
 
     #: task-3020 AC2: an ARMED bulk-delete confirmation on the Media list --
@@ -9255,27 +9241,24 @@ class LibraryScreen(BaseAppScreen):
         """Ctrl+S in a note: its Save button's commit, or why not.
 
         TASK-34000.40 (N-33), reached through ``action_library_editor_save``.
-        A refusal is said on the editor's status line and moves no focus
-        (ADR-031 rule (c); while unbound, the delete-confirm and conflict
-        branches moved it to Cancel and to the callout). A note with nothing
-        unsaved says so there, no toast (owner ruling 2026-10-27). Otherwise
-        the commit is the Save press's own, LIB-14's "keep it" included.
+        A refusal is said on the editor's own status line -- no toast, as the
+        other five editors answer -- and moves no focus (ADR-031 rule (c);
+        while unbound, the delete-confirm and conflict branches moved it to
+        Cancel and to the callout); a conflict's callout is brought into view.
+        Otherwise the commit is the Save press's own, LIB-14's "keep it"
+        included, and a note with nothing unsaved answers through it, as the
+        press does: "Saved — no changes." (ruling T9-g).
         """
         refusal = self._library_note_save_refusal()
         if refusal:
-            self._show_library_note_shortcut_refusal(refusal)
-            return
-        snapshot = self._library_note_session.snapshot
-        if snapshot is None:
-            return
-        if not (
-            snapshot.dirty
-            or snapshot.saving
-            or self._notes_state.autosave_state == "saving"
-            or self._notes_controller._library_note_is_pending_blank()
-        ):
-            self._notes_state.shortcut_status = LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH
+            self._notes_state.shortcut_status = refusal
             self._apply_library_note_presentation_state()
+            snapshot = self._library_note_session.snapshot
+            if snapshot is not None and snapshot.in_conflict:
+                for callout in self.query("#library-note-conflict-copy"):
+                    callout.scroll_visible(animate=False)
+            return
+        if self._library_note_session.snapshot is None:
             return
         self._notes_controller._begin_library_note_explicit_save()
 
@@ -9345,20 +9328,54 @@ class LibraryScreen(BaseAppScreen):
             workspace = self._notes_state.file_notes_workspace
             if workspace is not None and workspace.save_state in {"conflict", "error"}:
                 return workspace.save_state
+        if target == "media_analysis" and self._media_state.saving_analysis:
+            return LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY
+        if target == "media_edit" and self._media_state.bulk_delete_in_flight:
+            return LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY
         return ""
+
+    def _library_editor_save_pending(self, target: str) -> bool:
+        """Whether Ctrl+S in ``target`` would WRITE now -- the chip's own test.
+
+        TASK-34000.40 ruling T9-j: the chip promises a save, so it shows only
+        while the editor's visible commit would write -- a dirty note, a
+        shown prompt or skill Save, a dirty Folder files draft, an open Media
+        form (both forms always write). Never part of the binding's gate: a
+        clean editor still answers the key ("Saved — no changes.").
+        """
+        if target == "notes":
+            snapshot = self._library_note_session.snapshot
+            return bool(snapshot is not None and snapshot.dirty)
+        if target == "prompt":
+            # The Save button's own display rule (``sync_lifecycle_actions``),
+            # read from the state it is synced from: the footer re-registers
+            # on the dirty flip BEFORE the button is patched.
+            state = self._prompts_state
+            return state.conflict_snapshot is None and (
+                state.selected_prompt_id is None or state.dirty
+            )
+        if target == "skill":
+            return self._library_skill_save_available()
+        if target == "file_notes":
+            workspace = self._notes_state.file_notes_workspace
+            return workspace is not None and workspace.save_state == "dirty"
+        return target in {"media_analysis", "media_edit"}
 
     def _library_ctrl_s_chip(self, target: str) -> tuple[tuple[str, str], ...]:
         """``(("ctrl+s", verb),)`` for ``target``'s footer tier, or ``()``.
 
         TASK-34000.40 (N-33), ADR-031 rule (e): the ONE chip seam every editor
-        tier calls. Present only while ``target`` holds focus AND the key
-        would save there -- where it refuses (a conflict, an armed delete, a
-        held Save) it still answers at the editor (rule (c)), but a chip
+        tier -- and F1 (ruling T9-h) -- asks. Present only while ``target``
+        holds focus AND the key would save there (ruling T9-j). Where it
+        refuses (a conflict, an armed delete, a held Save) or has nothing to
+        write, it still answers at the editor (rule (c)), but a chip
         promising "save" would be the dead-chip lie.
         """
         if self._library_editor_save_target() != target:
             return ()
         if self._library_editor_save_refusal(target):
+            return ()
+        if not self._library_editor_save_pending(target):
             return ()
         if target == "notes":
             verb = "save" if self._notes_state.compact else "save now"
@@ -9429,7 +9446,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if refusal or not self._library_skill_save_available():
             self._update_library_skill_status_static(
-                refusal or LIBRARY_EDITOR_SAVE_NOTHING_TO_FLUSH
+                refusal or LIBRARY_EDITOR_SAVE_NO_CHANGES
             )
             return
         self.action_library_skill_save()
@@ -9446,8 +9463,6 @@ class LibraryScreen(BaseAppScreen):
         before = workspace.save_state
         ok = await workspace.flush_pending_work()
         workspace.report_key_save(before, ok)
-        # A refused save leaves the file in conflict, where the chip must go.
-        self._apply_library_notes_footer_context()
 
     async def action_library_notes_escape(self) -> None:
         return await self._notes_controller.action_library_notes_escape()
@@ -23461,6 +23476,13 @@ class LibraryScreen(BaseAppScreen):
             event
         )
 
+    @on(FileNotesSaveStateChanged)
+    def _handle_file_notes_save_state_changed(
+        self, event: FileNotesSaveStateChanged
+    ) -> None:
+        """TASK-34000.40 ruling T9-i: the Ctrl+S chip follows the save state."""
+        self._apply_library_notes_footer_context()
+
     @on(FileNotesEditableOpened)
     def _handle_file_notes_editable_opened(
         self, event: FileNotesEditableOpened
@@ -27018,6 +27040,13 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_skill_save(self, event: Button.Pressed) -> None:
         return self._skills_controller.handle_library_skill_save(event)
 
+    @on(LibrarySkillsListCanvas.SaveStateChanged)
+    def _handle_library_skill_save_state_changed(
+        self, event: LibrarySkillsListCanvas.SaveStateChanged
+    ) -> None:
+        """TASK-34000.40 ruling T9-j: the Ctrl+S chip follows the skill Save."""
+        self._apply_library_notes_footer_context()
+
     def _begin_library_skill_save(self) -> bool:
         """Admit one save and expose its shared lifecycle interlock."""
         if not self._library_skill_save_available():
@@ -27607,7 +27636,12 @@ class LibraryScreen(BaseAppScreen):
             WorkbenchHelpState,
         )
 
-        footer_shortcuts = self._library_footer_shortcuts_for_current_state()
+        # TASK-34000.40 ruling T9-h: F1 lists keys. A status-only footer entry
+        # (an empty key: "typing in field", the "after esc:" verbs, a review
+        # progress line) rendered as a keyless "- : …" row.
+        footer_shortcuts = tuple(
+            pair for pair in self._library_footer_shortcuts_for_current_state() if pair[0]
+        )
         # (task-3312 #1) Dedupe on the CANONICAL key, not the raw string:
         # the shared footer sets spell the exit key "esc" while BINDINGS
         # entries spell it "escape" (Textual's key name), so a raw-string
@@ -27630,6 +27664,13 @@ class LibraryScreen(BaseAppScreen):
             canonical = _canonical_shortcut_key(pair[0])
             if canonical in seen_keys:
                 continue
+            if canonical == _canonical_shortcut_key("ctrl+s"):
+                # T9-h: listed exactly where the footer chips it -- the ONE
+                # chip decision -- not wherever the binding is merely active
+                # (a refusing or clean editor still answers it, rule (c)).
+                save_target = self._library_editor_save_target()
+                if not (save_target and self._library_ctrl_s_chip(save_target)):
+                    continue
             seen_keys.add(canonical)
             binding_extras.append(pair)
         # (task-4023 AC#4 / RC-10) Name the surface the panel describes --
@@ -34707,8 +34748,13 @@ class LibraryScreen(BaseAppScreen):
 
     def _save_library_media_edit_from_form(self) -> None:
         """The metadata form's Save, event-free: the press and Ctrl+S share it
-        (TASK-34000.40 N-33; TASK-34000.22 AC#7)."""
+        (TASK-34000.40 N-33; TASK-34000.22 AC#7). The shared Media write
+        interlock single-flights it; a refused press says so on the form
+        (review M-4) instead of returning silently."""
         if self._media_state.bulk_delete_in_flight:
+            viewer = self._mounted_library_media_viewer()
+            if viewer is not None:
+                viewer.show_form_status("edit", LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY)
             return
         # TASK-34000.18: the form is prefilled from the Reader's item, so the
         # write targets that same item, not the list highlight.

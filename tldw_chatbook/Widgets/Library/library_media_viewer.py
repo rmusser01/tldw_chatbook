@@ -1303,6 +1303,27 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 # word (measured: "    Discard" painted at 160x45).
                 button.refresh(layout=True)
 
+    @staticmethod
+    def _form_status_line(status_id: str) -> Static:
+        """An authoring form's own status line, hidden until it has words.
+
+        TASK-34000.40 (N-33, review I-3/M-4): where a refused Save -- a press
+        or Ctrl+S -- answers at the form (ADR-031 rule (c)) instead of
+        returning silently.
+        """
+        line = Static("", id=status_id, classes="destination-purpose", markup=False)
+        line.display = False
+        return line
+
+    def show_form_status(self, form: str, text: str) -> None:
+        """Paint ``text`` on the ``"edit"`` or ``"analysis"`` form's status line."""
+        try:
+            line = self.query_one(f"#library-media-{form}-status", Static)
+        except (NoMatches, QueryError):
+            return
+        line.update(text)
+        line.display = bool(text)
+
     def _compose_edit_form(self) -> ComposeResult:
         """Render the metadata edit inputs, prefilled from the draft or the saved values.
 
@@ -1348,6 +1369,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     id="library-media-edit-cancel",
                     compact=True,
                 )
+            yield self._form_status_line("library-media-edit-status")
 
     def _compose_analysis(self) -> ComposeResult:
         """Render the Analysis section: read-only text + Edit/Generate, or a form.
@@ -1527,6 +1549,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     classes="library-canvas-action",
                     compact=True,
                 )
+            yield self._form_status_line("library-media-analysis-status")
 
     @staticmethod
     def _renderable_color(color: str) -> str | None:

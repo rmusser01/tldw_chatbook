@@ -92,7 +92,11 @@ from tldw_chatbook.UI.Library_Modules.library_media_state import (
 #: ``analysis_draft`` beside ``editing_analysis`` (the two authoring forms'
 #: typed text; shims ``_library_media_edit_draft`` /
 #: ``_library_media_analysis_draft``).
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 86
+#: 2026-10-27, TASK-34000.40 fix round 1 (review I-3): 86 -> 87,
+#: ``saving_analysis`` beside ``analysis_draft`` (the analysis form's own
+#: Save in flight, so a double or held Ctrl+S writes one version; shim
+#: ``_library_media_saving_analysis``).
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 87
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_

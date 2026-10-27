@@ -4881,6 +4881,7 @@ class LibraryNotesController:
         """Explicitly save the open note, bypassing the autosave debounce."""
         event.stop()
         self._begin_library_note_explicit_save()
+
     def _begin_library_note_explicit_save(self) -> None:
         """The Save button's commit, event-free; Ctrl+S runs exactly this
         (TASK-34000.40 N-33, ADR-031 rule (a))."""
@@ -5040,7 +5041,13 @@ class LibraryNotesController:
             NoteSaveOutcomeKind.SAVED,
             NoteSaveOutcomeKind.ACKNOWLEDGED,
         }:
+            if outcome.kind is NoteSaveOutcomeKind.ACKNOWLEDGED and outcome.message:
+                # TASK-34000.40 ruling T9-g: a Save (press or Ctrl+S) with
+                # nothing unsaved says so on the status line, no toast.
+                self._library_note_shortcut_status = outcome.message
             self._apply_library_note_saved_presentation(outcome)
+            if outcome.kind is NoteSaveOutcomeKind.ACKNOWLEDGED and self.is_mounted:
+                self._apply_library_note_presentation_state()
             return
         if outcome.kind is NoteSaveOutcomeKind.CONFLICTED:
             self._library_note_autosave_state = "conflict"

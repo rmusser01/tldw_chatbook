@@ -512,6 +512,11 @@ class LibraryMediaState:
     # TASK-34000.22: the analysis form's typed text, the same contract as
     # ``edit_draft`` for ``editing_analysis`` (``media_analysis_dirty``).
     analysis_draft: str | None = None
+    # TASK-34000.40 review I-3: the analysis form's own Save is in flight.
+    # One save per form at a time -- a double or held Ctrl+S (or a double
+    # click; the press shares the seam) answers "Already saving." instead
+    # of writing a second analysis version.
+    saving_analysis: bool = False
 
     # task-28006: an LLM analysis generation is in flight for the open item.
     generating_analysis: bool = False

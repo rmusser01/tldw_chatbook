@@ -550,13 +550,15 @@ that arrives once your hands are off the field paints normally.
 **Ctrl+S** saves the open note now, without waiting for the 2-second autosave,
 from anywhere in the note's pane: the body, Title, Keywords, the
 Edit/Preview/Info buttons or Info. It does what the **Save** button does, and
-focus stays where it was. With nothing unsaved it says "Saved — nothing to
-flush." on the status line, with no pop-up. Where a save is held it says why on
-the status line instead and moves nothing: "Save locked — finish or cancel the
-destructive action." while the Delete confirmation is open, "Save locked —
-resolve the note conflict below." in a conflict. With focus on the Notes list,
-the filter or the folder tree, Ctrl+S does nothing, even with a note open
-beside it. Autosave still handles ordinary typing.
+focus stays where it was. With nothing unsaved it says "Saved — no changes."
+on the status line, with no pop-up — the same answer the **Save** button gives.
+Where a save is held it says why on the status line instead, with no pop-up,
+and moves nothing: "Save locked — finish or cancel the destructive action."
+while the Delete confirmation is open, "Save locked — resolve the note
+conflict below." in a conflict (the conflict choices are brought into view).
+With focus on the Notes list, the filter or the folder tree, Ctrl+S does
+nothing, even with a note open beside it. Autosave still handles ordinary
+typing.
 
 #### Editor keys
 
@@ -565,7 +567,7 @@ beside it. Autosave still handles ordinary typing.
 | **Tab** / **Shift+Tab** | Move between the editor's own controls and stay there: "‹ Notes", Edit, Preview, Info, Save, Use in Console, Title, Keywords, Body, and back round to "‹ Notes". Tab out of the body stays inside that cycle, never wrapping round to the "Library notes / Folder files" switch above the pane. The move lands before the next keystroke, so typing straight through a Tab puts the rest where you meant it. |
 | **F6** / **Shift+F6** | Leave the editor for the Notes list or the Library rail. This is the way out of the editor's Tab cycle; **Escape** is the other (it returns to the list). |
 | **Ctrl+End** / **Ctrl+Home** | Jump the caret to the end or the start of the note body. `End` and `Home` still move within the current line. |
-| **Ctrl+S** | Save the note now (see above). The footer shows `ctrl+s save now` (`ctrl+s save` on a compact terminal) while the key would save. |
+| **Ctrl+S** | Save the note now (see above). The footer and F1 show `ctrl+s save now` (`ctrl+s save` on a compact terminal) only while the note has unsaved changes — the key would save. |
 | **Escape** | Returns to the list — one press, from Edit, Preview, or Info. From Info it goes back to the editor first. |
 
 Arriving in the **Title** by keyboard puts the caret at the end of the

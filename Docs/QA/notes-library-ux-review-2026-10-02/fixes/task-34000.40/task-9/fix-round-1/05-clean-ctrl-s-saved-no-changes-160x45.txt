@@ -4,12 +4,12 @@
  Library | Local
   Library notes  |  Folder files
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved — nothing to flush. · Next: Keep editing; changes save automatically.        │
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved — no changes. · Next: Keep editing; changes save automatically.              │
 │   a  │ Library notes · Ready                                        │  o    ‹ Notes   Scratch                                                                │
 │   v  │ Notes (122)                                                  │  t                                                                                     │
 │      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
 │      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
-│      │ copy or keep a folder synced, choose Add from files.         │     Saved — nothing to flush.                                                          │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved — no changes.                                                                │
 │      │                                                              │         Edit     Preview     Info                                                      │
 │      │ Filter                                                       │         Save     Use in Console                                                        │
 │      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
@@ -25,8 +25,8 @@
 │      │ filter: Scratch · 1 result                                   │<--- Body                                                                               │
 │      │                                                              │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
 │      │   Clear filter                                               │     ┃ scratch                                                                        ┃ │
-│      │  ▾ Unfiled                                                   │     ┃  ctrl-s testx again                                                            ┃ │
-│      │    Scratch · Unfiled · 11m                                   │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃  ctrl-s testx againy!                                                          ┃ │
+│      │    Scratch · Unfiled · 1h                                    │     ┃                                                                                ┃ │
 │ ---> │                                                              │     ┃                                                                                ┃ │
 │      │                                                              │     ┃                                                                                ┃ │
 │      │                                                              │     ┃                                                                                ┃ │
@@ -40,6 +40,6 @@
 │      │                                                              │     ┃                                                                                ┃ │
 │      │                                                              │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
 │      │                                                              │                                                                                        │
-│      └──────────────────────────────────────────────────────────────┘                                                                        4 words · 2:20  │
+│      └──────────────────────────────────────────────────────────────┘                                                                        4 words · 2:22  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  typing in field | esc back to notes | ctrl+s save now | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
+  typing in field | esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

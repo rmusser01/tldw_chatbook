@@ -1190,7 +1190,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: the notes refusal/clean branches, the skill and Folder files key
     #: seams and the event-free metadata-form Save: 38484 -> 38735 lines,
     #: 1384 -> 1394 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38735, 1394),
+    #: 2026-10-27, Task 9 fix round 1 (review I-1/I-3/M-3/M-4, rulings
+    #: T9-g..j; same owner decision): the chip-only pending check
+    #: (``_library_editor_save_pending``), the Folder files and skill
+    #: save-state handlers that refresh the footer, the Media forms' busy
+    #: refusals, and the notes refusal on the status line with the conflict
+    #: callout revealed: 38735 -> 38781 lines, 1394 -> 1397 methods
+    #: (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38781, 1397),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
