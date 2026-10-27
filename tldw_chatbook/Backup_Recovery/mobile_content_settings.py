@@ -162,7 +162,12 @@ def _dictionary_shape(encoded):
     ):
         raise ValueError("dictionary_identity_unrepresentable")
     marker = "active_dictionaries"
-    visible = marker in encoded.lower()
+    # Native LIKE '%active_dictionaries%' folds ASCII only; '_' is one
+    # Unicode character, rather than a literal underscore.
+    visible = (
+        re.search(r"active.dictionaries", encoded, re.ASCII | re.IGNORECASE | re.DOTALL)
+        is not None
+    )
     attachments = (
         tuple(sorted({value for value in values if type(value) is int}))
         if visible

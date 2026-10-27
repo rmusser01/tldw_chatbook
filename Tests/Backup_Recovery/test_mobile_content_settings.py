@@ -949,3 +949,178 @@ def test_archive_preparation_precedes_sqlite_budget_and_first_open_rejects_tampe
             assert _fingerprints(tmp_path / "profile") == before
             with journal._locked(exclusive=False) as fd:
                 assert tuple(journal._records(fd)) == events
+
+
+def test_captured_dictionary_derivation_matches_native_like_and_consumers(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+        LocalChatDictionaryService,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    samples = (
+        ("space", {"pinned_response_prefill": "active dictionaries"}, True),
+        ("uppercase", {"pinned_response_prefill": "ACTIVE DICTIONARIES"}, True),
+        ("punctuation", {"pinned_response_prefill": "active-dictionaries"}, True),
+        (
+            "unicode_character",
+            {"pinned_response_prefill": "active🦊dictionaries"},
+            True,
+        ),
+        ("no_character", {"pinned_response_prefill": "activedictionaries"}, False),
+        ("two_characters", {"pinned_response_prefill": "active  dictionaries"}, False),
+        (
+            "unicode_dotless_i",
+            {"pinned_response_prefill": "actıve dictionaries"},
+            False,
+        ),
+        ("unicode_long_s", {"pinned_response_prefill": "active dictionarieſ"}, False),
+        ("literal_text", {"pinned_response_prefill": "active_dictionaries"}, True),
+        ("duplicates", {"active_dictionaries": [11, 11]}, True),
+        ("decimal_string", {"active_dictionaries": [11, "11", 11]}, True),
+        (
+            "literal_and_key",
+            {
+                "active_dictionaries": [11],
+                "pinned_response_prefill": "active_dictionaries",
+            },
+            True,
+        ),
+    )
+    original = {}
+    source_derived = {}
+
+    def derived(db, cid):
+        with db.transaction() as cursor:
+            attachments = tuple(
+                r[0]
+                for r in cursor.execute(
+                    "SELECT dictionary_id FROM conversation_dictionary_attachments WHERE conversation_id=? ORDER BY dictionary_id",
+                    (cid,),
+                )
+            )
+            unresolved = (
+                cursor.execute(
+                    "SELECT count(*) FROM conversation_dictionary_unresolved WHERE conversation_id=?",
+                    (cid,),
+                ).fetchone()[0]
+                == 1
+            )
+            encoded = cursor.execute(
+                "SELECT metadata FROM conversations WHERE id=?", (cid,)
+            ).fetchone()[0]
+        return (
+            attachments,
+            unresolved,
+            tuple(
+                LocalChatDictionaryService._active_dictionaries({"metadata": encoded})
+            ),
+        )
+
+    def native_seed(db, purpose):
+        for name, metadata, visible in samples:
+            cid = "dictionary-like-" + name
+            encoded = json.dumps(metadata, ensure_ascii=False)
+            assert db.add_conversation({"id": cid, "metadata": encoded}) == cid
+            with db.transaction() as cursor:
+                # The constructor normalizes JSON; qualify exact captured bytes
+                # through the installed update trigger, including raw Unicode.
+                cursor.execute(
+                    "UPDATE conversations SET metadata=? WHERE id=?", (encoded, cid)
+                )
+                assert tuple(
+                    cursor.execute(
+                        "SELECT metadata,metadata LIKE '%active_dictionaries%' FROM conversations WHERE id=?",
+                        (cid,),
+                    ).fetchone()
+                ) == (encoded, int(visible))
+            if purpose == "legacy":
+                original[cid] = encoded
+                source_derived[cid] = derived(db, cid)
+        db.add_message(
+            {
+                "id": "dictionary-like-message",
+                "conversation_id": "dictionary-like-space",
+                "sender": "User",
+                "role": "user",
+                "content": "Exact dependent body",
+            }
+        )
+        with db.transaction() as cursor:
+            cursor.execute(
+                "INSERT INTO console_conversation_capture_policy VALUES ('dictionary-like-space','safe',0,1,'2026-10-25')"
+            )
+            cursor.execute(
+                "INSERT INTO console_conversation_library_policy VALUES ('dictionary-like-space',1,0,0,3,'2026-10-25')"
+            )
+
+    with content_reads(
+        tmp_path, monkeypatch, _seed_settings, native_seed=native_seed
+    ) as reads:
+        plan = reads.content_settings_plan()
+        rows = {
+            row.original[0]: dict(row.values)
+            for row in plan.rows
+            if row.table == "conversations"
+        }
+        assert set(original) <= rows.keys(), [
+            (b.original, b.reason) for b in plan.blockers
+        ]
+        assert not plan.blockers
+        assert any(
+            r.table == "messages" and r.original == ("dictionary-like-message",)
+            for r in plan.rows
+        )
+        for table in (
+            "console_conversation_capture_policy",
+            "console_conversation_library_policy",
+        ):
+            assert any(
+                r.table == table and r.original == ("dictionary-like-space",)
+                for r in plan.rows
+            )
+        retained = {
+            r.original[0]: dict(r.values)["metadata"]
+            for r in plan.source_rows
+            if r.table == "conversations"
+        }
+        proofs = {p.conversation_id: p for p in plan.dictionary_derivations}
+        with closing(CharactersRAGDB(":memory:", "dictionary-like-consumer")) as db:
+            for cid, encoded in original.items():
+                assert retained[cid] == encoded
+                proof = proofs[cid]
+                assert (
+                    proof.original_attachments,
+                    proof.original_unresolved,
+                    proof.original_active,
+                ) == source_derived[cid]
+                values = rows[cid]
+                assert json.loads(values["metadata"]).get(
+                    "pinned_response_prefill"
+                ) == json.loads(encoded).get("pinned_response_prefill")
+                assert db.add_conversation(values) == values["id"]
+                with db.transaction() as cursor:
+                    cursor.execute(
+                        "UPDATE conversations SET metadata=? WHERE id=?",
+                        (values["metadata"], values["id"]),
+                    )
+                assert derived(db, values["id"]) == (
+                    proof.mapped_attachments,
+                    proof.mapped_unresolved,
+                    proof.mapped_active,
+                )
+            assert source_derived["dictionary-like-space"] == ((), True, ())
+            assert source_derived["dictionary-like-literal_text"] == ((), False, ())
+            assert source_derived["dictionary-like-duplicates"] == (
+                (11,),
+                False,
+                (11, 11),
+            )
+            assert source_derived["dictionary-like-decimal_string"] == (
+                (11,),
+                True,
+                (11, 11, 11),
+            )
+        with pytest.raises(ValueError, match="pending"):
+            plan.require_complete()
