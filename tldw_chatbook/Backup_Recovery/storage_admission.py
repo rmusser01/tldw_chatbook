@@ -2450,6 +2450,10 @@ class _MobileScope:
         ):
             raise bootstrap.RecoveryRequired("mobile_scope_inactive")
         MaintenanceSession._check(session)
+        if self.captured is not None:
+            from .mobile_native_operation import _native_capture_check
+
+            _native_capture_check(self.captured, self.captured.cancel)
         with self.journal._locked(exclusive=False) as parent:
             records = self.journal._records(parent)
         prepared, witnesses = _mobile_state(records)
@@ -3305,6 +3309,19 @@ class MaintenanceSession:
             )
         ):
             raise bootstrap.RecoveryRequired("mobile_native_preparation_required")
+        from .mobile_native_operation import _require_readers_retired
+
+        _require_readers_retired(self)
+        from .mobile_consolidation_apply import _CapturedMobile
+        from .mobile_native_operation import _native_preopen
+
+        captured = None
+        for candidate in self._scopes:
+            if type(candidate) is _CapturedMobile and candidate.active:
+                if captured is not None or candidate.journal is not journal:
+                    raise ValueError("mobile_native_capture_cohort_changed")
+                _native_preopen(candidate, candidate.cancel)
+                captured = candidate
         classes = {
             "db.chachanotes.primary": CharactersRAGDB,
             "db.workspaces": WorkspaceDB,
@@ -3347,6 +3364,7 @@ class MaintenanceSession:
         owner = {"owner_id": owner_id, "path": target.witnesses[-1].path}
         scope = object.__new__(_MobileScope)
         scope.session, scope.journal, scope.owner = self, journal, owner
+        scope.captured = captured
         scope.witnesses, scope.resources = witnesses, []
         scope.sidecars = _mobile_sidecar_state(records, owner_id)
         scope.handed_off = False
@@ -3441,6 +3459,7 @@ def _mint_maintenance_session(
     session._thread = threading.get_ident()
     session._active = True
     session._scopes = []
+    session._mobile_attempted_journal = None
     _local.maintenance_session = session
     try:
         session._refresh_roots()

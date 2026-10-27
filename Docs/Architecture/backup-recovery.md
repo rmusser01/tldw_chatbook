@@ -896,3 +896,32 @@ passes the same immutable names and live captured source scope through both the
 nested mobile preview and inventory discovery. Native default discovery keeps its
 ordinary behavior. These local names are data; source capture, native topology
 and session custody remain the read authority.
+
+## Same-operation native input and reader retirement (ADR-244 R107)
+
+`_CapturedMobile.consolidate(password=..., cancel=...)` is a private synchronous
+coordinator. A denial-only actual-session journal association prevents a second
+attempt or reissued lifecycle from reopening readers or renewing the allowance;
+fresh native maintenance admission is required after the session ends. It derives
+complete native input internally with `_plan_runs` and one original `_TraceReadBudget`, retaining cohort, schema/member/manifest and immutable
+row proof references only in its call frame. No saved plan or returned readiness
+object can be passed to an owner. All pure `require_complete()` guards still refuse.
+
+`mobile_native_operation` checks actual session scopes, retained resources,
+uncertain-close flags and staging retirement before native owner admission can
+create paths or write owner-open journal events. The original source claim and
+maintenance locks stay held. `_CapturedMobile.owner` and the existing native
+owner admission share this check; the native `_MobileScope` also retains the exact
+captured lifecycle and revalidates it at subsequent native transaction admission.
+Selectors, source location, target physical witnesses, capture artifacts and
+cancellation are checked through existing native owners. This authenticates the
+prepared snapshots under exclusion; it is not a fresh live-row fingerprint read.
+
+The current coordinator always reports precise body-free outstanding native
+writer/consumer/field/RunLog duties after its actual readers retire, before owner
+or import effects. It does not claim an empty or populated operation is ready.
+Disposable native component tests qualify retirement-to-owner access separately.
+The following serial fixed-writer increment must install real owning transactions
+and concrete required consumers here, including committed receipt-first recovery.
+No generic handler registry, callback, grant flag, budget reset, source-reader
+reopen, runtime RunLog authority or public migration activation is provided.

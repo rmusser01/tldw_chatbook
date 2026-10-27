@@ -490,9 +490,36 @@ class _CapturedMobile:
         raise TypeError("mobile_lifecycle_is_native_issued")
 
     def check(self):
-        self.claim.check()
+        if (
+            type(self) is not _CapturedMobile
+            or type(self.session) is not MaintenanceSession
+            or self not in self.session._scopes
+            or self.journal is not getattr(self.session, "_mobile_journal", None)
+            or any(
+                actual is not expected
+                for actual, expected in zip(
+                    (
+                        self.session,
+                        self.journal,
+                        self.claim,
+                        self.preview,
+                        self.source,
+                        self.canonical,
+                        self.cancel,
+                        self.session._scopes,
+                    ),
+                    self.binding,
+                    strict=True,
+                )
+            )
+        ):
+            raise ValueError("mobile_native_capture_cohort_changed")
         if not self.active:
             raise ValueError("mobile_lifecycle_retired")
+        from .archive_reader import _check
+
+        _check(self.cancel)
+        self.claim.check()
         with self.journal._locked(exclusive=False) as fd:
             records = self.journal._records(fd)
         receipts = [
@@ -504,10 +531,18 @@ class _CapturedMobile:
 
     @contextmanager
     def owner(self, owner_id):
-        self.check()
+        from .mobile_native_operation import _native_preopen
+
+        _native_preopen(self, self.cancel)
         with self.session.mobile_consolidation_owner(self.journal, owner_id) as owner:
             yield owner
         self.check()
+
+    def consolidate(self, *, password, cancel):
+        """Prepare this actual operation; unresolved native duties refuse effects."""
+        from .mobile_native_operation import _consolidate
+
+        return _consolidate(self, password=password, cancel=cancel)
 
     def sqlite_reads(self, *, password, cancel):
         """Issue the fixed read-only captured SQLite scope under live maintenance."""
@@ -632,6 +667,9 @@ def _captured_mobile(
     from .profile_paths import lexical_path
     from .replacement import require_rollback_password
 
+    session._check()
+    if session._mobile_attempted_journal is not None:
+        raise ValueError("mobile_native_operation_already_attempted")
     require_rollback_password(password)
     session.prepare_mobile_consolidation(
         journal,
@@ -706,6 +744,17 @@ def _captured_mobile(
                     lifecycle.source = archive
                 else:
                     lifecycle.canonical = archive
+            lifecycle.cancel = cancel
+            lifecycle.binding = (
+                session,
+                journal,
+                claim,
+                preview,
+                lifecycle.source,
+                lifecycle.canonical,
+                cancel,
+                session._scopes,
+            )
             lifecycle.check()
             yield lifecycle
         finally:

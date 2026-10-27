@@ -1090,3 +1090,41 @@ allocator admission, receipt-first recovery and actual definition/current Goal/
 recovery consumers. Original-ID RunLog access must bind committed receipts and
 distinguish root ownership, framed membership and historical references.
 Passive component delivery grants no partial public activation or cutover.
+
+### Same-operation native reader retirement and preopen admission (R107)
+
+One private synchronous coordinator entered from the actual native-issued
+`_CapturedMobile` accepts only password and cancellation. It derives complete
+source/integrated/Run input internally under one original representation allowance;
+`_plan_runs` may receive that allowance privately. New frame, association and
+validation representations are admitted before construction. Exact session, claim,
+journal, capture, selector, source fingerprint, manifest/member/schema and native
+row proofs stay inside the synchronous operation frame. Caller plans, callbacks,
+factories, flags, handler names and returned handoff tokens grant nothing. All pure
+completion guards remain unconditional refusals.
+
+Before native path creation, owner-open publication, constructors or import effects,
+all captured SQLite/cursor/pin/history/crypto/worker/pipe/FD/staging resources must
+physically retire. Cleared local markers or inactive Python objects are insufficient;
+actual session resource cohorts and unresolved-close outcomes must be checked.
+The source claim and maintenance exclusion deliberately remain live. Uncertain
+retirement retains existing quarantine and never permits a retry to erase doubt.
+Preopen revalidation binds the same actual cohort, prepared journal, captured
+artifacts, selectors, source/target physical witnesses and cancellation. Subsequent
+owner/file effects require the same checks using legitimate native journal and
+receipt changes. Authenticated prepared snapshots under exclusion are not fresh
+postretirement live-row fingerprints. Readers and allowances are never reopened
+or renewed to cross this boundary.
+
+The serial component may qualify actual same-operation physical retirement followed
+by existing native owner admission on disposable fixtures without importing rows.
+The production coordinator must refuse exact body-free required writer, physical
+or consumer duties before effects until fixed owning handlers qualify them. A
+component success is not all-owner readiness, and these temporary blockers are
+not a permanent unsupported-content policy. No helper may bypass that production
+guard via a flag, fake plan or callback. The next fixed-writer increment supplies
+atomic rows/maps/provenance/holds/owning receipts inside this coordinator and proves
+populated positive operations. Crash recovery reconstructs admission and consults
+actual committed receipts first; saved frames and journal progress are not receipts.
+Undefined definition, current Goal/binding, runtime RunLog membership, allocator
+and Git dispositions still need their concrete native contracts.

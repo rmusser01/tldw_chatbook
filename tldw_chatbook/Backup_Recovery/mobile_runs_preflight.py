@@ -127,7 +127,7 @@ def _history_observations(history, *, _read_budget):
     return tuple(observations)
 
 
-def _plan_runs(reads):
+def _plan_runs(reads, *, _read_budget=None):
     from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
     from tldw_chatbook.DB.console_command_receipts import (
         ConsoleCommandReceiptRepository,
@@ -142,7 +142,9 @@ def _plan_runs(reads):
         raise ValueError("mobile_runs_native_snapshot_required")
     reads.check()
     _check_trace_members(reads)
-    budget = _TraceReadBudget()
+    budget = _TraceReadBudget() if _read_budget is None else _read_budget
+    if type(budget) is not _TraceReadBudget:
+        raise TypeError("mobile_runs_native_budget_required")
     integrated = _plan_integrated(reads, _read_budget=budget)
     goals = _plan_goal_rows(reads, integrated.identities, _read_budget=budget)
     identities = goals.identities
