@@ -41,7 +41,8 @@ async def test_the_tool_gates_pane_leads_with_full_agent_tools(monkeypatch):
         assert "any tool switched on below" not in heading
         assert "Full agent tools adds the rest: sub-agents" in heading
         button = app.query_one("#mcp-gate-full_agent_tools_enabled", Button)
-        assert str(button.label) == "Full agent tools: off ▸"
+        # task-35153 (dev): every gate row carries its effect scope.
+        assert str(button.label) == "Full agent tools (next chat): off ▸"
         assert "sub-agents" in str(button.tooltip)
 
         # It leads the pane: above the Agent built-ins group.
