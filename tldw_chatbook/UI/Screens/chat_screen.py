@@ -15179,6 +15179,9 @@ class ChatScreen(BaseAppScreen):
                 send_price_available_provider=(
                     lambda draft: self._send_price.availability_for_draft(draft)
                 ),
+                sendable_attachment_provider=(
+                    lambda: self._console_pending_image_attachment() is not None
+                ),
             )
             # TASK-1364: the composer shares the screen's prompt-history
             # store with the controller (which records accepted sends) so
@@ -21350,10 +21353,8 @@ class ChatScreen(BaseAppScreen):
             or bool(attachment_blocked_reason)
         )
 
-        pending = self._console_pending_image_attachment()
-
         composer.sync_action_state(
-            has_draft=bool(composer.draft_text().strip()) or pending is not None,
+            has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
             run_active=run_active,
             stop_available=run_active
             or bool(getattr(controller, "is_stop_allowed", False)),

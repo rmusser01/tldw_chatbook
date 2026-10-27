@@ -86,11 +86,14 @@ class _PriceComposerApp(App[None]):
     def __init__(self, tooltip_provider=None):
         super().__init__()
         self.tooltip_provider = tooltip_provider
+        #: Stands in for the screen's send gate (TASK-33620.15.22).
+        self.attachment_staged = False
 
     def compose(self) -> ComposeResult:
         yield ConsoleComposerBar(
             id="console-native-composer",
             send_price_tooltip_provider=self.tooltip_provider,
+            sendable_attachment_provider=lambda: self.attachment_staged,
         )
 
 
@@ -204,7 +207,12 @@ async def test_composer_price_affordance_tracks_send_queue_attachment_and_width(
             send_blocked=False,
             send_label="Send",
         )
+        # TASK-33620.15.22: the label alone is presentation, not payload.
         composer.set_pending_attachment_label("photo.png · 5 B")
+        composer._sync_current_action_state()
+        assert send_button.label.plain == "Send"
+        assert send_button.disabled is True
+        app.attachment_staged = True
         composer._sync_current_action_state()
         await pilot.pause()
         assert send_button.label.plain == "Send | $"
