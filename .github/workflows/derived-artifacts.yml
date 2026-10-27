@@ -148,6 +148,8 @@ jobs:
             Tests/Architecture/test_notes_sync_snapshot_construction.py \
             Tests/Workspaces/test_link_on_use.py \
             Tests/Workspaces/test_workspace_eligibility.py \
+            Tests/Research/test_server_research_search_service.py::test_paper_search_detail_and_ingest_use_public_client_methods \
+            Tests/Research/test_server_research_search_service.py::test_no_interop_module_calls_private_client_request \
             Tests/UI/Library_Modules/test_library_pending_work_veto_notice.py \
             Tests/Notes/test_notes_sync_root_display_name.py \
             Tests/Library/test_library_rag_answer_provider_resolution.py \
