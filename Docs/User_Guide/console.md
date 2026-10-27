@@ -1048,8 +1048,9 @@ once a chat uses that model, the Context view of Chat settings names the size
 it assumes. Readiness comes from your configuration plus any connection test of that provider's connection this
 session, in the same words as the rest of the Console: "Ready · not tested",
 "Ready · reachable 14:01" once a local server's model listing answered,
-"Key verified 14:01" once a cloud key was accepted, or "Not ready · no
-key" (or another reason, such as "refused :9099" after a refused test, or
+"Key verified 14:01" once a cloud key check accepted the key and listed
+that row's model (a row it did not list reads "Ready · reachable"), or
+"Not ready · no key" (or another reason, such as "refused :9099" after a refused test, or
 "window too small" for one model whose reply reservation fills its window;
 that row is judged on its own, and the provider's other models stay Ready).
 This chat's own row uses this chat's Max tokens, the same value the header
