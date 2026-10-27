@@ -22,6 +22,15 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_native_chat_flow import (
+    DUMMY_OPENAI_API_KEY,
+    _build_console_send_test_app,
+    _persist_console_provider_config,
+)
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat import attachment_core
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -148,3 +157,111 @@ async def test_the_composer_resync_reads_what_is_staged_not_the_painted_label(
 
         assert _send_state(send) == (True, True)
         assert await console._send_console_message_from_visible_action() is False
+
+
+@pytest.mark.asyncio
+async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypatch):
+    """The Workbench's own ``send`` action is a third readiness site.
+
+    ``_build_console_workbench_state`` derived ``can_send`` from draft text
+    alone and ignored the vision block, so for an image-only draft it read
+    disabled while the composer's Send was ready, and for a vision-blocked
+    image under a typed draft it read ready while Send was blocked.
+    """
+    _app, host = _ready_host()
+    async with host.run_test(size=(140, 42)) as pilot:
+        console, composer, send, store, session_id = await _ready_console(
+            host, pilot, monkeypatch
+        )
+        workbench_send = console.query_one("#workbench-action-send", Button)
+        for name, fields, sendable in _STAGED_KINDS:
+            store.clear_pending_attachments(session_id)
+            assert store.add_pending_attachment(session_id, _attachment(name, fields))
+            console._sync_console_control_bar()
+            await pilot.pause()
+            assert (workbench_send.disabled, send.disabled) == (
+                not sendable,
+                not sendable,
+            ), name
+
+        # A staged image the model can't accept blocks Send even under a
+        # typed draft; the Workbench action must not read ready over it.
+        monkeypatch.setattr(
+            attachment_core,
+            "vision_block_reason",
+            lambda *_a, **_k: "Console send blocked: no image support",
+        )
+        composer.load_draft("describe this")
+        store.clear_pending_attachments(session_id)
+        image = _attachment("photo.png", _STAGED_KINDS[0][1])
+        assert store.add_pending_attachment(session_id, image)
+        console._sync_console_control_bar()
+        await pilot.pause()
+        assert (workbench_send.disabled, send.disabled) == (True, True)
+
+
+@pytest.mark.asyncio
+async def test_a_ready_send_with_only_an_image_staged_sends_the_image(monkeypatch):
+    """The positive half of "a ready Send is one whose press sends".
+
+    No vision stub here: a vision-capable model passes both the screen's
+    and the controller's own image checks, and the provider call is faked
+    at ``chat_api_call``.
+    """
+    provider_calls: list[dict] = []
+
+    def fake_chat_api_call(**kwargs):
+        provider_calls.append(kwargs)
+        return "A small red square."
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.Chat_Functions.chat_api_call", fake_chat_api_call
+    )
+    # A completed send needs the durable-turn DB the factory app lacks, and
+    # (as the other full-send tests do) ordinary sending, capture off.
+    app = _build_console_send_test_app()
+    assert config_module.save_setting_to_cli_config(
+        "console", "exchange_capture", False
+    )
+    _persist_console_provider_config(
+        app,
+        provider="openai",
+        model="gpt-4o",
+        provider_settings={"api_key": DUMMY_OPENAI_API_KEY},
+    )
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        send = composer.query_one("#console-send-message", Button)
+        store = console._ensure_console_chat_store()
+        session_id = store.ensure_session().id
+        turn_ids: list[str] = []
+        original_launch = console._prompt_queue._launch_chain
+
+        def record_launch(draft: str, target_session_id: str) -> str:
+            turn_id = original_launch(draft, target_session_id)
+            turn_ids.append(turn_id)
+            return turn_id
+
+        monkeypatch.setattr(console._prompt_queue, "_launch_chain", record_launch)
+        composer.load_draft("")
+        image = _attachment("photo.png", _STAGED_KINDS[0][1])
+        assert store.add_pending_attachment(session_id, image)
+        console._sync_console_control_bar()
+        composer._sync_current_action_state()
+        assert _send_state(send) == (False, False)
+
+        assert await console._send_console_message_from_visible_action() is True
+        assert turn_ids
+        await console._console_runtime().wait_for_turn(turn_ids[0])
+
+        assert store.pending_attachments(session_id) == []
+        users = [m for m in store.messages_for_session(session_id) if m.role == "user"]
+        assert [m.image_data for m in users] == [b"\x89PNG"]
+        # The model received the image, as the only content of the turn.
+        (call,) = provider_calls
+        parts = call["messages_payload"][-1]["content"]
+        assert [p["image_url"]["url"] for p in parts if p["type"] == "image_url"] == [
+            "data:image/png;base64,iVBORw=="
+        ]

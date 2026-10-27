@@ -208,7 +208,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: built with the send gate's attachment predicate, so Send's readiness
     #: has one owner (ConsoleComposerBar.has_sendable_payload). Dev 3be493413a
     #: measures 24319/736; with the fix, 24320/736, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24320, 736),
+    #: Raised 24320 -> 24321 (methods unchanged) 2026-10-27 by the same task's
+    #: review follow-up, same owner rule: the Workbench `send` action's
+    #: readiness now reads has_sendable_payload and the vision block too, so
+    #: it no longer disagrees with Send for a staged image. With it,
+    #: 24321/736, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

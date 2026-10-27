@@ -13719,7 +13719,7 @@ class ChatScreen(BaseAppScreen):
         readiness = self._active_console_settings_readiness()
         blocker_copy = self._console_provider_blocker_copy(settings_readiness=readiness)
         composer = self._console_composer_or_none()
-        has_draft = bool(composer and composer.draft_text().strip())
+        has_draft = bool(composer and composer.has_sendable_payload())  # 33620.15.22
         controller = self._console_chat_controller
         run_state = getattr(controller, "run_state", None)
         store = self._console_chat_store
@@ -13748,6 +13748,7 @@ class ChatScreen(BaseAppScreen):
         can_send = (
             has_draft
             and not bool(self._console_setup_blocked_reason())
+            and not self._console_attachment_blocked_reason()
             and run_allows_send
         )
         return build_console_workbench_state(
