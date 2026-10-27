@@ -12103,7 +12103,10 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
         names = [str(label.render()) for label in step.query(".setup-tool-name")]
         # TASK-34100.5.3: the Full agent tools switch leads the step; every
         # other row is a gateable built-in, in table order.
-        assert names == ["Full agent tools"] + [
+        assert names == [
+            "Full agent tools"
+            + tool_gate_effect_suffix(scopes[("tools", "full_agent_tools_enabled")])
+        ] + [
             entry.title + tool_gate_effect_suffix(scopes[("tools", entry.gate_key)])
             for entry in entries
         ]

@@ -880,6 +880,12 @@ def gate_effect_scopes() -> dict[tuple[str, str], str]:
             ("tools", CHARACTER_TOOLS_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
         }
     )
+    # TASK-34100.5.3: Full agent tools is read on every Console send
+    # (ConsoleRuntime's light-surface reader) and decides nothing the
+    # external MCP server publishes.
+    from .plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
+
+    scopes[("tools", FULL_AGENT_TOOLS_GATE_KEY)] = EFFECT_SCOPE_NEXT_CHAT
     return scopes
 
 
@@ -1131,6 +1137,7 @@ def all_tool_gates() -> list[ToolGate]:
             description=FULL_AGENT_TOOLS_DESCRIPTION,
             enabled=full_agent_tools_enabled(tools_cfg),
             group="agent",
+            effect_scope=scopes[("tools", FULL_AGENT_TOOLS_GATE_KEY)],
         )
     )
     return gates

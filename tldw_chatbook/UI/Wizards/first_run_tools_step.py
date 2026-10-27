@@ -82,7 +82,8 @@ class ToolsStep(SetupStep):
                 )
                 with Vertical(classes="setup-tool-text"):
                     yield Label(
-                        FULL_AGENT_TOOLS_TITLE,
+                        FULL_AGENT_TOOLS_TITLE
+                        + scope_suffixes.get(FULL_AGENT_TOOLS_GATE_KEY, ""),
                         classes="setup-tool-name setup-tool-name-agent",
                     )
                     yield Static(
