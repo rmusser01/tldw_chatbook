@@ -2086,8 +2086,9 @@ class SubscriptionsDB(BaseDB):
         Raises:
             BaseException: Whatever the body raises (including
                 KeyboardInterrupt/SystemExit/GeneratorExit), re-raised
-                unchanged after the OUTERMOST block rolls back. An inner block does not roll back;
-                the exception propagates so the outermost can.
+                unchanged after the OUTERMOST block rolls back. An inner
+                block does not roll back; the exception propagates so the
+                outermost can.
         """
         conn = self.conn
         if not hasattr(self._local, "transaction_depth"):
