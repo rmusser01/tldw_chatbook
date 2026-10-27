@@ -230,5 +230,66 @@ async def test_section_patch_in_a_hidden_rail_keeps_its_new_secondary_line(
     )
 
 
+class _FocusRailHost(_RailHost):
+    """The rail beside a control outside it, as the Console composer sits."""
+
+    def compose(self) -> ComposeResult:
+        yield Button("Outside", id="outside")
+        with Vertical(id="rail"):
+            yield self.widget
+
+
+@pytest.mark.parametrize("same_tick", [False, True], ids=["later", "same-tick"])
+async def test_a_control_focused_at_the_collapse_leaves_no_focus_to_carry(
+    same_tick,
+) -> None:
+    """The held rebuild drops the focus recovery an immediate rebuild sets up.
+
+    That is safe because Textual blurs a focused control the collapse hides:
+    the control gets a Hide event at the collapse's first layout, as on the
+    base build, before the opening could need its focus back. A change in
+    the same tick as the collapse, made while the control still holds focus,
+    is held all the same.
+    """
+    inspector = ConsoleRunInspector(
+        _inspector_state(provider="No active work", chat=True)
+    )
+    after = _inspector_state(provider="No active work", chat=False)
+    host = _FocusRailHost(inspector)
+    async with host.run_test(size=(40, 30)) as pilot:
+        await pilot.pause()
+        attach = host.query_one("#console-inspector-dictionaries-attach", Button)
+        attach.focus()
+        await pilot.pause()
+        assert host.focused is attach
+        rail = host.query_one("#rail")
+        ChatScreen._sync_console_rail_descendant_visibility(rail, False)
+        if same_tick:
+            assert host.focused is attach, "the collapse blurred at once"
+            inspector.sync_state(after)
+        await pilot.pause()
+        await pilot.pause()
+        assert host.focused is None or rail not in host.focused.ancestors, (
+            f"focus stayed in the collapsed rail: {host.focused!r}"
+        )
+        if not same_tick:
+            inspector.sync_state(after)
+            await pilot.pause()
+        assert inspector._rail_rebuild_deferred
+        assert inspector.recompose_count == 0
+        ChatScreen._sync_console_rail_descendant_visibility(rail, True)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+        assert inspector.recompose_count == 1
+        assert host.query_one(
+            "#console-inspector-dictionaries-attach", Button
+        ).disabled, "the opening did not paint the held state"
+        focused = host.focused
+        assert focused is None or (
+            focused.is_mounted and rail not in focused.ancestors
+        ), f"the opening left focus on {focused!r}"
+
+
 def _kwargs(state: ConsoleInspectorSectionState) -> dict:
     return {"rows": state.rows, "summary": state.summary, "notice": state.notice}

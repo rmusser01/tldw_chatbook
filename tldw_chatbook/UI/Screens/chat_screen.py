@@ -562,6 +562,7 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_inspector_section import (
+    CONSOLE_RAIL_PRIOR_DISPLAY,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
@@ -12574,19 +12575,19 @@ class ChatScreen(BaseAppScreen):
         """Cascade rail display state while preserving child display preferences."""
         for child in widget.query("*"):
             if visible:
-                prior_display = getattr(child, "_console_rail_prior_display", None)
+                prior_display = getattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, None)
                 if prior_display is None:
                     continue
                 child.display = bool(prior_display)
                 child.styles.display = "block" if prior_display else "none"
-                delattr(child, "_console_rail_prior_display")
+                delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)
                 # TASK-37000: the rebuild a hidden child held for this opening.
                 if callable(getattr(child, "rebuild_if_deferred", None)):
                     child.rebuild_if_deferred()
                 continue
 
-            if not hasattr(child, "_console_rail_prior_display"):
-                setattr(child, "_console_rail_prior_display", bool(child.display))
+            if not hasattr(child, CONSOLE_RAIL_PRIOR_DISPLAY):
+                setattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, bool(child.display))
             child.display = False
             child.styles.display = "none"
 

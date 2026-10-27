@@ -180,7 +180,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: first agent run, re-writes its copy without a layout inside the
     #: collapsed rail (+1 comment, +1 import; the call stays one line).
     #: Rebased onto dev 0923ec0ca2 (24319/736); with the fix, 24324/736.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24324, 736),
+    #: Raised 24324 -> 24325 (methods unchanged) 2026-10-27 by TASK-37000's
+    #: review, same owner rule: the rail cascade names its marker through the
+    #: shared CONSOLE_RAIL_PRIOR_DISPLAY constant instead of four string
+    #: literals (+1 for the import). Dev 773cc9729c measured 24319/736.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24325, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

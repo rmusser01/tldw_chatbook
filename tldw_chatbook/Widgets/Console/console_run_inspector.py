@@ -32,6 +32,7 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    CONSOLE_RAIL_PRIOR_DISPLAY,
     hidden_by_console_rail,
 )
 
@@ -314,8 +315,10 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             )
         ):
             if hidden:
-                # Nothing in the hidden rail can hold focus, so there is no
-                # focus to carry across the rebuild the opening will run.
+                # No focus to carry to the opening: a control focused when the
+                # rail collapsed gets Textual's Hide at the collapse's first
+                # layout and blurs, on the base build too (pinned in
+                # test_console_inspector_rail_deferral).
                 self._rail_rebuild_deferred = True
                 return
             self._rail_rebuild_deferred = False
@@ -393,12 +396,12 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         if hidden_by_console_rail(self):
             return
         for child in self.query("*"):
-            prior_display = getattr(child, "_console_rail_prior_display", None)
+            prior_display = getattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, None)
             if prior_display is None:
                 continue
             child.display = bool(prior_display)
             child.styles.display = "block" if prior_display else "none"
-            delattr(child, "_console_rail_prior_display")
+            delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)
 
     @classmethod
     def _group_projection(
