@@ -279,6 +279,18 @@ class _CapturedSQLite:
 
         return _plan_content_workflows(self)
 
+    def trace_plan(self):
+        """Plan fixed normalized history without granting owning-write authority."""
+        from .mobile_trace_plan import _plan_traces
+
+        return _plan_traces(self)
+
+    def trace_inputs(self):
+        """Read fixed native trace inputs without exposing retained connections."""
+        from .mobile_trace_inputs import _read_trace_inputs
+
+        return _read_trace_inputs(self)
+
     def content_plan(self):
         """Build the complete fixed C projection without import authority."""
         from .mobile_content_memory import _plan_content

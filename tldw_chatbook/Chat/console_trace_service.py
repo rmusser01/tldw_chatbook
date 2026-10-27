@@ -19,9 +19,12 @@ from tldw_chatbook.Chat.console_semantic_revision import (
     project_semantic_revision_provider_message,
     project_semantic_revision_provider_messages,
 )
+from tldw_chatbook.Chat.console_trace_custom_pii import (
+    CUSTOM_PII_RULESET_UNAVAILABLE,
+    redact_pii_value_for_ruleset_revision,
+)
 from tldw_chatbook.Chat.console_trace_final_values import (
     _SURFACE_VERIFICATION_ISSUER,
-    _checkpoint_semantic_value,
     CompletedToolTurnWitness,
     FinalValueBinding,
     ProviderCredentialSource,
@@ -32,6 +35,7 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     VerifiedSurfaceDeltaItem,
     VerifiedSurfaceReplacement,
     VerifiedSurfaceReplacementRange,
+    _checkpoint_semantic_value,
     build_verified_surface_delta,
 )
 from tldw_chatbook.Chat.console_trace_models import (
@@ -42,10 +46,6 @@ from tldw_chatbook.Chat.console_trace_models import (
     TraceCallState,
     TraceContentRef,
     TraceOmission,
-)
-from tldw_chatbook.Chat.console_trace_custom_pii import (
-    CUSTOM_PII_RULESET_UNAVAILABLE,
-    redact_pii_value_for_ruleset_revision,
 )
 from tldw_chatbook.Chat.console_trace_provenance import (
     DerivedTraceProvenance,
@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     _project_verified_provider_request_provenance,
 )
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizer,
     PIIRedactionSpan,
@@ -4849,6 +4850,8 @@ class ConsoleTraceService:
         cursor: sqlite3.Cursor,
         segment_id: str,
         tail: SurfaceNodeRecord | None,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> _SurfaceProjection:
         segment = self.repository.get_segment(cursor, segment_id)
         if segment is None:
@@ -4868,12 +4871,15 @@ class ConsoleTraceService:
                 cursor,
                 segment.parent_segment_id,
                 inherited_head,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             )
             if tail is None:
                 tail = inherited_head
         head_id = None if tail is None else tail.node_id
         cached = self._surface_ref_cache.get(segment_id)
         if cached is not None and cached.head_id == head_id:
+            if _read_budget is not None:
+                _read_budget.container(len(cached.entries))
             return cached
         nodes: list[SurfaceNodeRecord] = []
         continuation = None
@@ -4882,19 +4888,26 @@ class ConsoleTraceService:
                 cursor,
                 segment_id,
                 after=continuation,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             )
+            if _read_budget is not None:
+                _read_budget.container(len(page))
             nodes.extend(page)
             if page.next_cursor is None:
                 break
             continuation = page.next_cursor
         if tail is not None:
             nodes = [node for node in nodes if node.sequence <= tail.sequence]
+        if _read_budget is not None:
+            # Filtering, indexes, active sequence nodes, and final tuple views.
+            _read_budget.reserve(1024 * len(nodes))
         local_node_ids = {node.node_id for node in nodes}
         replacements = tuple(
             record
             for record in self.repository.read_surface_replacements(
                 cursor,
                 segment_id,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             )
             if record.replacement.replacement_node_id in local_node_ids
         )
@@ -4905,6 +4918,8 @@ class ConsoleTraceService:
         active: dict[int, _SequenceNode] = {}
         if inherited_projection is not None:
             for sequence, key in inherited_projection.entries:
+                if _read_budget is not None:
+                    _read_budget.container(8)
                 sequence_node = _SequenceNode(sequence, key)
                 root_node = _sequence_merge(root_node, sequence_node)
                 active[sequence] = sequence_node
@@ -4924,6 +4939,8 @@ class ConsoleTraceService:
             if span > MAX_SURFACE_REPLACEMENT_SPAN:
                 raise ValueError("surface_replacement_span")
             node = by_id[replacement.replacement_node_id]
+            if _read_budget is not None:
+                _read_budget.container(span)
             anchors = tuple(
                 active[sequence]
                 for sequence in range(
@@ -4948,6 +4965,8 @@ class ConsoleTraceService:
             )
             root_node = _sequence_insert(root_node, insert_at, sequence_node)
             active[node.sequence] = sequence_node
+        if _read_budget is not None:
+            _read_budget.container(len(active))
         entries = _sequence_entries(root_node)
         root = _ProjectionRoot(None, base=tuple(entries))
         inherited_lineage = (
@@ -5100,10 +5119,16 @@ class ConsoleTraceService:
         self,
         cursor: sqlite3.Cursor,
         header_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> ReconstructedRequestHeader:
         """Read the complete immutable header selected for a request."""
 
-        header = self.repository.get_request_header(cursor, header_id)
+        header = self.repository.get_request_header(
+            cursor,
+            header_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if header is None:
             raise ValueError("request_header_unavailable")
         components: list[ReconstructedHeaderComponent] = []
@@ -5115,6 +5140,9 @@ class ConsoleTraceService:
                 or artifact.normalization_version != TRACE_VALUE_NORMALIZATION_VERSION
             ):
                 raise ValueError("request_header_component_unavailable")
+            if _read_budget is not None:
+                _read_budget.container()
+                _read_budget.json(artifact.sanitized_bytes)
             try:
                 value = json.loads(artifact.sanitized_bytes)
             except (TypeError, ValueError, UnicodeDecodeError) as exc:
@@ -5127,6 +5155,8 @@ class ConsoleTraceService:
                 )
             )
         composition = self._resolve_system_composition(header)
+        if _read_budget is not None:
+            _read_budget.container(len(components) + len(composition))
         return ReconstructedRequestHeader(
             header.header_id,
             header.provider_name,

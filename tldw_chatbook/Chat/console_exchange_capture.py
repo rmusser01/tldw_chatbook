@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     EPHEMERAL_ORIGIN_KEY,
     canonical_provider_endpoint_identity,
 )
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 
 #: Value ``EPHEMERAL_ORIGIN_KEY`` carries on an automatically-injected
@@ -354,7 +355,12 @@ def _stub_for(data: str, mime: str) -> str:
     return f"[{mime}, {size}, sha256:{digest}]"
 
 
-def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
+def _maybe_stub_string(
+    value: str,
+    mime_hint: str | None = None,
+    *,
+    _read_budget: _TraceReadBudget | None = None,
+) -> str:
     # Review finding M1: this gate used to measure the RAW value's length
     # while the hash/size below already measure the CANONICAL
     # (whitespace-stripped) bytes -- so line-wrapping alone could push
@@ -362,6 +368,10 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
     # but not the other (canonical len=4088 vs. wrapped len=4141 straddling
     # a 4096 gate), stubbing one variant of the same bytes and not the
     # other. Gate on the same canonical length the hash/size actually use.
+    if _read_budget is not None:
+        # Split/join, bounded decode prefix, hashing and final stub.
+        _read_budget.value(value, text_copies=4)
+        _read_budget.container(len(value))
     match = _DATA_URI_RE.match(value)
     if match:
         # Qodo PR #1883 finding: hash/size the whitespace-stripped payload,
@@ -394,15 +404,21 @@ def _maybe_stub_string(value: str, mime_hint: str | None = None) -> str:
     return value
 
 
-def stub_binary_strings(obj: Any) -> Any:
+def stub_binary_strings(
+    obj: Any, *, _read_budget: _TraceReadBudget | None = None
+) -> Any:
     """Recursively replace base64/data-URI payloads with honest stubs.
 
     Deterministic: identical input bytes always produce the identical stub
     (size + sha256 prefix), so a viewer can verify attachment identity
     across calls without the bytes themselves.
     """
+    if _read_budget is not None:
+        _read_budget.container()
     if isinstance(obj, str):
-        return _maybe_stub_string(obj)
+        return _maybe_stub_string(
+            obj, **({"_read_budget": _read_budget} if _read_budget is not None else {})
+        )
     if isinstance(obj, Mapping):
         mime_hint = obj.get("media_type") or obj.get("mime_type")
         out = {}
@@ -413,12 +429,30 @@ def stub_binary_strings(obj: Any) -> Any:
                     mime_hint
                     if isinstance(mime_hint, str)
                     else "application/octet-stream",
+                    **(
+                        {"_read_budget": _read_budget}
+                        if _read_budget is not None
+                        else {}
+                    ),
                 )
             else:
-                out[key] = stub_binary_strings(value)
+                out[key] = stub_binary_strings(
+                    value,
+                    **(
+                        {"_read_budget": _read_budget}
+                        if _read_budget is not None
+                        else {}
+                    ),
+                )
         return out
     if isinstance(obj, (list, tuple)):
-        return [stub_binary_strings(item) for item in obj]
+        return [
+            stub_binary_strings(
+                item,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
+            for item in obj
+        ]
     return obj
 
 
@@ -472,31 +506,56 @@ def _redact_project_instruction_rows(
     return rows, tuple(redacted_paths)
 
 
-def _remove_nested_credentials(value: Any) -> Any:
+def _remove_nested_credentials(
+    value: Any, *, _read_budget: _TraceReadBudget | None = None
+) -> Any:
+    if _read_budget is not None:
+        _read_budget.container()
     if isinstance(value, Mapping):
         return {
-            str(key): _sanitize_semantic_json_string(nested)
+            str(key): _sanitize_semantic_json_string(
+                nested,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
             if str(key).lower() in _SEMANTIC_JSON_STRING_KEYS
             and isinstance(nested, str)
-            else _remove_nested_credentials(nested)
+            else _remove_nested_credentials(
+                nested,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
             for key, nested in value.items()
             if str(key).lower() not in _CREDENTIAL_KEYS
         }
     if isinstance(value, (list, tuple)):
-        return [_remove_nested_credentials(item) for item in value]
+        return [
+            _remove_nested_credentials(
+                item,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
+            for item in value
+        ]
     return value
 
 
-def _sanitize_semantic_json_string(value: str) -> str:
+def _sanitize_semantic_json_string(
+    value: str, *, _read_budget: _TraceReadBudget | None = None
+) -> str:
     """Sanitize structured provider tool payloads without changing plain text."""
+    if _read_budget is not None:
+        _read_budget.json(value)
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError:
         return value
     if not isinstance(parsed, (Mapping, list)):
         return value
+    sanitized = sanitize_capture_value(
+        parsed, **({"_read_budget": _read_budget} if _read_budget is not None else {})
+    )
+    if _read_budget is not None:
+        _read_budget.value(sanitized, text_copies=2)
     return json.dumps(
-        sanitize_capture_value(parsed),
+        sanitized,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -507,6 +566,7 @@ def sanitize_capture_value_with_omission(
     *,
     known_credentials: tuple[str, ...] = (),
     sanitizer: CredentialSanitizer | None = None,
+    _read_budget: _TraceReadBudget | None = None,
 ) -> tuple[Any, bool]:
     """Sanitize one captured value, reporting whether anything was omitted.
 
@@ -522,7 +582,14 @@ def sanitize_capture_value_with_omission(
         if sanitizer is not None
         else CredentialSanitizer(known_credentials=known_credentials)
     )
-    result = active.sanitize(value)
+    result = (
+        active.sanitize(value)
+        if _read_budget is None
+        else active.sanitize(
+            value,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
+    )
     if not result.available:
         return dict(_CREDENTIAL_OMISSION), True
     sanitized_value = result.value
@@ -549,12 +616,20 @@ def sanitize_capture_value_with_omission(
     ):
         return sanitized_value, result.redacted
     return (
-        stub_binary_strings(_remove_nested_credentials(sanitized_value)),
+        stub_binary_strings(
+            _remove_nested_credentials(
+                sanitized_value,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        ),
         result.redacted,
     )
 
 
-def sanitize_capture_value(value: Any) -> Any:
+def sanitize_capture_value(
+    value: Any, *, _read_budget: _TraceReadBudget | None = None
+) -> Any:
     """Remove structured credentials and stub binary from an arbitrary value.
 
     Args:
@@ -564,7 +639,9 @@ def sanitize_capture_value(value: Any) -> Any:
         A JSON-compatible value with credential fields removed and binary or
         base64 strings replaced by bounded stubs.
     """
-    sanitized, _omitted = sanitize_capture_value_with_omission(value)
+    sanitized, _omitted = sanitize_capture_value_with_omission(
+        value, **({"_read_budget": _read_budget} if _read_budget is not None else {})
+    )
     return sanitized
 
 

@@ -458,8 +458,8 @@ lifetimes. Evals' private passive metadata path recognizes only the actual issue
 mobile discovery scope for current `recovery_pending`; ordinary startup and
 profile-launch consumers still refuse that fence.
 
-Chat/trace/citation/sync/AgentRuns transformations and integrated plan validation
-remain required pending handlers. Planning creates no imported rows, authority
+Content and normalized trace planning compose the private handlers described below.
+Sync, AgentRuns and integrated plan validation remain required pending handlers. Planning creates no imported rows, authority
 holds, batch receipts or published history and confers no public apply/cutover
 success. The complete composed plan must be reviewed before owner writes.
 
@@ -644,3 +644,61 @@ pre/post hash, name, ancestor, claim/journal, cancellation and resource checks
 remain in force, including the unqueried Workspaces and Runs members. This
 removes repeated irrelevant metadata queries across the five nested C builders;
 it introduces no cache, reader renewal or change to the original SQL budgets.
+
+
+### Private normalized trace planning (T)
+
+`_CapturedSQLite.trace_inputs()` and `trace_plan()` accept no caller paths, SQL,
+callbacks or authority. `mobile_trace_inputs.py` uses the existing retained native
+connections through a read-only transaction adapter, including the native trace
+reader, already-normalized legacy reader, citation context validators and local
+character repository. All six members retain their complete before/after custody,
+metadata, name, scope, journal and resource checks; cancellation and resource checks
+also occur between bounded tuple batches and native calls. No connection is reopened
+and no SQL restriction is relaxed.
+
+`mobile_trace_plan.py` assigns all 34 T tables and 331 columns their fixed normalized,
+operational, GC or citation disposition. Original rows and bytes accompany the
+mapped rows. Only declared typed references and the native header
+`adapter_defaults_json.system_composition` revision grammar relocate. Materialized
+envelope, artifact, audit and legacy run-tag bytes remain exact. Native artifact
+length/digest, frozen policy, component and state validators qualify their respective
+fields; per-call closure additionally covers reverse-owned responses/events, header
+components, surface prefixes/replacements, semantic live messages/attachments,
+policy bindings and frozen masks. A newly lost input produces an exact call blocker;
+original native unavailability and uncertainty remain unchanged.
+
+Opaque nonempty trace run groups have their own deterministic reservations, separate
+from AgentRuns. Historical semantic message/conversation locators share live identity
+reservations and include canonical historical occupancy. The actual native viewer
+projection checks mapped semantic keys, selection, duplicate behavior and order;
+unpreservable ties and canonical idempotency-key collisions refuse the affected
+input. Keys are never rewritten or deduplicated. Operational epochs remain canonical;
+source provenance survives without adopting maintenance authority.
+
+`mobile_trace_authority.py` discharges only the exact accepted C local-character
+slot after captured source ownership, actual joined-row predicate, full caller
+eligibility and accepted mapped conversation/card/reservation proof against canonical
+context. Owned inactive history remains inactive; foreign or missing ownership stays
+blocked, and explicit None remains None. No canonical identity is overwritten.
+Citation SQL no-fingerprint-history is only an inert-context disposition: it proves
+neither credential UNUSED nor backend coverage, key readability, namespace adoption
+or permissions. Populated unproved citation composites retain exact blockers.
+
+`console_trace_read_budget.py` supplies one private nonrenewable 16 MiB allowance
+across the captured source and canonical trace input/proof/materialization operation.
+The same object passes through the actual native read-used codecs, semantic projection,
+redaction, legacy and reconstruction paths. Reservations precede decoding, cloning,
+base64 and repeated-reference expansion; exhaustion is a distinct body-free exception
+that cannot become historical uncertainty. Ordinary callers retain their default
+unbudgeted behavior. This representation allowance is not a heap measurement or a
+large-profile capacity promise, and all existing SQLite limits remain in force.
+
+Independent disposable native-reader tests qualify mapped output after capture
+retirement and restoration of private test isolation. Their native constructors do
+not prove import-write authority or preservation of constructor-generated audit
+creation timestamps. An eventual owning writer must also qualify native artifact
+reuse behavior when identical bytes need distinct planned IDs. The current plan
+preserves every timestamp consumed by readers and never inserts rows. Legacy exchange
+normalization, sync, AgentRuns, integrated validation and owner writes remain separate
+gates; `require_complete()` always refuses this pending plan.

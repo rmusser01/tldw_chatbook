@@ -802,3 +802,8 @@ entry. Bounded complete, partial and normalized legacy output and ordinary unbud
 native callers require focused preservation controls. A missed nested path risks
 excess allocation; overcharging or catching exhaustion risks false historical loss.
 These are implementation qualification requirements, never new import authority.
+
+A separate incidence-size preflight was considered and rejected: it would duplicate
+native projection semantics without a complete faithful bound for JSON, base64,
+masks, sanitizer and legacy expansion. The shared explicit native allowance keeps
+those reservations beside the operations that allocate the representations.

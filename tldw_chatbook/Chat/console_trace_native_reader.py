@@ -14,6 +14,7 @@ from tldw_chatbook.Chat.console_semantic_revision import (
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
 from tldw_chatbook.Chat.console_trace_provenance import TraceTransformKind
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     PII_DETECTOR_UNAVAILABLE,
@@ -63,7 +64,9 @@ class ConsoleTraceNativeReader:
         self.repository = repository or ConsoleTraceRepository()
         self.service = service or ConsoleTraceService(self.repository)
 
-    def read_calls(self, message_id: str) -> tuple[NormalizedTraceCall, ...]:
+    def read_calls(
+        self, message_id: str, *, _read_budget: _TraceReadBudget | None = None
+    ) -> tuple[NormalizedTraceCall, ...]:
         """Reconstruct native calls attached to one conversation message.
 
         Args:
@@ -97,32 +100,55 @@ class ConsoleTraceNativeReader:
                 conversation_id,
                 message_id,
                 turn_id=turn_id,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             ):
                 if (
                     call.route_identity == "legacy_snapshot"
                     or call.state not in _STATUS
                 ):
                     continue
-                result.append(self._reconstruct_call(cursor, call))
+                if _read_budget is not None:
+                    _read_budget.container()
+                result.append(
+                    self._reconstruct_call(
+                        cursor,
+                        call,
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
+                    )
+                )
             return tuple(result)
 
     def _reconstruct_call(
         self,
         cursor: Any,
         call: TraceCallRecord,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> NormalizedTraceCall:
         uncertainty: list[str] = []
         omitted: list[str] = []
         request: dict[str, object]
         try:
-            request, request_omissions = self._reconstruct_request(cursor, call)
+            request, request_omissions = self._reconstruct_request(
+                cursor,
+                call,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
             omitted.extend(request_omissions)
         except (KeyError, TypeError, ValueError, UnicodeDecodeError):
             request = {"omitted": "native_request_reconstruction_unavailable"}
             omitted.append("request")
             uncertainty.append("native_request_reconstruction_unavailable")
         try:
-            response = self._reconstruct_response(cursor, call)
+            response = self._reconstruct_response(
+                cursor,
+                call,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
         except (KeyError, TypeError, ValueError, UnicodeDecodeError):
             response = {"omitted": "native_response_reconstruction_unavailable"}
             omitted.append("response")
@@ -134,6 +160,9 @@ class ConsoleTraceNativeReader:
             or call.settled_at
             or "recorded-before-dispatch"
         )
+        if _read_budget is not None:
+            _read_budget.value(call.usage, text_copies=2)
+            _read_budget.container(20)
         usage_json = (
             json.dumps(dict(call.usage), separators=(",", ":"), sort_keys=True)
             if call.usage is not None
@@ -145,7 +174,11 @@ class ConsoleTraceNativeReader:
             created_at=created_at,
             provider=call.provider_name or "unavailable",
             model=call.model_name or "unavailable",
-            endpoint=self._endpoint(cursor, call),
+            endpoint=self._endpoint(
+                cursor,
+                call,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
             request=request,
             response=response,
             status=_STATUS[call.state],
@@ -165,27 +198,46 @@ class ConsoleTraceNativeReader:
             uncertainty_codes=tuple(uncertainty),
         )
 
-    def _endpoint(self, cursor: Any, call: TraceCallRecord) -> str | None:
+    def _endpoint(
+        self,
+        cursor: Any,
+        call: TraceCallRecord,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
+    ) -> str | None:
         if call.request_header_id is None:
             return None
-        header = self.repository.get_request_header(cursor, call.request_header_id)
+        header = self.repository.get_request_header(
+            cursor,
+            call.request_header_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         return None if header is None else header.endpoint_identity
 
     def _reconstruct_request(
         self,
         cursor: Any,
         call: TraceCallRecord,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> tuple[dict[str, object], tuple[str, ...]]:
         if call.surface_node_id is None or call.request_header_id is None:
             raise ValueError("native_request_boundary_unavailable")
         tail = self.repository.get_surface_node(cursor, call.surface_node_id)
         if tail is None:
             raise ValueError("native_surface_unavailable")
-        projection = self.service._surface_projection(cursor, call.segment_id, tail)
+        projection = self.service._surface_projection(
+            cursor,
+            call.segment_id,
+            tail,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         messages: list[object] = []
         continuations: list[object] = []
         omissions: list[str] = []
         for _, key in projection.entries:
+            if _read_budget is not None:
+                _read_budget.container()
             component_kind, reference_kind, identity = key
             destination = (
                 continuations
@@ -202,6 +254,11 @@ class ConsoleTraceNativeReader:
                         call=call,
                         revision_id=identity,
                         expected_conversation_id=revision.source_conversation_id,
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
                     )
                     if value == {"omitted": CREDENTIAL_SANITIZER_UNAVAILABLE}:
                         omissions.append("provider_continuations")
@@ -210,13 +267,23 @@ class ConsoleTraceNativeReader:
                         cursor,
                         revision_id=identity,
                         expected_conversation_id=revision.source_conversation_id,
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
                         policy_id=call.policy_id,
                     )
                 destination.append(value)
             elif reference_kind == "artifact":
                 destination.append(
                     self._decode_artifact(
-                        self.repository.get_artifact(cursor, identity)
+                        self.repository.get_artifact(cursor, identity),
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
                     )
                 )
             elif reference_kind == "omission":
@@ -227,7 +294,11 @@ class ConsoleTraceNativeReader:
             else:
                 raise ValueError("native_surface_reference_invalid")
 
-        header = self.service.reconstruct_header(cursor, call.request_header_id)
+        header = self.service.reconstruct_header(
+            cursor,
+            call.request_header_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         system_rows = [
             item
             for item in header.components
@@ -255,7 +326,12 @@ class ConsoleTraceNativeReader:
                 omissions.append("rendered_system_row")
             else:
                 raise ValueError("rendered_system_slot_unavailable")
-        request = self._header_request(cursor, call, header)
+        request = self._header_request(
+            cursor,
+            call,
+            header,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         request["messages_payload"] = messages
         if continuations:
             request["provider_continuations"] = continuations
@@ -271,6 +347,7 @@ class ConsoleTraceNativeReader:
         call: TraceCallRecord,
         revision_id: str,
         expected_conversation_id: str,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> object:
         revision = self.repository.get_semantic_revision(cursor, revision_id)
         if (
@@ -292,7 +369,8 @@ class ConsoleTraceNativeReader:
             if binding.omission_reason_code is not None:
                 return {"omitted": binding.omission_reason_code}
             materialized = self._decode_artifact(
-                self.repository.get_artifact(cursor, binding.artifact_id or "")
+                self.repository.get_artifact(cursor, binding.artifact_id or ""),
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             )
             if not isinstance(materialized, Mapping):
                 raise ValueError("semantic_continuation_unavailable")
@@ -304,8 +382,12 @@ class ConsoleTraceNativeReader:
             cursor,
             revision_ids=(revision_id,),
             expected_conversation_id=expected_conversation_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
         )[revision_id]
-        sanitized = CredentialSanitizer().sanitize(value)
+        sanitized = CredentialSanitizer().sanitize(
+            value,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if not sanitized.available:
             return {"omitted": CREDENTIAL_SANITIZER_UNAVAILABLE}
         return sanitized.value
@@ -315,7 +397,11 @@ class ConsoleTraceNativeReader:
         cursor: Any,
         call: TraceCallRecord,
         header: ReconstructedRequestHeader,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> dict[str, object]:
+        if _read_budget is not None:
+            _read_budget.value(header)
         request: dict[str, object] = {}
         literal_components = [
             item.value
@@ -344,7 +430,12 @@ class ConsoleTraceNativeReader:
         ]
         if tools:
             request["tools"] = tools
-        system = self._system_message(cursor, call, header)
+        system = self._system_message(
+            cursor,
+            call,
+            header,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if system is not None:
             request["system_message"] = system
         return request
@@ -354,6 +445,8 @@ class ConsoleTraceNativeReader:
         cursor: Any,
         call: TraceCallRecord,
         header: ReconstructedRequestHeader,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> object | None:
         rendered = {
             item.ordinal: item.value
@@ -362,6 +455,8 @@ class ConsoleTraceNativeReader:
         }
         parts: list[object] = []
         for token in header.system_composition:
+            if _read_budget is not None:
+                _read_budget.container()
             kind = token.get("kind")
             if kind == "revision":
                 revision_id = token.get("revision_id")
@@ -374,6 +469,11 @@ class ConsoleTraceNativeReader:
                     cursor,
                     revision_id=revision_id,
                     expected_conversation_id=revision.source_conversation_id,
+                    **(
+                        {"_read_budget": _read_budget}
+                        if _read_budget is not None
+                        else {}
+                    ),
                     policy_id=call.policy_id,
                 )
                 parts.append(projected.get("content", projected))
@@ -389,6 +489,8 @@ class ConsoleTraceNativeReader:
         if not parts:
             return None
         if all(isinstance(part, str) for part in parts):
+            if _read_budget is not None:
+                _read_budget.value(parts)
             return "\n".join(str(part) for part in parts)
         return parts[0] if len(parts) == 1 else parts
 
@@ -396,6 +498,8 @@ class ConsoleTraceNativeReader:
         self,
         cursor: Any,
         call: TraceCallRecord,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> dict[str, object]:
         response = self.repository.get_response_link(cursor, call.call_id)
         if response is None:
@@ -412,16 +516,24 @@ class ConsoleTraceNativeReader:
                 expected_conversation_id=revision.source_conversation_id,
                 policy_id=call.policy_id,
                 response_call=call,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             )
         value = self._decode_artifact(
-            self.repository.get_artifact(cursor, response.artifact_id or "")
+            self.repository.get_artifact(cursor, response.artifact_id or ""),
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
         )
         return dict(value) if isinstance(value, Mapping) else {"value": value}
 
     @staticmethod
-    def _decode_artifact(artifact: TraceArtifactRecord | None) -> object:
+    def _decode_artifact(
+        artifact: TraceArtifactRecord | None,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
+    ) -> object:
         if artifact is None:
             raise ValueError("trace_artifact_unavailable")
+        if _read_budget is not None:
+            _read_budget.json(artifact.sanitized_bytes)
         return json.loads(artifact.sanitized_bytes)
 
 

@@ -18,20 +18,21 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from tldw_chatbook.Chat.console_trace_models import (
+    MAX_SURFACE_REPLACEMENT_SPAN,
+    PROMOTED_VOICE_IMPORT_REASON,
     FrozenTracePolicy,
     SemanticRevisionRef,
     SurfaceReplacement,
-    MAX_SURFACE_REPLACEMENT_SPAN,
     TraceCallState,
     TraceContentRef,
     TraceOmission,
     TraceReservationProvenance,
-    PROMOTED_VOICE_IMPORT_REASON,
+    _validate_stable_opaque_id,
     is_terminal_call_state,
     new_opaque_id,
     validate_call_transition,
-    _validate_stable_opaque_id,
 )
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     CredentialSanitizer,
@@ -419,12 +420,18 @@ def _freeze_json_value(value: object) -> object:
     return value
 
 
-def _decode_object(value: str | None) -> Mapping[str, object] | None:
+def _decode_object(
+    value: str | None, *, _read_budget: _TraceReadBudget | None = None
+) -> Mapping[str, object] | None:
     if value is None:
         return None
+    if _read_budget is not None:
+        _read_budget.json(value)
     decoded = json.loads(value)
     if not isinstance(decoded, dict):
         raise ValueError("stored_json_object")
+    if _read_budget is not None:
+        _read_budget.value(decoded)
     return cast(Mapping[str, object], _freeze_json_value(decoded))
 
 
@@ -2121,6 +2128,7 @@ class ConsoleTraceRepository:
         message_id: str,
         *,
         turn_id: str | None = None,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> Iterator[TraceCallRecord]:
         """Yield only calls associated with one message in bounded SQL pages.
 
@@ -2152,6 +2160,7 @@ class ConsoleTraceRepository:
         for segment_id, through_sequence in self._segment_lineage(
             cursor,
             owner.root_segment_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
         ):
             last_sequence = -1
             last_call_id = ""
@@ -2198,7 +2207,17 @@ class ConsoleTraceRepository:
                 if not rows:
                     break
                 for row in rows:
-                    call = self.get_call(cursor, row[0])
+                    if _read_budget is not None:
+                        _read_budget.container()
+                    call = self.get_call(
+                        cursor,
+                        row[0],
+                        **(
+                            {"_read_budget": _read_budget}
+                            if _read_budget is not None
+                            else {}
+                        ),
+                    )
                     if call is None:
                         raise RuntimeError("trace_lineage_call_unavailable")
                     yield call
@@ -2211,6 +2230,8 @@ class ConsoleTraceRepository:
         self,
         cursor: sqlite3.Cursor,
         root_segment_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> list[tuple[str, int | None]]:
         """Return root-to-leaf segment IDs with each inherited upper bound."""
 
@@ -2218,6 +2239,8 @@ class ConsoleTraceRepository:
         segment = self.get_segment(cursor, root_segment_id)
         upper_bound: int | None = None
         while segment is not None:
+            if _read_budget is not None:
+                _read_budget.container(2)
             lineage.append((segment.segment_id, upper_bound))
             upper_bound = segment.inherited_through_sequence
             if segment.parent_segment_id is None:
@@ -2559,6 +2582,7 @@ class ConsoleTraceRepository:
         policy_id: str,
         semantic_revision_id: str | None,
         artifact_id: str | None,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> tuple[TraceRedactionSpanRecord, ...]:
         """Read every bounded field mask for one source under one policy."""
 
@@ -2570,7 +2594,7 @@ class ConsoleTraceRepository:
             else "artifact_id"
         )
         source_id = semantic_revision_id or artifact_id
-        rows = cursor.execute(
+        selected = cursor.execute(
             f"""SELECT span_id, policy_id, source_kind, semantic_revision_id,
                        artifact_id, field_path, start_codepoint, end_codepoint,
                        category, rule_id, detector_version, outcome
@@ -2579,7 +2603,13 @@ class ConsoleTraceRepository:
                  ORDER BY field_path, start_codepoint, end_codepoint, span_id
                  LIMIT 10001""",
             (policy_id, source_id),
-        ).fetchall()
+        )
+        rows = []
+        for row in selected:
+            if _read_budget is not None:
+                _read_budget.value(row)
+                _read_budget.container()
+            rows.append(row)
         if len(rows) > 10_000:
             raise ValueError("redaction_span_limit")
         return tuple(TraceRedactionSpanRecord(*row) for row in rows)
@@ -2999,6 +3029,7 @@ class ConsoleTraceRepository:
         *,
         page_size: int = DEFAULT_SURFACE_NODE_PAGE_SIZE,
         after: SurfaceNodeCursor | None = None,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> SurfaceNodePage:
         """Read one bounded seek page of segment-local surface nodes.
 
@@ -3037,7 +3068,7 @@ class ConsoleTraceRepository:
                 " AND (sequence > ? OR (sequence = ? AND node_id > ?))"
             )
             parameters = (segment_id, after[0], after[0], after[1], page_size + 1)
-        rows = cursor.execute(
+        selected = cursor.execute(
             f"""SELECT node_id, segment_id, sequence, predecessor_node_id,
                        component_kind, reference_kind, semantic_revision_id,
                        artifact_id, omission_reason_code
@@ -3045,7 +3076,13 @@ class ConsoleTraceRepository:
                        {continuation_clause}
                  ORDER BY sequence, node_id LIMIT ?""",
             parameters,
-        ).fetchall()
+        )
+        rows = []
+        for row in selected:
+            if _read_budget is not None:
+                _read_budget.value(row)
+                _read_budget.container()
+            rows.append(row)
         records = tuple(SurfaceNodeRecord(*row) for row in rows[:page_size])
         next_cursor = (
             (records[-1].sequence, records[-1].node_id)
@@ -3087,8 +3124,10 @@ class ConsoleTraceRepository:
         self,
         cursor: sqlite3.Cursor,
         segment_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> tuple[SurfaceReplacementRecord, ...]:
-        rows = cursor.execute(
+        selected = cursor.execute(
             """SELECT r.replacement_id, r.segment_id, r.predecessor_head_id,
                       r.start_node_id, r.start_sequence, r.end_node_id,
                       r.end_sequence, r.replacement_node_id
@@ -3099,7 +3138,13 @@ class ConsoleTraceRepository:
                 ORDER BY n.sequence, r.start_sequence, r.end_sequence,
                          r.replacement_id""",
             (segment_id,),
-        ).fetchall()
+        )
+        rows = []
+        for row in selected:
+            if _read_budget is not None:
+                _read_budget.value(row)
+                _read_budget.container()
+            rows.append(row)
         return tuple(
             SurfaceReplacementRecord(
                 row[0],
@@ -3227,8 +3272,14 @@ class ConsoleTraceRepository:
         self,
         cursor: sqlite3.Cursor,
         header_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> RequestHeaderRecord | None:
-        return self._get_request_header(cursor, header_id)
+        return self._get_request_header(
+            cursor,
+            header_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
 
     def reserve_call(
         self,
@@ -3302,11 +3353,24 @@ class ConsoleTraceRepository:
         assert record is not None
         return record
 
-    def get_call(self, cursor: sqlite3.Cursor, call_id: str) -> TraceCallRecord | None:
+    def get_call(
+        self,
+        cursor: sqlite3.Cursor,
+        call_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
+    ) -> TraceCallRecord | None:
         row = cursor.execute(
             self._call_select() + " WHERE call_id = ?", (call_id,)
         ).fetchone()
-        return None if row is None else self._call(row)
+        return (
+            None
+            if row is None
+            else self._call(
+                row,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
+        )
 
     def get_call_by_idempotency_key(
         self,
@@ -3789,7 +3853,9 @@ class ConsoleTraceRepository:
                     FROM console_trace_calls"""
 
     @staticmethod
-    def _call(row: sqlite3.Row) -> TraceCallRecord:
+    def _call(
+        row: sqlite3.Row, *, _read_budget: _TraceReadBudget | None = None
+    ) -> TraceCallRecord:
         return TraceCallRecord(
             call_id=row[0],
             owner_id=row[1],
@@ -3810,7 +3876,10 @@ class ConsoleTraceRepository:
             settled_at=row[16],
             provider_inactive_at=row[17],
             outcome=row[18],
-            usage=_decode_object(row[19]),
+            usage=_decode_object(
+                row[19],
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
             integrity_state=row[20],
             omission_reason_code=row[21],
             reservation_provenance=TraceReservationProvenance(row[22]),
@@ -3839,19 +3908,31 @@ class ConsoleTraceRepository:
     def _header_components(
         cursor: sqlite3.Cursor,
         header_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> tuple[HeaderComponentRef, ...]:
-        rows = cursor.execute(
+        selected = cursor.execute(
             """SELECT component_kind, ordinal, artifact_id
                  FROM console_trace_header_components WHERE header_id = ?
                 ORDER BY component_kind, ordinal""",
             (header_id,),
-        ).fetchall()
+        )
+        rows = []
+        for row in selected:
+            if _read_budget is not None:
+                _read_budget.value(row)
+                _read_budget.container()
+            rows.append(row)
+        if _read_budget is not None:
+            _read_budget.value(rows)
         return tuple(HeaderComponentRef(*row) for row in rows)
 
     def _get_request_header(
         self,
         cursor: sqlite3.Cursor,
         header_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> RequestHeaderRecord | None:
         row = cursor.execute(
             """SELECT header_id, provider_name, model_name, route_identity,
@@ -3863,7 +3944,13 @@ class ConsoleTraceRepository:
         ).fetchone()
         if row is None:
             return None
-        objects = tuple(_decode_object(value) for value in row[5:9])
+        objects = tuple(
+            _decode_object(
+                value,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            )
+            for value in row[5:9]
+        )
         if any(value is None for value in objects):
             raise ValueError("stored_header_json")
         return RequestHeaderRecord(
@@ -3876,7 +3963,11 @@ class ConsoleTraceRepository:
             cast(Mapping[str, object], objects[1]),
             cast(Mapping[str, object], objects[2]),
             cast(Mapping[str, object], objects[3]),
-            self._header_components(cursor, header_id),
+            self._header_components(
+                cursor,
+                header_id,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+            ),
         )
 
     def _get_response_link(

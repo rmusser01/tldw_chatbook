@@ -76,6 +76,7 @@ _DOMAINS = (
     _Domain("trace_policy", "chat", "console_trace_policies", "policy_id"),
     _Domain("trace_artifact", "chat", "console_trace_artifacts", "artifact_id"),
     _Domain("trace_call", "chat", "console_trace_calls", "call_id"),
+    _Domain("trace_group", "chat", "console_trace_calls", "run_id", repeated=True),
     _Domain("trace_event", "chat", "console_trace_events", "event_id"),
     _Domain("trace_node", "chat", "console_trace_surface_nodes", "node_id"),
     _Domain(
@@ -321,6 +322,11 @@ def _reserve(domain, source, canonical, fingerprint):
     existing = [row[domain.column] for row in canonical]
     if any(type(value) is not domain.scalar for value in original + existing):
         raise ValueError("mobile_identity_type_invalid:" + domain.name)
+    if domain.name == "trace_group":
+        from tldw_chatbook.Chat.console_trace_repository import _nonempty
+
+        for identity in original + existing:
+            _nonempty(identity, "run_id")
     if domain.repeated:
         # A rule owns several revision rows; its logical identity reserves once.
         original, existing = list(set(original)), list(set(existing))
@@ -367,6 +373,47 @@ def _reserve(domain, source, canonical, fingerprint):
         yield _Reservation(domain.name, identity, target)
 
 
+def _historical_locators(reads, purpose):
+    """Retained revision locators share live domains without creating live owners."""
+    messages = _rows(reads, purpose, "chat", "messages")
+    revisions = _rows(reads, purpose, "chat", "console_trace_semantic_revisions")
+    owners = {}
+    sequences = set()
+    revision_by_id = {row["revision_id"]: row for row in revisions}
+    for row in messages:
+        owners[row["id"]] = row["conversation_id"]
+    for row in revisions:
+        message, conversation = row["source_message_id"], row["source_conversation_id"]
+        if any(
+            type(value) is not str or not value for value in (message, conversation)
+        ):
+            raise ValueError("mobile_identity_historical_locator_invalid")
+        if message in owners and owners[message] != conversation:
+            raise ValueError("mobile_identity_historical_owner_ambiguous")
+        owners[message] = conversation
+        if row["live_message_id"] is not None and row["live_message_id"] != message:
+            raise ValueError("mobile_identity_historical_live_locator_invalid")
+        sequence = row["revision_sequence"]
+        key = (conversation, message, sequence)
+        if type(sequence) is not int or sequence < 0 or key in sequences:
+            raise ValueError("mobile_identity_historical_sequence_invalid")
+        sequences.add(key)
+        predecessor = row["predecessor_revision_id"]
+        if predecessor is not None:
+            prior = revision_by_id.get(predecessor)
+            if (
+                prior is None
+                or (prior["source_message_id"], prior["source_conversation_id"])
+                != (message, conversation)
+                or prior["revision_sequence"] >= sequence
+            ):
+                raise ValueError("mobile_identity_historical_predecessor_invalid")
+    return {
+        "message": {row["source_message_id"] for row in revisions},
+        "conversation": {row["source_conversation_id"] for row in revisions},
+    }
+
+
 def _plan_identities(reads):
     from .mobile_captured_sqlite import _CapturedSQLite
 
@@ -376,15 +423,22 @@ def _plan_identities(reads):
     captured = reads.captured
     fingerprint = captured.preview.source_fingerprint
     reservations = []
+    historical = {
+        purpose: _historical_locators(reads, purpose)
+        for purpose in ("legacy", "canonical")
+    }
     for domain in _DOMAINS:
-        reservations.extend(
-            _reserve(
-                domain,
-                _rows(reads, "legacy", domain.family, domain.table),
-                _rows(reads, "canonical", domain.family, domain.table),
-                fingerprint,
-            )
-        )
+        partitions = []
+        for purpose in ("legacy", "canonical"):
+            rows = _rows(reads, purpose, domain.family, domain.table)
+            if domain.name in {"message", "conversation"}:
+                existing = {row[domain.column] for row in rows}
+                rows += tuple(
+                    {domain.column: value}
+                    for value in sorted(historical[purpose][domain.name] - existing)
+                )
+            partitions.append(rows)
+        reservations.extend(_reserve(domain, *partitions, fingerprint))
     for domain, table in (
         ("memory_sequence", "console_conversation_memory_selections"),
         ("fleet_sequence", "fleet_progress_messages"),

@@ -20413,3 +20413,17 @@ migrated it back to82, and authenticated capture correctly refused the member
 (expected81, manifest82). Seed linked metadata with actual returned IDs while the
 native owner is still open, before legacy finalization; preserve the admission
 check instead of changing captured versions or weakening schema validation.
+
+
+## Retire capture and fixture admission overrides before a native oracle
+
+**TASK-36766 T, 2026-10-27.** The mapped character-reader oracle first refused
+ordinary DB admission while capture was active (67.73-second epoch), then still
+refused after physical retirement (59.05-second epoch): fixture bootstrap overrides
+continued to select the durable pending operation. Keeping those fixture-only
+patches in `monkeypatch.context()` through capture/no-effects/retirement, then
+restoring the pre-fixture private pytest selector and bootstrap before opening the
+disposable copied canonical DB, reached actual native preview (64.21 seconds).
+Assert the restored paths are the existing private test environment. Preserve the
+pending evidence and ordinary admission guards; a copied DB and constructor do not
+create source authority, and an unreached reader is not reader qualification.

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, replace
 import hashlib
 import json
 import sqlite3
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_JSON_MAX_BYTES,
     CaptureDecodeLimitError,
-    CaptureUnavailableError,
     CaptureDetail,
+    CaptureUnavailableError,
     ExchangeCapture,
     capture_from_storage,
     history_elision_marker,
@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_trace_models import (
     TraceOmission,
 )
 from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
 from tldw_chatbook.Chat.console_trace_redaction import CREDENTIAL_FILTER_VERSION
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -79,11 +80,17 @@ def _canonical_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _json_from_artifact(value: bytes) -> object:
+def _json_from_artifact(
+    value: bytes, *, _read_budget: _TraceReadBudget | None = None
+) -> object:
+    if _read_budget is not None:
+        _read_budget.json(value)
     return json.loads(value.decode("utf-8"))
 
 
-def _sanitize_legacy_message(value: object) -> tuple[object, bool]:
+def _sanitize_legacy_message(
+    value: object, *, _read_budget: _TraceReadBudget | None = None
+) -> tuple[object, bool]:
     """Sanitize one row, avoiding repeated scans of known-safe field names.
 
     Exact ordinary transcript rows have only ``role`` and ``content`` keys.
@@ -92,9 +99,12 @@ def _sanitize_legacy_message(value: object) -> tuple[object, bool]:
     two constant keys across every accumulated legacy snapshot.
     """
 
+    if _read_budget is not None:
+        _read_budget.container(2)
     if isinstance(value, Mapping) and set(value) == {"role", "content"}:
         sanitized, _redacted = sanitize_capture_value_with_omission(
-            [value["role"], value["content"]]
+            [value["role"], value["content"]],
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
         )
         if isinstance(sanitized, list) and len(sanitized) == 2:
             return {
@@ -102,7 +112,9 @@ def _sanitize_legacy_message(value: object) -> tuple[object, bool]:
                 "content": sanitized[1],
             }, False
         return dict(_SANITIZER_OMISSION), True
-    sanitized, _redacted = sanitize_capture_value_with_omission(value)
+    sanitized, _redacted = sanitize_capture_value_with_omission(
+        value, **({"_read_budget": _read_budget} if _read_budget is not None else {})
+    )
     return sanitized, sanitized == _SANITIZER_OMISSION
 
 
@@ -442,7 +454,9 @@ class LegacyTraceNormalizer:
             decoded_bytes=decoded_bytes,
         )
 
-    def read_calls(self, message_id: str) -> tuple[NormalizedTraceCall, ...]:
+    def read_calls(
+        self, message_id: str, *, _read_budget: _TraceReadBudget | None = None
+    ) -> tuple[NormalizedTraceCall, ...]:
         """Read verified legacy snapshots for one assistant message."""
 
         if type(message_id) is not str or not message_id:
@@ -454,7 +468,7 @@ class LegacyTraceNormalizer:
             ).fetchone()
             if owner is None or type(owner[0]) is not str:
                 return ()
-            rows = cursor.execute(
+            selected = cursor.execute(
                 """SELECT call.call_id
                      FROM console_trace_calls AS call
                      JOIN console_trace_request_headers AS header
@@ -463,31 +477,60 @@ class LegacyTraceNormalizer:
                       AND header.route_identity = 'legacy_snapshot'
                     ORDER BY call.run_id, call.call_sequence, call.call_id""",
                 (message_id,),
-            ).fetchall()
-            return tuple(
-                call
-                for (call_id,) in rows
-                if (call := self._read_call(cursor, str(call_id), str(owner[0])))
-                is not None
             )
+            rows = []
+            for row in selected:
+                if _read_budget is not None:
+                    _read_budget.value(row)
+                    _read_budget.container()
+                rows.append(row)
+            result = []
+            for (call_id,) in rows:
+                if _read_budget is not None:
+                    _read_budget.container()
+                call = self._read_call(
+                    cursor,
+                    str(call_id),
+                    str(owner[0]),
+                    **(
+                        {"_read_budget": _read_budget}
+                        if _read_budget is not None
+                        else {}
+                    ),
+                )
+                if call is not None:
+                    result.append(call)
+            return tuple(result)
 
     def _read_call(
         self,
         cursor: sqlite3.Cursor,
         call_id: str,
         conversation_id: str,
+        *,
+        _read_budget: _TraceReadBudget | None = None,
     ) -> NormalizedTraceCall | None:
-        call = self.repository.get_call(cursor, call_id)
+        call = self.repository.get_call(
+            cursor,
+            call_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if (
             call is None
             or call.surface_node_id is None
             or call.request_header_id is None
         ):
             return None
-        header = self.repository.get_request_header(cursor, call.request_header_id)
+        header = self.repository.get_request_header(
+            cursor,
+            call.request_header_id,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         link = self.repository.get_response_link(cursor, call_id)
         if header is None or link is None or link.artifact_id is None:
             return None
+        if _read_budget is not None:
+            _read_budget.container(len(header.components))
         components = {
             item.component_kind: item.artifact_id for item in header.components
         }
@@ -504,9 +547,18 @@ class LegacyTraceNormalizer:
             or response_artifact is None
         ):
             return None
-        metadata = _json_from_artifact(metadata_artifact.sanitized_bytes)
-        request_value = _json_from_artifact(request_artifact.sanitized_bytes)
-        response_value = _json_from_artifact(response_artifact.sanitized_bytes)
+        metadata = _json_from_artifact(
+            metadata_artifact.sanitized_bytes,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
+        request_value = _json_from_artifact(
+            request_artifact.sanitized_bytes,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
+        response_value = _json_from_artifact(
+            response_artifact.sanitized_bytes,
+            **({"_read_budget": _read_budget} if _read_budget is not None else {}),
+        )
         if (
             not isinstance(metadata, dict)
             or not isinstance(request_value, dict)
@@ -532,7 +584,7 @@ class LegacyTraceNormalizer:
         node = self.repository.get_surface_node(cursor, call.surface_node_id)
         if node is None or node.component_kind != "legacy_snapshot":
             return None
-        rows = cursor.execute(
+        selected = cursor.execute(
             """WITH RECURSIVE legacy_chain(
                    node_id, predecessor_node_id, component_kind, reference_kind,
                    semantic_revision_id, artifact_id, omission_reason_code, sequence
@@ -555,7 +607,13 @@ class LegacyTraceNormalizer:
                   WHERE component_kind = 'legacy_snapshot_message'
                   ORDER BY sequence""",
             (call.surface_node_id,),
-        ).fetchall()
+        )
+        rows = []
+        for row in selected:
+            if _read_budget is not None:
+                _read_budget.value(row)
+                _read_budget.container(4)
+            rows.append(row)
         revision_ids = tuple(
             str(row[4]) for row in rows if row[3] == "revision" and row[4] is not None
         )
@@ -574,9 +632,17 @@ class LegacyTraceNormalizer:
                 cursor,
                 revision_ids=missing_revision_ids[offset : offset + 256],
                 expected_conversation_id=conversation_id,
+                **({"_read_budget": _read_budget} if _read_budget is not None else {}),
             )
             for revision_id, candidate in projected.items():
-                value, failed = _sanitize_legacy_message(candidate)
+                value, failed = _sanitize_legacy_message(
+                    candidate,
+                    **(
+                        {"_read_budget": _read_budget}
+                        if _read_budget is not None
+                        else {}
+                    ),
+                )
                 if failed or not isinstance(value, dict):
                     return None
                 projected_revisions[revision_id] = value
@@ -604,7 +670,14 @@ class LegacyTraceNormalizer:
                 artifact = self.repository.get_artifact(cursor, str(artifact_id))
                 if artifact is None:
                     return None
-                value = _json_from_artifact(artifact.sanitized_bytes)
+                value = _json_from_artifact(
+                    artifact.sanitized_bytes,
+                    **(
+                        {"_read_budget": _read_budget}
+                        if _read_budget is not None
+                        else {}
+                    ),
+                )
                 uncertainty.append("legacy_message_source_unknown")
             elif reference_kind == "omission":
                 value = {"kind": "legacy_omission", "reason": omission_reason_code}
@@ -612,7 +685,12 @@ class LegacyTraceNormalizer:
                     uncertainty.append("legacy_history_omitted")
             else:
                 return None
+            if _read_budget is not None:
+                _read_budget.value(value)
             messages.append(value)
+        if _read_budget is not None:
+            _read_budget.value(request_value)
+            _read_budget.container(20)
         request = dict(request_value)
         if metadata.get("messages_payload_present"):
             request["messages_payload"] = messages
