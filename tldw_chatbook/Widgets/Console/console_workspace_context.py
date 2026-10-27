@@ -45,7 +45,11 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
-from .compose_delta import ComposeReadView, plan_in_place_delta
+from .compose_delta import (
+    ComposeReadView,
+    detached_styles_skipped,
+    plan_in_place_delta,
+)
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -881,11 +885,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
         writes = None
         try:
-            before = compose(self)
-            self._state = state
-            # Composed last, so the recorded signatures and reads describe
-            # the state the patched tree shows.
-            after = compose(self)
+            # TASK-33620.15.20: neither tree is ever mounted, so skip the
+            # restyle each new node would get (21-34 ms per send live).
+            with detached_styles_skipped(self.app):
+                before = compose(self)
+                self._state = state
+                # Composed last, so the recorded signatures and reads describe
+                # the state the patched tree shows.
+                after = compose(self)
             writes = plan_in_place_delta(
                 [
                     child

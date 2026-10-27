@@ -31,14 +31,20 @@ to know which classes are visual.
 ``ComposeReadView`` is the other half of the same question, asked before any
 compose runs: which state fields did the last compose read? A delta confined
 to fields it did not read needs neither a patch nor a rebuild.
+
+``detached_styles_skipped`` keeps the diff composes cheap: nothing they build
+is ever mounted, so Textual's restyle of each new node is skipped while they
+run (TASK-33620.15.20).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any
 
 from rich.text import Text
+from textual.app import App
 from textual.containers import Container, Horizontal, Vertical
 from textual.content import Content
 from textual.widget import Widget
@@ -66,6 +72,52 @@ _DELTA_STORAGE = frozenset({"_Static__content", "_tooltip"})
 #: Public objects Textual gives every widget instance: ``styles`` is compared
 #: through its inline rules, and the other two carry no compose-set state.
 _PER_INSTANCE_OBJECTS = frozenset({"styles", "message_signal", "lock"})
+
+
+_UNSHADOWED = object()
+
+
+@contextmanager
+def detached_styles_skipped(app: App) -> Iterator[None]:
+    """Skip Textual's restyle of nodes outside the DOM while the block runs.
+
+    TASK-33620.15.20. Every ``add_class``/``remove_class``/``set_class`` call
+    restyles its node at once (``DOMNode.update_node_styles`` ->
+    ``App.update_styles`` -> ``Stylesheet.apply``), even for a widget a
+    compose has only just built. Textual styles a widget again when it
+    mounts (``App._register`` applies the stylesheet after attaching it), and
+    the trees ``plan_in_place_delta`` diffs are never mounted, so for them
+    that styling is never read. It is not free: measured live on origin/dev
+    3be493413a (160x45, Anthropic claude-haiku-4-5), the Conversations tray's
+    two diff composes for a send's "Running" marker restyled 64-69 nodes for
+    21-34 ms, which made the first poll tick after acceptance the longest
+    UI-loop callback between Enter and the provider POST in 8 of 12 sends.
+
+    Inside the block, a node with no parent (one a compose built, not yet
+    mounted) is not restyled; the app and every mounted node are restyled as
+    usual. The previous binding is restored on every exit.
+
+    Args:
+        app: The running app whose restyles to narrow.
+
+    Yields:
+        None.
+    """
+    restyle = app.update_styles
+    shadowed = vars(app).get("update_styles", _UNSHADOWED)
+
+    def update_styles(node: Any, animate: bool = True) -> None:
+        if node is app or node._parent is not None:
+            restyle(node, animate=animate)
+
+    app.update_styles = update_styles  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        if shadowed is _UNSHADOWED:
+            del app.update_styles
+        else:
+            app.update_styles = shadowed  # type: ignore[method-assign]
 
 
 def _flatten(
