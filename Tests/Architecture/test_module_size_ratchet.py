@@ -549,7 +549,12 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8184,
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7024,
+    # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 7024 -> 7043 (+19). Send's readiness gets one owner,
+    # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
+    # the Workbench, fed by the screen's send-gate attachment predicate.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 7000,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
