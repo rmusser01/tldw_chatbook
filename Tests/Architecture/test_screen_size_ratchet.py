@@ -1637,6 +1637,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: save-state handlers that refresh the footer, the Media forms' busy
     #: refusals, and the notes refusal on the status line with the conflict
     #: callout revealed: 38735 -> 38781 lines, 1394 -> 1397 methods
+    #: 2026-10-27, Task 9 fix round 2 (review R1 N-2/N-3/N-6; same owner
+    #: decision): the interlock release clears the metadata form's refusal
+    #: line, the note save passes ``explicit`` to its outcome, and every
+    #: reset of the analysis form resets its save guard: 38781 -> 38796
+    #: lines, 1397 methods (measured with ``_measure``).
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32828, 1288),
 }
 
