@@ -366,14 +366,18 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
 # the setup wizard could appear; reviewers measured 10-16 s to Welcome. A
 # profile's first launch now plays no splash. This pins both halves: the
 # splash never mounts on a first launch (deterministic: that half fails on
-# any machine), and Welcome is on screen within the budget. Measured 2.5-2.9 s
-# under Pilot on an M-series Mac (2026-10-05, TASK-34100.13 head); the budget
-# shares the screen-switch guard's generous CI headroom. RATCHET (ADR-097):
-# never raise it; a breach means new work landed between launch and Welcome.
+# any machine), and Welcome is on screen within the budget. The clock starts
+# before ``TldwCli()`` is built (review F13: it used to start inside
+# run_test, which left construction out). Measured 4.0-4.4 s that way under
+# Pilot on an M-series Mac at load average 15-25 (2026-10-27, TASK-34100.13);
+# 2.5-2.9 s on the old, later clock. The budget keeps the screen-switch
+# guard's ~2.5x CI headroom, and a returning Full splash (7 s) on top of
+# today's measurement breaches it. RATCHET (ADR-097): never raise it; a
+# breach means new work landed between launch and Welcome.
 # ---------------------------------------------------------------------------
 
-#: Seconds from the app's first frame to the first-run wizard's Welcome step.
-TIME_TO_WELCOME_BUDGET_SECONDS = SCREEN_SWITCH_BUDGET_SECONDS
+#: Seconds from building the app to the first-run wizard's Welcome step.
+TIME_TO_WELCOME_BUDGET_SECONDS = 10.0
 
 
 def _fresh_profile_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -410,11 +414,13 @@ async def test_fresh_profile_reaches_welcome_without_a_splash(
     from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeStep
     from tldw_chatbook.app import TldwCli
 
+    # Review F13: the clock starts before the app is built, so construction
+    # and run_test's startup count toward the budget.
+    started = asyncio.get_running_loop().time()
     app = TldwCli()
     splash_seen = False
     welcome_after: float | None = None
     async with app.run_test(size=(120, 40)) as pilot:
-        started = asyncio.get_running_loop().time()
         deadline = started + 30.0
         while asyncio.get_running_loop().time() < deadline:
             await pilot.pause(0.05)
