@@ -842,3 +842,198 @@ async def test_the_typed_key_record_follows_the_provider_committed_last():
         assert ok, error
 
         assert typed_provider_key({STEP_PROVIDER: step.get_step_data()}) == ""
+
+
+# --- review v5r1 ------------------------------------------------------------------
+
+
+def _ciphertext(value: str = "sk-real-openai-key") -> str:
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    return ConfigEncryption().encrypt_value(value, "earlier-master-pw")
+
+
+@pytest.mark.asyncio
+async def test_an_unsaved_typed_key_is_called_out_on_an_encrypted_config(
+    monkeypatch,
+):
+    # R1-3: a re-run over an encrypted config, a new Anthropic key typed on
+    # Provider, Model skipped. Protect read only "Your keys are protected".
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _install(
+        monkeypatch,
+        {
+            "encryption": {"enabled": True},
+            "api_settings": {"openai": {"api_key": "sk-decrypted-openai-x"}},
+        },
+    )
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container, step = await _open_protect(
+            pilot,
+            wizard,
+            provider_data={
+                "provider_key": "anthropic",
+                "provider_value": "anthropic",
+                "entered_key": True,
+            },
+        )
+        await _until(pilot, lambda: "isn't saved" in _step_text(step), what="state")
+
+        assert "Your saved API keys are encrypted" in _step_text(step)
+        assert "Anthropic key you typed" in _step_text(step)
+        assert _shown_buttons(step) == {
+            "Change password…": "setup-protect-set-password",
+            "Back to Model": "setup-protect-back-to-model",
+        }
+        step.query_one("#setup-protect-back-to-model", Button).press()
+        await _until(
+            pilot,
+            lambda: _current_step_id(container) == STEP_MODEL,
+            what="the Model step",
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_stranded_key_is_named_instead_of_nothing_to_protect(monkeypatch):
+    # R1-4: encryption off, a key still `enc:` under an earlier password.
+    # Protect said "No API key is saved in config.toml".
+    _install(monkeypatch, {"api_settings": {"openai": {"api_key": _ciphertext()}}})
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container, step = await _open_protect(pilot, wizard)
+        await _until(pilot, lambda: "still encrypted" in _step_text(step), what="state")
+        text = _step_text(step)
+
+        assert "No API key is saved" not in text
+        assert "OpenAI key" in text
+        assert "Settings ▸ Providers & Models" in text
+        assert str(CONFIG_PATH) in text
+        assert "enc:" not in text
+        assert _shown_buttons(step) == {}
+
+        await pilot.press("ctrl+n")
+        await _at_summary(pilot, app, container)
+        await _until_progress_box(pilot, wizard, STEP_PROTECT, "–")
+
+
+def _resume_draft(active_step_id: str):
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        SETUP_DRAFT_VERSION,
+        STEP_WELCOME,
+        SetupDraft,
+    )
+
+    return SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=active_step_id,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_PROTECT: {"encryption_enabled": True},
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_never_claims_encryption_the_file_no_longer_has(monkeypatch):
+    # R1-5 / F1 (seen live): encrypt in Protect, Exit setup, turn encryption
+    # off in Settings, relaunch into the resumed wizard. The restore wrote a
+    # fixed "Encryption enabled." under "Your OpenAI key is saved as plain
+    # text… Encrypt with a password…".
+    _install(monkeypatch, {"api_settings": {"openai": {"api_key": "sk-plain-x"}}})
+    app_instance = MagicMock()
+    app_instance.app_config = {}
+    wizard = FirstRunSetupWizard(app_instance, resume_draft=_resume_draft(STEP_PROTECT))
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        step = container.steps[container._step_index_for_id(STEP_PROTECT)]
+        await _until(pilot, lambda: "plain text" in _step_text(step), what="state")
+        await pilot.pause(0.3)
+        status = str(step.query_one("#setup-protect-status", Static).render())
+
+        assert "Encryption enabled" not in status
+        assert "Encryption enabled" not in _step_text(step)
+        assert step.encryption_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_a_resume_past_protect_follows_the_file_on_the_tracker(monkeypatch):
+    # R1-5: resumed past Protect, the checkpoint's encryption_enabled = true
+    # ticked ✓ although config.toml now holds the key as plain text.
+    _install(monkeypatch, {"api_settings": {"openai": {"api_key": "sk-plain-x"}}})
+    app_instance = MagicMock()
+    app_instance.app_config = {}
+    wizard = FirstRunSetupWizard(app_instance, resume_draft=_resume_draft(STEP_SUMMARY))
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        await _at_summary(pilot, app, container)
+        await _until_progress_box(pilot, wizard, STEP_PROTECT, "–")
+
+        assert container.wizard_data[STEP_PROTECT]["encryption_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_continuing_while_encrypting_waits_for_the_outcome(monkeypatch):
+    # R1-6: while the encryption worker runs, Keep as plain text and Next
+    # stayed live, and advancing recorded the pre-encryption state (tracker
+    # '–', checkpoint False) a moment before the keys were encrypted.
+    import threading
+
+    disk = _install(
+        monkeypatch, {"api_settings": {"openai": {"api_key": "sk-plain-openai-x"}}}
+    )
+    release = threading.Event()
+
+    def _slow_enable(password: str) -> bool:
+        release.wait(10)
+        disk.enable_calls.append(password)
+        disk.document = {**disk.document, "encryption": {"enabled": True}}
+        return True
+
+    monkeypatch.setattr(config_module, "enable_config_encryption", _slow_enable)
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            container, step = await _open_protect(pilot, wizard)
+            primary = step.query_one("#setup-protect-set-password", Button)
+            keep = step.query_one("#setup-protect-keep-plain", Button)
+            await _until(pilot, lambda: primary.display, what="the encrypt button")
+
+            step._on_password_result("first-master-pw")
+            await _until(pilot, lambda: step._busy, what="the encrypt worker")
+            assert keep.disabled
+
+            # The disabled button lost focus, so ctrl+n has no container to
+            # reach; a click on Next is how a user continues here.
+            wizard.query_one("#wizard-next", Button).press()
+            await _until(
+                pilot, lambda: "still running" in _pinned_error(wizard), what="refusal"
+            )
+            assert _current_step_id(container) == STEP_PROTECT
+
+            release.set()
+            await _until(
+                pilot,
+                lambda: "Encryption enabled" in _step_text(step),
+                what="the success line",
+            )
+            assert _pinned_error(wizard) == ""
+            assert not keep.display or not keep.disabled
+
+            await pilot.press("ctrl+n")
+            await _at_summary(pilot, app, container)
+            assert container.wizard_data[STEP_PROTECT]["encryption_enabled"] is True
+            await _until_progress_box(pilot, wizard, STEP_PROTECT, "✓")
+    finally:
+        release.set()

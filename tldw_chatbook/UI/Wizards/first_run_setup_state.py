@@ -2075,13 +2075,25 @@ def build_summary_rows(
     from tldw_chatbook.UI.Wizards.first_run_protect_state import (
         encryption_card_path,
         plaintext_secret_paths,
+        stranded_fix_page,
+        stranded_secret_paths,
     )
 
+    stranded = () if encryption_on else stranded_secret_paths(app_config)
     if encryption_on:
         encryption_row = SummaryRow(
             "Key encryption",
             ROW_CONFIGURED,
             f"on — change the password or turn it off in {encryption_card_path()}",
+        )
+    elif stranded:
+        # Review v5r1 (R1-4): "off" hid a key stuck under an earlier password;
+        # encrypting is refused until it is re-entered or cleared.
+        encryption_row = SummaryRow(
+            "Key encryption",
+            ROW_ATTENTION,
+            "off — a saved key is still encrypted with an earlier password and "
+            f"can't be read; re-enter or clear it in {stranded_fix_page(stranded)}",
         )
     elif plaintext_secret_paths(app_config):
         # Review round 1 (R1-F1): the same secrets Protect offers to encrypt

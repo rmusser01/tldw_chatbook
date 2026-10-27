@@ -45,6 +45,9 @@ from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 PRIMARY_BUTTON_ID = "setup-protect-set-password"
 KEEP_PLAIN_BUTTON_ID = "setup-protect-keep-plain"
 BACK_TO_MODEL_BUTTON_ID = "setup-protect-back-to-model"
+#: Why Next waits while an encrypt or a password change is running (review
+#: v5r1, R1-6): committing then recorded the state from before the outcome.
+BUSY_REFUSAL = "Encryption is still running. Wait for it to finish."
 
 
 def _load_persisted_config() -> tuple[Mapping[str, Any], str]:
@@ -157,6 +160,30 @@ class ProtectKeysStep(SetupStep):
         # Nothing is offered until the file has been read.
         for button in self.query(Button):
             button.display = False
+        # Review v5r1 (R1-5/F1): a resumed checkpoint's Protect record says
+        # only whether encryption was on when it was saved -- encryption may
+        # have been turned off in Settings since. Read the file now, so the
+        # record and the tracker follow it even if Protect is never shown.
+        if isinstance(self._recorded_state(), Mapping):
+            self.reload_state()
+
+    def _recorded_state(self) -> object:
+        """The wizard's committed (or resumed) record for this step, if any."""
+        data = getattr(self.wizard, "wizard_data", None)
+        return data.get(wizard_state.STEP_PROTECT) if isinstance(data, dict) else None
+
+    def _sync_recorded_state(self) -> None:
+        """Bring an existing Protect record in line with what was just read."""
+        record = self._recorded_state()
+        if not isinstance(record, Mapping):
+            return
+        self.wizard.wizard_data[wizard_state.STEP_PROTECT] = {
+            **record,
+            **self.get_step_data(),
+        }
+        update = getattr(self.wizard, "update_progress", None)
+        if callable(update):
+            update()
 
     def on_show(self) -> None:
         """Re-derive the state from the config file each time the step shows.
@@ -218,6 +245,7 @@ class ProtectKeysStep(SetupStep):
             )
         self._config_path = path_text
         self.render_state(state)
+        self._sync_recorded_state()
         self._settle_focus()
 
     def render_state(self, state: protect_state.ProtectState) -> None:
@@ -246,7 +274,6 @@ class ProtectKeysStep(SetupStep):
             primary = self.query_one(f"#{PRIMARY_BUTTON_ID}", Button)
             primary.label = copy.primary_label or protect_state.ENCRYPT_LABEL
             primary.display = bool(copy.primary_label)
-            primary.disabled = self._busy
             self.query_one(
                 f"#{KEEP_PLAIN_BUTTON_ID}", Button
             ).display = copy.show_keep_plain
@@ -255,6 +282,31 @@ class ProtectKeysStep(SetupStep):
             ).display = copy.show_back_to_model
         except NoMatches:
             return
+        self._disable_actions(self._busy)
+
+    def _disable_actions(self, busy: bool) -> None:
+        """Every step action waits while an encrypt or change is running."""
+        for button_id in (
+            PRIMARY_BUTTON_ID,
+            KEEP_PLAIN_BUTTON_ID,
+            BACK_TO_MODEL_BUTTON_ID,
+        ):
+            for button in self.query(f"#{button_id}"):
+                button.disabled = busy
+
+    async def commit(self) -> tuple[bool, str]:
+        """Refuse Next while an encrypt or a password change is running.
+
+        Review v5r1 (R1-6): Next and "Keep as plain text" stayed live during
+        the work, and advancing recorded the state from before it ("plain
+        text", tracker '–') a moment before the keys were encrypted.
+
+        Returns:
+            (False, why) while busy, else (True, "").
+        """
+        if self._busy:
+            return False, BUSY_REFUSAL
+        return True, ""
 
     # -- focus ---------------------------------------------------------------
     def _next_button(self) -> Button | None:
@@ -407,10 +459,7 @@ class ProtectKeysStep(SetupStep):
             self.clear_step_error()
         # A newer render supersedes any file read still in flight.
         self._state_generation += 1
-        try:
-            self.query_one(f"#{PRIMARY_BUTTON_ID}", Button).disabled = busy
-        except NoMatches:
-            pass
+        self._disable_actions(busy)
 
     async def _apply_password_worker(self, password: str) -> None:
         if self.is_attached:
