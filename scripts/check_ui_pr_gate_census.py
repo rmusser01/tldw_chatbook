@@ -1267,10 +1267,16 @@ MINIMUM_FILES = 2520
 #   ctrl_s_saves_in_every_editor.py (four real-app boots: notes x2, prompts,
 #   Folder files, ~24 s alone), its `_media` sibling (one production-CSS boot,
 #   ~6 s) and its `_skills` sibling (one real-app boot, ~7 s): 923 -> 926.
+# - task 9 fix round 1 (2026-10-27, review R0, rulings T9-g..j): the notes
+#   file kept its two notes boots (~20 s alone); its prompt and Folder files
+#   arms moved to Tests/UI/test_library_ctrl_s_saves_in_every_editor_extended.py
+#   (~14 s alone), plus Tests/UI/test_library_ctrl_s_chip_follows_save_state.py
+#   (two boots, ~15 s) and the boot-free Tests/UI/test_library_ctrl_s_
+#   refusals.py (~2 s), all timed alone with no plugin: 926 -> 929.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 10 = 2467.
-MINIMUM_FILES = 2467
+# moves; the floor is the measured entry count: 2457 + 13 = 2470.
+MINIMUM_FILES = 2470
 
 
 MINIMUM_FILES = 2038

@@ -104,7 +104,12 @@ _LIBRARY_SCREEN_PATH = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.py"
 #: ``_library_media_rename_cache``) and ``review_done_map_cache`` (was the
 #: screen's lazily created ``_review_done_map_cache``; bare-underscore shim),
 #: each read only by a body that moved to the controller.
-_EXPECTED_MEDIA_STATE_FIELD_COUNT = 88
+#: 2026-10-27, TASK-34000.40 fix round 1 (review I-3): 86 -> 87,
+#: ``saving_analysis`` beside ``analysis_draft`` (the analysis form's own
+#: Save in flight, so a double or held Ctrl+S writes one version; shim
+#: ``_library_media_saving_analysis``). Rebased 2026-11-19 onto
+#: TASK-36952.3.6's 88: 88 -> 89.
+_EXPECTED_MEDIA_STATE_FIELD_COUNT = 89
 
 #: The 2 WIRING attributes the state PR deliberately left on
 #: ``LibraryScreen`` (the ``_conversation_reader_controller``/``_library_
