@@ -735,3 +735,38 @@ not license a generic remapper, BLOB rewriting or invented chronology.
 This prevents trace grouping from acquiring execution authority and prevents silent
 history loss through viewer deduplication. It grants no source mutation,
 insertability, normalization permission or later lifecycle-trigger bypass.
+
+
+### Captured local-character association projection
+
+A nonNULL C-owned local-character authority association may map from the captured
+source default namespace to the captured canonical default namespace only with
+native per-input ownership proof and the complete accepted C conversation/card map.
+The fixed retained adapter obtains local authority through the native context
+validator and invokes CharacterConversationSearchRepository against the actual
+joined conversation and card. Its resolved-row predicate is necessary but not
+sufficient: caller restrictions for local runtime, character kind, canonical decimal
+assistant identity, captured authority, live joined card and conversation visibility
+and deletion must also hold, with exact row provenance.
+
+The mapped association uses the accepted mapped conversation/card/reservation and
+canonical native context; it never substitutes a similarly named or occupied
+canonical card. The same native predicate and complete caller filters qualify the
+mapped inputs. Independent actual original and mapped native transcript-preview and
+revalidation controls must cover distinct contexts, occupied card-ID remapping, and
+foreign, unresolved, missing, deleted and explicit-None cases. Disposable mapped
+consumers qualify the transformation; they do not create source authority.
+
+Ownership and present UI eligibility remain distinct. Provably owned inactive
+history retains its exact deletion and visibility state; two false predicates do
+not prove foreign, missing or ambiguous ownership. Any unproved association keeps
+an exact body-free per-conversation blocker and original provenance. Explicit None
+stays None; remote and persona identities never enter this local-character rule.
+Canonical local identity is unchanged. Citation profiles, fingerprint keys,
+permissions and filesystem bindings retain their separate proof obligations.
+
+This finite projection prevents a foreign or unavailable character chat from
+becoming another character's live chat. No generic adapter, caller cursor or SQL,
+indexing, repair, key provisioning, capture widening, owning write or authority
+activation is granted; every existing retained-scope fence and resource limit
+continues to apply.
