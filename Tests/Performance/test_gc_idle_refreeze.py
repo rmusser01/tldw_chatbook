@@ -125,6 +125,7 @@ def counting_collector(monkeypatch: pytest.MonkeyPatch, calls: list[tuple]) -> N
         monkeypatch: Installs the fakes.
         calls: Receives ``("collect", generation)`` per call.
     """
+
     def collect(generation: int = 2) -> int:
         calls.append(("collect", generation))
         info = {"generation": generation, "collected": 0, "uncollectable": 0}
@@ -358,8 +359,15 @@ class HeldWorkerPass:
 
     def __enter__(self) -> HeldWorkerPass:
         gc.callbacks.append(self._hold)
-        self._thread.start()
-        assert self._started.wait(10), "the worker's pass never started"
+        try:
+            self._thread.start()
+            assert self._started.wait(10), "the worker's pass never started"
+        except BaseException:
+            # ``__exit__`` never runs for a failed ``__enter__``: release the
+            # worker and take the hook out, or every later pass would see it.
+            self._release.set()
+            gc.callbacks.remove(self._hold)
+            raise
         return self
 
     def finish(self) -> None:
@@ -373,7 +381,9 @@ class HeldWorkerPass:
         gc.callbacks.remove(self._hold)
 
 
-def a_worker_pass_ends_inside_every_collect(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+def a_worker_pass_ends_inside_every_collect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[bool]:
     """Every ``gc.collect`` call meets a worker's full pass that ends inside it.
 
     Args:
@@ -435,7 +445,9 @@ def test_a_worker_threads_pass_ending_inside_a_skipped_call_is_not_booked(
         if owed == "compaction":
             assert refreezer.compaction_due(), "a compaction that never ran was booked"
         else:
-            assert gc.get_freeze_count() == frozen, "a skipped call was followed by a freeze"
+            assert gc.get_freeze_count() == frozen, (
+                "a skipped call was followed by a freeze"
+            )
         assert (gc.get_threshold(), gc.isenabled()) == (thresholds, enabled)
     finally:
         gc.unfreeze()
@@ -846,6 +858,59 @@ def test_a_maintenance_waits_for_a_boot_freeze_on_another_thread(
     ui_loop.join(10)
     assert seen == ["waited"], "a maintenance ran inside a boot point's freeze"
     assert outcomes == ["refreeze"], "the boot point's objects counted as growth"
+
+
+def test_a_boot_freeze_waits_for_a_compaction_on_another_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-import's freeze cannot land between a compaction's unfreeze and its collection.
+
+    The compaction unfreezes the heap, then retries its full collection with
+    short sleeps that release the GIL. A pre-import freezing from its own
+    thread in that window would freeze the whole heap again, garbage
+    included, and the compaction would be booked as done having reclaimed
+    nothing. The maintenance holds the refreezer's lock across it, so the
+    boot freeze waits. Real collector, real compaction.
+
+    Args:
+        monkeypatch: Routes the boot point to this refreezer and opens the
+            window inside the compaction.
+    """
+    gc.unfreeze()
+    gc.collect()
+    try:
+        cycle = Cycle()
+        garbage = weakref.ref(cycle)
+        gc.freeze()  # frozen while live, as a shown transcript is
+        del cycle
+        refreezer = real_refreezer()
+        refreezer.note_stranded()
+        monkeypatch.setattr(ui_responsiveness, "_HEAP_REFREEZER", refreezer)
+        froze = threading.Event()
+        seen: list[str] = []
+
+        def preimport() -> None:
+            ui_responsiveness.freeze_long_lived_heap("screen_preimport")
+            froze.set()
+
+        boot = threading.Thread(target=preimport, daemon=True)
+        collect_in_full = ui_responsiveness._collect_in_full
+
+        def window_then_collect() -> None:
+            boot.start()  # the heap is unfrozen now; the collection comes next
+            seen.append("ran" if froze.wait(0.5) else "waited")
+            collect_in_full()
+
+        monkeypatch.setattr(ui_responsiveness, "_collect_in_full", window_then_collect)
+        outcome = refreezer.maintain("conversation_painted")
+        boot.join(10)
+
+        assert outcome == "compact"
+        assert garbage() is None, "the compaction reclaimed nothing"
+        assert seen == ["waited"], "a boot freeze ran inside a compaction"
+        assert froze.is_set(), "the boot freeze never ran"
+    finally:
+        gc.unfreeze()
 
 
 class TranscriptApp(TextualAppGuards, App[None]):

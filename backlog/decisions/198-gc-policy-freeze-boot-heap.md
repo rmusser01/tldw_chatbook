@@ -235,7 +235,10 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    returned 0 with no callback on its own thread, and the count still went
    from 0 to 1 once the worker finished. So a try now counts only when a
    `gc.callbacks` watcher, installed for that one call, sees a
-   generation-2 pass start and stop on the calling thread.
+   generation-2 pass start and stop on the calling thread. The same probe
+   on 3.13.13 and 3.14.6 gave the same result: the caller's own
+   `gc.collect(2)` reports generation 2 start and stop on its thread, and a
+   skipped call reports nothing there.
 
    **Boot freezes are not growth (2026-10-27, TASK-33620.15.12).** The boot
    points freeze through the refreezer. Once it has made its first
@@ -246,6 +249,15 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    first measurement a boot freeze costs nothing extra, because that
    measurement includes it. After it, a boot freeze costs one more walk
    (about 2 ms per 700K objects on 3.12.11).
+
+   So the baseline is now the frozen set's size after the last compaction
+   plus what boot points froze since, and the bound above reads against
+   it: the set never outgrows that baseline by more than the budget plus
+   one re-freeze. The budget is a quarter of that baseline (50K at least),
+   so a boot freeze of D objects raises it by up to D/4, as it always did
+   for a boot freeze before the first measurement. The lock also keeps a boot freeze out of
+   a compaction's window between its unfreeze and its collection, where it
+   would freeze the garbage the compaction is about to reclaim.
 4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
    never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
    the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.

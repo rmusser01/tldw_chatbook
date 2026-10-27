@@ -423,8 +423,15 @@ def _full_pass_ran_here() -> bool:
     """Call ``gc.collect(2)``; True only if its pass started and stopped on this thread.
 
     ``gc.callbacks`` run on the thread whose pass it is, so a watcher keyed
-    to the caller's thread ignores any other thread's pass. It is installed
-    only for the call: a permanent one would run at every young collection.
+    to the caller's thread ignores any other thread's pass (probed on
+    3.12.11, 3.13.13 and 3.14.6). It is installed only for the call: a
+    permanent one would run at every young collection.
+
+    CPython walks ``gc.callbacks`` by index, so removing the watcher while
+    another thread's pass walks the list can make that pass skip the
+    callback after it. Nothing else in tldw_chatbook registers one; a
+    permanent callback added later should be registered at import, ahead
+    of any watcher.
     """
     caller = threading.get_ident()
     phases: list[str] = []
@@ -441,7 +448,7 @@ def _full_pass_ran_here() -> bool:
     return phases[:1] == ["start"] and "stop" in phases
 
 
-def freeze_long_lived_heap(reason: str, *, generation: int | None = 1) -> int:
+def freeze_long_lived_heap(reason: str) -> int:
     """Move the objects alive now into CPython's permanent GC generation.
 
     ADR-198 (PERF-11, TASK-33270): with nothing frozen, every automatic
@@ -456,14 +463,11 @@ def freeze_long_lived_heap(reason: str, *, generation: int | None = 1) -> int:
 
     Args:
         reason: What froze the heap, for the DEBUG log line.
-        generation: The oldest generation collected before the freeze, or
-            None when the caller has just collected.
 
     Returns:
         The permanent generation's size after the freeze.
     """
-    if generation is not None:
-        gc.collect(generation)
+    gc.collect(1)
     frozen = _HEAP_REFREEZER.freeze_at_boot_point(_freeze)
     logging.getLogger(__name__).debug("gc heap frozen (%s): %d objects", reason, frozen)
     return frozen
@@ -575,13 +579,13 @@ class IdleHeapRefreezer:
     ``gc.freeze()`` never collects a frozen object, and Textual widgets are
     cyclic, so whatever is frozen live and dropped later (a switched-away
     transcript, a recomposed rail) would leak. So once the permanent
-    generation has grown by ``growth_ratio`` of its size after the last
-    compaction (and by at least ``min_growth``), the next idle moment of
-    ``compaction_quiet_seconds`` compacts instead: unfreeze, collect the whole
-    heap, freeze the survivors. No re-freeze runs while a compaction is due,
-    so the permanent generation never outgrows its size after the last
-    compaction by more than that budget plus one re-freeze, and the next
-    compaction reclaims whatever in it has become garbage.
+    generation has grown by ``growth_ratio`` of its baseline (its size after
+    the last compaction, plus what boot points froze since) and by at least
+    ``min_growth``, the next idle moment of ``compaction_quiet_seconds``
+    compacts instead: unfreeze, collect the whole heap, freeze the survivors.
+    No re-freeze runs while a compaction is due, so the permanent generation
+    never outgrows that baseline by more than the budget plus one re-freeze,
+    and the next compaction reclaims whatever in it has become garbage.
 
     The budget alone let switched-away transcripts pile up: live, across 24
     chat switches, one compaction met 212-373K dead objects and held the UI
@@ -601,7 +605,9 @@ class IdleHeapRefreezer:
     collector is never disabled and its thresholds are never touched.
 
     The boot points (``_ui_ready``, the pre-imports) freeze through
-    :meth:`freeze_at_boot_point`, so their objects never count as growth.
+    :meth:`freeze_at_boot_point`, so their objects never count as growth:
+    they move the baseline, and the budget with it, exactly as they would
+    had they frozen before the first look.
 
     CPython skips ``gc.collect()`` while another thread's pass is in
     progress. A maintenance that meets one (after a few short retries) reports
@@ -627,7 +633,8 @@ class IdleHeapRefreezer:
             quiet_seconds: Quiet time before a re-freeze.
             compaction_quiet_seconds: Quiet time before a compaction.
             growth_ratio: Growth of the permanent generation, as a fraction
-                of its size after the last compaction, that makes one due.
+                of its baseline (its size after the last compaction plus what
+                boot points froze since), that makes one due.
             min_growth: The smallest growth that makes a compaction due.
             clock: Monotonic clock, injectable for tests.
             enabled: Whether requests are honoured at all.
@@ -650,17 +657,22 @@ class IdleHeapRefreezer:
         self._requested_at = float("-inf")
         self._request: tuple[str, weakref.ref[Any], Callable[[Any], bool]] | None = None
         self._generation = 0
-        #: Permanent generation's size after the last compaction (or first look).
+        #: Permanent generation's size after the last compaction (or first
+        #: look), plus what boot points froze since.
         self._baseline: int | None = None
         #: Its size when last walked.
         self._frozen = 0
-        #: Whether a re-freeze ran since that walk, so ``_frozen`` is stale.
+        #: Whether a re-freeze or boot freeze ran since that walk, so
+        #: ``_frozen`` is stale.
         self._stale = False
         #: Whether frozen objects became garbage since the last compaction.
         self._stranded = False
         #: Held by a boot point's freeze and by every walk and maintenance:
-        #: the pre-imports freeze from their own threads (TASK-33620.15.12).
-        #: Reentrant, so a callback on the holding thread cannot deadlock it.
+        #: the pre-imports freeze from their own threads (TASK-33620.15.12),
+        #: and one landing between a compaction's unfreeze and its
+        #: collection would freeze that garbage again. Reentrant because
+        #: :meth:`maintain` calls :meth:`_look` and :meth:`compaction_due`
+        #: while holding it.
         self._lock = threading.RLock()
         #: ``(action, reason)`` of each maintenance run, newest last.
         self.actions: deque[tuple[str, str]] = deque(maxlen=32)
