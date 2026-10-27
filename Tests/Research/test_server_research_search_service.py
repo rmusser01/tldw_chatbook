@@ -335,6 +335,9 @@ def test_no_interop_module_calls_private_client_request():
     root = pathlib.Path(research_search_module.__file__).parents[1]
     private = re.compile(r"\._request\(|getattr\([^)]*[\"']_request[\"']")
     # getattr(<client-ish>, <non-literal>): a variable name can hide "_request".
+    # Covers client-named receivers only: ~50 legitimate dynamic getattr lookups
+    # under *_Interop (e.g. getattr(service, method_name), lazy __init__
+    # re-exports) make a blanket ban infeasible; a static check cannot close dynamic dispatch.
     dynamic = re.compile(r"getattr\(\s*[\w.]*client\w*\s*,\s*[^\"'\s]")
     offenders = [
         str(p.relative_to(root))
