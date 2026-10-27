@@ -1470,3 +1470,38 @@ def test_licence_ids_render_in_canonical_spdx_case() -> None:
     assert display_license("apache-2.0") == "Apache-2.0"
     assert display_license("NOASSERTION") == "Unknown / not declared"
     assert display_license("Custom[v1]") == "Custom[v1]"
+
+
+def test_a_licence_link_to_the_model_card_is_not_called_licence_text(
+    tmp_path: Path,
+) -> None:
+    """TASK-34100.14 review F8-b: OmniVoice declares its licences on its
+    model card (two licences, ``license_id="other"``), so its licence link
+    is the repository page. The review called that page "Licence text" --
+    the mirror image of the original mislabel. A link to the model's own
+    repository page reads "Licence terms (model card)"; a real licence
+    document keeps "Licence text".
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.Widgets.ModelArtifacts.plan_panel import plan_details_text
+
+    report = _report(tmp_path, repository="ct03/omnivoice-onnx-int8hq")
+    card = replace(
+        report,
+        entries=(
+            replace(
+                report.entries[0],
+                license_url="https://huggingface.co/ct03/omnivoice-onnx-int8hq",
+            ),
+        ),
+    )
+
+    details = plan_details_text(card, model_label="OmniVoice voice model")
+    assert (
+        "Licence terms (model card): "
+        "https://huggingface.co/ct03/omnivoice-onnx-int8hq"
+    ) in details
+    assert "Licence text:" not in details
+    plain = plan_details_text(report, model_label="OmniVoice voice model")
+    assert "Licence text: https://example.test/license" in plain

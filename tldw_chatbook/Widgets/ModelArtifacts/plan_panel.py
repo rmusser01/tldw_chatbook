@@ -136,6 +136,19 @@ def plan_summary_text(report: PreflightReport, *, model_label: str) -> str:
     return "\n".join(lines)
 
 
+def _licence_link_line(row: PlanRow) -> str:
+    """Label a component's licence link by what it points at.
+
+    TASK-34100.14 review F8-b: a model that states its licences on its model
+    card (OmniVoice: two licences, ``license_id="other"``) links to its own
+    repository page, which is not licence text.
+    """
+    card = f"https://huggingface.co/{row.repository}"
+    if row.license_url.rstrip("/") == card:
+        return f"Licence terms (model card): {row.license_url}"
+    return f"Licence text: {row.license_url}"
+
+
 def plan_details_text(
     report: PreflightReport,
     *,
@@ -166,7 +179,7 @@ def plan_details_text(
                 f"Source: {row.repository}{installed}",
                 f"Revision: {row.revision}",
                 f"Licence: {display_license(row.license_id)}",
-                *((f"Licence text: {row.license_url}",) if row.license_url else ()),
+                *((_licence_link_line(row),) if row.license_url else ()),
                 f"Precision: {row.precision}",
                 f"Contents: {files}, {format_mib(row.total_bytes)}",
                 f"Provenance: {row.provenance}",
