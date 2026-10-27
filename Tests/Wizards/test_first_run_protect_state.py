@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.UI.Screens.settings_encryption import ENCRYPTION_CARD_PATH
+from tldw_chatbook.UI.Wizards import first_run_protect_state as protect_module
 from tldw_chatbook.UI.Wizards.first_run_protect_state import (
     NOTHING_TO_PROTECT,
     PROTECT_ENCRYPTED,
@@ -74,7 +75,117 @@ def test_a_stranded_encrypted_key_is_not_offered_as_plain_text():
     state = read_protect_state(
         {"api_settings": {"openai": {"api_key": ciphertext}}}, {}
     )
-    assert state.kind == PROTECT_NOTHING
+    assert state.kind != PROTECT_PLAINTEXT
+
+
+_PROVIDERS_PAGE = "Settings ▸ Providers & Models"
+_ADVANCED_PAGE = "Settings ▸ Advanced Config"
+
+
+def test_a_stranded_key_is_named_never_called_absent():
+    # Review v5r1 (R1-4): encryption off, a key still `enc:` under an
+    # earlier password. Protect said "No API key is saved in config.toml, so
+    # there is nothing to encrypt" -- a key IS saved; it just can't be read.
+    ciphertext = ConfigEncryption().encrypt_value("sk-real", "earlier-pw")
+    state = read_protect_state(
+        {"api_settings": {"openai": {"api_key": ciphertext}}}, {}
+    )
+    copy = protect_copy(state, config_path="/p/config.toml")
+
+    assert state == ProtectState(
+        protect_module.PROTECT_STRANDED,
+        stranded=("OpenAI key",),
+        stranded_where=_PROVIDERS_PAGE,
+    )
+    assert "No API key is saved" not in copy.body
+    assert "nothing to encrypt" not in copy.body
+    assert "Your saved OpenAI key is still encrypted" in copy.body
+    assert f"Re-enter or clear it in {_PROVIDERS_PAGE}" in copy.body
+    assert copy.path_line == "Config file: /p/config.toml"
+    # Encrypting is refused while a value is stranded: no offer to fail.
+    assert copy.primary_label == ""
+    assert not copy.show_keep_plain
+    assert ENCRYPTION_CARD_PATH in copy.later_line
+    assert not any("Skip" in line for line in (copy.title, copy.body))
+
+
+def test_a_stranded_key_beside_a_plain_one_names_both_and_offers_nothing():
+    ciphertext = ConfigEncryption().encrypt_value("sk-real", "earlier-pw")
+    state = read_protect_state(
+        {
+            "api_settings": {
+                "openai": {"api_key": ciphertext},
+                "anthropic": {"api_key": "sk-ant-plain"},
+            },
+            "API": {"groq_api_key": ConfigEncryption().encrypt_value("g", "pw")},
+        },
+        {},
+    )
+    copy = protect_copy(state, config_path="/p/config.toml")
+
+    assert state.kind == protect_module.PROTECT_STRANDED
+    assert state.stranded == ("OpenAI key", "Groq key")
+    assert state.providers == ("Anthropic",)
+    # A legacy `[API]` value is not editable on Providers & Models.
+    assert state.stranded_where == _ADVANCED_PAGE
+    assert "OpenAI key and Groq key are still encrypted" in copy.body
+    assert "Your Anthropic key is saved as plain text" in copy.body
+    assert copy.primary_label == ""
+
+
+def test_a_stranded_key_for_the_provider_just_typed_is_called_unsaved_too():
+    # Saving the typed key on Model replaces the stranded value, so say so.
+    ciphertext = ConfigEncryption().encrypt_value("sk-real", "earlier-pw")
+    state = read_protect_state(
+        {"api_settings": {"openai": {"api_key": ciphertext}}},
+        {},
+        typed_provider_key="openai",
+    )
+    copy = protect_copy(state, config_path="/p/config.toml")
+
+    assert state.kind == protect_module.PROTECT_STRANDED
+    assert state.unsaved_provider == "OpenAI"
+    assert "The OpenAI key you typed isn't saved" in copy.body
+    assert copy.show_back_to_model
+
+
+def test_an_unsaved_typed_key_is_called_out_on_an_encrypted_config():
+    # Review v5r1 (R1-3): a re-run over an encrypted config, a new Anthropic
+    # key typed on Provider, Model skipped. Protect returned "encrypted"
+    # before it looked at the typed key: no callout, no Back to Model.
+    state = read_protect_state(
+        {
+            "encryption": {"enabled": True},
+            "api_settings": {"openai": {"api_key": "sk-decrypted"}},
+        },
+        {},
+        typed_provider_key="anthropic",
+    )
+    copy = protect_copy(state, config_path="/p/config.toml")
+
+    assert state == ProtectState(PROTECT_ENCRYPTED, unsaved_provider="Anthropic")
+    assert "Your saved API keys are encrypted" in copy.body
+    assert "The Anthropic key you typed isn't saved" in copy.body
+    assert copy.show_back_to_model
+    assert copy.primary_label == "Change password…"
+
+
+@pytest.mark.parametrize(
+    "openai_value",
+    ["sk-decrypted", ConfigEncryption().encrypt_value("sk-real", "session-pw")],
+    ids=["unlocked", "locked"],
+)
+def test_a_typed_key_saved_into_an_encrypted_config_is_not_called_out(openai_value):
+    state = read_protect_state(
+        {
+            "encryption": {"enabled": True},
+            "api_settings": {"openai": {"api_key": openai_value}},
+        },
+        {},
+        typed_provider_key="openai",
+    )
+
+    assert state == ProtectState(PROTECT_ENCRYPTED)
 
 
 def test_a_legacy_api_table_key_is_offered_and_named():
@@ -271,6 +382,41 @@ def test_a_fresh_real_config_file_has_nothing_to_protect(real_config_file):
     assert _protect_state_from_disk().kind == PROTECT_NOTHING
 
 
+def test_a_really_encrypted_config_file_reads_encrypted_unlocked_or_locked(
+    real_config_file,
+):
+    # Review v5r1 (TE-G4BV5-2): every other "already encrypted" test hands
+    # Protect a dict with `[encryption]` in it -- the pattern that hid the
+    # original bug (the in-memory view has no such table). This one encrypts a
+    # real file with the real engine and reads it back the way the step does.
+    import sys
+
+    real_config_file('[api_settings.openai]\napi_key = "sk-plain-protect-probe"\n')
+    module = sys.modules["tldw_chatbook.config"]
+    assert _protect_state_from_disk() == ProtectState(
+        PROTECT_PLAINTEXT, providers=("OpenAI",)
+    )
+
+    assert module.enable_config_encryption("protect-probe-master-pw") is True
+    assert _protect_state_from_disk().kind == PROTECT_ENCRYPTED
+
+    module.clear_encryption_password()  # a session without the password
+    module._SETTINGS_CACHE = None
+    module._CONFIG_CACHE = None
+    assert _protect_state_from_disk().kind == PROTECT_ENCRYPTED
+
+
+def test_a_stranded_key_in_a_real_config_file_is_named(real_config_file):
+    # The read-back of a file with encryption off keeps `enc:` as written.
+    ciphertext = ConfigEncryption().encrypt_value("sk-real", "earlier-pw")
+    real_config_file(f'[api_settings.openai]\napi_key = "{ciphertext}"\n')
+
+    state = _protect_state_from_disk()
+
+    assert state.kind == protect_module.PROTECT_STRANDED
+    assert state.stranded == ("OpenAI key",)
+
+
 def test_env_keys_are_named_by_variable():
     state = read_protect_state(
         {
@@ -332,7 +478,7 @@ def test_only_a_stored_plaintext_key_gets_the_offer(state):
     offered = copy.primary_label == "Encrypt with a password…"
     assert offered is (state.kind == PROTECT_PLAINTEXT)
     assert copy.show_keep_plain is offered
-    assert copy.show_back_to_model is (state.kind == PROTECT_UNSAVED)
+    assert copy.show_back_to_model is bool(state.unsaved_provider)
     if state.kind in NOTHING_TO_PROTECT:
         assert "master password" not in copy.body  # no pitch
         assert copy.primary_label == ""
@@ -396,8 +542,10 @@ def test_tracker_ticks_protect_only_when_the_keys_are_encrypted():
         {"encryption_enabled": False, "protect_state": PROTECT_UNREADABLE},
         # A session resumed past Protect: the checkpoint keeps only this.
         {"encryption_enabled": False},
+        # Review v5r1 (R1-4): a key stuck under an earlier password.
+        {"encryption_enabled": False, "protect_state": "stranded"},
     ],
-    ids=["kept-plain-text", "unreadable", "resumed"],
+    ids=["kept-plain-text", "unreadable", "resumed", "stranded"],
 )
 def test_tracker_never_ticks_protect_when_the_keys_were_not_encrypted(record):
     items = setup_progress_items(
@@ -458,6 +606,32 @@ def test_summary_flags_the_same_plain_text_secrets_protect_offers():
     }
     assert rows["Key encryption"].state == ROW_ATTENTION
     assert "plain text" in rows["Key encryption"].detail
+
+
+def test_summary_names_a_stranded_key_instead_of_reading_off():
+    # Review v5r1 (R1-4): Summary said "Key encryption — off" over a key
+    # that is still encrypted under an earlier password and can't be read.
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_ATTENTION
+
+    ciphertext = ConfigEncryption().encrypt_value("sk-real", "earlier-pw")
+    rows = {
+        row.label: row
+        for row in build_summary_rows(
+            {
+                "api_settings": {
+                    "openai": {"api_key": ciphertext},
+                    "anthropic": {"api_key": "sk-ant-plain"},
+                }
+            },
+            {},
+            rag_deps_installed=False,
+        )
+    }
+    row = rows["Key encryption"]
+
+    assert row.state == ROW_ATTENTION
+    assert "still encrypted with an earlier password" in row.detail
+    assert _PROVIDERS_PAGE in row.detail
 
 
 def test_an_unreadable_config_never_offers_or_claims_plain_text():

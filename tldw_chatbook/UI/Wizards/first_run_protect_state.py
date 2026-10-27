@@ -24,6 +24,13 @@ uses) plus the environment and the provider a key was typed for:
 * ``nothing`` -- no key anywhere.
 * ``unreadable`` -- config.toml could not be read and its ``[encryption]``
   state is unknown: no offer, and no guess (review round 1, R1-F5).
+* ``stranded`` -- encryption is off, but a saved value is still ``enc:``
+  ciphertext under an earlier password: name it and where to re-enter or
+  clear it. Encrypting is refused over it, so there is no offer (review
+  v5r1, R1-4: this read "No API key is saved in config.toml").
+
+A key typed this run but not on disk is called out in every state that has
+saved keys too, encrypted included (review v5r1, R1-3).
 
 Pure: no I/O, no Textual. The step reads the file off the UI thread and
 renders what :func:`protect_copy` returns.
@@ -40,6 +47,7 @@ PROTECT_UNSAVED = "unsaved"
 PROTECT_ENV_ONLY = "env_only"
 PROTECT_NOTHING = "nothing"
 PROTECT_UNREADABLE = "unreadable"
+PROTECT_STRANDED = "stranded"
 
 #: States where config.toml held no key to protect: the tracker shows '–'
 #: for Protect instead of the ✓ that reads as "your keys are protected".
@@ -48,7 +56,11 @@ NOTHING_TO_PROTECT = frozenset({PROTECT_UNSAVED, PROTECT_ENV_ONLY, PROTECT_NOTHI
 #: Every other recorded state shows '–': nothing was there to protect, the
 #: keys were kept as plain text (Summary flags that; the tracker does not cry
 #: wolf over a skippable step, TASK-25818), or the file could not be read.
-PROTECT_UNTICKED = NOTHING_TO_PROTECT | {PROTECT_PLAINTEXT, PROTECT_UNREADABLE}
+PROTECT_UNTICKED = NOTHING_TO_PROTECT | {
+    PROTECT_PLAINTEXT,
+    PROTECT_UNREADABLE,
+    PROTECT_STRANDED,
+}
 
 #: The step's two primary-button labels; the button keeps one id.
 ENCRYPT_LABEL = "Encrypt with a password…"
@@ -63,6 +75,11 @@ ENCRYPTED_STATUS = (
 #: The outcome line under the buttons; the body above already says what
 #: encryption means for startup.
 ENABLED_STATUS = "✓ Encryption enabled."
+#: Where a still-encrypted value is re-entered or cleared. Mirrors the
+#: Settings card's refusal (settings_encryption): Providers & Models edits only
+#: `api_settings.<provider>.api_key`; Advanced Config edits any value.
+WHERE_PROVIDERS_PAGE = "Settings ▸ Providers & Models"
+WHERE_ADVANCED_PAGE = "Settings ▸ Advanced Config"
 CHANGED_STATUS = (
     "✓ Master password changed. Use the new one the next time chatbook starts."
 )
@@ -82,6 +99,11 @@ class ProtectState:
             on disk (``unsaved``, or ``plaintext`` beside other stored keys).
         other_secrets: Dotted config keys of saved plaintext secrets that no
             provider owns (``plaintext``), in config order.
+        stranded: What is still encrypted under an earlier password while
+            encryption is off ("OpenAI key", or a dotted config key), in
+            config order (``stranded``).
+        stranded_where: The Settings page that can re-enter or clear every
+            stranded value (``stranded``).
     """
 
     kind: str
@@ -89,6 +111,8 @@ class ProtectState:
     env_vars: tuple[str, ...] = ()
     unsaved_provider: str = ""
     other_secrets: tuple[str, ...] = ()
+    stranded: tuple[str, ...] = ()
+    stranded_where: str = ""
 
     @property
     def nothing_to_protect(self) -> bool:
@@ -211,6 +235,49 @@ def plaintext_secret_paths(config: Mapping[str, object]) -> tuple[tuple[str, ...
     return tuple(found)
 
 
+def stranded_secret_paths(
+    config: Mapping[str, object],
+) -> tuple[tuple[str, ...], ...]:
+    """Config paths of every value still ``enc:`` ciphertext.
+
+    Mirrors ``config._encrypted_value_paths`` (what the Settings card names
+    when it refuses to encrypt): every table but ``[encryption]`` -- and
+    setup's own ``[first_run]`` checkpoint -- arrays not walked. With
+    encryption off, each one is stranded under an earlier password.
+
+    Args:
+        config: The merged config read back from config.toml.
+
+    Returns:
+        Each value's path as a tuple of keys, in config order.
+    """
+    from tldw_chatbook.config import is_encrypted_config_value
+
+    found: list[tuple[str, ...]] = []
+
+    def _walk(table: Mapping, prefix: tuple[str, ...]) -> None:
+        for key, value in table.items():
+            if not prefix and key in _NEVER_SECRET_TABLES:
+                continue
+            if isinstance(value, Mapping):
+                _walk(value, prefix + (str(key),))
+            elif is_encrypted_config_value(value):
+                found.append(prefix + (str(key),))
+
+    _walk(config, ())
+    return tuple(found)
+
+
+def stranded_fix_page(paths: tuple[tuple[str, ...], ...]) -> str:
+    """The Settings page that can re-enter or clear every path in ``paths``."""
+    if all(
+        len(path) == 3 and path[0] == "api_settings" and path[2] == "api_key"
+        for path in paths
+    ):
+        return WHERE_PROVIDERS_PAGE
+    return WHERE_ADVANCED_PAGE
+
+
 def _secret_owner(
     path: tuple[str, ...], config: Mapping[str, object]
 ) -> tuple[str, str]:
@@ -266,9 +333,6 @@ def read_protect_state(
         normalize_provider_config_key,
     )
 
-    encryption = config.get("encryption")
-    if isinstance(encryption, Mapping) and _flag(encryption.get("enabled")):
-        return ProtectState(PROTECT_ENCRYPTED)
     stored_keys: set[str] = set()
     stored: list[str] = []
     others: list[str] = []
@@ -279,12 +343,37 @@ def read_protect_state(
             stored.append(owner_name)
         else:
             others.append(".".join(path))
+    still_encrypted = stranded_secret_paths(config)
     typed = (
         normalize_provider_config_key(typed_provider_key) if typed_provider_key else ""
     )
-    unsaved = (
-        _display_name(typed_provider_key) if typed and typed not in stored_keys else ""
-    )
+
+    def _unsaved(saved: set[str]) -> str:
+        return _display_name(typed_provider_key) if typed and typed not in saved else ""
+
+    encryption = config.get("encryption")
+    if isinstance(encryption, Mapping) and _flag(encryption.get("enabled")):
+        # Review v5r1 (R1-3): a key typed this run but never saved is called
+        # out here too. An `enc:` value is saved -- this session may just not
+        # hold the password -- so it never reads as unsaved.
+        saved = stored_keys | {_secret_owner(p, config)[0] for p in still_encrypted}
+        return ProtectState(PROTECT_ENCRYPTED, unsaved_provider=_unsaved(saved))
+    # With encryption off, a saved key still `enc:` is the user's typed key
+    # only after Model saves the new one over it, so it does not count.
+    unsaved = _unsaved(stored_keys)
+    if still_encrypted:
+        labels: list[str] = []
+        for path in still_encrypted:
+            owner_key, owner_name = _secret_owner(path, config)
+            labels.append(f"{owner_name} key" if owner_key else ".".join(path))
+        return ProtectState(
+            PROTECT_STRANDED,
+            providers=tuple(dict.fromkeys(stored)),
+            unsaved_provider=unsaved,
+            other_secrets=tuple(dict.fromkeys(others)),
+            stranded=tuple(dict.fromkeys(labels)),
+            stranded_where=stranded_fix_page(still_encrypted),
+        )
     if stored or others:
         return ProtectState(
             PROTECT_PLAINTEXT,
@@ -343,6 +432,14 @@ def _plaintext_subject(state: ProtectState) -> tuple[str, bool]:
     return f"Your {keys} and {other_phrase.format('other ')}", True
 
 
+def _unsaved_sentence(provider: str) -> str:
+    """The callout for a key typed this run that is not on disk."""
+    return (
+        f" The {provider} key you typed isn't saved: it is saved together with "
+        "the model you choose on Model."
+    )
+
+
 def config_path_line(config_path: str, width: int = 0) -> str:
     """Return "Config file: <path>", keeping every character of the path.
 
@@ -385,14 +482,41 @@ def protect_copy(
     card = encryption_card_path()
     path_line = config_path_line(config_path, width)
     if state.kind == PROTECT_ENCRYPTED:
+        body = ENCRYPTED_STATUS
+        if state.unsaved_provider:
+            body += _unsaved_sentence(state.unsaved_provider)
         return ProtectCopy(
             title="Your keys are protected",
-            body=ENCRYPTED_STATUS,
+            body=body,
             path_line=path_line,
             later_line=(
                 f"Change the password or turn encryption off any time in {card}."
             ),
             primary_label=CHANGE_LABEL,
+            show_back_to_model=bool(state.unsaved_provider),
+        )
+    if state.kind == PROTECT_STRANDED:
+        many = len(state.stranded) > 1
+        it = "them" if many else "it"
+        body = (
+            f"! Your saved {_join(state.stranded)} {'are' if many else 'is'} "
+            "still encrypted with an earlier master password, and encryption "
+            f"is now off, so chatbook can't read {it}. Re-enter or clear {it} "
+            f"in {state.stranded_where}."
+        )
+        if state.providers or state.other_secrets:
+            subject, plural = _plaintext_subject(state)
+            body += f" {subject} {'are' if plural else 'is'} saved as plain text."
+        if state.unsaved_provider:
+            body += _unsaved_sentence(state.unsaved_provider)
+        # No offer: encrypting is refused while a value is stranded.
+        return ProtectCopy(
+            title="Saved keys can't be read" if many else "A saved key can't be read",
+            body=body,
+            path_line=path_line,
+            later_line=f"Once that's fixed, you can encrypt your saved keys in {card}.",
+            primary_label="",
+            show_back_to_model=bool(state.unsaved_provider),
         )
     if state.kind == PROTECT_PLAINTEXT:
         subject, many = _plaintext_subject(state)
@@ -404,10 +528,7 @@ def protect_copy(
             "that password each time it starts."
         )
         if state.unsaved_provider:
-            body += (
-                f" The {state.unsaved_provider} key you typed isn't saved: it "
-                "is saved together with the model you choose on Model."
-            )
+            body += _unsaved_sentence(state.unsaved_provider)
         if state.providers:
             title = "Protect your API keys" if many else "Protect your API key"
         else:

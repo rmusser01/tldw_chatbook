@@ -525,8 +525,9 @@ _BUDGETS: dict[str, int] = {
     # refused-Next suffix onto SetupStep.refusal_message -> 3,144.
     # TASK-33008 (Phase 8) -> 3,136. TASK-34100.4 moved the tracker glyph and
     # the finish-later flow into helpers (3,123); its review round 1 moved
-    # Skip setup's save into first_run_finish_later.skip_setup (3,119).
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3119,
+    # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
+    # review v5r1 dropped the resume's stale Protect status line (3,106).
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3106,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and

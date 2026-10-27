@@ -1234,21 +1234,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                             else str(button.label).startswith("Surprise me")
                         ),
                     )
-
-            protect_values = draft.values.get(wizard_state.STEP_PROTECT, {})
-            protect_step = self.steps[
-                self._step_index_for_id(wizard_state.STEP_PROTECT)
-            ]
-            if (
-                isinstance(protect_step, ProtectKeysStep)
-                and "encryption_enabled" in protect_values
-            ):
-                encryption_enabled = protect_values["encryption_enabled"]
-                protect_step.encryption_enabled = encryption_enabled
-                if encryption_enabled:
-                    protect_step.query_one("#setup-protect-status", Static).update(
-                        "Encryption enabled."
-                    )
+            # Protect is not restored here: it re-reads config.toml itself
+            # (TASK-34100.4 review v5r1, F1), never a saved "Encryption enabled."
         except Exception:
             logger.warning("Setup resume control restore failed (category=runtime)")
             return False
