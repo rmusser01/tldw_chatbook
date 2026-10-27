@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save         │
+│   a  │ Library notes · Ready                                  │  o  automatically.                                   │
+│   v  │ Notes (122)                                            │  t  Daily log 2026-09-28                             │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     Read-only preview · Not included in bulk         │
+│      │                                                        │     selection                                        │
+│      │ Filter                                                 │     Read-only — this note cannot be changed; your d… │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Edit     Preview     Info                    │
+│      │ ▊ Filter notes… (Enter)                              ▎ │         Save     Use in Console                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┌──────────────────────────────────────────────┐ │
+│      │                                                        │     │Daily log 2026-09-28                          │ │
+│      │    Done     All 30     Clear                           │<--- │ Mood: 😐                                     │ │
+│      │      Export       Actions…                             │     │                                              │ │
+│      │ 1 selected                                             │     │ • Read 30 pages.                             │ │
+│      │  ▸ Agent_Lessons                                       │     │ • Meal-prepped dal.                          │ │
+│      │  ▾ Journal                                             │     │ • Fixed the flaky test.                      │ │
+│ ---> │  ☐   Daily log 2026-09-28 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-27 · 2m                       ▇ │     │                                              │ │
+│      │ █☑   Daily log 2026-09-26 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-25 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-24 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-23 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-22 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-21 · 2m                         │     │                                              │ │
+│      │  ☐   Daily log 2026-09-20 · 2m                         │     └──────────────────────────────────────────────┘ │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

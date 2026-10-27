@@ -126,8 +126,11 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: Refresh control (115 + 1 = 116). **117**: TASK-34000.28 polish-1a task 5
 #: (2026-10-26) -- ``link_origin``, the ``(note_id, title)`` a followed
 #: backlink or note link came from, offered as the editor heading's
-#: ``‹ <title>`` one-hop way back (116 + 1 = 117).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 117
+#: ``‹ <title>`` one-hop way back (116 + 1 = 117). **118**: TASK-34000.29
+#: polish-1b task 7 (2026-10-26) -- ``select_actions_visible``, whether the
+#: select strip's Actions… chooser is open; state rather than canvas-local
+#: because Escape, the footer and the pick all read it (117 + 1 = 118).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 118
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
