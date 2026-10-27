@@ -9,7 +9,8 @@ This scan is stdlib AST only. Its import resolution copies
 ``Docs/QA/architecture-review-2026-10-25/scripts/graph.py`` and its layers
 copy ``layers.py`` there, so its counts agree with the review's record.
 Top-level and function-level imports both count; ``if TYPE_CHECKING:`` imports
-are out of scope.
+are out of scope. An ``importlib.import_module`` call on a string literal
+counts as a function-level (``lazy``) import of that module, wherever it is.
 
 ``layer_direction_allowlist.tsv`` freezes the upward imports that existed when
 this test landed, one ``src_module<TAB>dst_module<TAB>kind`` row each, where
@@ -82,14 +83,33 @@ def _is_type_checking(test: ast.expr) -> bool:
     )
 
 
-def _imports(tree: ast.Module) -> list[tuple[ast.Import | ast.ImportFrom, str]]:
-    """Every import statement with its kind: top, lazy or typing."""
-    found: list[tuple[ast.Import | ast.ImportFrom, str]] = []
+def _imports(
+    tree: ast.Module,
+) -> list[tuple[ast.Import | ast.ImportFrom | ast.Call, str]]:
+    """Every import statement and ``import_module("...")`` call, with its kind.
+
+    Kind is top, lazy or typing. A call counts as lazy (typing under TYPE_CHECKING).
+    """
+    found: list[tuple[ast.Import | ast.ImportFrom | ast.Call, str]] = []
 
     def visit(node: ast.AST, kind: str) -> None:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             found.append((node, kind))
             return
+        if (
+            isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == "import_module")
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "import_module"
+                )
+            )
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            found.append((node, "typing" if kind == "typing" else "lazy"))
         if isinstance(node, ast.If) and _is_type_checking(node.test):
             for stmt in node.body:
                 visit(stmt, "typing")
@@ -138,10 +158,39 @@ def _upward_imports() -> dict[tuple[str, str, str], str]:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node, kind in _imports(tree):
+        statements = _imports(tree)
+        # Names this module binds to importlib, and whether it binds import_module
+        # from importlib. ponytail: `import_module as x` aliases are not seen (none
+        # exist); add them here if one appears.
+        importlib_names = {"importlib"} | {
+            alias.asname
+            for node, _ in statements
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name == "importlib" and alias.asname
+        }
+        has_import_module = any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "importlib"
+            and not node.level
+            and any(alias.name == "import_module" for alias in node.names)
+            for node, _ in statements
+        )
+        for node, kind in statements:
             if kind == "typing":
                 continue
-            if isinstance(node, ast.Import):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name):
+                    if not has_import_module:
+                        continue
+                elif not (
+                    isinstance(func.value, ast.Name)
+                    and func.value.id in importlib_names
+                ):
+                    continue
+                targets = [resolve(node.args[0].value)]
+            elif isinstance(node, ast.Import):
                 targets = [resolve(alias.name) for alias in node.names]
             else:
                 if node.level:
@@ -195,7 +244,9 @@ def test_no_new_upward_import() -> None:
         "Protocol). An import inside a function counts too, so moving one there does "
         "not fix it. If an import truly belongs, explain why in the PR and get the "
         f"reviewer's agreement first. Never just append a row to {ALLOWLIST_NAME} to "
-        "make this test pass."
+        "make this test pass. A move that leaves a re-export shim at the old path "
+        "may add that shim's row only if the same change deletes at least as many "
+        "rows; the shim's row is deleted when its importers are retargeted."
     )
 
 

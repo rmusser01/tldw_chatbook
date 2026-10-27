@@ -32,15 +32,18 @@ Each top-level package under `tldw_chatbook/`, and each module at the package ro
 - Top-level imports (`top`) and imports inside a function or lambda (`lazy`) both count. A function-level import still runs, and it still couples the two layers. Moving an import into a function does not fix its direction.
 - Imports under `if TYPE_CHECKING:` are out of scope. They never run.
 - An import resolves to the longest prefix of its dotted name that is a module. `from tldw_chatbook.UI.Screens import chat_screen` names `tldw_chatbook.UI.Screens.chat_screen`. Relative imports resolve from the importing module's own package.
-- Dynamic imports (`importlib.import_module`, `__import__`) are not seen.
+- A call to `importlib.import_module` (or to `import_module` imported from `importlib`) whose first argument is a string literal counts as a function-level (`lazy`) import of that module, wherever the call sits.
+- Dynamic imports of a name that is not a string literal are out of scope, and so is `__import__`. For example, `Chat/console_first_send_modules.py` imports eight presentation modules from a tuple of names, and the test does not see it.
 
 ## The allowlist
 
 `Tests/Architecture/layer_direction_allowlist.tsv` holds one row for each distinct (source module, imported module, kind) upward import that existed when the test landed. Kind is `top` or `lazy`. Lines starting with `#` are comments.
 
-- **A new upward import fails** `test_no_new_upward_import`. The failure names the file and line. Fix the direction: move the code that needs the higher layer up into that layer, or have the higher layer pass it in (a parameter, a callback or a Protocol). If you think an import belongs, explain why in the PR and get the reviewer's agreement before adding its row. Never just append a row to make the test pass.
+- **A new upward (source, target, kind) fails** `test_no_new_upward_import`. The failure names the file and line. Fix the direction: move the code that needs the higher layer up into that layer, or have the higher layer pass it in (a parameter, a callback or a Protocol). If you think an import belongs, explain why in the PR and get the reviewer's agreement before adding its row. Never just append a row to make the test pass. A move that leaves a re-export shim at the old path may add that shim's row only if the same change deletes at least as many rows; the shim's row is deleted when its importers are retargeted.
 - **A row with no matching import fails** `test_allowlist_has_no_stale_rows`. Delete the row. The allowlist only shrinks, so every structural fix that removes an upward import also removes its row.
-- Changing an import's kind (top-level to function-level, or back) shows up twice: the new kind fails as a new import, and the old row fails as stale.
+- Rows are per module pair and kind, not per statement. Another import of a listed (source, target, kind) passes, whether it brings in another name or imports the same target in another function. A row goes stale only when the last such import is gone.
+- A row whose target is a package `__init__` covers every name that package re-exports. Two rows target `Widgets.Console`, which re-exports about 40 widgets, and one targets `tldw_api`.
+- Changing an import's kind (top-level to function-level, or back) shows up twice when it was the only import of that pair and kind: the new kind fails as a new import, and the old row fails as stale.
 
 ## Census when the test landed (dev `2b296e60b3`)
 
@@ -52,4 +55,4 @@ The review counts each imported name, so `from x import a, b` is two of its edge
 | DB → domain | 336 (169) | 79 (28 / 51) |
 | kernel → DB, domain or presentation | 89 (26) | 59 (24 / 35) |
 
-65 of the 336 DB → domain names (17 distinct imports) target model modules. The rule allows them, so they have no row; the other 271 are frozen. The review measured 335 DB → domain names at `7a5e2513c5`, and one more had landed by `2b296e60b3`. Every count on this page, and the 191 rows, match what `graph.py` and `layers.py` report at that commit.
+65 of the 336 DB → domain names (17 distinct imports) target model modules. The rule allows them, so they have no row; the other 271 are frozen. The review measured 335 DB → domain names at `7a5e2513c5`, and one more had landed by `2b296e60b3`. Every count on this page, and the 191 rows, match what `graph.py` and `layers.py` report at that commit. No literal `import_module` call outside presentation points upward at that commit, so counting those calls added no row.
