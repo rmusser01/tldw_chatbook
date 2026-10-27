@@ -971,6 +971,14 @@ jobs:
           # stopped them coming back.
           python scripts/check_backlog_task_files.py
 
+      - name: ADR numbers are unique
+        if: ${{ !cancelled() }}
+        run: |
+          # Fifty ADR numbers were shared by 117 files, so "ADR-228" named
+          # more than one decision. Only the frozen list in
+          # scripts/adr_shared_numbers_frozen.txt may stay shared.
+          python scripts/check_adr_numbers.py
+
       - name: ChaChaNotes table allowlist covers every migrated table
         if: ${{ !cancelled() }}
         run: |

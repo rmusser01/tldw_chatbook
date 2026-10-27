@@ -192,6 +192,21 @@ Do not require an ADR for routine bug fixes, small UI polish, copy-only changes,
 
 Accepted ADRs are immutable except for typo fixes, link repairs, or metadata that does not alter the decision. If a decision changes, create a new ADR and mark the old one as `Superseded by ADR-NNN`.
 
+## Numbering rule
+
+One number per decision. A new ADR takes the next free number, which is the
+highest number in use plus 1 -- gaps are never backfilled.
+
+If two files end up with the same number, the oldest file (by its `Date:`
+field, else its add-commit time) keeps it. Each younger file takes the next
+free number and gains a renumbering-provenance note naming its old number.
+
+`scripts/check_adr_numbers.py` (run by `./scripts/preflight.sh` and the
+required `derived-artifacts.yml` job) fails on any collision outside the frozen
+list in `scripts/adr_shared_numbers_frozen.txt`, and names the next free number.
+The frozen list can only shrink; TASK-36943.3 renumbers the existing
+collisions and empties it.
+
 ## Naming
 
 Use numeric filenames:

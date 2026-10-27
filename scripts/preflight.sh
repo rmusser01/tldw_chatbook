@@ -115,6 +115,8 @@ run_check "backlog task ids" \
   "$PYTHON" scripts/check_backlog_task_ids.py
 run_check "readable backlog task files" \
   "$PYTHON" scripts/check_backlog_task_files.py
+run_check "unique ADR numbers" \
+  "$PYTHON" scripts/check_adr_numbers.py
 run_check "chachanotes table allowlist" \
   "$PYTHON" scripts/check_schema_table_allowlist.py
 run_check "index plan pins" \
