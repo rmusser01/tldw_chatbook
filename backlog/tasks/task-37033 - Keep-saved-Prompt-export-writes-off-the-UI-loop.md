@@ -1,7 +1,7 @@
 ---
 id: TASK-37033
 title: Keep saved-Prompt export writes off the UI loop
-status: To Do
+status: In Progress
 created_date: 2026-10-27 18:01
 labels:
 - textual-patterns
@@ -13,6 +13,9 @@ references:
 - tldw_chatbook/UI/Library_Modules/library_prompts_controller.py
 - https://github.com/rmusser01/tldw_chatbook/blob/3c279941e2af523ab75d2772ef543521870868c4/backlog/tasks/task-34000.97%20-%20Exporting-a-note-into-a-folder-the-app-cannot-search-raises-out-of-a-callback-instead-of-Export-failed.md
 - Docs/superpowers/qa/2026-10-27-textual-book-after-pr3251.md
+assignee:
+- '@codex'
+updated_date: 2026-10-27 22:17
 ---
 
 ## Description
@@ -31,12 +34,24 @@ Evidence, source pins, book pages, controls and limitations: [post-merge Textual
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Unrelated App key and event dispatch continues while a saved-Prompt export destination write is held, without waiting for the file operation to finish.
-- [ ] #2 After release, one correct captured Prompt Markdown export is produced and the source Prompt database row remains unchanged.
-- [ ] #3 Existing-file Replace confirmation, no-clobber protection, cancellation, write-failure feedback and operation-scoped result/focus behavior retain their established outcomes.
-- [ ] #4 Mounted private-profile tests use the actual Prompt export picker and real local service/SQLite with ordinary and held-writer controls, verifying key dispatch, output fidelity, unchanged source data and drained work.
+- [x] #1 Unrelated App key and event dispatch continues while a saved-Prompt export destination write is held, without waiting for the file operation to finish.
+- [x] #2 After release, one correct captured Prompt Markdown export is produced and the source Prompt database row remains unchanged.
+- [x] #3 Existing-file Replace confirmation, no-clobber protection, cancellation, write-failure feedback and operation-scoped result/focus behavior retain their established outcomes.
+- [x] #4 Mounted private-profile tests use the actual Prompt export picker and real local service/SQLite with ordinary and held-writer controls, verifying key dispatch, output fidelity, unchanged source data and drained work.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Promote committed real SQLite/FileSave audit into ordinary and held App dispatch regressions. 2. Move captured Prompt destination writes off the UI loop through existing worker and confirmation ownership; retain Replace/no-clobber/scoped feedback. 3. Verify targeted journeys/helper/source/worker guards, document evidence and commit exact owned files. ADR required: no. ADR path: N/A. Reason: bounded scheduling repair preserving existing service and UI ownership. Existing ADRs: backlog/decisions/033-application-session-state-ownership.md; backlog/decisions/036-application-service-composition-lifecycle.md; backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md.
+<!-- SECTION:PLAN:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Saved Prompt export now captures Markdown and destination before submitting a native screen worker; FileSave and Replace callbacks return immediately, filesystem-only writing runs off-loop, and scoped UI receipts retain the captured Prompt identity. Late no-clobber collisions reopen the existing Replace prompt. Render/write failures keep safe feedback and retry. Added real SQLite/FileSave controls and adapted existing tests to await native export completion without weakening assertions. Final minimal ordinary/held New/Replace controls: 4 parent passes and 4 actual private-child passes, zero errors/skips. Also verified race Cancel/Replace, 34 helper cases, 3 navigation scopes, 64 size/wiring controls and unchanged native preimport budget at 558/558 modules. Fourteen existing native Windows mode/symlink/CRLF/receipt expectations and two unchanged inventory/import guard failures reproduce on original source; all raw receipts and causal witness methodology are retained in .superpowers/sdd/2026-10-27-textual-37031-37034/task-3-report.md. Updated Docs/Architecture/library-shell.md. ADR required: no; existing backlog/decisions/033-application-session-state-ownership.md, 036-application-service-composition-lifecycle.md, 031-tui-keybinding-and-footer-hint-conventions.md, 150-design-token-system-and-design-language.md and 161-component-pattern-library.md preserve existing ownership. Task remains In Progress for coordinator independent review and current-head CI; no full suite or allowance increases.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

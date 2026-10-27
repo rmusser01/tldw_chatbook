@@ -441,7 +441,9 @@ def export_library_prompt_file(
 
     The body ``LibraryScreen._write_library_prompt_export_file`` carried
     before TASK-34000.3, with the replace prompt, the atomic write and the
-    full-path receipt. The screen keeps validation and builds ``detail``.
+    full-path receipt. A native screen worker moves only the destination write
+    off-loop; picker and Replace callbacks return immediately. The screen
+    keeps validation and builds the captured ``detail``.
 
     Args:
         screen: The Library screen.
@@ -453,15 +455,34 @@ def export_library_prompt_file(
     from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 
     target = resolve_export_destination(validated_path)
+    try:
+        content = render_prompt_markdown(detail)
+    except Exception as exc:
+        logger.warning(
+            "Failed to export Library prompt {} (category={}).",
+            prompt_id,
+            type(exc).__name__,
+        )
+        notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
+        return
 
-    def _write(*, overwrite: bool = True) -> None:
+    async def _write(*, overwrite: bool) -> None:
         try:
-            write_export_text(
-                target, render_prompt_markdown(detail), overwrite=overwrite
+            await asyncio.to_thread(
+                write_export_text, target, content, overwrite=overwrite
             )
-        except FileExistsError:
-            raise  # the seam asks instead of overwriting a file that appeared
         except Exception as exc:
+            if isinstance(exc, FileExistsError) and not overwrite:
+                # A late no-clobber collision asks on the UI loop. Its answer
+                # starts another worker, so neither picker callback waits for I/O.
+                request_export_write(
+                    screen.app,
+                    target,
+                    on_replace=_start_write,
+                    on_cancel=_keep,
+                    picked=validated_path,
+                )
+                return
             logger.warning(
                 "Failed to export Library prompt {} (category={}).",
                 prompt_id,
@@ -475,6 +496,15 @@ def export_library_prompt_file(
             severity="information",
         )
 
+    def _start_write(*, overwrite: bool) -> None:
+        # Independent exports retain their captured destination and payload.
+        # Return immediately even when Textual invokes us from a modal callback.
+        screen.run_worker(
+            _write(overwrite=overwrite),
+            group="library-prompt-export",
+            exclusive=False,
+        )
+
     def _keep() -> None:
         notify(
             f"Prompt export cancelled. {validated_path.name} was left unchanged.",
@@ -482,7 +512,11 @@ def export_library_prompt_file(
         )
 
     request_export_write(
-        screen.app, target, on_replace=_write, on_cancel=_keep, picked=validated_path
+        screen.app,
+        target,
+        on_replace=_start_write,
+        on_cancel=_keep,
+        picked=validated_path,
     )
 
 

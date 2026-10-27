@@ -32,6 +32,11 @@ from tldw_chatbook.UI.Library_Modules import library_file_export
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileNameInput
 
 
+# _build_test_app reloads the source-bound configuration imported at collection.
+# Keep its admitted lifetime profile; conftest resets its config per test.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _export_host(tmp_path, theme, kind="legacy"):
     db, service = _real_prompt_scope_service(tmp_path)
     fields = {
@@ -290,6 +295,14 @@ async def test_export_result_after_navigation_preserves_current_status(tmp_path,
         destination = tmp_path / "earlier.md"
         screen._write_library_prompt_export_file(
             destination, "Earlier prompt", "", "", "", "Earlier body", "", prompt_id
+        )
+        # File publication precedes the off-loop writer's scoped UI receipt.
+        await host.workers.wait_for_complete(
+            [
+                worker
+                for worker in host.workers
+                if worker.group == "library-prompt-export"
+            ]
         )
         await pilot.pause()
         assert destination.exists()
