@@ -1438,3 +1438,7 @@ Tests/UI/test_console_collapsed_inspector_send_layout.py::test_an_inspector_open
 # 13-15 s each locally), appended at the tail; existing shard slots stay fixed.
 Tests/UI/test_console_environment_bound_registry.py
 Tests/UI/test_console_environment_consent_revoked_hop.py
+# TASK-33620.15.17: keys typed before the Console composer's first focus land in
+# the draft, in order (one private-profile case; 47 s at a local load average
+# of 25, where the composer's private-profile nothing-focused cases took 24-30 s).
+Tests/UI/test_console_arrival_focus_keys.py::test_keys_typed_before_the_activation_restore_land_in_the_draft_in_order

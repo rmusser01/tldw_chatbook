@@ -23,6 +23,7 @@ fresh profile first (`lessons-testing-evidence.md`: "Tests/UI
 
 from __future__ import annotations
 
+import contextlib
 import time
 
 import pytest
@@ -33,6 +34,7 @@ from textual.events import Paste
 from textual.widgets import Button, OptionList, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI import pump_probe
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictation import FakeDictationSession
 from Tests.UI.test_console_native_chat_flow import (
@@ -46,6 +48,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
@@ -110,30 +113,100 @@ async def _mounted(host, pilot):
     return console, composer
 
 
-async def _after_mount_focus_restore(console, pilot) -> None:
-    """Let the mount's own focus restore run before a case clears focus.
+@contextlib.contextmanager
+def _activation_restore_ledger():
+    """Record every focus restore a ChatScreen schedules, and whether it ran.
 
-    ``ChatScreen.on_mount`` arms ``set_timer(0.2, _restore_console_workbench_focus)``,
-    which may focus the draft when nothing owns focus. A case that clears focus
-    before that timer fires can get the draft refocused right after and read it
-    as "something focused the draft". Measured 2026-10-20 (TASK-33620.15.7), 20
-    interleaved runs each: the nothing-focused typing case failed 5 on dev and
-    12 once that task's cheaper mount made ``_mounted`` return before the timer
-    more often. Waits for the timer itself, whatever it decides.
+    Yields a list of ``[how, ran]`` entries, one per scheduled
+    ``_restore_console_workbench_focus``. Install it before the host runs:
+    it wraps ``call_after_refresh`` and ``set_timer`` on ChatScreen, so it
+    sees a restore however Textual stores it afterwards -- ``set_timer``
+    keeps ``partial(self.call_next, callback)``, not the callback, and the
+    ``call_next`` hop then parks it on ``_next_callbacks`` -- and an entry
+    turns ``ran`` only when the restore itself has returned.
     """
-    restore = console._restore_console_workbench_focus
+    restore = ChatScreen._restore_console_workbench_focus
+    after_refresh = ChatScreen.call_after_refresh
+    set_timer = ChatScreen.set_timer
+    ledger: list[list] = []
 
-    def pending() -> bool:
-        return any(
-            timer._callback == restore
-            and timer._task is not None
-            and not timer._task.done()
-            for timer in list(console._timers)
-        )
+    def tracked(callback, how: str):
+        if getattr(callback, "__func__", None) is not restore:
+            return callback, None
+        entry = [how, False]
 
-    await _wait_for(pilot, lambda: not pending(), "the mount's focus restore never ran")
-    # A focus() the restore made lands through App.call_later.
-    await pilot.pause()
+        def run_restore() -> None:
+            try:
+                callback()
+            finally:
+                entry[1] = True
+
+        return run_restore, entry
+
+    def counting_after_refresh(self, callback, *args, **kwargs):
+        callback, entry = tracked(callback, "after refresh")
+        scheduled = after_refresh(self, callback, *args, **kwargs)
+        if entry is not None and scheduled:
+            ledger.append(entry)
+        return scheduled
+
+    def counting_set_timer(self, delay, callback=None, **kwargs):
+        callback, entry = tracked(callback, f"{delay} s timer")
+        timer = set_timer(self, delay, callback, **kwargs)
+        if entry is not None:
+            ledger.append(entry)
+        return timer
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ChatScreen, "call_after_refresh", counting_after_refresh)
+        patch.setattr(ChatScreen, "set_timer", counting_set_timer)
+        yield ledger
+
+
+async def _after_activation_focus_restores(console, pilot, restores) -> None:
+    """Wait until every focus restore the Console's activation scheduled has run.
+
+    The activation schedules ``_restore_console_workbench_focus`` three times,
+    all from the attach reconcile: after refresh and on a 0.2 s timer when the
+    view starts, and after refresh again when the reconcile replays the
+    screen's resume. One that runs after a case's ``set_focus(None)`` focuses
+    the draft again, and the case reads that as "the key focused the draft"
+    (TASK-33620.15.7, TASK-33620.15.23).
+
+    The earlier waits looked for the restore on the screen's timers and
+    callback list. Neither could see the timer's: Textual's ``set_timer``
+    stores ``partial(self.call_next, restore)``, so ``timer._callback ==
+    restore`` was never true, and the wait returned before the timer fired
+    in 8 of 42 probed runs -- exactly the 8 that failed. ``restores`` is the
+    ``_activation_restore_ledger`` this case installed, which records each
+    restore as it is scheduled and marks it when it has run.
+
+    So this waits, without a fixed sleep, until the reconcile has finished
+    (nothing more will be scheduled) and every recorded restore has run, then
+    makes one round trip through the app's queue: a ``focus()`` a restore
+    made lands through ``App.call_later``, ahead of that round trip.
+    """
+    await _wait_for(
+        pilot,
+        lambda: (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        ),
+        "the Console's attach reconcile never finished",
+    )
+
+    def unrun() -> list[str]:
+        return [how for how, ran in list(restores) if not ran]
+
+    await _wait_for(
+        pilot,
+        lambda: bool(restores) and not unrun(),
+        lambda: (
+            f"activation focus restores not yet run: {unrun()} "
+            f"(scheduled: {[how for how, _ran in restores]})"
+        ),
+    )
+    assert await pump_probe.pump_runs(console.app), "the app's pump never ran"
 
 
 async def _start_held_run(console, composer, pilot):
@@ -1319,29 +1392,30 @@ async def test_paste_with_nothing_focused_lands_in_a_focused_draft(request):
     `_should_capture_console_input` still claims it for the draft -- which
     then changed with no caret anywhere on screen (PR #2934 checkpoint
     review). The draft takes focus first here too."""
-    gateway, host = _held_run_host()
-    async with host.run_test(size=(160, 45)) as pilot:
-        console, composer = await _mounted(host, pilot)
-        await _after_mount_focus_restore(console, pilot)
-        composer.load_draft("hello")
-        console.set_focus(None)
-        await pilot.pause()
-        assert console.app.focused is None
+    with _activation_restore_ledger() as restores:
+        gateway, host = _held_run_host()
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, composer = await _mounted(host, pilot)
+            await _after_activation_focus_restores(console, pilot, restores)
+            composer.load_draft("hello")
+            console.set_focus(None)
+            await pilot.pause()
+            assert console.app.focused is None
 
-        host.post_message(Paste(" world"))
-        await _wait_for(
-            pilot, lambda: composer.draft_text() != "hello", "the paste never landed"
-        )
-        assert composer.draft_text() == "hello world"
-        assert console.app.focused is composer, (
-            f"the paste edited the draft but focus is {console.app.focused!r}"
-        )
-        await _wait_for(
-            pilot,
-            lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
-            "the pasted-into draft never painted its caret",
-        )
-        gateway.release.set()
+            host.post_message(Paste(" world"))
+            await _wait_for(
+                pilot, lambda: composer.draft_text() != "hello", "the paste never landed"
+            )
+            assert composer.draft_text() == "hello world"
+            assert console.app.focused is composer, (
+                f"the paste edited the draft but focus is {console.app.focused!r}"
+            )
+            await _wait_for(
+                pilot,
+                lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
+                "the pasted-into draft never painted its caret",
+            )
+            gateway.release.set()
 
 
 @pytest.mark.asyncio
@@ -1351,30 +1425,31 @@ async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
     key used to land in a draft that showed no caret, and Backspace then
     edited it unseen (PR #2934 round-2 review). A printable key now focuses
     the draft and types there; an editing key alone leaves it untouched."""
-    gateway, host = _held_run_host()
-    async with host.run_test(size=(160, 45)) as pilot:
-        console, composer = await _mounted(host, pilot)
-        await _after_mount_focus_restore(console, pilot)
-        composer.load_draft("hello")
-        console.set_focus(None)
-        await pilot.pause()
-        assert console.app.focused is None
+    with _activation_restore_ledger() as restores:
+        gateway, host = _held_run_host()
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, composer = await _mounted(host, pilot)
+            await _after_activation_focus_restores(console, pilot, restores)
+            composer.load_draft("hello")
+            console.set_focus(None)
+            await pilot.pause()
+            assert console.app.focused is None
 
-        await pilot.press("backspace")
-        await pilot.pause()
-        assert composer.draft_text() == "hello", (
-            "Backspace edited a draft that shows no caret"
-        )
+            await pilot.press("backspace")
+            await pilot.pause()
+            assert composer.draft_text() == "hello", (
+                "Backspace edited a draft that shows no caret"
+            )
 
-        await pilot.press("k")
-        await _wait_for(
-            pilot, lambda: composer.draft_text() != "hello", "the key never landed"
-        )
-        assert composer.draft_text() == "hellok"
-        assert console.app.focused is composer, (
-            f"the key edited the draft but focus is {console.app.focused!r}"
-        )
-        gateway.release.set()
+            await pilot.press("k")
+            await _wait_for(
+                pilot, lambda: composer.draft_text() != "hello", "the key never landed"
+            )
+            assert composer.draft_text() == "hellok"
+            assert console.app.focused is composer, (
+                f"the key edited the draft but focus is {console.app.focused!r}"
+            )
+            gateway.release.set()
 
 
 # ---------------------------------------------------------------------------
