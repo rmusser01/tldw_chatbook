@@ -15,6 +15,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Terminal.contracts import (
     AdmissionGate,
     BackendIdentity,
@@ -37,6 +38,7 @@ from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
     ConsoleTerminalWorkspace,
     TerminalViewport,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 # These tests mount the real ChatScreen, which reads app config at build time.
 pytestmark = pytest.mark.bootstrap_profile
@@ -493,8 +495,9 @@ async def test_terminal_rail_focus_capture_release_tab_and_return(
 
         assert await pilot.click("#console-terminal-return")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await pilot.pause()
-        assert pilot.app.focused is console.query_one("#console-native-transcript")
+        # TASK-33622.8 AC#3: the return lands in the composer, not the transcript.
+        composer = console.query_one("#console-native-composer")
+        await _wait_until(pilot, lambda: pilot.app.focused is composer)
         assert console._terminal.is_open is False
 
     manager.finalize_shutdown()
@@ -562,11 +565,13 @@ async def test_unarmed_terminal_replaces_only_center_and_return_restores_transcr
         assert await pilot.click("#console-terminal-return")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         await pilot.pause()
-        transcript = console.query_one("#console-native-transcript")
         assert _surrounding_console_widgets(console) == surrounding
         assert all(widget.is_mounted for widget in surrounding.values())
         assert console._terminal.is_open is False
-        assert pilot.app.focused is transcript
+        # TASK-33622.8 AC#3: the return lands in the composer.
+        await _wait_until(
+            pilot, lambda: pilot.app.focused is surrounding["composer"]
+        )
         assert isinstance(
             console.query_one("#console-main-column"), ConsoleTranscriptRegion
         )
@@ -738,5 +743,108 @@ async def test_creating_another_terminal_session_selects_and_focuses_it(
             lambda: pilot.app.focused is viewport,
             detail=lambda: pilot.app.focused,
         )
+
+    manager.finalize_shutdown()
+
+
+def _session_tab_labels(console: ChatScreen) -> list[str]:
+    strip = console.query_one("#console-native-tab-strip")
+    return [str(button.label) for button in strip.query(Button)]
+
+
+def _rendered_message_ids(console: ChatScreen) -> frozenset[str]:
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    return transcript.mounted_message_content_ids()
+
+
+@pytest.mark.asyncio
+async def test_terminal_round_trip_restores_tabs_transcript_and_composer_focus() -> (
+    None
+):
+    """TASK-33622.8 AC#1-#4: Return to transcript restores what the user left.
+
+    On dev the swap back mounted a fresh transcript center and nothing
+    re-synced it: the tab strip showed only "New tab", the transcript said
+    "No messages yet." for a populated chat, and focus sat on the transcript
+    surface, where a typed "y" opened Trace.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        for index in range(12):
+            store.append_message(
+                first.id,
+                role=ConsoleMessageRole.USER,
+                content=f"alpha question {index}",
+            )
+            store.append_message(
+                first.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content=f"alpha answer {index}\n\nwith a second paragraph",
+            )
+        second = store.create_session(title="Beta thread")
+        store.append_message(
+            second.id, role=ConsoleMessageRole.USER, content="beta question"
+        )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_until(
+            pilot,
+            lambda: len(_rendered_message_ids(console)) >= 4,
+            detail=lambda: _rendered_message_ids(console),
+        )
+        labels_before = _session_tab_labels(console)
+        # Two chat tabs (each with its close button), New tab and Temporary.
+        assert labels_before.count("✕") == 2, labels_before
+        assert "Beta thread" in labels_before, labels_before
+        assert "Temporary" in labels_before, labels_before
+        ids_before = _rendered_message_ids(console)
+
+        # The reader scrolled up into the history before opening the Terminal.
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(pilot, lambda: transcript.max_scroll_y > 4)
+        transcript.release_anchor()
+        transcript.scroll_to(y=2, animate=False)
+        await _wait_until(pilot, lambda: transcript.scroll_y == 2)
+
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(console, pilot, "#console-terminal-return")
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        restored = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert restored is not transcript  # the swap really remounted the center
+
+        composer = console.query_one("#console-native-composer")
+        await _wait_until(
+            pilot,
+            lambda: _session_tab_labels(console) == labels_before
+            and _rendered_message_ids(console) == ids_before
+            and restored.scroll_y == 2
+            and pilot.app.focused is composer,
+            detail=lambda: (
+                _session_tab_labels(console),
+                len(_rendered_message_ids(console)),
+                restored.scroll_y,
+                pilot.app.focused,
+            ),
+        )
+        # Never the quiet "No messages yet." body for this populated chat.
+        assert not [
+            body
+            for body in restored.query(".console-transcript-empty-body")
+            if body.display and body.region.area
+        ]
+        assert composer.display is True
+
+        draft_before = _composer_draft(console)
+        await pilot.press("y")
+        await pilot.pause()
+        assert _composer_draft(console) == draft_before + "y"
+        assert pilot.app.screen is console  # "y" did not open Trace
 
     manager.finalize_shutdown()

@@ -1679,6 +1679,7 @@ class ChatScreen(BaseAppScreen):
     #: TASK-33622.5: defaults for the bare ``__new__`` screens tests build.
     _console_terminal_open = False
     _console_terminal_workspace = None
+    _console_terminal_return_reading = None  # TASK-33622.8
 
     #: ADR-161 task 10: the Console's styling rides the app bundle via
     #: ``features/_console{,_panels}.tcss`` (CSS_MODULES members). The
@@ -2252,12 +2253,11 @@ class ChatScreen(BaseAppScreen):
             grid = self.query_one("#console-workspace-grid", Widget)
         except QueryError:
             return
-        from ..Console_Modules.terminal import sync_terminal_center_chrome
+        from ..Console_Modules import terminal as terminal_center
 
         replacement = self._build_console_center()
         if replacement is current:
-            sync_terminal_center_chrome(self)
-            self.call_after_refresh(self._focus_open_console_terminal)
+            terminal_center.finish_center_swap(self)
             return
         siblings = list(grid.children)
         try:
@@ -2271,16 +2271,10 @@ class ChatScreen(BaseAppScreen):
         replacement.set_styles(width=current.styles.width)
         replacement.styles.min_width = current.styles.min_width
         replacement.styles.min_height = current.styles.min_height
+        terminal_center.capture_center_reading(self, current)
         await current.remove()
         await grid.mount(replacement, before=next_sibling)
-        sync_terminal_center_chrome(self)
-        if self._console_terminal_open:
-            self.call_after_refresh(self._focus_open_console_terminal)
-        else:
-            self.call_after_refresh(
-                self._focus_console_workbench_target,
-                "console-transcript-surface",
-            )
+        terminal_center.finish_center_swap(self)
 
     def _focus_open_console_terminal(self) -> None:
         """Focus the one useful Terminal control for its current authority state."""

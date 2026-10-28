@@ -2004,7 +2004,9 @@ palette) instead of the chat send. Confirming **Arm Terminal** puts focus on
 **New**, and a session you create is selected and gets your typing straight
 away, even when other sessions exist. **F6** moves between the Terminal and the
 rails. The line under the terminal says so when the terminal does not have the
-keyboard. **Return to transcript** brings the chat and its composer back.
+keyboard. **Return to transcript** brings the chat and its composer back: the
+same tabs, the conversation's messages at the place you were reading, and the
+keyboard in the composer.
 
 Close, Disarm, and shutdown perform bounded best-effort process cleanup and
 show when cleanup cannot be proven; deliberately detached processes may

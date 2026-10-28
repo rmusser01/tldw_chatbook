@@ -636,6 +636,59 @@ def sync_terminal_center_chrome(screen: Any) -> None:
     screen._register_console_footer_shortcuts()
 
 
+def capture_center_reading(screen: Any, center: Any) -> None:
+    """Remember the transcript reading position before the Terminal replaces it.
+
+    TASK-33622.8: the swap removes the transcript region, and its return
+    mounts a fresh one; this is the position "Return to transcript" restores.
+
+    Args:
+        screen: The Console ``ChatScreen`` swapping its center.
+        center: The center about to be removed (only a transcript region
+            carries a reading state).
+    """
+    capture = getattr(center, "capture_reading_state", None)
+    if callable(capture):
+        screen._console_terminal_return_reading = capture()
+
+
+def finish_center_swap(screen: Any) -> None:
+    """Settle chrome, focus and content after the Console center was swapped.
+
+    TASK-33622.8: returning mounts a fresh transcript center, and nothing
+    re-synced it -- the tab strip showed only "New tab", a populated chat
+    read "No messages yet." (the transcript sync gate still held the
+    pre-swap token), and focus sat on the transcript, where "y" opened
+    Trace. The return now re-renders tabs and transcript, restores the
+    captured reading position, and focuses the composer.
+
+    Args:
+        screen: The Console ``ChatScreen`` whose center was just mounted.
+    """
+    sync_terminal_center_chrome(screen)
+    if screen._console_terminal_open:
+        screen.call_after_refresh(screen._focus_open_console_terminal)
+        return
+    reading = screen._console_terminal_return_reading
+    screen._console_terminal_return_reading = None
+    # The mounted transcript is new: its sync gate must not skip it.
+    screen._console_transcript_sync_token = None
+    screen.run_worker(
+        _resync_returned_transcript(screen, reading),
+        group="console-sync",
+        exclusive=True,
+    )
+    screen.call_after_refresh(
+        screen._focus_console_workbench_target, "console-native-composer"
+    )
+
+
+async def _resync_returned_transcript(screen: Any, reading: Any) -> None:
+    """Render the returned center, then put the reader back where they were."""
+    await screen._sync_native_console_chat_ui()
+    screen.call_after_refresh(screen._restore_console_transcript_reading_state, reading)
+
+
 def _projection_fingerprint(
     permitted: bool,
     armed: bool,

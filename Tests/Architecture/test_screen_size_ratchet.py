@@ -254,7 +254,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: sync_terminal_center_chrome). Rebased 2026-10-29 onto dev 3efe8476ce,
     #: which measures 24329/737; with the fix, 24386/737, the exact measurement.
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24561, 741),
+    #: Lowered 24386 -> 24380 2026-10-27 by TASK-33622.8: the center swap's
+    #: focus branches moved into Console_Modules/terminal.py
+    #: (finish_center_swap), which also re-syncs the returned transcript.
+    #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24555, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
