@@ -1,7 +1,7 @@
 ---
 id: TASK-37173
 title: Prepare copyable bug reports from retained diagnostics
-status: In Progress
+status: Done
 created_date: 2026-10-28 17:02
 assignee:
 - '@codex'
@@ -13,7 +13,7 @@ references:
 - Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
 documentation:
 - backlog/decisions/252-bug-report-evidence-and-sharing.md
-updated_date: 2026-10-28 21:31
+updated_date: 2026-10-28 22:25
 ---
 
 ## Description
@@ -30,7 +30,7 @@ Give users a readable report containing their description and retained diagnosti
 - [x] #4 The editable reviewed Markdown is the exact validated clipboard payload and stays within 60000 UTF-8 bytes including formatting and manual edits.
 - [x] #5 Source failures, read deadlines, concurrent logging, runtime changes, and dialog cancellation preserve the draft and cannot mix evidence or apply stale results.
 - [x] #6 Report creation performs no upload, LLM call, domain/config mutation, automatic draft write, or new capture/retention change.
-- [ ] #7 Focused privacy, repository, rendering, clipboard, UI, packaging, and design-governance checks pass, with live evidence of the report and pasted bytes.
+- [x] #7 Focused privacy, repository, rendering, clipboard, UI, packaging, and design-governance checks pass, with live evidence of the report and pasted bytes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,15 +53,19 @@ Approved spec: Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented a shared editable, memory-only bug report from Quick Actions, Logs and Settings About. Defaults include retained app-wide logs/exception traces and selected Console events/timing/errors; tool inputs/results require opt-in and immutable source governance. Reports and edited copy candidates are redacted and bounded to 60,000 UTF-8 bytes. No uploader, new recorder, schema, dependency or draft persistence was added.
+Implemented the shared editable, memory-only Report a bug flow from Quick Actions, Logs and Settings About. Reports include retained app-wide logs/exception traces and selected Console events, timing and errors. Tool inputs/results require opt-in and immutable source governance. Rendering and exact edited clipboard candidates are redacted and bounded to 60000 UTF-8 bytes; no upload, new recorder, dependency, schema or automatic draft persistence was added.
 
-Bounded repository reads retain timed-out work through retirement. The modal preserves edits, guards dismissal/quit, rejects stale generation/copy results and truthfully says Copy requested. A fresh whole-branch review found four substantive issues; all were reproduced and fixed: off-loop alias projection, real surface-event tool projection, step/run outcome separation and causal agent ordering.
+Bounded adapters retain timed-out work through retirement. The modal preserves drafts, guards dismissal/quit, rejects stale generation/copy delivery and truthfully says Copy requested. The feature review's four substantive findings were reproduced and fixed: off-loop alias projection, production surface-event tool fields, separate step/run outcomes and per-run causal ordering.
 
-Verification: 57 affected tests pass after fixes; 5 post-fix entry/import checks pass; renderer/sanitizer 163 pass; task/ADR guards pass. Native WindowsDriver/TTY journeys cover all three entry points, redacted exception evidence, Calculator results through the real capture service, manual edits, copy requests and discard guards. Received OSC52 packets match reviewed bytes (Palette 2,762; About 2,429) and recorded SHA-256 hashes. No OS clipboard acknowledgement is claimed.
+Resolved all requested shared failures: Windows governance paths/UTF-8 reads, standalone pin imports, canonical Settings/token/provider contracts, type-only annotation imports, three missing quit hooks and reasoned census exemptions. The focused shared review exposed goal completion under a covering quit prompt; a mounted RED-to-GREEN regression verifies exact-owner delivery after resume plus retained configuration/error updates. The palette navigation fixture owns its profile and awaits finite Skills workers before retirement; native storage gates and retirement budgets are unchanged.
 
-ADR required: yes. ADR: backlog/decisions/252-bug-report-evidence-and-sharing.md. Evidence and limitations: Docs/superpowers/verification/2026-10-28-report-a-bug.md. Plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md. Core files: Utils/bug_report.py, Utils/bug_report_capture.py, Widgets/bug_report_dialog.py, bounded log/DB/trace readers, shared action/entry points, focused tests and user/architecture guidance.
+Final verification at 478fd5b328: 605 unique passing targeted cases (395 combined report/privacy/UI/focus/palette/census; 31 design/component/bundle; 179 lifecycle/goal/exchange/extraction). Fatal lint across all changed Python files passes; default Ruff checks on 13 report/shared-repair modules and new tests pass; 19 formatting targets pass. Task uniqueness/readability and ADR guards pass. No full suite ran. Self-review and independent review findings are resolved, with no deferred minors.
 
-AC #7 stays unchecked and task remains In Progress: existing shared governance/focus/provider/profile-fixture failures prevent claiming the repository Definition of Done. No full suite ran. New helpers/tests format clean; two fatal lint annotation findings reproduce unchanged on dev. Unrelated test debt was left visible.
+Native WindowsDriver/TTY journeys cover all three entry points, redacted failure evidence, real captured Calculator results, manual review edits, copy requests and discard guards. Decoded OSC52 payloads match reviewed bytes and stored SHA-256 receipts (Palette 2762 bytes; About 2429); no OS clipboard acknowledgement is claimed.
+
+ADR required: yes for the feature; backlog/decisions/252-bug-report-evidence-and-sharing.md governs. Shared-check follow-up requires no new ADR because it enforces existing contracts. Plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md. Final evidence/rulings: Docs/superpowers/verification/2026-10-28-report-a-bug.md and its linked receipts. Updated lessons record exact-top-screen ownership and awaiting native screen work before test teardown.
+
+Core files: Utils/bug_report.py, Utils/bug_report_capture.py, Widgets/bug_report_dialog.py, bounded log/trace/DB readers, shared app action and three entry points, focused tests and user/architecture guidance. Shared repairs cover governance/focus/provider/census tests and goal/response-rule/portrait quit hooks. Local commits and the managed worktree are preserved for review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

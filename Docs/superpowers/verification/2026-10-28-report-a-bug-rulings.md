@@ -2,9 +2,7 @@
 
 Preserved from the execution ledger; each decision retains its rationale and cost.
 
-Later evidence: the existing log-buffer emission test passed in the combined
-integration run, where the app module had collection-time profile ownership.
-The historical isolated-fixture limitation below was not hidden by a product fix.
+The user’s later request to fix the remaining shared checks supersedes the historical shared-debt deferrals below. Final verification at 478fd5b328 has 605 unique passing targeted cases; no such verification blocker remains. The initial log-buffer profile limitation was also resolved in the combined run.
 
 - Ruling: Repository/user targeted-test instruction overrides skill full-suite wording — no full suite without opt-in — limits broad regression coverage.
 - Ruling: Continue against the recorded unchanged-code app-test failure; use bootstrap_profile on new focused app/report tests — avoids changing unrelated bootstrap code — existing baseline failure remains a verification limitation until a justified fixture can exercise it.
@@ -19,3 +17,6 @@ The historical isolated-fixture limitation below was not hidden by a product fix
 - Final: Ruling: Keep unsupported retired/multimodal tool bodies explicitly unavailable — immutable governance takes precedence over reconstructing raw content — less historical tool-content coverage.
 - Final: Ruling: Keep cross-source chronology unknown and preserve source-local order — independent clocks do not prove causality — global visual interleaving remains approximate.
 - Final: Ruling: Leave unchanged shared-test failures as baseline limitations — retired styles/global fixtures are outside this feature — the repository-wide checks are not wholly green and the Backlog DoD cannot be claimed without qualification.
+- Ruling: Keep hook-review unconditional cancellation and read-only paired portrait review as reasoned census exemptions; add real quit hooks to goal launch, portrait save and response-rule editing — no guarded work is silently bypassed — an incorrect exemption could lose unsettled work, so adjacent cancel/unmount paths were reviewed.
+- Ruling: Preserve the longstanding four-cell compact action floor and explicitly test canonical high-contrast choices instead of reviving retired Tools styles — source history confirms these contracts — incorrect expectations would weaken hit-target or contrast coverage; source and shipped-bundle assertions both remain enforced.
+- Ruling: Keep the mounted palette case scoped to navigation; skip nonessential deferred boot work and await its finite Skills screen workers before teardown — the snapshot found cold native authority admission still running after the canvas mounted — this case does not qualify the boot fleet, whose contracts remain in the separate boot tests. No production retirement budget or storage gate was weakened.
