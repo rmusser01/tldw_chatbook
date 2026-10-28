@@ -580,7 +580,10 @@ async def test_spawn_failure_and_required_context_have_no_empty_success():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("leader_exits", [False, True])
-async def test_posix_owned_group_descendants_are_reaped(tmp_path, leader_exits):
+@pytest.mark.parametrize("startup_delay", [0.0, 0.8], ids=["ordinary", "slow-start"])
+async def test_posix_owned_group_descendants_are_reaped(
+    tmp_path, leader_exits, startup_delay
+):
     import os
 
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -592,20 +595,48 @@ async def test_posix_owned_group_descendants_are_reaped(tmp_path, leader_exits):
     child = command("import time;time.sleep(30)").argv[-1]
     code = (
         "import subprocess,sys,pathlib,time;"
+        # The slow control exceeds the old 600 ms launch-to-timeout budget.
+        f"time.sleep({startup_delay!r});"
         f"p=subprocess.Popen([sys.executable,'-I','-c',{child!r}]);"
         f"pathlib.Path({str(pidfile)!r}).write_text(str(p.pid));"
         + ("pass" if leader_exits else "time.sleep(30)")
     )
     engine = HookEngine(
-        (command(code, timeout_seconds=0.6, effects=["deny"]),),
+        (command(code, timeout_seconds=10, effects=["deny"]),),
         lambda *_: True,
         HookBudgetOwner(),
     )
-    outcome = await engine.fire_async(event())
-    assert pidfile.exists()
-    assert not outcome.allowed
-    assert not engine.processes.records
-    await engine.close()
+    execution = asyncio.create_task(engine.fire_async(event()))
+
+    async def descendant_ready():
+        while not execution.done():
+            jobs = tuple(engine.processes.records.values())
+            if pidfile.exists() and len(jobs) == 1:
+                capture = jobs[0].capture
+                if capture is not None and capture.transport is not None:
+                    if not leader_exits or capture.exited.done():
+                        return capture
+            await asyncio.sleep(0.01)
+        raise AssertionError(
+            f"hook ended before descendant readiness: {await execution}"
+        )
+
+    try:
+        capture = await asyncio.wait_for(descendant_ready(), 5)
+        assert capture.exited.done() is leader_exits
+        group = capture.transport.get_pid()
+        execution.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await execution
+        await engine.close()
+        assert not engine.processes.records
+        assert not any(engine.budget_owner.snapshot().values())
+        with pytest.raises(ProcessLookupError):
+            os.killpg(group, 0)
+    finally:
+        execution.cancel()
+        await asyncio.gather(execution, return_exceptions=True)
+        await engine.close()
 
 
 @pytest.mark.asyncio
