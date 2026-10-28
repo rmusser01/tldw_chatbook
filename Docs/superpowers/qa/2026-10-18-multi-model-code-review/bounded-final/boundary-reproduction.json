@@ -1,0 +1,39 @@
+{
+  "physical_requests": 0,
+  "product_children": 0,
+  "source_head": "47093a3175c59db846a746c70b6f45d8b70cc50c",
+  "captured_coverage_errors": [
+    {
+      "field": [
+        "inspected_refs",
+        0
+      ],
+      "type": "string_type"
+    },
+    {
+      "field": [
+        "inspected_refs",
+        1
+      ],
+      "type": "string_type"
+    },
+    {
+      "field": [
+        "notes"
+      ],
+      "type": "extra_forbidden"
+    }
+  ],
+  "outcomes": {
+    "new_id": "incomplete",
+    "cached_page_after_checkpoint": {
+      "checkpoint_revision": 1,
+      "pending_units": 0,
+      "replayed_page_revision": 0,
+      "identical_cached_page": true,
+      "changed_resubmit": "disposition_conflict"
+    },
+    "same_id": "sealed"
+  },
+  "interpretation": "Reproduces existing contracts and observed recovery mismatch; no behavior was repaired or new live outcome inferred."
+}

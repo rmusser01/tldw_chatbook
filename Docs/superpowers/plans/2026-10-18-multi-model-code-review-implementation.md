@@ -1662,3 +1662,23 @@ ADR required: yes (existing ADR281).
 ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md.
 Reason: the existing runtime/ownership contracts are preserved; these integration
 corrections introduce no new architecture.
+
+
+### Bounded final outcome (2026-10-28; supersedes pending-grant status)
+
+The human approved the consolidated66-request/3-child scope. Preflight consumed
+2 failed requests (private prompt omitted schema_version), then its one manual
+retry passed in3 requests with native tool results and settled usage. The one
+final Console run on47093 used54 requests/3 children, native[2,1]/one chain, and
+failed the result gate with live_report_incomplete_R2. R2's corrected new-ID
+submission left a rejected record open; V1 accepted2 correct decisions but
+replayed cached revision0 after checkpoint revision1 and did not complete.
+Mapping and two unified pages exist; neither incomplete role sealed.
+
+Exact offline rejection/correction and cached-page controls reproduce these
+boundaries. No new product repair or full rerun was started. CI also has8
+reproduced module-size failures; its composer-state failure passes locally.
+Cumulative314requests/21children;7financialrequests unused but no permitted
+retry/final invocation/fresh child remains. AC24 stays unchecked, task InProgress,
+PR3286 draft. See bounded-final/report.md and outcome-review.md in the QA directory.
+No merge or further live execution is authorized by this outcome.

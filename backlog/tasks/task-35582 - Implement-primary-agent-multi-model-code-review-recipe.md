@@ -15,7 +15,7 @@ documentation:
 - Docs/superpowers/specs/2026-10-18-multi-model-code-review-design.md
 - backlog/decisions/281-primary-agent-multi-model-code-review.md
 - Docs/superpowers/plans/2026-10-18-multi-model-code-review-implementation.md
-updated_date: 2026-10-28 20:07
+updated_date: 2026-10-28 21:48
 ---
 
 ## Description
@@ -92,21 +92,26 @@ a real numbering collision; contracts are unchanged. The original worktree,
 71-commit history and raw QA archives remain preserved in a verified Git bundle.
 Required fixtures and concise independent reviews remain in the PR.
 
-AC23 is supported by the versioned targeted evidence. AC24 is still open:
-255historical provider requests/18children are consumed, and the latest live
-verifier was incomplete. No new live spending has been authorized. A successful
-HTTP response or runner exit is not completion evidence. Current integration,
-preflight and final-run results are tracked in
-Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md and its retention
-manifest. Historical notes/receipts remain recoverable from the preserved source
-commit3bce87f15c; they are summarized here to keep the delivery review usable.
+AC23 retains its recorded targeted evidence. AC24 remains open after the single
+approved final qualification on47093a3175: the real Haiku preflight passed, then
+the final run used54 requests/3 children and exited2 (`live_report_incomplete_R2`).
+R2's new-ID correction left its earlier invalid-record rejection unresolved; V1
+accepted both correct decisions but reread a cached revision-0 batch after a
+revision-1 checkpoint and never completed its protocol. Both originals map once
+and the unified report is readable; incomplete participant seals still fail AC24.
+The two boundaries were reproduced offline without changing product behavior.
 
-PR https://github.com/rmusser01/tldw_chatbook/pull/3286 targets dev. Narrow CI
-corrections defer review imports without raising startup/style limits, serialize
-first-use owner/ledger attachment, and declare the new modal in the existing
-test inventory. The result gate and native tool-result/accounting preflight
-passed offline controls only. One consolidated spending question is pending;
-recovery spending is zero. See the linked delivery evidence for exact checks.
+The approved scope consumed59 new requests/3 children; cumulative314/21. Seven
+financial requests remain unused, but retry/final-invocation/child scope is spent;
+no additional live execution or budget request follows. Eight module-size CI
+failures reproduce; a composer-state CI failure passes the exact local test and
+is not claimed fixed. No broad refactor, raised budget or full rerun was started.
+See Docs/superpowers/qa/2026-10-18-multi-model-code-review/bounded-final/report.md
+and its independent review, result hashes and durable archive references.
+
+PR https://github.com/rmusser01/tldw_chatbook/pull/3286 remains draft against dev.
+The original worktree and history are preserved. ADR281 remains the governing
+decision; no architecture change was introduced during bounded closeout.
 
 No merge is authorized. Keep the PR draft and this task In Progress until the
 remaining live qualification and Definition of Done are actually met.
