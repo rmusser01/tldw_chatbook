@@ -1,0 +1,276 @@
+{
+  "observed_at": "2026-10-28T15:44:50.532265+00:00",
+  "refs": 395,
+  "unique_task_draft_trees": 341,
+  "registered_worktrees": 53,
+  "max_major_id": 37144,
+  "next_unused_id": 37145,
+  "worktrees": [
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui",
+      "max_major_id": 35678,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.claude/worktrees/send-admission/tldw_tui",
+      "max_major_id": 34601,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.claude/worktrees/send-baseline/tldw_tui",
+      "max_major_id": 34563,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/auto-transcription-defaults/tldw_tui",
+      "max_major_id": 36390,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-approval-baseline/tldw_tui",
+      "max_major_id": 34416,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-approval-pr/tldw_tui",
+      "max_major_id": 34569,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-approval-ux/tldw_tui",
+      "max_major_id": 34416,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-cold-trust/tldw_tui",
+      "max_major_id": 34563,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-commit-baseline/tldw_tui",
+      "max_major_id": 34601,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-config-css-profile/tldw_tui",
+      "max_major_id": 35615,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-preparation-baseline/tldw_tui",
+      "max_major_id": 34563,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-response-rules/tldw_tui",
+      "max_major_id": 34362,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-send-lag-integration/tldw_tui",
+      "max_major_id": 34669,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-send-preparation/tldw_tui",
+      "max_major_id": 34563,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/console-watch-baseline/tldw_tui",
+      "max_major_id": 34667,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/incremental-send-speed/tldw_tui",
+      "max_major_id": 34563,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/ingest-editor-mousemove/tldw_tui",
+      "max_major_id": 37143,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/older-pr-review/tldw_tui",
+      "max_major_id": 33125,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/pr-2196-review/tldw_tui",
+      "max_major_id": 33125,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/pr-2439-review/tldw_tui",
+      "max_major_id": 33080,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/pr-2595-review/tldw_tui",
+      "max_major_id": 33125,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/pr2563-native-goals/tldw_tui",
+      "max_major_id": 33151,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "max_major_id": 37144,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/web-default-typography/tldw_tui",
+      "max_major_id": 34409,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui",
+      "max_major_id": 36423,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.codex-pr-task14801",
+      "max_major_id": 14810,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/collection-delete-undo-receipt",
+      "max_major_id": 15674,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-markdown-rp-flavor",
+      "max_major_id": 15482,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-model-picker",
+      "max_major_id": 14880,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-prompt-queue",
+      "max_major_id": 14920,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-queue-role-accents",
+      "max_major_id": 15261,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-transcript-windowing",
+      "max_major_id": 15530,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/console-uat-dev",
+      "max_major_id": 35312,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-conflict-compare",
+      "max_major_id": 15532,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-conflict-resolution",
+      "max_major_id": 15601,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-final-acceptance",
+      "max_major_id": 15530,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-p3-consistency",
+      "max_major_id": 15483,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-session-git-distill",
+      "max_major_id": 15261,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/file-notes-workbench-polish",
+      "max_major_id": 14880,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/library-canvas-scoped-sync",
+      "max_major_id": 15702,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/library-rail-collapse-delete-safety",
+      "max_major_id": 15603,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/notes-compact-chrome-consistency",
+      "max_major_id": 15482,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/notes-delete-undo-receipt",
+      "max_major_id": 15671,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/pr-2595",
+      "max_major_id": 33080,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/prompt-delete-undo-receipt",
+      "max_major_id": 15674,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/roleplay-chat-identity",
+      "max_major_id": 14801,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15458-media-viewer-inplace",
+      "max_major_id": 15741,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-15459-library-compose-once",
+      "max_major_id": 16199,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task-207-live-ingest-progress",
+      "max_major_id": 15741,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task14810-dev-baseline",
+      "max_major_id": 14807,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/task3795-base-compare",
+      "max_major_id": 3794,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui/.worktrees/uat-ingestion-dev",
+      "max_major_id": 15702,
+      "exists": true
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/Working/Github/tldw_tui_default_tools_uat",
+      "max_major_id": 14807,
+      "exists": true
+    }
+  ],
+  "purpose": "Allocate one nonduplicating CI repair task for residual painted acknowledgement-to-echo row gap, distinct from completed TASK-33620.5/33620.15."
+}

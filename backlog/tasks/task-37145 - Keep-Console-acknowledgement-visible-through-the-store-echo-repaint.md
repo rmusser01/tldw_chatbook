@@ -1,7 +1,7 @@
 ---
 id: TASK-37145
 title: Keep Console acknowledgement visible through the store echo repaint
-status: In Progress
+status: Done
 created_date: 2026-10-28 15:49
 assignee:
 - '@codex'
@@ -18,7 +18,7 @@ references:
 - TASK-32522
 - Tests/UI/test_console_send_acknowledgement.py
 - tldw_chatbook/Widgets/Console/console_transcript.py
-updated_date: 2026-10-28 16:06
+updated_date: 2026-10-28 16:24
 ---
 
 ## Description
@@ -32,7 +32,7 @@ PR3283 UI shard1 on cc907deb18 recorded four missing-user compositor samples dur
 - [x] #1 A controlled native mounted replacement keeps the acknowledged USER message in the last committed frame until the exact store echo can appear once; the regression fails before the fix with no unrelated setup errors or skips.
 - [x] #2 Cancellation, unmount, reorder and session-switch behavior preserve existing reconciliation ownership and removal completion, and repainting resumes after a cancelled replacement.
 - [x] #3 The original end-to-end acknowledgement gate and focused transcript controls pass without raising its frame allowance, adding sleeps/retries, changing message identities, or changing guard caps, dependencies, polling or timeout policy.
-- [ ] #4 Focused Superpowers review and local verification qualify the repair; relevant documentation records the actual compositor evidence and existing ADR ownership. Actual successor-head PR CI remains a separate delivery gate.
+- [x] #4 Focused Superpowers review and local verification qualify the repair; relevant documentation records the actual compositor evidence and existing ADR ownership. Actual successor-head PR CI remains a separate delivery gate.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,6 +55,7 @@ Scoped AST and diff-check pass. Both touched tests pass Ruff lint/format checks.
 Updated Docs/Architecture/console.md and the actual TASK-37145 compositor incident in backlog/docs/lessons-testing-evidence.md. Existing ownership: TASK-33620.5 Known residue; TASK-34982 cancellation-safe removal. ADR required: no; routine rendering transaction under [ADR-094](../decisions/094-console-turn-lifetime-and-navigation-boundary.md) and [accepted ADR-230](../decisions/230-console-send-preparation-and-io-ownership.md). Broader Proposed ADR-231 polling redesign is excluded. No live terminal-write, elapsed blank-duration, natural race-frequency, provider-latency or whole-send certification is claimed; no full suite was run.
 
 Implementation/self-review complete; task stays In Progress with AC4 open for the root's fresh scoped Superpowers review, current-dev integration and actual successor-head PR CI/delivery closure. Full report: .superpowers/sdd/2026-10-27-textual-37031-37034/ci-ack-37145-report.md.
+Fresh scoped Superpowers review of f9d4ad7a29 approves spec/code quality with zero Critical/Important findings. Reviewer independently verifies24XML files and reconstructs historical full-CSS RED03 tool-source provenance; root independently parses actual RED/final/wrapper receipts. Final12nodes pass0F0E0S;7temporary-wrapper control bodies pass with their exact qualification. Native batch repair is locally complete. Root owns latestDev798 integration/enrollment and actual successor-head hosted CI as a separate pending PR delivery gate. Portable report/evidence: Docs/superpowers/qa/2026-10-27-textual-followups-implementation.md. Inherited warnings,3E721/format debt and299-line baseline pin overage remain explicitly qualified; no cap or original frame allowance changed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

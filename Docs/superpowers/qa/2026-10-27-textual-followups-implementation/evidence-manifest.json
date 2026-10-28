@@ -2,6 +2,26 @@
   "note": "Portable Markdown/JSON is LF-normalized. Source/XML hashes retain native meaning. Historical receipts are pinned to their stated heads; final PR CI is a separate delivery gate. Original Task1 review artifact was not retained.",
   "files": [
     {
+      "file": "ack-37145-retained-tool-provenance.json",
+      "sha256": "24d531702ffd22b4f2442bcd906fdcee08d98478b33d69d3479e21be62cb3bed"
+    },
+    {
+      "file": "ack-37145-static.json",
+      "sha256": "513c61ec18faa79b1349eeb60aa89c628c56ee62828b207ceb39743765a12845"
+    },
+    {
+      "file": "ci-ack-37145-report.md",
+      "sha256": "9a6dfb8a9a5e17133b09599d34f20b33a9fd966f8988528389bc3677570b6f8d"
+    },
+    {
+      "file": "ci-ack-37145-task-review.md",
+      "sha256": "4726fdd150bbb0b7de989458edfd6f3f35b49ac154340b3f9f115f7078f4c9bd"
+    },
+    {
+      "file": "ci-ack-gap-task-id-allocation.json",
+      "sha256": "359e3e941b11028b0257296dcbd5ab802a2cba19385fc9a85e48d0f68f71ab12"
+    },
+    {
       "file": "ci-repair-37144-report.md",
       "sha256": "3715cc82df24b8b91678bd9960b31b8a63419eb2d68ac46c9df6529d6a018195"
     },
@@ -22,6 +42,10 @@
       "sha256": "13f4eebb914924d31405780e01557a28e0b619f62c882534431b65c8736eab6b"
     },
     {
+      "file": "ci-send-ack-gap-review.md",
+      "sha256": "5684923a37d25ce7ff094798132113d2bdfbcf603c0396c282142a83dd364b03"
+    },
+    {
       "file": "computed-param-selector-proof.json",
       "sha256": "3e18c2dd717a82349b45d084aafb3d8b6bc42a2b48bd001f3bcbd25d36a47e4e"
     },
@@ -35,7 +59,7 @@
     },
     {
       "file": "executor-rulings.md",
-      "sha256": "d557ff0ccffead4d4342511d9899ffa5f53e7fd210c839cc10e87f0ab1fe5912"
+      "sha256": "c54e6b3b52681aa970af21d6cca1be562893c057e6916011c1c46e5d4fe08efa"
     },
     {
       "file": "final-census-capacity-proof.json",
@@ -140,6 +164,10 @@
     {
       "file": "rebase-dev773-proof.json",
       "sha256": "9afc1826a6cfe9ba34f709b9e99e962f6279bc3edc8b61da2c71a6ffd1077744"
+    },
+    {
+      "file": "root-ack37145-xml-proof.json",
+      "sha256": "2d0b7f52f3b592580c4333efb014aa7d822a8ea9846f98254f41ec1cb0f00617"
     },
     {
       "file": "root-ci37144-child-proof.json",
