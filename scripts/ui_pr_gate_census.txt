@@ -1788,3 +1788,10 @@ Tests/UI/test_console_attachment_vision_block.py::test_a_vision_block_names_the_
 Tests/UI/test_console_attachment_vision_block.py::test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft
 # TASK-33620.2 review: with no model chosen, the setup strip owns the composer and the vision row stays hidden.
 Tests/UI/test_console_attachment_vision_block.py::test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidden
+# TASK-33628.1 (2026-10-27): the Ctrl+Q loss-guard regressions, appended at the
+# tail as node ids (the whole file is ~60 s; each of these is ~10 s alone): a
+# lone composer draft, a Temporary chat's parked unsent turn, and the tab-close
+# dialog naming that parked turn.
+Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_with_only_a_composer_draft_asks_and_stay_keeps_it
+Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn
+Tests/UI/test_console_quit_loss_guard.py::test_tab_close_reports_a_parked_unsent_turn
