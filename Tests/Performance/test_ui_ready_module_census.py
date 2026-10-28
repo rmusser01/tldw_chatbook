@@ -189,6 +189,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Schema composition is first-send work; its frozen data type is already resident.
+    "tldw_chatbook.Agents.first_request_schemas",
     # Local transcription failure attribution is first-failure work.
     "tldw_chatbook.STT.failure_diagnostics",
     # Empty Console has neither persisted markers nor assistant token rates.

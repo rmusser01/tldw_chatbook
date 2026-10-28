@@ -144,7 +144,8 @@ root_alias/path arguments is refused with discovery guidance instead of silently
 using scratch. list_directory requires its declared directory_path. To inspect an
 admitted project alias, discover/load fs_list or fs_read and use their own schemas.
 
-First-request schema composition is in `Agents/first_request_schemas.py`;
+First-request schema composition loads on demand from `Agents/first_request_schemas.py`;
+the frozen plan type lives in `agent_models.py`.
 `agent_service.py` retains request sizing and dispatch. Compact plans carry their
 input ceiling through schema loading, project startup/nested admission, preview
 and final request checks. Late inboxes cannot expand their frozen schema set.

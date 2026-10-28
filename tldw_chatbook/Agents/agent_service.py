@@ -108,6 +108,7 @@ from .agent_models import (
     TERMINAL_RUN_STATUSES,
     AgentConfig,
     AgentDefinition,
+    FirstRequestSchemaPlan,
     AgentStep,
     ContinuationEventContext,
     ModelTurn,
@@ -167,9 +168,6 @@ from .fleet_coordinator import (
     FleetCoordinator,
     FleetHandle,
     RetainedTranscript,
-)
-from .first_request_schemas import (
-    FirstRequestSchemaPlan, build_runtime_schema_plan, build_compact_schema_plan,
 )
 from .human_input_wait import human_input_wait_active
 from .native_tools import (
@@ -822,6 +820,8 @@ def build_first_request_schema_plan(
         A frozen schema plan whose ``request_fits`` flag proves whether any
         provider request can be dispatched within the current context budget.
     """
+    from .first_request_schemas import build_runtime_schema_plan, build_compact_schema_plan
+
     api_endpoint = config.execution_provider or api_endpoint
     direct_prompt = direct_system_prompt or config.system_prompt
     discovery_prompt = discovery_system_prompt or config.system_prompt

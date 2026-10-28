@@ -59,6 +59,10 @@ jobs:
           Tests/Agents/test_skill_tool_spawn.py::test_undisclosed_skill_tool_is_refused_without_find_load
           Tests/Agents/test_skill_tool_spawn.py::test_skill_tool_executes_after_find_load_discloses_it
           Tests/Agents/test_skill_tool_spawn.py::test_native_spawn_child_cannot_call_a_skill_tool
+          Tests/Agents/test_agent_service.py::test_definitive_result_observer_receives_structured_success_and_failure_only
+          Tests/Agents/test_agent_service.py::test_call_with_timeout_pauses_deadline_while_predicate_holds
+          Tests/Agents/test_agent_service.py::test_call_with_timeout_deadline_resumes_after_pause_ends
+          Tests/Agents/test_agent_service.py::test_runtime_observation_and_concurrent_cancellation_share_owner_sequence
           Tests/Agents/test_agent_service.py::test_replacement_updates_permission_set_in_lockstep
           Tests/Agents/test_agent_service.py::test_initial_project_instruction_rows_are_verified_and_marked_before_provider
           Tests/Agents/test_agent_service.py::test_bounding_that_drops_pending_instruction_row_stops_without_send_or_mark

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -903,7 +904,12 @@ def test_binding_with_symlinked_ancestor_is_never_auto_selected(tmp_path):
     real_root = real_parent / "repo"
     real_root.mkdir(parents=True)
     alias_parent = tmp_path / "alias"
-    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    try:
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows host does not grant directory-symlink creation")
+        raise
     binding = _binding(alias_parent / "repo")
 
     with pytest.raises(ProjectInstructionBindingRecovery, match="no_eligible_binding"):
