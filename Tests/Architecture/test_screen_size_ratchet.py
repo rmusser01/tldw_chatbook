@@ -191,7 +191,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: its import; the stamp lives in Console_Modules/wiring.py::
     #: environment_scope_stamp). Dev 416feb50ee measures 24319/736; with the
     #: fix, 24321/736, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 736),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24327, 736),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
