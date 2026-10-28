@@ -51,6 +51,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches, QueryError
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Widgets.destination_rail import GLYPH_COLLAPSED, GLYPH_EXPANDED
@@ -93,6 +94,47 @@ SINGLE_LINE_ROW_BUDGET = RAIL_CONTENT_WIDTH_MIN - 1 - 2
 #: budget (``SINGLE_LINE_ROW_BUDGET`` = 27) still leaves 25 columns for a
 #: child row's own text.
 ROW_INDENT_COLUMNS = 2
+
+#: What ``ChatScreen._sync_console_rail_descendant_visibility`` stamps on each
+#: descendant of a collapsed Console rail: the display it had before the
+#: collapse. The rail's opening restores that display and removes the mark.
+CONSOLE_RAIL_PRIOR_DISPLAY = "_console_rail_prior_display"
+
+
+def hidden_by_console_rail(widget: Widget) -> bool:
+    """Whether a collapsed Console rail is hiding ``widget`` (TASK-37000).
+
+    Nothing such a widget does is drawn, yet each layout it requests lays out
+    the whole screen. Its owner keeps its state current for readers and
+    leaves the DOM work that needs a layout to the rail's opening, which lays
+    the rail out anyway.
+
+    Args:
+        widget: A widget that may sit inside a Console rail.
+
+    Returns:
+        True while the rail's collapse cascade holds the widget's display.
+    """
+    return getattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, None) is not None
+
+
+def set_display_under_console_rail(widget: Widget, visible: bool) -> None:
+    """Show or hide ``widget``, deferring to a collapsed rail's cascade.
+
+    Inside a collapsed rail a direct write showed the widget in a rail nobody
+    sees, laid out the whole screen, and was then undone: the opening restores
+    the display recorded at the collapse (TASK-37000: a first send's Agents
+    section showed in a rail open throughout and not in one opened after).
+    There the preference goes to the cascade's record instead.
+
+    Args:
+        widget: The widget to show or hide.
+        visible: Whether it should be displayed.
+    """
+    if hidden_by_console_rail(widget):
+        setattr(widget, CONSOLE_RAIL_PRIOR_DISPLAY, bool(visible))
+        return
+    widget.styles.display = "block" if visible else "none"
 
 
 def row_fits_one_line(
@@ -403,6 +445,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.styles.min_height = 0
         self.add_class("console-inspector-section")
         self.recompose_count = 0
+        #: A rebuild a collapsed rail is holding for its opening (TASK-37000).
+        self._rail_rebuild_deferred = False
 
     # -- DOM id helpers -----------------------------------------------
 
@@ -791,6 +835,10 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         appearing/disappearing -- recomposes the whole section (counted in
         ``recompose_count``).
 
+        Inside a collapsed Console rail (TASK-37000) the attributes still
+        update at once, an in-place patch re-writes copy without a layout, and
+        a rebuild waits for the rail's opening (``rebuild_if_deferred``).
+
         Args:
             state: New rows + header summary, as one atomic snapshot.
         """
@@ -810,21 +858,44 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         self.rows = rows
         self.summary = summary
         self.notice = notice
+        hidden = self.is_mounted and hidden_by_console_rail(self)
         if (
-            not self.is_mounted
-            or not same_structure
-            or not self._apply_state_updates(
-                previous_rows, previous_summary, previous_notice
+            self.is_mounted
+            and same_structure
+            and not self._rail_rebuild_deferred
+            and self._apply_state_updates(
+                previous_rows, previous_summary, previous_notice, layout=not hidden
             )
         ):
-            self.recompose_count += 1
-            self.refresh(recompose=True)
+            return
+        if hidden:
+            self._rail_rebuild_deferred = True
+            return
+        self._rail_rebuild_deferred = False
+        self.recompose_count += 1
+        self.refresh(recompose=True)
+
+    def rebuild_if_deferred(self) -> None:
+        """Run the rebuild a collapsed rail held back (TASK-37000).
+
+        The rail's opening cascade calls this once it has shown the section
+        again, so the rebuild lands with the opening's own layout.
+        """
+        if not self._rail_rebuild_deferred:
+            return
+        self._rail_rebuild_deferred = False
+        if not self.is_mounted:
+            return
+        self.recompose_count += 1
+        self.refresh(recompose=True)
 
     def _apply_state_updates(
         self,
         previous_rows: tuple[InspectorSectionRow, ...],
         previous_summary: str,
         previous_notice: str,
+        *,
+        layout: bool = True,
     ) -> bool:
         """Patch changed summary/row Statics in place.
 
@@ -833,6 +904,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             previous_summary: The summary text that produced the mounted
                 summary Static (or the fact it was absent).
             previous_notice: Text that produced the mounted notice.
+            layout: Whether re-written copy asks for a layout; ``False``
+                inside a collapsed rail, whose opening lays it out.
 
         Returns:
             ``True`` when every changed widget was found and patched;
@@ -841,22 +914,31 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """
         try:
             if self.summary and self.summary != previous_summary:
-                self.query_one(f"#{self._summary_id}", Static).update(self.summary)
+                self.query_one(f"#{self._summary_id}", Static).update(
+                    self.summary, layout=layout
+                )
             if self.notice and self.notice != previous_notice:
-                self.query_one(f"#{self._notice_id}", Static).update(self.notice)
+                self.query_one(f"#{self._notice_id}", Static).update(
+                    self.notice, layout=layout
+                )
             for index, (row, previous_row) in enumerate(
                 zip(
                     self.rows[: self.max_visible_rows],
                     previous_rows[: self.max_visible_rows],
                 )
             ):
-                self._apply_row_update(index, row, previous_row)
+                self._apply_row_update(index, row, previous_row, layout=layout)
         except (NoMatches, QueryError):
             return False
         return True
 
     def _apply_row_update(
-        self, index: int, row: InspectorSectionRow, previous_row: InspectorSectionRow
+        self,
+        index: int,
+        row: InspectorSectionRow,
+        previous_row: InspectorSectionRow,
+        *,
+        layout: bool = True,
     ) -> None:
         """Patch one row widget in place; raises NoMatches/QueryError on a
         missing target so the caller can fall back to a recompose."""
@@ -885,17 +967,17 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             resolved_primary = resolve_glyph_text(row.primary_text)
             row_widget._primary_text = resolved_primary
             self.query_one(f"#{self._row_primary_id(index)}", Static).update(
-                resolved_primary
+                resolved_primary, layout=layout
             )
         if row.secondary_text != previous_row.secondary_text:
             row_widget._secondary_text = row.secondary_text
             secondary = self.query_one(f"#{self._row_secondary_id(index)}", Static)
-            secondary.update(row.secondary_text)
+            secondary.update(row.secondary_text, layout=layout)
             # Same mounted shape (the structural key guarantees it), but an
             # empty secondary is HIDDEN rather than blank -- so a row that
             # gains or loses its detail text has to gain or lose the line
             # too, or the new text renders into a `display: none` Static.
-            secondary.styles.display = "none" if not row.secondary_text else "block"
+            set_display_under_console_rail(secondary, bool(row.secondary_text))
         if row.status != previous_row.status:
             if previous_row.status:
                 row_widget.remove_class(

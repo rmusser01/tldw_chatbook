@@ -135,6 +135,38 @@ def _start_live_turn(console, controller, store, session_id):
     return assistant.id
 
 
+def _inspector_rows_text(inspector: ConsoleRunInspector) -> str:
+    """The run inspector's row copy as the user sees it, now or at its opening.
+
+    Read from the mounted rows, hidden or not: inside the collapsed rail
+    (160x48 here) an in-place change re-writes them without a layout.
+    TASK-37000: only while the collapsed rail holds a rebuild, such as the
+    Approvals group appearing, are the mounted rows stale until the opening,
+    which composes ``_rendered_row_entries`` of the inspector's current state
+    and ownership; until then that projection is what the rows will show.
+    Whether the opening paints it is pinned by the TASK-37000 parity tests
+    (test_console_collapsed_inspector_send_layout).
+
+    Args:
+        inspector: The mounted Console run inspector.
+
+    Returns:
+        One line per row.
+    """
+    from tldw_chatbook.Widgets.Console.console_inspector_section import (
+        hidden_by_console_rail,
+    )
+
+    if hidden_by_console_rail(inspector) and inspector._rail_rebuild_deferred:
+        return "\n".join(
+            text
+            for _widget_id, text, _status in ConsoleRunInspector._rendered_row_entries(
+                inspector.state, inspector._ownership
+            )
+        )
+    return "\n".join(str(row.render()) for row in inspector.query(Static))
+
+
 async def _assert_projection(console, pilot, assistant_id, copy, approval_count):
     await console._sync_native_console_transcript()
     console._sync_console_mode_bar()
@@ -152,7 +184,7 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
     # A busy config lifetime returns False and queues a fresh trailing sync;
     # its Inspector state may also precede Textual's row recomposition.
     def published():
-        rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
+        rendered = _inspector_rows_text(inspector)
         return (
             inspector.state.pending_approval_count == approval_count
             and f"Live work: {copy}" in rendered
@@ -160,7 +192,7 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
         )
 
     await _wait(pilot, published)
-    rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
+    rendered = _inspector_rows_text(inspector)
     assert f"Live work: {copy}" in rendered, rendered
     assert f"Approvals: {approval_count} pending" in rendered, rendered
     assert inspector.state.pending_approval_count == approval_count
@@ -385,6 +417,18 @@ async def _verify_review_routes_reach_visible_skill_confirm_before_queued_approv
                 if entry_point == "shortcut":
                     await pilot.press("alt+a")
                 elif entry_point == "inspector":
+                    # TASK-37000: the collapsed Inspector holds its rebuild
+                    # (Review approval becoming enabled) for its opening; a
+                    # user reaches this button by opening it.
+                    await console.action_toggle_console_inspector_rail()
+                    await _wait(
+                        pilot,
+                        lambda: not console.query_one(
+                            "#console-inspector-review-approval", Button
+                        ).disabled,
+                    )
+                    console.query_one("#console-native-composer").focus()
+                    await pilot.pause()
                     console.query_one(
                         "#console-inspector-review-approval", Button
                     ).press()
@@ -784,11 +828,11 @@ async def _verify_legacy_tool_approval_counts_in_the_mounted_view(request, tmp_p
                 lambda: (
                     inspector.state.pending_approval_count == 1
                     and "Approvals: 1 pending"
-                    in "\n".join(str(row.render()) for row in inspector.query(Static))
+                    in _inspector_rows_text(inspector)
                 ),
             )
             assert inspector.state.pending_approval_count == 1
-            rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
+            rendered = _inspector_rows_text(inspector)
             assert "Approvals: 1 pending" in rendered, rendered
             attention = console._workspace._workspace_files_attention_snapshot()
             assert attention.pending_approval_count == 1

@@ -31,6 +31,10 @@ from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
+from tldw_chatbook.Widgets.Console.console_inspector_section import (
+    CONSOLE_RAIL_PRIOR_DISPLAY,
+    hidden_by_console_rail,
+)
 
 _ACTION_GROUPS = ACTION_GROUPS
 _CONDITIONAL_OWNERS = ("Tools", "Approvals", "Artifacts")
@@ -248,6 +252,8 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self.styles.min_height = 0
         #: Count of wholesale recomposes taken by ``sync_state`` (test seam).
         self.recompose_count = 0
+        #: A rebuild a collapsed rail is holding for its opening (TASK-37000).
+        self._rail_rebuild_deferred = False
 
     def sync_state(self, state: ConsoleInspectorState) -> None:
         """Refresh the mounted inspector from a new display-state snapshot.
@@ -257,6 +263,13 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         ``Static`` widgets are updated in place instead of tearing down and
         recomposing the whole inspector. Any structural change (rows added/
         removed/reordered, action or dictionary changes) still recomposes.
+
+        TASK-37000: inside a collapsed Console rail, ``state`` still updates
+        at once, rows are re-written without a layout, and a recompose waits
+        for the rail's opening (``rebuild_if_deferred``). A chat's first send
+        is such a change (its dictionary and world-book rows and Attach
+        actions), and every mount it made in the hidden rail laid out the
+        whole screen.
 
         Args:
             state: New inspector display-state snapshot.
@@ -292,11 +305,23 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
             if structural_change
             else None
         )
+        hidden = self.is_mounted and hidden_by_console_rail(self)
         if (
             not self.is_mounted
             or structural_change
-            or not self._apply_row_updates(previous, previous_ownership)
+            or self._rail_rebuild_deferred
+            or not self._apply_row_updates(
+                previous, previous_ownership, layout=not hidden
+            )
         ):
+            if hidden:
+                # No focus to carry to the opening: a control focused when the
+                # rail collapsed gets Textual's Hide at the collapse's first
+                # layout and blurs, on the base build too (pinned in
+                # test_console_inspector_rail_deferral).
+                self._rail_rebuild_deferred = True
+                return
+            self._rail_rebuild_deferred = False
             self._pending_conditional_focus = focus_snapshot
             self._pending_more_focus_recovery = recover_removed_more_focus
             self._pending_more_focus_section_id = more_focus_section_id
@@ -308,6 +333,20 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         # cascade the owning screen applies later in the same sync tick.
         self.call_after_refresh(self._restore_rail_cascade_visibility)
         self.call_after_refresh(self._request_sections_reconcile)
+
+    def rebuild_if_deferred(self) -> None:
+        """Run the recompose a collapsed rail held back (TASK-37000).
+
+        The rail's opening cascade calls this once it has shown the inspector
+        again, so the rebuild lands with the opening's own layout.
+        """
+        if not self._rail_rebuild_deferred:
+            return
+        self._rail_rebuild_deferred = False
+        if not self.is_mounted:
+            return
+        self.recompose_count += 1
+        self.refresh(recompose=True)
 
     async def recompose(self) -> None:
         """Reconcile the replacement sections after their DOM is committed."""
@@ -354,15 +393,15 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         layouts per Inspector update during a run (TASK-33620.15.7). The
         markers stay, so the rail's reopening cascade restores the rows.
         """
-        if getattr(self, "_console_rail_prior_display", None) is not None:
+        if hidden_by_console_rail(self):
             return
         for child in self.query("*"):
-            prior_display = getattr(child, "_console_rail_prior_display", None)
+            prior_display = getattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, None)
             if prior_display is None:
                 continue
             child.display = bool(prior_display)
             child.styles.display = "block" if prior_display else "none"
-            delattr(child, "_console_rail_prior_display")
+            delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)
 
     @classmethod
     def _group_projection(
@@ -570,11 +609,15 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         self,
         previous: ConsoleInspectorState,
         previous_ownership: InspectorOwnedContent,
+        *,
+        layout: bool = True,
     ) -> bool:
         """Update changed row Statics in place after a non-structural change.
 
         Args:
             previous: The state snapshot that produced the mounted rows.
+            layout: Whether re-written copy asks for a layout; ``False``
+                inside a collapsed rail, whose opening lays it out.
 
         Returns:
             True when all changed rows were updated in place; False when a
@@ -590,7 +633,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                 row_widget = self.query_one(f"#{widget_id}", Static)
             except (NoMatches, QueryError):
                 return False
-            row_widget.update(text)
+            row_widget.update(text, layout=layout)
             if status != old_status:
                 # Both sides normalize, so a swap between two synonyms of one
                 # class (e.g. "missing" -> "unavailable") removes and re-adds

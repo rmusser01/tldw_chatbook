@@ -15,7 +15,6 @@ from pathlib import Path
 from types import FunctionType
 
 import pytest
-from textual.widgets import Static
 
 from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 from Tests.private_profile import private_profile_test
@@ -632,9 +631,7 @@ async def test_original_legacy_pending_facts_paint_before_cold_config_retires(
                     violations.append(
                         "live legacy count1 deferred behind fresh configuration"
                     )
-                rendered = "\n".join(
-                    str(row.render()) for row in inspector.query(Static)
-                )
+                rendered = original._inspector_rows_text(inspector)
                 if "Approvals: 1 pending" not in rendered:
                     violations.append(
                         "mounted approval row did not paint current count"

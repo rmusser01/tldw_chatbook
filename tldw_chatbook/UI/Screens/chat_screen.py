@@ -562,9 +562,12 @@ from ...Widgets.Console.console_agent_steering_bar import (
     ConsoleAgentSteeringState,
 )
 from ...Widgets.Console.console_inspector_section import (
+    CONSOLE_RAIL_PRIOR_DISPLAY,
     ConsoleInspectorSection,
     ConsoleInspectorSectionRow,
     ConsoleInspectorSectionState,
+    hidden_by_console_rail,
+    set_display_under_console_rail,
 )
 from ...Widgets.Console.console_command_popup import ConsoleCommandPopup
 from ...Widgets.Console.console_transcript import (
@@ -8675,10 +8678,9 @@ class ChatScreen(BaseAppScreen):
             fleet_previous_rows = fleet_section.rows
             fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
-            fleet_section.styles.display = (
-                "block"
-                if fleet_section_state.rows or fleet_section_state.summary
-                else "none"
+            set_display_under_console_rail(
+                fleet_section,
+                bool(fleet_section_state.rows or fleet_section_state.summary),
             )
             if fleet_focus_row_id is not None and (
                 tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
@@ -12573,16 +12575,19 @@ class ChatScreen(BaseAppScreen):
         """Cascade rail display state while preserving child display preferences."""
         for child in widget.query("*"):
             if visible:
-                prior_display = getattr(child, "_console_rail_prior_display", None)
+                prior_display = getattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, None)
                 if prior_display is None:
                     continue
                 child.display = bool(prior_display)
                 child.styles.display = "block" if prior_display else "none"
-                delattr(child, "_console_rail_prior_display")
+                delattr(child, CONSOLE_RAIL_PRIOR_DISPLAY)
+                # TASK-37000: the rebuild a hidden child held for this opening.
+                if callable(getattr(child, "rebuild_if_deferred", None)):
+                    child.rebuild_if_deferred()
                 continue
 
-            if not hasattr(child, "_console_rail_prior_display"):
-                setattr(child, "_console_rail_prior_display", bool(child.display))
+            if not hasattr(child, CONSOLE_RAIL_PRIOR_DISPLAY):
+                setattr(child, CONSOLE_RAIL_PRIOR_DISPLAY, bool(child.display))
             child.display = False
             child.styles.display = "none"
 
@@ -14238,7 +14243,8 @@ class ChatScreen(BaseAppScreen):
                 continue
             if str(widget.renderable) == row.text:
                 continue
-            widget.update(row.text)
+            # TASK-37000: in a collapsed rail, the rail's opening lays it out.
+            widget.update(row.text, layout=not hidden_by_console_rail(widget))
             widget.set_classes(row.classes)
 
     def _build_console_library_search_region(self) -> Container:
@@ -20774,13 +20780,13 @@ class ChatScreen(BaseAppScreen):
         # TASK-251 (audit P1 B1) -- DEVIATION FROM THE BRIEF, documented in
         # the task-251 report: the brief's Change 3 asked to skip this
         # build+push entirely while the right rail is hidden. Measured
-        # against the actual test suite, that broke real behavior --
-        # Console keeps the inspector's mounted content fresh in the
-        # background regardless of paint visibility (selecting a message,
-        # a setup blocker appearing, resuming a conversation, etc. all
-        # still need `#console-run-inspector-state`'s children to reflect
-        # the latest state even while collapsed, and several existing
-        # tests assert exactly that). The audit's actual measured
+        # against the actual test suite, that broke real behavior: the
+        # inspector's state must stay current while collapsed (selecting a
+        # message, a setup blocker, resuming a conversation). TASK-37000:
+        # the hidden inspector re-writes rows in place without a layout and
+        # holds a rebuild for the rail's opening, so this push is cheap
+        # there; read `inspector.state`, not its children, for the latest
+        # facts while the rail is collapsed. The audit's actual measured
         # complaint -- "streaming-excerpt selection = 5 teardowns/s" -- is
         # already fixed below by `_selected_console_message_inspector_rows`
         # rendering a stable "Streaming…" placeholder: the built state stops

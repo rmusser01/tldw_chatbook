@@ -564,7 +564,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # time under load ~38 (CI ran the run-start node in 4.3-6.1 s against 8.8 s
 # at that load), shards 13, 14 and 17 come to 15.8, 16.3 and 16.0 pytest min;
 # the heaviest shard (11, 17.2) is unchanged.
-MINIMUM_FILES = 967
+# TASK-37000 (2026-10-27) appends 3 entries at the tail: the collapsed-rail
+# deferral file (four widget cases, about 8 s locally) and the two mounted
+# Console cases of its send file as node ids (about 21 s and 30 s locally at
+# load ~15), so no existing entry changes shard: 965 -> 968.
+MINIMUM_FILES = 970
 
 
 def read_census(path: Path) -> list[str]:
