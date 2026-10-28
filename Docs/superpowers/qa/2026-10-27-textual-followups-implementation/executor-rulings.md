@@ -185,3 +185,15 @@ TASK-37145 f9d4ad7a29 fresh scoped review: spec and code quality approved, zeroC
 
 
 Ruling: Integrate currentdev798 with all85incoming paths and retain its workflow/test-dependency riders,973-entry prefix, diagnostic changes and lessons. Preserve26owned Python blobs and add only the complete two-case repaint file in the existing tail; no own timeout/shard/frame allowance increase — cost if wrong: combined focus/GC/scheduler behavior can differ from isolated scopes or a gate can be lost. Exact blob/lesson/inventory checks, combined4native passes,175contracts, source-pin/static validation and actual successor-head CI qualify the result; forecast1168.06s is not a hosted pass.
+
+
+Ruling: Correct d48 CI capacity by decomposing six existing selections while keeping the computed revert selection whole, all46collected cases, all prior audit/Settings coverage and every other prefix position. Use current successful wall times and conservative120second reserves for cancelled jobs;1116entries/143tail,17shards/1200second caps — cost if wrong: runner variance or changed co-location can still time out or expose order sensitivity. Preserve both timeout annotations and preliminary3contract failures, keep source/tests/workflows and checker behavior exact except the increased floor, require175passing contracts and actual successor-head CI;1125.90seconds remains a forecast. No product speedup, runtime pass from collection, or limit relaxation is claimed.
+
+
+Ruling: Accept unchanged Settings/Console/scheduling/Evals/export/Speech behavior outside the capacity review using existing approved reviews and exact source blobs — cost if wrong: changed test co-location could still expose behavior; actual combined successor-head CI remains mandatory.
+
+Ruling: Accept whole-branch/task design outside this metadata review because its independent reviews and fixes are already complete — cost if wrong: a cross-task concern could survive scoped review; prior final whole-branch review and successor-head CI remain binding, with no broader approval claimed from the capacity reviewer.
+
+Ruling: Leave live App behavior, natural runner variance and co-location effects to actual successor-head CI rather than metadata inspection — cost if wrong: another shard can time out or expose order sensitivity; inspect every run and fix actual failures without raising limits.
+
+Ruling: Remove the key-shaped synthetic parameter from portable CI evidence after GitHub rejects unpublished97fb; independently evaluate the existing test fixture expression, preserve counts/log hashes and amend only the unpublished owned commit — cost if wrong: a receipt could lose exact textual identity. Explicit redaction qualification, retained private original/log digest, fresh manifest verification and exact source/census/checker blob comparison bound that loss; no key is disclosed and no push-protection bypass is used.
