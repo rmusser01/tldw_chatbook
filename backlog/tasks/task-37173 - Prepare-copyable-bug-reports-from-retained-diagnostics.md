@@ -13,7 +13,7 @@ references:
 - Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
 documentation:
 - backlog/decisions/252-bug-report-evidence-and-sharing.md
-updated_date: 2026-10-28 17:04
+updated_date: 2026-10-28 20:10
 ---
 
 ## Description
@@ -24,12 +24,12 @@ Give users a readable report containing their description and retained diagnosti
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Users can open one report flow from the command palette, Logs, and Settings About without changing their active work.
-- [ ] #2 The report includes available session logs, captured exception traces, environment facts, and selected Console events, timing, and errors with explicit source scope and missing-evidence notices.
-- [ ] #3 Tool inputs and results are excluded by default and included only through explicit opt-in after source governance and diagnostic redaction; source messages, provider exchanges, and reasoning fields remain excluded.
-- [ ] #4 The editable reviewed Markdown is the exact validated clipboard payload and stays within 60000 UTF-8 bytes including formatting and manual edits.
-- [ ] #5 Source failures, read deadlines, concurrent logging, runtime changes, and dialog cancellation preserve the draft and cannot mix evidence or apply stale results.
-- [ ] #6 Report creation performs no upload, LLM call, domain/config mutation, automatic draft write, or new capture/retention change.
+- [x] #1 Users can open one report flow from the command palette, Logs, and Settings About without changing their active work.
+- [x] #2 The report includes available session logs, captured exception traces, environment facts, and selected Console events, timing, and errors with explicit source scope and missing-evidence notices.
+- [x] #3 Tool inputs and results are excluded by default and included only through explicit opt-in after source governance and diagnostic redaction; source messages, provider exchanges, and reasoning fields remain excluded.
+- [x] #4 The editable reviewed Markdown is the exact validated clipboard payload and stays within 60000 UTF-8 bytes including formatting and manual edits.
+- [x] #5 Source failures, read deadlines, concurrent logging, runtime changes, and dialog cancellation preserve the draft and cannot mix evidence or apply stale results.
+- [x] #6 Report creation performs no upload, LLM call, domain/config mutation, automatic draft write, or new capture/retention change.
 - [ ] #7 Focused privacy, repository, rendering, clipboard, UI, packaging, and design-governance checks pass, with live evidence of the report and pasted bytes.
 <!-- AC:END -->
 
@@ -47,15 +47,21 @@ Reason: Introduces a user-controlled diagnostic export contract across logs, gov
 
 Detailed plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md
 Approved spec: Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
-Implementation has not started; execution method is selected after review of the detailed plan.
+Execution: native implementation and independent whole-branch review completed. Shared verification limitations keep AC #7 and the repository Definition of Done open; see Implementation Notes.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented a shared editable, memory-only bug report from Quick Actions, Logs and Settings About. Defaults include retained app-wide logs/exception traces and selected Console events/timing/errors; tool inputs/results require opt-in and immutable source governance. Reports and edited copy candidates are redacted and bounded to 60,000 UTF-8 bytes. No uploader, new recorder, schema, dependency or draft persistence was added.
 
+Bounded repository reads retain timed-out work through retirement. The modal preserves edits, guards dismissal/quit, rejects stale generation/copy results and truthfully says Copy requested. A fresh whole-branch review found four substantive issues; all were reproduced and fixed: off-loop alias projection, real surface-event tool projection, step/run outcome separation and causal agent ordering.
+
+Verification: 57 affected tests pass after fixes; 5 post-fix entry/import checks pass; renderer/sanitizer 163 pass; task/ADR guards pass. Native WindowsDriver/TTY journeys cover all three entry points, redacted exception evidence, Calculator results through the real capture service, manual edits, copy requests and discard guards. Received OSC52 packets match reviewed bytes (Palette 2,762; About 2,429) and recorded SHA-256 hashes. No OS clipboard acknowledgement is claimed.
+
+ADR required: yes. ADR: backlog/decisions/252-bug-report-evidence-and-sharing.md. Evidence and limitations: Docs/superpowers/verification/2026-10-28-report-a-bug.md. Plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md. Core files: Utils/bug_report.py, Utils/bug_report_capture.py, Widgets/bug_report_dialog.py, bounded log/DB/trace readers, shared action/entry points, focused tests and user/architecture guidance.
+
+AC #7 stays unchecked and task remains In Progress: existing shared governance/focus/provider/profile-fixture failures prevent claiming the repository Definition of Done. No full suite ran. New helpers/tests format clean; two fatal lint annotation findings reproduce unchanged on dev. Unrelated test debt was left visible.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

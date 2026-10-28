@@ -1,0 +1,21 @@
+# Ordered report-a-bug implementation rulings
+
+Preserved from the execution ledger; each decision retains its rationale and cost.
+
+Later evidence: the existing log-buffer emission test passed in the combined
+integration run, where the app module had collection-time profile ownership.
+The historical isolated-fixture limitation below was not hidden by a product fix.
+
+- Ruling: Repository/user targeted-test instruction overrides skill full-suite wording — no full suite without opt-in — limits broad regression coverage.
+- Ruling: Continue against the recorded unchanged-code app-test failure; use bootstrap_profile on new focused app/report tests — avoids changing unrelated bootstrap code — existing baseline failure remains a verification limitation until a justified fixture can exercise it.
+- Ruling: Merge independent metadata streams by a bounded recent-facts round robin preserving each source's causal order, and disclose that cross-source order is not causality — no trustworthy shared clock exists — global interleaving may differ from wall-clock order.
+- Ruling: Retired/multimodal or unverifiable tool sources are unavailable rather than reconstructed through the full reader — avoids loading excluded content or bypassing immutable masks — some retained historical tool content cannot be included.
+- Ruling: Keep the pre-existing log-buffer app import failure as a reported baseline limitation; task completion uses the 38 passing collection/privacy tests — identical RecoveryRequired on unchanged dev — that app-import fixture remains unverified.
+- Ruling: Normalize census file keys with as_posix while registering this modal — Windows backslashes made every existing decision appear absent — test-only portability change, no product behavior changes.
+- Ruling: Leave five unrelated pre-existing uncensused modal guards unchanged; add a direct census assertion for the new report guard and retain real quit-walk coverage — none of those five product files changed here — whole-repository census remains a reported baseline limitation.
+- Ruling: Finish shared CSS/governance and legacy dismissal verification with Task 4 after entry-point styling settles — avoids rebuilding/rerunning the same shared checks twice — shared regressions would be found later in this run.
+- Ruling: Preserve unrelated existing provider/focus/governance test debt rather than change retired UI or global fixtures for reporting — report scope must stay bounded — shared checks cannot honestly be described as wholly green.
+- Final: Ruling: Keep previous-session recovery, native crash dumps, uploads and recording outside v1 — these were explicitly excluded in the approved scope — older crashes still require another evidence source.
+- Final: Ruling: Keep unsupported retired/multimodal tool bodies explicitly unavailable — immutable governance takes precedence over reconstructing raw content — less historical tool-content coverage.
+- Final: Ruling: Keep cross-source chronology unknown and preserve source-local order — independent clocks do not prove causality — global visual interleaving remains approximate.
+- Final: Ruling: Leave unchanged shared-test failures as baseline limitations — retired styles/global fixtures are outside this feature — the repository-wide checks are not wholly green and the Backlog DoD cannot be claimed without qualification.
