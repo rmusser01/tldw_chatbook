@@ -128,3 +128,18 @@ TASK-34406.2).
 3. Abandoned tool threads can still complete side effects after a timeout is reported.
 4. A sub-agent's DB row may still be `running` when `run_turn` returns — wait on `on_child_settled`.
 5. The `tool_call` run-log record is emitted before dispatch, so a blocked or crashed tool still leaves a durable trace.
+
+
+When a full first-request tool surface does not fit, ADR-253 tries a compact
+surface containing catalog discovery and the run's gated progress tools before
+falling back to plain chat. The compact surface uses the session/plain prompt,
+concise discovery guidance, and the same whole-request budget. Optional fleet,
+skill-management and run-log schemas do not crowd out find_tools/load_tools.
+A plain plan stays plain through runtime setup, including when a progress inbox
+exists. Small or unverified local windows are not enlarged by this fallback.
+
+The built-in read_file/list_directory/write_file family uses file_path or
+directory_path; relative paths address private scratch. Passing the fs_* family's
+root_alias/path arguments is refused with discovery guidance instead of silently
+using scratch. list_directory requires its declared directory_path. To inspect an
+admitted project alias, discover/load fs_list or fs_read and use their own schemas.

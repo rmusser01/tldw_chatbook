@@ -53,3 +53,30 @@ bridge call; no unrelated owner or sink-topology drift. Regenerate the canonical
 inventory before publishing these source edits. TASK-37234 remains In Progress.
 
 Canonical inventory regeneration completed; the resulting diff matches exactly the two reviewed owners and aggregate call count, with no sink-topology changes.
+
+## Follow-up implementation (base 9017e04671)
+
+Spec/ADR: backlog/decisions/253-compact-discovery-before-plain-chat.md.
+ADR required: yes; the compact fallback changes the provider-facing disclosure policy.
+Continue inline under the user's standing request to fix and update PR #3284.
+
+- [x] Add regressions in test_first_request_window_honest_plan.py for fitting compact discovery, preserved session prompt, too-small plain fallback, and actual service/inbox requests; watch the new cases fail before product edits.
+- [x] In agent_service.py, try compact discovery with existing gated message schemas and the caller's plain prompt before no-tools fallback; keep its full request fit check. Do not append progress to a plain plan.
+- [x] Reproduce the transcript in test_file_tools_workspace_roots.py and pin read/write sibling safety. In file_operation_tools.py reject root_alias/path from the other family before touching scratch and require directory_path for listings; point callers to find/load fs_* instead of rerouting.
+- [ ] Run focused planner, disclosure, file-root and progress tests; lint changed files, self-review and obtain an independent review. Add affected tests to the existing two-version Linux workflow, commit and push the authorized PR update; inspect both result artifacts.
+
+Review focus: large-window behavior unchanged; session prompt preserved; no overflow from progress re-addition; malformed file calls never read/write scratch; explicit denied and excluded bindings unchanged. Original incident stays open until the actual project retest succeeds.
+
+Review ruling: preserve the compact plan's input ceiling for later load_tools
+requests. Both native and fenced regressions admitted an oversized schema against
+the static fallback before the fix. The new optional ceiling narrows existing
+admission; other existing project-context budget paths retain their behavior.
+The initial native test used llama_cpp (fenced by capability policy), so it was
+corrected to a native-capable provider and asserts the actual tools payload.
+
+Verification ledger: 16 relevant RED failures before product edits; final compact
+planner/budget selection 22 passed; file-root/existing planner selection 31 passed
+and two explicit Windows symlink-privilege skips. Earlier broad selection covered
+11 recovery and 20 progress tests. Lint/format/whitespace pass. Independent review
+found the later-load ceiling defect, now covered RED-to-GREEN in native/fenced
+requests. Do not infer a successful Fedora project summary from scripted tests.

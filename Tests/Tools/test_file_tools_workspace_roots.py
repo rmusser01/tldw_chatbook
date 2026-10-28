@@ -20,6 +20,15 @@ from tldw_chatbook.Tools.file_operation_tools import (
 )
 
 
+def _symlink_directory(target: Path, link: Path) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows host does not grant directory-symlink creation")
+        raise
+
+
 @pytest.fixture()
 def bound_workspace(tmp_path, monkeypatch):
     registry = LocalWorkspaceRegistryService(
@@ -135,7 +144,7 @@ async def test_symlink_inside_bound_folder_cannot_escape(
     marker.write_text("marker")
 
     link = ro_folder / "link"
-    os.symlink(target_dir, link)
+    _symlink_directory(target_dir, link)
 
     with wfr.run_workspace("ws-a"):
         result = await ListDirectoryTool().execute(
@@ -300,7 +309,7 @@ async def test_glob_grep_and_the_read_family_all_refuse_a_path_outside_every_roo
         list_result = await ListDirectoryTool().execute(directory_path=str(outside_dir))
 
         link = bound_workspace["ro"] / "escape"
-        os.symlink(outside_dir, link)
+        _symlink_directory(outside_dir, link)
         glob_result = await GlobFiles().execute(pattern="**/*")
         grep_result = await GrepFiles().execute(
             pattern="OUTSIDE_EVERY_ROOT_MARKER_9f3c1a"
@@ -316,3 +325,59 @@ async def test_glob_grep_and_the_read_family_all_refuse_a_path_outside_every_roo
 
     assert "secret.txt" not in {Path(p).name for p in glob_result["matches"]}
     assert grep_result["matches"] == []
+
+
+@pytest.mark.asyncio
+async def test_project_alias_listing_never_claims_the_empty_scratch_is_the_project(
+    bound_workspace,
+):
+    (bound_workspace["rw"] / "README.md").write_text("A real project", encoding="utf-8")
+    with wfr.run_workspace("ws-a"):
+        result = await ListDirectoryTool().execute(
+            root_alias="project", path=".", depth=2
+        )
+    assert "error" in result, result
+    assert "fs_list" in result["error"]
+    assert "load_tools" in result["error"]
+    assert "entries" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments", [{}, {"directory_path": None}, {"directory_path": ""}]
+)
+async def test_listing_requires_its_declared_path_instead_of_defaulting_to_scratch(
+    bound_workspace, arguments
+):
+    result = await ListDirectoryTool().execute(**arguments)
+    assert "directory_path" in result.get("error", ""), result
+    assert "entries" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_type,path_key,target,extra,recovery",
+    [
+        (ReadFileTool, "file_path", "note.txt", {}, "fs_read"),
+        (
+            WriteFileTool,
+            "file_path",
+            "note.txt",
+            {"content": "unexpected write"},
+            "fs_write",
+        ),
+        (ListDirectoryTool, "directory_path", ".", {}, "fs_list"),
+    ],
+)
+@pytest.mark.parametrize("foreign", [{"root_alias": "project"}, {"path": "elsewhere"}])
+async def test_builtin_file_tools_reject_foreign_path_arguments_before_scratch_access(
+    bound_workspace, tool_type, path_key, target, extra, recovery, foreign
+):
+    scratch = bound_workspace["sandbox"] / "note.txt"
+    scratch.write_text("PRIVATE_SCRATCH", encoding="utf-8")
+    with wfr.run_workspace("ws-a"):
+        result = await tool_type().execute(**{path_key: target, **extra, **foreign})
+    assert recovery in result.get("error", ""), result
+    assert "PRIVATE_SCRATCH" not in str(result)
+    assert scratch.read_text(encoding="utf-8") == "PRIVATE_SCRATCH"
+    assert "entries" not in result

@@ -170,6 +170,24 @@ _FILE_TOOL_PATH_ARGS: dict[str, tuple[str, bool]] = {
 SCRATCH_RELATIVE_PATH_TOOLS: frozenset[str] = frozenset(_FILE_TOOL_PATH_ARGS)
 
 
+def _foreign_file_path_error(tool_name: str, args: Mapping[str, Any]) -> str | None:
+    """Reject fs_* addressing before a built-in can fall back to scratch."""
+    if not {"root_alias", "path"}.intersection(args):
+        return None
+    workspace_tool = {
+        "read_file": "fs_read",
+        "list_directory": "fs_list",
+        "write_file": "fs_write",
+    }[tool_name]
+    path_key = _FILE_TOOL_PATH_ARGS[tool_name][0]
+    return (
+        f"{tool_name} does not accept root_alias or path; it uses {path_key}. "
+        "Relative paths refer to private scratch. For a bound project folder, "
+        f"use find_tools to find {workspace_tool}, then load_tools before calling "
+        "it with root_alias and path."
+    )
+
+
 def path_precheck_failed(
     tool_name: str,
     args: Mapping[str, Any] | None,
@@ -329,6 +347,9 @@ class ReadFileTool(Tool):
         Returns:
             Dictionary with file content or error
         """
+        argument_error = _foreign_file_path_error(self.name, kwargs)
+        if argument_error is not None:
+            return {"error": argument_error}
         file_path = kwargs.get("file_path")
         if not file_path:
             return {"error": "No file path provided"}
@@ -423,7 +444,10 @@ class ListDirectoryTool(Tool):
             "properties": {
                 "directory_path": {
                     "type": "string",
-                    "description": "The path to the directory to list",
+                    "description": (
+                        "Directory path. Relative paths use private scratch; "
+                        "for a project root_alias, use fs_list instead."
+                    ),
                 },
                 "include_hidden": {
                     "type": "boolean",
@@ -464,7 +488,14 @@ class ListDirectoryTool(Tool):
         Returns:
             Dictionary with directory contents or error
         """
-        directory_path = kwargs.get("directory_path", ".")
+        argument_error = _foreign_file_path_error(self.name, kwargs)
+        if argument_error is not None:
+            return {"error": argument_error}
+        directory_path = kwargs.get("directory_path")
+        if not isinstance(directory_path, (str, Path)) or not str(directory_path).strip():
+            return {
+                "error": "directory_path is required; use '.' explicitly for private scratch."
+            }
         include_hidden = kwargs.get("include_hidden", False)
         recursive = kwargs.get("recursive", False)
         # TASK-32806.6: the schema says `maximum: 5`, but nothing clamped
@@ -700,6 +731,9 @@ class WriteFileTool(Tool):
         Returns:
             Dictionary with success status or error
         """
+        argument_error = _foreign_file_path_error(self.name, kwargs)
+        if argument_error is not None:
+            return {"error": argument_error}
         file_path = kwargs.get("file_path")
         content = kwargs.get("content")
 

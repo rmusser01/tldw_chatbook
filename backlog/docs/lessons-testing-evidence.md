@@ -1,5 +1,24 @@
 # Lessons: what counts as evidence a change works
 
+## A successful wrong-family tool call is not project evidence (TASK-37234, 2026-10-28)
+
+**Incident.** The Fedora follow-up to PR #3284 recorded successful directory listings,
+so the ordinary log alone appeared to show working file access. The transcript
+revealed `list_directory(root_alias=..., path=".", depth=2)`: the built-in expects
+`directory_path`, ignored the alias, and defaulted to empty scratch. A real bound
+workspace with a README and empty scratch reproduced the same successful empty
+listing. A second probe showed that full runtime schemas exhausted the conservative
+local budget although compact discovery fit, and the runtime then added the inbox
+reader to the supposedly plain plan.
+
+**What to do.** Check the actual arguments and root semantics, not just a success
+outcome. Assert the request that reaches the model after runtime setup, not only the
+planner's output. When preserving discovery under a small budget, also exercise
+load_tools with an oversized schema so later admission cannot silently use the
+larger static model fallback. Native tests must assert an actual tools payload;
+setting native_tools alone does not override provider capability policy.
+
+
 ## A mount-time assertion can expire before the regression acts (TASK-37143, 2026-10-27)
 
 **Incident.** PR #3282's Linux UI shard passed 175 cases but stopped a stale-readiness-proof regression at its assumption that the composer was still mount-blocked. Delayed product work had already enabled its valid connection. Explicitly selecting that ready connection reproduced the old assertion. Establishing readiness before injecting expiry fixed the case while preserving its own helper-task sync checks. An in-memory early-return mutation still failed with syncs=[False], proving that an already-enabled Send button cannot make the test vacuous.
