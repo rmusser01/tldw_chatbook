@@ -143,3 +143,9 @@ directory_path; relative paths address private scratch. Passing the fs_* family'
 root_alias/path arguments is refused with discovery guidance instead of silently
 using scratch. list_directory requires its declared directory_path. To inspect an
 admitted project alias, discover/load fs_list or fs_read and use their own schemas.
+
+First-request schema composition is in `Agents/first_request_schemas.py`;
+`agent_service.py` retains request sizing and dispatch. Compact plans carry their
+input ceiling through schema loading, project startup/nested admission, preview
+and final request checks. Late inboxes cannot expand their frozen schema set.
+Terminal step metadata logging is in `Agents/tool_disclosure_diagnostics.py`.

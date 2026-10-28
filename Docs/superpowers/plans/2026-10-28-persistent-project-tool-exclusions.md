@@ -80,3 +80,14 @@ and two explicit Windows symlink-privilege skips. Earlier broad selection covere
 11 recovery and 20 progress tests. Lint/format/whitespace pass. Independent review
 found the later-load ceiling defect, now covered RED-to-GREEN in native/fenced
 requests. Do not infer a successful Fedora project summary from scripted tests.
+
+## PR review/check follow-up
+
+ADR required: no; existing ADR-253 and UI acknowledgement contracts apply.
+1. Extract schema-plan construction and step logging without changing behavior or raising size budgets.
+2. Reproduce and fix the acknowledgement handoff failure; retain evidence that early acknowledgement release is rejected.
+3. Inspect adjacent tool budget/addressing paths, fix only reproduced defects, and verify targeted Windows/Linux tests and current-head CI.
+
+Prior Linux qualification at bec76a6105 passed 213 tests on each Python 3.12/3.14 leg (run 40762456938). Live Fedora retest remains pending.
+
+Review follow-up verification: the four native/fenced startup/late-inbox cases failed before repair; all 26 planner/runtime cases pass afterward. Four compatibility/size controls pass. Rebase integrates dev's TASK-37145 UI repaint fix without weakening its continuity assertion. Local UI qualification reached a separate pre-provider wait timeout; retain that limitation until refreshed Linux checks qualify the combined branch. Existing project admission and final checks now share the compact ceiling, and compact progress stays frozen. Independent re-review found no remaining concrete issue.

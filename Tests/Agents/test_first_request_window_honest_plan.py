@@ -81,6 +81,7 @@ def _plan(
     model: str = _MODEL,
     session_system_prompt: str | None = _SESSION_PROMPT,
     native_tools: bool = False,
+    fleet_max_live: int = 4,
 ):
     registry = ToolCatalogRegistry()
     registry.register_provider(_BuiltinLikeProvider())
@@ -119,7 +120,7 @@ def _plan(
         new_chat_enabled=True,
         worktree_merge_enabled=True,
         agent_messages=[{"role": "user", "content": message}],
-        fleet_max_live=4,
+        fleet_max_live=fleet_max_live,
     )
 
 
@@ -412,5 +413,89 @@ def test_compact_discovery_does_not_load_a_schema_beyond_its_input_budget(
         result = next(s for s in outcome.steps if s.kind == "tool_result")
         assert result.result == "not loaded (request budget): notes_tool_0"
         assert "oversized schema" not in str(chat.calls[-1])
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["fence", "native"])
+@pytest.mark.parametrize("addition", ["startup", "late-inbox"])
+def test_compact_request_budget_survives_runtime_context_additions(
+    tmp_path, native, addition
+):
+    from dataclasses import replace
+    from hashlib import sha256
+    from Tests.Agents.test_agent_service import ScriptedChat
+    from Tests.Chat.test_console_agent_project_instructions import _candidate
+    from tldw_chatbook.Agents.agent_service import AgentService, ModelRequest
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    provider = "openai" if native else "llama_cpp"
+    message = (
+        "Repository workflow guidance. " * 650
+        if addition == "late-inbox"
+        else "Reply with just: hi"
+    )
+    plan = _plan(
+        ContextWindowResolution(4096, "server metadata", True),
+        max_tokens=1024,
+        native_tools=native,
+        provider=provider,
+        message=message,
+        fleet_max_live=1 if addition == "late-inbox" else 4,
+    )
+    assert plan.schemas.request_fits
+    assert plan.schemas.schema_input_budget_tokens == 3072
+    candidate = None
+    if addition == "startup":
+        candidate = _candidate(tmp_path)
+        body = "Repository documentation and workflow guidance. " * 650
+        candidate = replace(
+            candidate,
+            source=replace(
+                candidate.source,
+                body=body,
+                byte_count=len(body.encode()),
+                digest=sha256(body.encode()).hexdigest(),
+            ),
+        )
+    chat = ScriptedChat(["done"])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-additions")
+    service = AgentService(
+        db=db,
+        registry=plan.registry,
+        chat_call=chat,
+        startup_instruction_candidate=candidate,
+        confirm_project_instruction_dispatch=lambda snapshot: "proceed",
+        message_inbox=MessageStore().open_inbox("c")
+        if addition == "late-inbox"
+        else None,
+    )
+    try:
+        _, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": message}],
+            config=plan.config,
+            api_endpoint=provider,
+            first_request_schema_plan=plan.schemas,
+        )
+        assert outcome.status == "done"
+        call = chat.calls[0]
+        assert ("tools" in call) is native
+        assert service._project_instruction_request_fits(
+            plan.config,
+            provider,
+            ModelRequest(tuple(call["messages_payload"]), tuple(call.get("tools", ()))),
+            input_budget_tokens=plan.schemas.schema_input_budget_tokens,
+        )
+        if addition == "startup":
+            assert not service._startup_instruction_snapshot.primary_delivery.source_digests
+            assert (
+                "omitted_token_budget"
+                in service._startup_instruction_snapshot.warning_codes
+            )
+        else:
+            assert "read_agent_messages" not in str(call)
     finally:
         db.close()
