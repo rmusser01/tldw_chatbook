@@ -59,7 +59,7 @@
     },
     {
       "file": "executor-rulings.md",
-      "sha256": "c54e6b3b52681aa970af21d6cca1be562893c057e6916011c1c46e5d4fe08efa"
+      "sha256": "b6d654ecb67a12c35f75aeb5c33782f49540ef5b6b16ae206cfe2ef5ddb5ba45"
     },
     {
       "file": "final-census-capacity-proof.json",
@@ -108,6 +108,10 @@
     {
       "file": "hosted-860-ci-proof.json",
       "sha256": "df2fb731a0b141f953b960127a514800f2fe05ab046ea3d21dd54a6e6e9fc71a"
+    },
+    {
+      "file": "hosted-cc907-failure-proof.json",
+      "sha256": "f93506ed92cde114b1c7d0a6cdd38d2572b3d8f0e73db78756fdc60256c087c2"
     },
     {
       "file": "hosted-functional-ci-proof.json",
@@ -164,6 +168,34 @@
     {
       "file": "rebase-dev773-proof.json",
       "sha256": "9afc1826a6cfe9ba34f709b9e99e962f6279bc3edc8b61da2c71a6ffd1077744"
+    },
+    {
+      "file": "rebase-dev798-census-capacity-proof.json",
+      "sha256": "a0b2cb0918ba9f1257c6f1adc15654952144e5a5ca2423d59daa0e9e3dccf2b7"
+    },
+    {
+      "file": "rebase-dev798-ci-contract-proof.json",
+      "sha256": "244fbb169a76893a98223c944aa3b4af34e0d40fe6d53ff7fb9449c1b07dae74"
+    },
+    {
+      "file": "rebase-dev798-native-proof.json",
+      "sha256": "105ecae5682f28034031419ded721bd6dda2ef73576d89f51c293b28fbc71e60"
+    },
+    {
+      "file": "rebase-dev798-proof.json",
+      "sha256": "402b70f21918406b8eb20365077b8e2a48c33d63806a9cdaea482be055138d99"
+    },
+    {
+      "file": "rebase-dev798-static-baseline-proof.json",
+      "sha256": "f4882ac1ef1c41677d4d5e07816ebec162bc9ed9130091be6aee6b5fea5b76df"
+    },
+    {
+      "file": "rebase-dev798-static-summary.json",
+      "sha256": "b6e094312b9462b152f32aa9e765a0e72cc19a205a39801ec6dd9c11837bf0b1"
+    },
+    {
+      "file": "rebase-dev798-ui-cost-input-proof.json",
+      "sha256": "9794898e2dc6401d17507c625f9191abbf2799ea5a730a30611be9e741ca4152"
     },
     {
       "file": "root-ack37145-xml-proof.json",

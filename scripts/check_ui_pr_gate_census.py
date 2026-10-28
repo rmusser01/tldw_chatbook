@@ -581,8 +581,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # before the Console composer's first focus land in the draft, in order (one
 # private-profile case), so no existing entry changes shard: dev's 964 + 1
 # = 965.
-# Textual audit controls retain every dev entry plus 113 tail entries.
-MINIMUM_FILES = 1086
+# Textual audit controls retain every dev entry plus 114 tail entries.
+MINIMUM_FILES = 1087
 
 
 def read_census(path: Path) -> list[str]:

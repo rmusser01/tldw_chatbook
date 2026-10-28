@@ -182,3 +182,6 @@ Ruling: Accept historical full-CSS RED03 provenance from independently reconstru
 Ruling: Leave inherited warnings, three transcript E721 sites, formatter debt and existing299-line size-pin overage to existing owners; source remains net zero and caps unchanged — cost if wrong: baseline debt persists. Exact baseline comparison,12clean final targeted passes and7qualified wrapper-body controls support the repair without a global-clean claim.
 
 TASK-37145 f9d4ad7a29 fresh scoped review: spec and code quality approved, zeroCritical/Important;24actualXML files independently checked by reviewer, root independently parsed authoritativeRED/final/wrapper receipts. Local repair complete; latestDev798 integration and actual successor-headCI remain root gates.
+
+
+Ruling: Integrate currentdev798 with all85incoming paths and retain its workflow/test-dependency riders,973-entry prefix, diagnostic changes and lessons. Preserve26owned Python blobs and add only the complete two-case repaint file in the existing tail; no own timeout/shard/frame allowance increase — cost if wrong: combined focus/GC/scheduler behavior can differ from isolated scopes or a gate can be lost. Exact blob/lesson/inventory checks, combined4native passes,175contracts, source-pin/static validation and actual successor-head CI qualify the result; forecast1168.06s is not a hosted pass.
