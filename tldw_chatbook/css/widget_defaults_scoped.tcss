@@ -2973,6 +2973,39 @@ BuddyWorkspaceModal #buddy-inbox-error { height: auto; color: $error; }
 BuddyWorkspaceModal #buddy-inbox-actions { height: 3; min-height: 3; align-horizontal: right; }
 BuddyWorkspaceModal #buddy-inbox-actions Button.buddy-workspace-modal-button { width: auto; min-width: 8; margin-left: 1; }
 
+/* ===== WIDGET: BugReportDialog (Widgets/bug_report_dialog.py) ===== */
+
+
+BugReportDialog #bug-report-dialog {
+    width: 120;
+    max-width: 95%;
+    height: 42;
+    max-height: 95%;
+    border: round $tldw-boundary;
+    background: $panel;
+    padding: 1;
+}
+BugReportDialog #bug-report-describe, BugReportDialog #bug-report-review-stage { height: 1fr; }
+BugReportDialog #bug-report-describe { scrollbar-gutter: stable; }
+
+BugReportDialog #bug-report-review {
+    height: 1fr;
+    max-height: 100%;
+    margin: 0;
+}
+BugReportDialog #bug-report-inventory, BugReportDialog #bug-report-selection, BugReportDialog #bug-report-disclosure {
+    height: auto;
+    margin-bottom: 1;
+}
+BugReportDialog #bug-report-status {
+    height: auto;
+    max-height: 3;
+    margin: 0;
+    padding: 0 1;
+}
+BugReportDialog #bug-report-status.-error { color: $text-error; }
+BugReportDialog #bug-report-actions { dock: bottom; }
+
 /* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
 
 

@@ -29,6 +29,7 @@ class BugReportContext:
     conversation_id: str | None = field(repr=False)
     origin_route: str
     collection_started_at: str
+    conversation_label: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ def capture_bug_report_context(app: TldwCli) -> BugReportContext:
         getattr(session, "persisted_conversation_id", None) if eligible else None,
         str(getattr(app, "current_tab", "unknown")),
         datetime.now(timezone.utc).isoformat(),
+        str(getattr(session, "title", "Untitled conversation")) if eligible else None,
     )
 
 

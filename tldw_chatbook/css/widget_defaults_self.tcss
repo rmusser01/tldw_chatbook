@@ -3389,6 +3389,14 @@ WorkspaceChangeReviewPanel {
     height: auto;
 }
 
+/* ===== WIDGET: BugReportDialog (Widgets/bug_report_dialog.py) ===== */
+
+BugReportDialog { align: center middle; }
+
+
+
+BugReportDialog .form-textarea { height: 5; }
+
 /* ===== WIDGET: _BackdropClickShield (Widgets/modal_dismissal.py) ===== */
 
 _BackdropClickShield {
