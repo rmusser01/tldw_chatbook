@@ -6,6 +6,7 @@ docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class),
 ``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing)
 and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
 not swallow the next key).
+The aggregate also selects a resize-capable native Windows driver (TASK-37173).
 They share a module so a new App-level guard costs neither another ``app.py``
 line (size ratchet) nor another boot-path module (ADR-097 census).
 
@@ -60,12 +61,14 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import FrameType
 from typing import Any, Callable, Optional
 
 from loguru import logger
-from textual import events
+from textual import constants, events
+from textual.driver import Driver
 from textual.message import Message
 from textual.screen import Screen
 
@@ -303,3 +306,33 @@ class TextualAppGuards(
     DetachedFocusGuard, TextSelectionCrashGuard, UserInputTap, ThreadWorkerContextGuard
 ):
     """Every guard in this module; add BEFORE ``App`` in the base list."""
+
+    def get_driver_class(self) -> type[Driver]:
+        """Enable native Windows resize reporting while preserving custom drivers.
+
+        Returns:
+            The upstream driver, or its native Windows resize adapter.
+        """
+        driver_class = super().get_driver_class()  # type: ignore[misc]
+        if sys.platform != "win32" or constants.DRIVER is not None:
+            return driver_class
+
+        from textual.drivers import win32
+        from textual.drivers.windows_driver import WindowsDriver
+
+        if driver_class is not WindowsDriver:
+            return driver_class
+
+        class WindowsResizeDriver(WindowsDriver):
+            def start_application_mode(self) -> None:
+                # Textual 8.2.8 clears ENABLE_WINDOW_INPUT while enabling VT
+                # input, then waits for the resize records that flag admits.
+                # Reapply after EVERY start (including resume). Upstream close
+                # still owns restoration of the original console modes.
+                super().start_application_mode()
+                win32.set_console_mode(
+                    sys.__stdin__,
+                    win32.get_console_mode(sys.__stdin__) | win32.ENABLE_WINDOW_INPUT,
+                )
+
+        return WindowsResizeDriver

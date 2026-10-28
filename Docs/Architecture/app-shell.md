@@ -21,7 +21,9 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 
 ## The app class
 
-`TldwCli(TextSelectionCrashGuard, LibraryIngestQueueMixin, App[None])` mixes in a crash guard for Textual 8.x text-selection `MouseDown` crashes; the mixin must sit before `App` so its `on_event` wrapper is the last line of defense.
+`TldwCli` composes `TextualAppGuards` before `App`. The aggregate in `Utils/text_selection_crash_guard.py` includes the Textual 8.x text-selection crash guard, detached-focus recovery, input activity tracking, and thread-worker context isolation.
+
+On native Windows, its `get_driver_class()` adapts Textual's default `WindowsDriver` to enable `ENABLE_WINDOW_INPUT` after every application-mode start, including resume (TASK-37173). Textual 8.2.8 enables VT input but omits this resize-reporting flag, leaving screens at their old dimensions after a terminal resize. The adapter preserves the remaining input flags and upstream console restoration; constructor-supplied and environment-selected drivers, including served transports, are unchanged. Unix does not import the Windows adapter path. Native before/after evidence and a reproducible Logs probe live in `qa/windows-terminal-resize-2026-10-28/`.
 
 Construction is phased and timed (`self._startup_phases`, histogram `app_startup_phase_duration_seconds`):
 
