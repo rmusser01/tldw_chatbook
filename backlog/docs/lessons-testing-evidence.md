@@ -22168,3 +22168,10 @@ and a title-only update do not establish a replayable schedule mutation.
 ## A captured render-error boundary also needs the diagnostic inventory refresh (PR #3283, 2026-10-28)
 
 PR #3283 passed all 23 application test jobs, all 17 UI shards and Perf Guard, then its required artifact job failed: moving Prompt rendering before worker admission added a second sanitized failure warning, and the inventory still recorded three calls instead of four in `library_file_export.py`. The missing refresh cost a full hosted CI attempt despite clean behavior tests and code review. `--statements ... --since 773cc9729cfbc9c13c14b56724fcb02efd3a54a3` identified exactly one added warning carrying only Prompt ID and exception category. The repair changes that owner's count/digest; all 698 other owners, 116 privacy candidates and 16 sinks stay identical. Run `scripts/check_persistent_diagnostic_inventory.py` before publication whenever an error boundary adds a logger call, inspect its statement-level delta, and regenerate only the intended snapshot. Passing behavior tests does not establish this artifact is current.
+
+
+## Native batched recomposition can expose an empty DOM before replacement rows publish (TASK-37235, 2026-10-28)
+
+PR3283's Media journey saw no highlighted rows after Edit Save even though the Reader had the edited title. A held native Canvas mount reproduced that exact boundary: loading was false and scopes matched, but DOM rows were empty inside Textual's batch; canonical selection/action identity stayed on item3 and the last render-eligible frame retained its cue. Releasing mount published the edited row and cue. The uninstrumented CI interval is inferred from this matching witness, not directly captured.
+
+Wait for the accepted replacement row objects and edited title before the separate semantic cue assertion. Do not treat settled service/controller flags as a DOM publication receipt, wait on the cue itself, or add an arbitrary pause. A cue-removed negative control must still fail after publication. Actual RED03/GREEN source/XML receipts and native hold evidence are retained in the Textual follow-up QA records.

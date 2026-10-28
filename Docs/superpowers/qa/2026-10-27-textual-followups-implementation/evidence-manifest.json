@@ -46,6 +46,10 @@
       "sha256": "359e3e941b11028b0257296dcbd5ab802a2cba19385fc9a85e48d0f68f71ab12"
     },
     {
+      "file": "ci-media-37235-report.md",
+      "sha256": "5cdc35dd6e848db471ff10b4da3c65c569d53400744c26b24160bc74d8f93786"
+    },
+    {
       "file": "ci-repair-37144-report.md",
       "sha256": "3715cc82df24b8b91678bd9960b31b8a63419eb2d68ac46c9df6529d6a018195"
     },
@@ -148,6 +152,46 @@
     {
       "file": "hosted-functional-ci-proof.json",
       "sha256": "8b0a153fea3dd1e507c4ff6be7d4df9ec16ede89daa7582a7aad14b028b95cb2"
+    },
+    {
+      "file": "media-37235-green-source.py.txt",
+      "sha256": "b74a59bb6284b01a3a037018f81a9b288b3999ca7f9c79da7856494eadc662bc"
+    },
+    {
+      "file": "media-37235-proof.json",
+      "sha256": "ee37bd95c67493d77af7509ddc4fdd2e8a8fb7e5f1557e88a57878e81e039df9"
+    },
+    {
+      "file": "media-37235-red03-source.py.txt",
+      "sha256": "65df51150d4f11e8644a26bbeb4f94667680bdee0919aceb5cfbe1435dec3ab7"
+    },
+    {
+      "file": "media-highlight-diagnostic-receipts.json",
+      "sha256": "98d7d37b9b8fc6b35438e88591411ec543e032f1a7d4dac92fdad7b5a5436312"
+    },
+    {
+      "file": "media-highlight-frame-after.json",
+      "sha256": "fde6fdb3c84c4618aaa47628db4861a7645a8773ed2acf33ab8931225d9d89bb"
+    },
+    {
+      "file": "media-highlight-frame-before.json",
+      "sha256": "c08ff9e09beaf980d0e2692ebf4acfe9bbe70c58cfb825c55be4b6d657ec2dbc"
+    },
+    {
+      "file": "media-highlight-investigation.md",
+      "sha256": "7039d40eb10691433e213e6b601fc42218b50eef9bf896f26845ad1ed628198c"
+    },
+    {
+      "file": "media-highlight-observation.json",
+      "sha256": "6ef69b65143a712adac16607f9cbaf91a4ef6bcff64f9c527ddf0714a5366df2"
+    },
+    {
+      "file": "media-highlight-probe.py.txt",
+      "sha256": "d8f839294bcdbbb0f70a128cc7a49163eee230475f8ffe32beb9ace7302e2455"
+    },
+    {
+      "file": "media-highlight-source-receipts.json",
+      "sha256": "69189df1f44c23e5c03ad456490e4fb2b9c62f06640b76743b177856fd178b2f"
     },
     {
       "file": "metadata-source-qualification.json",

@@ -26,7 +26,11 @@ test; the whole file stays inside the 35 s lane budget.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
+
 import pytest
+from textual.css.query import NoMatches, QueryError
 from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_library_shell import (
@@ -143,6 +147,25 @@ def _reader_title(screen) -> str:
     return str(screen.query_one("#library-media-viewer-title", Static).renderable)
 
 
+def _edit_save_has_published(screen, canonical: str, title: str) -> bool:
+    """Observe the saved Reader and replacement list, independently of its cue."""
+    browse = screen._library_media_browse_controller
+    rows = _rows(screen)
+    return (
+        not screen._media_state.editing
+        and _reader_title(screen) == title
+        and not browse.loading
+        and browse.applied_scope is not None
+        and browse.applied_scope == browse.requested_scope
+        and len(rows) == 5
+        and all(row.is_attached for row in rows)
+        and any(
+            str(row.media_id) == canonical and row._library_media_title == title
+            for row in rows
+        )
+    )
+
+
 async def test_open_by_bare_id_highlights_that_row_after_the_browse_lands():
     """AC#1: the list highlight sits on the opened item, not row 1, and stays
     there after the browse page lands. The ``▸`` cue and the ``loaded`` word
@@ -242,13 +265,112 @@ async def test_read_later_and_edit_save_target_the_opened_item_not_row_1():
         # AC#4: the Reader stays on item 3 and paints the new title.
         await _wait_for_condition(
             pilot,
-            lambda: not screen._media_state.editing
-            and _reader_title(screen) == f"{TITLES['3']} (edited)",
+            lambda: _edit_save_has_published(
+                screen, canonical, f"{TITLES['3']} (edited)"
+            ),
             message=lambda: f"reader title after save: {_reader_title(screen)!r}",
         )
         assert screen._media_state.reader_session.loaded_id == canonical
         assert [str(row.media_id) for row in _highlighted_rows(screen)] == [canonical]
         assert TITLES["1"] not in _reader_title(screen)
+
+
+@pytest.mark.parametrize(
+    "remove_cue", [False, True], ids=["native-mount", "missing-cue"]
+)
+async def test_edit_save_observer_waits_for_replacement_rows_before_checking_cue(
+    monkeypatch, remove_cue
+):
+    """TASK-37235: a Reader title is not publication of the sibling list.
+
+    Hold the real native recompose after removal, within its rendering batch.
+    Readiness must wait for replacement rows but must not wait for their cue.
+    """
+    host, _app, service = _host()
+    async with host.run_test(size=SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        canonical = await _open_by_link(screen, pilot, "3")
+        await _open_more_strip(screen, pilot)
+        await pilot.click("#library-media-edit")
+        title_input = await _wait_for_selector(
+            screen, pilot, "#library-media-edit-title"
+        )
+        title = f"{TITLES['3']} (edited)"
+        title_input.value = title
+        canvas = screen.query_one("#library-media-canvas")
+        old_rows = _rows(screen)
+        native_mount = canvas.mount_all
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        def mount_after_release(*args, **kwargs):
+            if not service.update_calls or entered.is_set():
+                return native_mount(*args, **kwargs)
+
+            async def held_mount():
+                entered.set()
+                await release.wait()
+                return await native_mount(*args, **kwargs)
+
+            return held_mount()
+
+        monkeypatch.setattr(canvas, "mount_all", mount_after_release)
+        try:
+            await pilot.click("#library-media-edit-save")
+            await asyncio.wait_for(entered.wait(), 15)
+
+            async def reader_saved():
+                # Pilot.pause drains every pump, including the one intentionally held.
+                while True:
+                    try:
+                        if (
+                            not screen._media_state.editing
+                            and _reader_title(screen) == title
+                        ):
+                            return
+                    except (NoMatches, QueryError):
+                        pass  # The Reader's own replacement can also be pending.
+                    await asyncio.sleep(0.02)
+
+            await asyncio.wait_for(reader_saved(), 15)
+            assert service.update_calls[-1]["media_id"] == 3
+            assert service.update_calls[-1]["title"] == title
+            assert screen._media_state.selected_media_id == canonical
+            assert screen._media_state.reader_session.loaded_id == canonical
+            assert host._batch_count > 0
+            assert _rows(screen) == []
+            assert not _edit_save_has_published(
+                screen, canonical, title
+            ), "the post-save observer settled before native replacement rows published"
+        finally:
+            # Release inside run_test, including on RED, before App teardown.
+            release.set()
+
+        await _wait_for_condition(
+            pilot,
+            lambda: _edit_save_has_published(screen, canonical, title),
+            message="the replacement rows never published after native mount release",
+        )
+        assert all(row not in old_rows for row in _rows(screen))
+        assert [str(row.media_id) for row in _highlighted_rows(screen)] == [canonical]
+
+        if remove_cue:
+            # A semantic mutation: real row publication with no selected marker.
+            canvas.apply_reader_state(
+                replace(
+                    canvas.canvas,
+                    rows=tuple(
+                        replace(row, selected=False) for row in canvas.canvas.rows
+                    ),
+                )
+            )
+            assert _edit_save_has_published(screen, canonical, title)
+            assert _highlighted_rows(screen) == []
+            with pytest.raises(AssertionError):
+                assert [str(row.media_id) for row in _highlighted_rows(screen)] == [
+                    canonical
+                ]
 
 
 async def test_trash_confirm_names_the_opened_item_and_trashes_it():
