@@ -1,0 +1,55 @@
+{
+  "mode": "held_source",
+  "calls": [
+    {
+      "id": "run-a",
+      "mode": "local",
+      "real_result_id": "run-a"
+    }
+  ],
+  "selected_a": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-a",
+    "highlighted": "research-run-run-a",
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  },
+  "held_native_timer": {
+    "source": "local",
+    "select_value": "local",
+    "selected": "run-a",
+    "highlighted": "research-run-run-a",
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Loaded 2 local research run(s).",
+    "mounted": true
+  },
+  "server_child_before_release": {
+    "source": "server",
+    "select_value": "server",
+    "selected": null,
+    "highlighted": null,
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Server research backend is unavailable.",
+    "mounted": true
+  },
+  "settled_server": {
+    "source": "server",
+    "select_value": "server",
+    "selected": "run-a",
+    "highlighted": null,
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Server research backend is unavailable.",
+    "mounted": true
+  },
+  "final": {
+    "source": "server",
+    "select_value": "server",
+    "selected": "run-a",
+    "highlighted": null,
+    "detail": "LOCAL A ALPHA\nStatus: running\nPhase: planning\nControl: running\nLatest checkpoint: none\nProgress: n/a",
+    "status": "Server research backend is unavailable.",
+    "mounted": true
+  }
+}

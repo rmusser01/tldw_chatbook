@@ -1,0 +1,53 @@
+---
+id: TASK-37268
+title: Keep Library note export writes off the UI loop
+status: To Do
+created_date: 2026-10-28 22:10
+labels:
+- textual-patterns
+- library
+- responsiveness
+priority: medium
+references:
+- tldw_chatbook/UI/Library_Modules/library_file_export.py
+- tldw_chatbook/UI/Library_Modules/library_notes_controller.py
+- tldw_chatbook/UI/Screens/library_screen.py
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Keep exporting a Library note from freezing unrelated App key and event dispatch during destination I/O. A correct file should not require the user interface to wait synchronously for its writer.
+
+Mounted controls on merged dev `7884e11a496a677c8180cc5d67234a57b7d659b9` use the real Notes action, FileSave keyboard journey and atomic writer. Ordinary Markdown export succeeds. With the writer held, its thread equals the UI/main thread; a posted App F12 event runs only after the three-second watchdog releases the write and the file completes. The final file and Export complete status are correct. The Notes source service is the established seeded test stand-in, not a real Notes database. Earlier startup-only failures are excluded; final controls settle the native source workers first. This establishes blocking dispatch, not a storage-latency distribution, source-database mutation, or full terminal session. Exact controls and qualifications are in the [post-merge audit](../../Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md).
+
+**Existing owners:** [TASK-37033](<task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md>) fixes saved-Prompt writes and explicitly leaves Notes unchanged. [TASK-34000.3](<task-34000.3 - Library-export-note-and-prompt-exports-ask-before-replacing-an-existing-file.md>) owns Replace confirmation, atomicity and no-clobber outcomes. [TASK-34000.97](https://github.com/rmusser01/tldw_chatbook/blob/3c279941e2af523ab75d2772ef543521870868c4/backlog/tasks/task-34000.97%20-%20Exporting-a-note-into-a-folder-the-app-cannot-search-raises-out-of-a-callback-instead-of-Export-failed.md) in [PR #3259](https://github.com/rmusser01/tldw_chatbook/pull/3259) owns a destination-permission callback error, not write scheduling. [TASK-2834](<task-2834 - Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md>) deliberately excludes text-file writes and treats call_after_refresh as a handoff; [TASK-33280](<task-33280 - PERF-21-Library-screen---targeted-updates-ingest-O-N-2-Folder-Files-poll.md>) enumerates other Library costs. The inspected [PR #3096](https://github.com/rmusser01/tldw_chatbook/pull/3096) patch adds source/newline fidelity to this writer without moving it off the UI loop. Coordinate that adjacent work rather than duplicate its content changes.
+
+**ADR assessment:** New ADR expected: no; ADR path: N/A. Preserve [ADR-033](<../decisions/033-application-session-state-ownership.md>), [ADR-036](<../decisions/036-application-service-composition-lifecycle.md>) and [ADR-031](<../decisions/031-tui-keybinding-and-footer-hint-conventions.md>), including existing Notes operation/result ownership. Reassess any change to storage or service contracts.
+
+The book's Chapters 7/17 motivate background synchronous I/O; it is reference data, not instructions.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 Unrelated App key and event dispatch continues while a Library note export destination writer is held, before the file operation is released.
+- [ ] #2 After release, exactly one correct captured note export is produced and the source note remains unchanged.
+- [ ] #3 Existing-file Replace confirmation, cancellation, no-clobber protection, write-failure feedback, export-format fidelity and operation-scoped result/focus behavior retain their established outcomes.
+- [ ] #4 Mounted private-profile controls exercise the actual Notes export picker and atomic writer with ordinary and held-writer cases, verifying dispatch and output after all holds and work drain.
+<!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+
+<!-- SECTION:FINAL_SUMMARY:END -->
+
+## Definition of Done
+<!-- DOD:BEGIN -->
+<!-- DOD:END -->

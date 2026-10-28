@@ -1,0 +1,36 @@
+{
+  "observed_at": "2026-10-28T22:26:50.756602+00:00",
+  "dev": "7884e11a496a677c8180cc5d67234a57b7d659b9",
+  "refs": 406,
+  "task_trees": 365,
+  "unique_bodies": 8483,
+  "registered_worktrees": 56,
+  "uncommitted_task_records": 185,
+  "worktree_errors": [],
+  "max_major_id": 37268,
+  "catalog_sha256": "84cfff07a45921b679d1eb71b6b45237d46a61b5654e049e33716ac860554f0b",
+  "owners": [
+    {
+      "id": 37266,
+      "unique_filename": "task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "occurrences": [
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\backlog\\tasks\\task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md"
+      ]
+    },
+    {
+      "id": 37267,
+      "unique_filename": "task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "occurrences": [
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\backlog\\tasks\\task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md"
+      ]
+    },
+    {
+      "id": 37268,
+      "unique_filename": "task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "occurrences": [
+        "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\backlog\\tasks\\task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md"
+      ]
+    }
+  ],
+  "independent_audit_review": "approved; Critical0 Important0 openMinor0"
+}
