@@ -1,0 +1,59 @@
+name: Tool Recovery
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/workflows/tool-recovery.yml
+      - tldw_chatbook/Agents/**
+      - Tests/Agents/**
+      - Tests/hooks_v2_process_support.py
+      - Tests/conftest.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tool-recovery-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: Linux tool recovery and command hooks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install targeted test dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+      - name: Record Linux runtime
+        run: python -c "import platform; print(platform.platform()); print(platform.python_version())"
+      - name: Run recovery and real command contracts
+        run: >-
+          python -m pytest
+          Tests/Agents/test_tool_disclosure_refusals.py
+          Tests/Agents/test_agent_runtime_review_hook.py
+          Tests/Agents/test_agent_loop_load_dedupe.py
+          Tests/Agents/test_hooks_v2_tool_pipeline.py
+          Tests/Agents/test_hooks_v2_execution.py
+          Tests/Agents/test_skill_tool_spawn.py::test_undisclosed_skill_tool_is_refused_without_find_load
+          Tests/Agents/test_skill_tool_spawn.py::test_skill_tool_executes_after_find_load_discloses_it
+          Tests/Agents/test_skill_tool_spawn.py::test_native_spawn_child_cannot_call_a_skill_tool
+          Tests/Agents/test_agent_service.py::test_replacement_updates_permission_set_in_lockstep
+          -q --no-cov -o addopts= --timeout=120 --junitxml=tool-recovery-results.xml
+      - name: Retain targeted test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tool-recovery-results
+          path: tool-recovery-results.xml
+          if-no-files-found: warn

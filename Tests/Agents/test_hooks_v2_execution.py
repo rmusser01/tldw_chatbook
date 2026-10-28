@@ -865,14 +865,27 @@ async def test_windows_command_refuses_before_root_access_or_launch(monkeypatch)
         process_owner=Owner(),
         environment=lambda *_: accesses.append("env") or {},
     )
-    with monkeypatch.context() as m:
-        m.setattr(sys, "platform", "win32")
-        result = await engine.fire_async(event())
-    assert not result.allowed and result.failures[0].code == "unsupported_platform"
-    assert accesses == [] and not engine.processes.records
+
+    async def forbidden_launch(*_args, **_kwargs):
+        accesses.append("launch")
+        raise AssertionError("unsupported command reached subprocess launch")
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(sys, "platform", "win32")
+            m.setattr(budget.loop, "subprocess_exec", forbidden_launch)
+            for _ in range(2):
+                result = await engine.fire_async(event())
+                assert not result.allowed
+                assert result.failures[0].code == "unsupported_platform"
+                assert accesses == [] and not engine.processes.records
+                assert not any(budget.snapshot().values())
+        # Restoring sys.platform restores the actual host, which may be Windows.
+        if sys.platform != "win32":
+            assert (await engine.fire_async(event())).succeeded
+    finally:
+        await engine.close()
     assert not any(budget.snapshot().values())
-    assert (await engine.fire_async(event())).succeeded
-    await engine.close()
 
 
 @pytest.mark.asyncio
