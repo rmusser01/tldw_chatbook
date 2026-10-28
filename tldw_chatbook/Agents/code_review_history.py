@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .agent_service import AgentConfig, ModelRequest
+
 import json
 from dataclasses import dataclass
 
@@ -124,3 +129,88 @@ def project_verifier_history(
         len(retained),
     )
     return retained[:insertion] + [note] + retained[insertion:]
+
+
+def review_history_for_request(
+    self, config, messages, *, native, continuation_groups=()
+):
+    binding = config.review_binding
+    service = getattr(self.registry, "_review_service", None)
+    if (
+        binding is None
+        or binding.role != "verifier"
+        or service is None
+        or service.actor.kind != "subagent"
+    ):
+        return messages
+    from .code_review_history import project_verifier_history
+
+    checkpoint = service.verifier_checkpoint(binding.review_id)
+    if (
+        checkpoint.attempt_id != binding.attempt_id
+        or checkpoint.target_digest != binding.target_digest
+    ):
+        from .code_review_models import ReviewRefused
+
+        raise ReviewRefused("review_checkpoint_scope_mismatch")
+    return project_verifier_history(
+        messages, checkpoint, continuation_groups=continuation_groups, native=native
+    )
+
+
+def review_input_capacity(
+    self, config: AgentConfig, api_endpoint: str, request: ModelRequest
+) -> int | None:
+    """Return remaining exact input tokens; unverified fallbacks are unknown."""
+    from tldw_chatbook.Agents import agent_service as runtime
+    from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
+    from tldw_chatbook.model_capabilities import get_model_capabilities
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+    try:
+        window = resolve_context_window(api_endpoint, config.model)
+        caps = get_model_capabilities().get_model_capabilities(
+            api_endpoint, config.model
+        )
+
+        def cap(*names):
+            return next(
+                (
+                    caps[name]
+                    for name in names
+                    if type(caps.get(name)) is int and caps[name] > 0
+                ),
+                None,
+            )
+
+        capacity = resolve_request_capacity(
+            context_window_tokens=window.tokens if window.verified else None,
+            context_window_verified=window.verified,
+            provider_input_cap_tokens=cap(
+                "max_input_tokens", "input_token_limit", "provider_input_cap"
+            ),
+            provider_output_cap_tokens=cap(
+                "max_output_tokens", "output_token_limit", "provider_output_cap"
+            ),
+            requested_response_tokens=max(1, config.response_reserve_tokens),
+        )
+        ceiling = capacity.effective_input_ceiling_tokens
+        if ceiling is None:
+            return None
+        used = runtime._count_model_messages(
+            list(request.messages),
+            config.model,
+            api_endpoint,
+            reasoning_replay=config.reasoning_replay,
+        )
+        if request.tools:
+            used += runtime.estimate_tokens(
+                runtime.json.dumps(list(request.tools), sort_keys=True, separators=(",", ":")),
+                config.model,
+                provider=api_endpoint,
+            )
+        if type(used) is not int or used < 0:
+            return None
+        return ceiling - used
+    except Exception:  # noqa: BLE001 — unavailable accounting fails closed
+        return None

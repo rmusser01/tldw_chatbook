@@ -559,10 +559,10 @@ _BUDGETS: dict[str, int] = {
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
-    "tldw_chatbook/config.py": 12251,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
+    "tldw_chatbook/config.py": 12245,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 11605,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9620,
+    "tldw_chatbook/Agents/agent_service.py": 9594,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
@@ -572,7 +572,7 @@ _BUDGETS: dict[str, int] = {
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8178,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -585,14 +585,14 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     "tldw_chatbook/Chat/console_runtime.py": 6686,
-    "tldw_chatbook/Chat/console_trace_service.py": 6674,
+    "tldw_chatbook/Chat/console_trace_service.py": 6662,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
-    "tldw_chatbook/Agents/local_tool_provider.py": 5749,
+    "tldw_chatbook/Agents/local_tool_provider.py": 5738,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5186,
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5176,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,

@@ -3293,8 +3293,7 @@ class LocalWorkspaceRegistryService:
             if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
                 self._delete_default_runtime_bindings()
                 return None
-            binding = _runtime_binding_from_row(row)
-            return binding
+            return _runtime_binding_from_row(row)
 
     def list_runtime_bindings(
         self,
