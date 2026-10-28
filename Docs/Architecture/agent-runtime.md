@@ -56,6 +56,18 @@ blocked/not-started refusal through the existing preparation seam (ADR-252).
 The runtime preserves that error while unrelated preparation exceptions remain
 generic and fail closed. Runtime tools retain their independent gates.
 
+Ordinary INFO logs retain content-free disclosure breadcrumbs even when the
+handler formats only the message: `agent schema request` reports active/runtime
+counts, discovery availability and protocol; `agent tool discovery` reports its
+match count; `agent schema load` reports requested/accepted/omitted/invalid counts
+and detail-budget exhaustion. Accepted names are JSON-escaped and limited to eight
+names of 64 characters. Terminal `agent run step` messages include kind, outcome
+and a JSON-escaped tool name capped at 128 characters. Opaque run ids correlate
+the records. Prompts, search queries, arguments, schema/result bodies and project
+contents are excluded from these message strings. These host-side observations
+identify the recovery path; they do not prove the provider's response or the
+reporter's original incident. See TASK-37234.
+
 Local file-worker execution errors (including crashes, timeouts, spawn/protocol
 and cleanup failures) are ordinary failures in both `LocalToolProvider` and
 `VirtualCliProvider`, so the same-tool limit applies even when paths change.
