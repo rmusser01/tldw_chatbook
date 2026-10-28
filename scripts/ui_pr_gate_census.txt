@@ -1432,3 +1432,9 @@ Tests/UI/test_console_first_send_import_cycles.py
 Tests/UI/test_console_inspector_rail_deferral.py
 Tests/UI/test_console_collapsed_inspector_send_layout.py::test_a_send_asks_no_layout_of_the_collapsed_inspector
 Tests/UI/test_console_collapsed_inspector_send_layout.py::test_an_inspector_opened_after_a_send_matches_one_open_throughout
+# TASK-33620.15.1.6: the Environment panel's worker root reads go through the
+# real registry and consent service and land a bound folder; a landing whose
+# consent was revoked in the hop is dropped (one private-profile journey each,
+# 13-15 s each locally), appended at the tail; existing shard slots stay fixed.
+Tests/UI/test_console_environment_bound_registry.py
+Tests/UI/test_console_environment_consent_revoked_hop.py

@@ -689,7 +689,7 @@ async def test_precaptured_domains_share_snapshot_without_repeating_reads(runtim
         raise AssertionError("already captured domain was read again")
 
     for name in (
-        "capture_change_review_admission", "capture_character_authority",
+        "read_session_change_review_admission", "capture_character_authority",
         "capture_prompt_transform_inputs", "capture_skill_context_maximum",
     ):
         monkeypatch.setattr(capture, name, repeated)

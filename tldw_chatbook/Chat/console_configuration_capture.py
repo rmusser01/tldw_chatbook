@@ -19,7 +19,7 @@ from .console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from .console_turn_context import (
     ConsoleCharacterAuthoritySnapshot,
     ConsoleTurnConfigurationSnapshot,
-    capture_change_review_admission,
+    read_session_change_review_admission,
 )
 
 if TYPE_CHECKING:
@@ -341,9 +341,8 @@ def capture_console_turn_configuration(
 
     session = next(item for item in store.sessions() if item.id == session_id)
     held_scope = session.rag_scope_holder.scope
-    workspace_id = store.session_workspace_id(session_id)
     roots, aliases, skipped = (
-        checked(capture_change_review_admission, app, workspace_id)
+        checked(read_session_change_review_admission, app, store, session_id)
         if _captured_change_review is _UNSET_CAPTURED_DOMAIN
         else _captured_change_review
     )

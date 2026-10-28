@@ -43,8 +43,17 @@ from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent, owner_ha
 
 jobs = []
 root = None
+
+
+def run_worker(job, **kwargs):
+    if kwargs["group"] == ConsoleEnvironmentController.ROOT_WORKER_GROUP:
+        job()  # the automatic refresh's off-loop root read answers at once here
+        return
+    jobs.append((job, kwargs["group"]))
+
+
 controller = ConsoleEnvironmentController(
-    run_worker=lambda job, **kwargs: jobs.append((job, kwargs["group"])),
+    run_worker=run_worker,
     marshal_to_ui=lambda callback, *args: callback(*args),
     workspace_root_accessor=lambda: root,
     rail_open_accessor=lambda: True,

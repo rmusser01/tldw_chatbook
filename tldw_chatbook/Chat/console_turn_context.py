@@ -37,14 +37,18 @@ from tldw_chatbook.Character_Chat.emote_directives import CharacterEmoteRunSnaps
 
 def capture_change_review_admission(
     app: Any, workspace_id: str | None
-) -> tuple[tuple[Any, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
-    """Read only consent-admitted roots for the owning workspace."""
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
+    """Read only consent-admitted roots for the owning workspace.
+
+    Roots come back as ``str``, as the turn snapshot stores them, so every
+    reader compares like with like (TASK-33620.15.1.5).
+    """
     service = getattr(app, "change_review_consent_service", None)
     if service is not None:
         try:
             admission = service.admit_turn(workspace_id)
             return (
-                tuple(admission.ready_roots),
+                tuple(str(root) for root in admission.ready_roots),
                 tuple(getattr(admission, "ready_aliases", ())),
                 tuple(admission.skipped_roots),
             )
@@ -53,44 +57,101 @@ def capture_change_review_admission(
     return (), (), ()
 
 
+def read_session_change_review_admission(
+    app: Any, store: Any, session_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
+    """The one read of a session's consent-admitted Change Review roots.
+
+    The turn configuration builder, hook authority and the Environment panel /
+    Change Review accessor all ask this, so they cannot describe different
+    trees: the session's OWN workspace, its consent admission, ``str`` roots
+    (TASK-33620.15.1.5). It reads the store (one session lookup) and then the
+    consent service. The store belongs to the UI loop: a worker caller sees
+    the session's workspace as of its read, which suits the Environment
+    panel, whose stale-scope guard drops an answer the scope has since moved
+    past (TASK-33620.15.1.6). A caller that must freeze the UI loop's view --
+    turn admission's precapture -- takes the workspace id on the UI loop and
+    calls ``capture_change_review_admission``, the workspace-level read this
+    composes, on its worker instead.
+
+    Args:
+        app: Owning application services (the consent service).
+        store: The Console session store owning ``session_id``.
+        session_id: The session whose roots to read.
+
+    Returns:
+        ``(roots, aliases, skipped)``; empty when consent is off, nothing is
+        bound, or the consent service is absent or raised.
+
+    Raises:
+        KeyError: ``session_id`` is not one of the store's sessions.
+    """
+    return capture_change_review_admission(app, store.session_workspace_id(session_id))
+
+
+def session_change_review_admission_stamp(
+    app: Any, store: Any, session_id: str
+) -> tuple[Any, ...]:
+    """Name what ``read_session_change_review_admission`` reads, without reading it.
+
+    In memory only -- no registry or consent read -- so the UI loop can ask
+    where the admission read itself is too slow: the Console Environment
+    panel's stale-scope guard compares the stamp its gather worker took with
+    the current one (TASK-33620.15.1.6). Every in-app change that can alter
+    the session's admitted roots moves it: the session's workspace, a folder
+    bound or unbound (the registry's ``mutation_generation``), consent
+    toggled or a root finishing preparation (the consent service's
+    ``admission_revision``), or another consent service answering. Changes
+    made outside the app (another process, a folder removed on disk) do not.
+
+    Args:
+        app: Owning application services (registry and consent service).
+        store: The Console session store owning ``session_id``.
+        session_id: The session whose admission inputs to name.
+
+    Returns:
+        A hashable stamp; equal stamps mean no in-app change between them. An
+        unknown session stamps with no workspace rather than raising.
+    """
+    try:
+        workspace_id = store.session_workspace_id(session_id)
+    except KeyError:
+        workspace_id = None
+    registry = getattr(app, "workspace_registry_service", None)
+    service = getattr(app, "change_review_consent_service", None)
+    return (
+        workspace_id,
+        getattr(registry, "mutation_generation", None),
+        id(service),
+        getattr(service, "admission_revision", None),
+    )
+
+
 def resolve_session_workspace_roots(
     controller: Any, session_id: str
 ) -> tuple[str, ...]:
     """Read one session's consent-admitted workspace roots, and nothing else.
 
-    The value ``controller.resolve_turn_execution_context(session_id)
-    .workspace_roots`` carries: the runtime-owned controller has no turn-context
-    provider, and its snapshot takes its roots from this same admission read
-    for the session's own workspace. Building that whole snapshot to keep one
-    field (RAG profile depth through storage admission, the MCP definition
-    maximum, the skill catalog, project authority, ...) held the UI loop
-    0.2-1.4 s every time the Console Environment panel asked for its root --
-    on Inspect-rail open, at each run completion and on every 10 s poll
-    (TASK-33620.15.1.3); the admission read alone measured 1-12 ms.
-
-    An installed turn-context provider owns the whole snapshot, roots
-    included, so its snapshot is still asked.
+    The Console Environment panel and the Change Review opener ask this. It
+    used to build a whole turn configuration and keep its ``workspace_roots``,
+    which held the UI loop 0.2-1.4 s per ask (TASK-33620.15.1.3); no snapshot
+    is built for it now, with or without a turn-context provider
+    (TASK-33620.15.1.5).
 
     Args:
         controller: The Console chat controller owning ``session_id``.
         session_id: The session whose workspace roots to read.
 
     Returns:
-        The consent-admitted roots as strings, coerced exactly as the
-        snapshot's ``workspace_roots`` are; empty when consent is off,
-        nothing is bound, or the consent service is absent or raised.
+        The consent-admitted roots as strings.
 
     Raises:
-        KeyError: ``session_id`` is not one of the controller's sessions (the
-            full snapshot build raised for it too).
+        KeyError: ``session_id`` is not one of the controller's sessions.
     """
-    if getattr(controller, "_turn_context_provider", None) is not None:
-        return controller.resolve_turn_execution_context(session_id).workspace_roots
-    workspace_id = controller.store.session_workspace_id(session_id)
-    roots, _aliases, _skipped = capture_change_review_admission(
-        controller.app, workspace_id
+    roots, _aliases, _skipped = read_session_change_review_admission(
+        controller.app, controller.store, session_id
     )
-    return tuple(str(root) for root in roots)
+    return roots
 
 
 def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:

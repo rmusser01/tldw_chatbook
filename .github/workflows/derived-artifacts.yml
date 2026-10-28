@@ -448,6 +448,10 @@ jobs:
     # cap. TASK-33620.15.1.3 appends one mounted Console file (two tests,
     # ~8 s serial). TASK-33620.15.4 appends the durable commit window file
     # (three cases on a real file-backed commit, ~7 s serial).
+    # TASK-33620.15.1.6 and .5 append two mounted Console files: the
+    # Environment panel's consent reads stay off the UI loop (three tests)
+    # and one helper answers every reader of a session's admitted roots (two
+    # tests), about 10-15 s each serial.
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -547,6 +551,8 @@ jobs:
             Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list \
             Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone \
             Tests/Chat/test_console_durable_commit_window.py \
+            Tests/UI/test_console_environment_root_reads.py \
+            Tests/UI/test_console_session_admitted_roots.py \
             --timeout=300 \
             --tb=short
 
