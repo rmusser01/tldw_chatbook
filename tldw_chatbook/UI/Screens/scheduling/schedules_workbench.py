@@ -2963,14 +2963,9 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
-        # Routing only (task-5): which owner the reminder is written under,
-        # not a ReminderTask field. Defaults to the service's current owner
-        # so a form built before this selector existed (or a caller that
-        # omits it) behaves exactly as before.
+        # Capture routing and payload before admitting this dismissed form.
         form_data = dict(form_data)
         target_owner = form_data.pop("owner_id", None) or service.owner_id
-        # Name the selected owner using the form's vocabulary. The Queue
-        # spans owners, so the saved row appears without switching owners.
         owner_label = {value: label for label, value in self._runs_on_options()[0]}.get(
             target_owner, target_owner
         )
@@ -2980,13 +2975,18 @@ class SchedulesWorkbench(BaseAppScreen):
             else f"Scheduled task created for {owner_label}."
         )
 
+        group = f"schedules-save-reminder:{(target_owner, task_id)!r}"
+        predecessors = tuple(
+            worker
+            for worker in self.workers
+            if task_id is not None and worker.node is self and worker.group == group
+        )
+
         async def _save_and_refresh() -> None:
-            # The owner is threaded through the call rather than flipped onto
-            # the service around it: `service.owner_id` is shared mutable
-            # state that the sync/refresh/run-now workers also read, and a
-            # flip held across an awaited network round-trip is visible to
-            # every one of them.
             try:
+                # Settle earlier same-reminder writes before any later request.
+                for worker in predecessors:
+                    await worker.wait()
                 if task_id is None:
                     await service.create_reminder(form_data, owner_id=target_owner)
                     self.app_instance.notify(created_message, severity="information")
@@ -3009,10 +3009,8 @@ class SchedulesWorkbench(BaseAppScreen):
 
         self.run_worker(
             _save_and_refresh,
-            # Each dismissed form has admitted a write, including creates.
-            # Cancelling its response waiter cannot roll back that write.
-            exclusive=False,
-            group="schedules-save-reminder",
+            exclusive=False,  # Admitted responses must settle, not be cancelled.
+            group=group,
         )  # type: ignore[arg-type]
 
     @on(AcknowledgeIncidentRequested)

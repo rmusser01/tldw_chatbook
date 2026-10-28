@@ -41,7 +41,8 @@ class AcceptedClient:
 
     notifications_service = None
 
-    def __init__(self):
+    def __init__(self, *, offline_title=None):
+        self.offline_title = offline_title
         self.entered, self.release = asyncio.Event(), asyncio.Event()
         self.calls, self.effects, self.cancelled = [], {}, []
 
@@ -51,6 +52,8 @@ class AcceptedClient:
 
     async def update_reminder(self, server_id, **payload):
         self.calls.append((server_id, dict(payload)))
+        if payload.get("title") == self.offline_title:
+            raise ServerUnavailableError("controlled offline response")
         # A controlled external effect precedes the held acknowledgement.
         self.effects[server_id] = dict(payload)
         if server_id == "server-a" and len(self.calls) == 1:
@@ -215,6 +218,69 @@ async def test_full_forms_keep_both_accepted_saves(
                 assert client.cancelled == []
                 verb = "updated" if operation == "edit" else "created"
                 assert notices.count((f"Scheduled task {verb}.", "information")) == 2
+                assert app._exception is None
+            finally:
+                client.release.set()
+                await settle(app, pilot)
+    finally:
+        client.release.set()
+        db.close()
+
+
+@pytest.mark.parametrize("second_outcome", ["acknowledged", "offline"])
+@private_profile_test
+async def test_same_reminder_saves_settle_before_the_next_update(
+    request, tmp_path, monkeypatch, second_outcome
+):
+    assert_worktree_sources()
+    db = ScheduledTasksDB(tmp_path / "same-reminder.db")
+    client = AcceptedClient(
+        offline_title="Second" if second_outcome == "offline" else None
+    )
+    ids = seed(db)
+    app = ReminderHost(db, client)
+    app.scheduling_service.set_owner("server:1")
+    notices = []
+    notify = app.notify
+
+    def observe(message, **kwargs):
+        notices.append((message, kwargs.get("severity")))
+        return notify(message, **kwargs)
+
+    monkeypatch.setattr(app, "notify", observe)
+    try:
+        async with app.run_test(size=(180, 60)) as pilot:
+            screen = SchedulesWorkbench(app_instance=app)
+            await app.push_screen(screen)
+            try:
+                await settle(app, pilot)
+                form = await open_form(app, screen, pilot, ids[0], "First")
+                await save_form(app, screen, pilot, form)
+                await asyncio.wait_for(client.entered.wait(), 15)
+                assert client.effects["server-a"]["title"] == "First"
+                form = await open_form(app, screen, pilot, ids[0], "Second")
+                await save_form(app, screen, pilot, form)
+                before_release = [payload["title"] for _, payload in client.calls]
+                # Both dismissed forms retain their captured server owner even
+                # if the shared service selection changes while they wait.
+                app.scheduling_service.set_owner("local")
+                client.release.set()
+                await settle(app, pilot)
+                assert db.get_reminder_task(ids[0])["title"] == "Second"
+                assert db.get_reminder_task(ids[0])["owner_id"] == "server:1"
+                assert_queue_titles(screen, ["Second", "B"])
+                pending = db.get_pending_mutations(owner_id="server:1")
+                if second_outcome == "offline":
+                    assert len(pending) == 1
+                    assert pending[0]["payload"]["fields"]["title"] == "Second"
+                    assert client.effects["server-a"]["title"] == "First"
+                else:
+                    assert pending == []
+                    assert client.effects["server-a"]["title"] == "Second"
+                assert before_release == ["First"]
+                assert [key for key, _ in client.calls] == ["server-a", "server-a"]
+                assert notices.count(("Scheduled task updated.", "information")) == 2
+                assert client.cancelled == []
                 assert app._exception is None
             finally:
                 client.release.set()

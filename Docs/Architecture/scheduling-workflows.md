@@ -68,13 +68,20 @@ admission. Service ownership, transfer guards and offline outcomes remain under
 ADR-018; this screen-local guard does not establish physical cancellation of a
 remote request or extend the batch lifetime beyond the workbench.
 
-Full reminder-form Saves admit independent named, non-exclusive mutation workers
-(TASK-37032). Each callback captures its service, reminder ID, selected owner and
-copied form payload before dispatch. A later dismissed form cannot cancel an
-already admitted Save, including another create. The form's existing dismissal
-still prevents repeated Enter from submitting it twice. Successful acknowledgements
-refresh the Queue; a deleted or newly transfer-locked row's `None` service result
-uses the existing failure feedback and refresh instead of a success toast. Worker
+Full reminder-form Saves use named, non-exclusive mutation workers (TASK-37032).
+Each callback captures its service, reminder ID, selected owner and copied form
+payload before dispatch. Updates for the same captured owner/reminder wait for all
+prior same-identity form workers to settle before calling the service. This keeps
+an older accepted response from overwriting a newer acknowledged edit or deleting
+its offline queue entry. Different reminders and separate creates remain independent;
+creates never wait on other creates. A later dismissed form cannot cancel an
+already admitted Save. The form's existing dismissal still prevents repeated Enter
+from submitting it twice. Successful acknowledgements refresh the Queue; a deleted
+or newly transfer-locked row's `None` service result uses the existing failure
+feedback and refresh instead of a success toast. Mounted real-service/SQLite controls
+hold an accepted first response, submit the same reminder again and verify the newer
+Queue/SQLite value, including a second offline update. This is a full-form policy;
+inline edits and global service callers retain their existing contracts. Worker
 cancellation is never evidence of remote rollback; screen lifetime is unchanged.
 
 Offline full-form updates project queued fields onto the existing server-write
@@ -86,6 +93,8 @@ only by the existing client seam, as ADR-018 requires. Private mounted controls
 exercise durable offline queues and reminder sync replay through the real
 `SchedulingServerClient` and `ServerNotificationsService` request schema with a
 controlled API transport; retry, schema and conflict policies are unchanged.
+Retaining explicit nulls in the durable queue does not establish remote null
+clearing: the unchanged notification transport omits `None` request values.
 
 ## What can be scheduled
 
