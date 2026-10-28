@@ -2158,6 +2158,23 @@ class _OwnerSeqAllocator:
 RunModelScope = Callable[[str, str], contextlib.AbstractContextManager[None]]
 
 
+def _tool_availability_refusal(
+    name: str,
+    allowed_tools: tuple[str, ...],
+    disclosed_names: set[str],
+    registry: ToolCatalogRegistry,
+) -> ToolResult | None:
+    """Explain missing disclosure only after checking the run's allow-list."""
+    if name not in allowed_tools or registry.resolve_name(name) is None:
+        return ToolResult.blocked(f"Tool not permitted: {name}")
+    if name not in disclosed_names:
+        return ToolResult.blocked(
+            f"Tool schema not loaded: {name}. Call load_tools alone with "
+            f"ids=[{json.dumps(name)}], including all tools to retain, then retry."
+        )
+    return None
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -3678,11 +3695,11 @@ class AgentService:
                     outcome=TOOL_OUTCOME_CANCELLED,
                     dispatch_state="not_started",
                 )
-            if (
-                call.name not in config.allowed_tools
-                or call.name not in disclosed_names
-            ):
-                return ToolResult.blocked(f"Tool not permitted: {call.name}")
+            refusal = _tool_availability_refusal(
+                call.name, config.allowed_tools, disclosed_names, self.registry
+            )
+            if refusal is not None:
+                return refusal
 
             def _invoke() -> ToolResult:
                 from .automatic_work_runtime import current_automatic_work
@@ -7697,13 +7714,11 @@ class AgentService:
                 # alone let an undisclosed skill name execute the instant
                 # the model guessed it, even behind a >8-tool catalog where
                 # progressive disclosure is supposed to gate exactly this.
-                if (
-                    call.name not in config.allowed_tools
-                    or call.name not in disclosed_names
-                ):
-                    return _observed_skill_result(
-                        ToolResult.blocked(f"Tool not permitted: {call.name}")
-                    )
+                refusal = _tool_availability_refusal(
+                    call.name, config.allowed_tools, disclosed_names, self.registry
+                )
+                if refusal is not None:
+                    return _observed_skill_result(refusal)
                 # Cheap early exit before rendering the skill: the
                 # authoritative check-and-increment lives in `spawn` itself
                 # (shared with the native spawn_subagent path), so the
@@ -8742,6 +8757,17 @@ class AgentService:
                 ),
             )
 
+            runtime_tool_names = frozenset(schema.name for schema in runtime_schemas)
+
+            def prepare_hook_call(call: ToolCall) -> ToolCall | ToolResult:
+                if call.name not in runtime_tool_names:
+                    refusal = _tool_availability_refusal(
+                        call.name, config.allowed_tools, disclosed_names, self.registry
+                    )
+                    if refusal is not None:
+                        return refusal
+                return hook_run.prepare_call(call)
+
             if self._hooks_v2_engine.mcp_executor is not None:
                 from .hooks_v2.mcp_executor import MCPHookContext
 
@@ -8764,7 +8790,7 @@ class AgentService:
                 )
 
         deps = LoopDeps(
-            prepare_hook_call=hook_run.prepare_call if hook_run else None,
+            prepare_hook_call=prepare_hook_call if hook_run else None,
             accept_hook_preparation=hook_run.validate_dispatch if hook_run else None,
             validate_hook_dispatch=(
                 (lambda call: hook_run.validate_dispatch(call, accept_context=False))

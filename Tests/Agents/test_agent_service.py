@@ -2689,7 +2689,8 @@ def test_replacement_updates_permission_set_in_lockstep(db):
     assert load1["result"] == "loaded: t0"
     assert t0_before["result"] == "invoked fake:t0"
     assert load2["result"] == "loaded: t1"
-    assert "Tool not permitted: t0" in t0_after["result"]
+    assert "schema not loaded: t0" in t0_after["result"]
+    assert "load_tools" in t0_after["result"]
     assert t0_after["tool_outcome"] == "blocked"
     assert t1_result["result"] == "invoked fake:t1"
 
