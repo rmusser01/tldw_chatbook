@@ -607,6 +607,11 @@ def _row_paint_writes(
 ) -> list[Callable[[], None]] | None:
     """Return the writes that make a composed row show ``paint``.
 
+    The mounted buttons are checked against the record only when ``paint``
+    differs from it. A row whose incoming paint equals the record is left as
+    it is, even if its buttons drifted; the compose diff this replaced checked
+    mounted values only on the nodes it changed, too.
+
     Args:
         composed: The row as compose (or the last patch) left it.
         paint: The values the incoming row data gives.
