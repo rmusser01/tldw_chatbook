@@ -10,8 +10,8 @@ own send preflight used the window attached to the send's resolution.
 
 The planner now plans against the same window the send resolved. A window
 the app cannot vouch for never licenses the full preamble: it is planned as
-the smallest common local window, and when the tools do not fit the request
-carries only the session's own system prompt.
+the smallest common local window. ADR-253 retains fitting compact discovery
+before falling back to the session-only prompt when even that cannot fit.
 """
 
 from __future__ import annotations
@@ -80,6 +80,7 @@ def _plan(
     provider: str = "llama_cpp",
     model: str = _MODEL,
     session_system_prompt: str | None = _SESSION_PROMPT,
+    native_tools: bool = False,
 ):
     registry = ToolCatalogRegistry()
     registry.register_provider(_BuiltinLikeProvider())
@@ -109,7 +110,7 @@ def _plan(
         resolution=resolution,
         fallback_model=model,
         session_system_prompt=session_system_prompt,
-        native_tools=False,
+        native_tools=native_tools,
         turn_skill_bindings=(),
         turn_bundle_block="",
         install_skill_enabled=True,
@@ -146,13 +147,28 @@ def test_an_unverified_window_never_licenses_the_full_agent_preamble(provider) -
     content = _system_content(plan)
     # A llama-server started with -c 4096 must be able to take it with room
     # for the reply: the live failure was 4,730 tokens (~20.8 KB).
-    assert len(content) < 1_000, (len(content), content[:300])
-    assert plan.schemas.runtime_schemas == ()
+    from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+    assert (
+        count_tokens_messages(
+            [
+                {"role": "system", "content": content},
+                {"role": "user", "content": "Reply with just: hi"},
+            ],
+            _MODEL,
+            provider=provider,
+        )
+        + 1024
+        <= 4096
+    )
+    assert {s.name for s in plan.schemas.runtime_schemas} == {
+        "find_tools",
+        "load_tools",
+        "read_agent_messages",
+    }
     assert plan.schemas.active_schemas == ()
     assert plan.schemas.request_fits
-    # The request carries the session's own prompt, not tool instructions
-    # for a protocol it no longer describes.
-    assert plan.schemas.system_prompt == _SESSION_PROMPT
+    assert plan.schemas.system_prompt.startswith(_SESSION_PROMPT)
 
 
 @pytest.mark.parametrize("session_prompt", [None, "", "   "])
@@ -165,7 +181,8 @@ def test_a_tool_less_request_with_the_system_prompt_off_carries_no_tool_talk(
     protocol described below ... Use spawn_subagent' -- with no tools and no
     protocol below it, inviting a small model to fake tool calls."""
     plan = _plan(
-        ContextWindowResolution(32000, "application fallback", False),
+        ContextWindowResolution(512, "server metadata", True),
+        max_tokens=128,
         session_system_prompt=session_prompt,
     )
 
@@ -185,7 +202,11 @@ def test_a_detected_small_window_plans_against_the_server_value() -> None:
         ContextWindowResolution(4096, "server metadata", True), max_tokens=1024
     )
 
-    assert len(_system_content(plan)) < 1_000
+    assert {s.name for s in plan.schemas.runtime_schemas} == {
+        "find_tools",
+        "load_tools",
+        "read_agent_messages",
+    }
     assert plan.schemas.request_fits
 
 
@@ -263,3 +284,133 @@ def test_a_hosted_model_outside_the_catalog_keeps_its_tools_on_the_first_send(
     }
     assert "spawn_subagent" in names, sorted(names)
     assert plan.schemas.request_fits
+
+
+@pytest.mark.parametrize("verified", [False, True], ids=["unknown", "verified"])
+@pytest.mark.parametrize("native", [False, True], ids=["fence", "native"])
+def test_compact_discovery_survives_full_runtime_budget_failure(verified, native):
+    plan = _plan(
+        ContextWindowResolution(4096, "probe", verified),
+        max_tokens=1024,
+        native_tools=native,
+        provider="openai" if native else "llama_cpp",
+    )
+    names = {schema.name for schema in plan.schemas.runtime_schemas}
+    assert {"find_tools", "load_tools", "read_agent_messages"} <= names
+    assert names == {"find_tools", "load_tools", "read_agent_messages"}
+    assert plan.schemas.active_schemas == ()
+    assert plan.schemas.offer_find_load
+    assert not plan.schemas.log_active
+    assert plan.schemas.request_fits
+    assert plan.schemas.system_prompt.startswith(_SESSION_PROMPT)
+    assert "spawn_subagent" not in plan.schemas.system_prompt
+
+
+@pytest.mark.parametrize("compact", [False, True], ids=["plain", "compact"])
+def test_service_keeps_the_planned_surface_with_a_live_progress_inbox(
+    tmp_path, compact
+):
+    from Tests.Agents.test_agent_service import ScriptedChat, fence
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    plan = _plan(
+        ContextWindowResolution(4096 if compact else 512, "server metadata", True),
+        max_tokens=1024 if compact else 128,
+    )
+    replies = (
+        [
+            fence("find_tools", {"query": "notes_tool_0"}),
+            fence("load_tools", {"ids": ["mcp:notes_tool_0"]}),
+            fence("notes_tool_0", {}),
+        ]
+        if compact
+        else []
+    ) + ["done"]
+    chat = ScriptedChat(replies)
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-plan")
+    service = AgentService(
+        db=db,
+        registry=plan.registry,
+        chat_call=chat,
+        message_inbox=MessageStore().open_inbox("c"),
+    )
+    try:
+        _, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "Describe the project"}],
+            config=plan.config,
+            api_endpoint="llama_cpp",
+            first_request_schema_plan=plan.schemas,
+        )
+        assert outcome.status == "done"
+        first = chat.calls[0]["messages_payload"][0]["content"]
+        if compact:
+            assert "find_tools" in first and "load_tools" in first
+            assert "spawn_subagent" not in first
+            results = [s for s in outcome.steps if s.kind == "tool_result"]
+            assert [s.tool_name for s in results] == [
+                "find_tools",
+                "load_tools",
+                "notes_tool_0",
+            ]
+            assert all(s.tool_outcome == "success" for s in results)
+        else:
+            assert plan.schemas.runtime_schemas == ()
+            assert plan.schemas.active_schemas == ()
+            assert "read_agent_messages" not in first
+            assert "find_tools" not in first
+            assert "load_tools" not in first
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("native", [False, True], ids=["fence", "native"])
+def test_compact_discovery_does_not_load_a_schema_beyond_its_input_budget(
+    tmp_path, monkeypatch, native
+):
+    from dataclasses import replace
+    from Tests.Agents.test_agent_service import ScriptedChat, fence, native_call
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    original = _BuiltinLikeProvider.load_schema
+
+    def large_schema(self, tool_id):
+        schema = original(self, tool_id)
+        return replace(schema, description="oversized schema " * 5000)
+
+    monkeypatch.setattr(_BuiltinLikeProvider, "load_schema", large_schema)
+    provider = "openai" if native else "llama_cpp"
+    plan = _plan(
+        ContextWindowResolution(4096, "server metadata", True),
+        max_tokens=1024,
+        native_tools=native,
+        provider=provider,
+    )
+    call = (
+        {
+            "content": None,
+            "tool_calls": [native_call("load_tools", {"ids": ["notes_tool_0"]})],
+        }
+        if native
+        else fence("load_tools", {"ids": ["notes_tool_0"]})
+    )
+    chat = ScriptedChat([call, "done"])
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="compact-budget")
+    try:
+        service = AgentService(db=db, registry=plan.registry, chat_call=chat)
+        _, outcome = service.run_turn(
+            conversation_id="c",
+            messages=[{"role": "user", "content": "Inspect"}],
+            config=plan.config,
+            api_endpoint=provider,
+            first_request_schema_plan=plan.schemas,
+        )
+        assert ("tools" in chat.calls[0]) is native
+        result = next(s for s in outcome.steps if s.kind == "tool_result")
+        assert result.result == "not loaded (request budget): notes_tool_0"
+        assert "oversized schema" not in str(chat.calls[-1])
+    finally:
+        db.close()

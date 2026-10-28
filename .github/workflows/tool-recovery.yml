@@ -7,6 +7,8 @@ on:
       - .github/workflows/tool-recovery.yml
       - tldw_chatbook/Agents/**
       - Tests/Agents/**
+      - tldw_chatbook/Tools/file_operation_tools.py
+      - Tests/Tools/test_file_tools_workspace_roots.py
       - Tests/hooks_v2_process_support.py
       - Tests/conftest.py
   workflow_dispatch:
@@ -45,6 +47,9 @@ jobs:
         run: >-
           python -m pytest
           Tests/Agents/test_tool_disclosure_refusals.py
+          Tests/Agents/test_first_request_window_honest_plan.py
+          Tests/Agents/test_fleet_message_tools.py
+          Tests/Tools/test_file_tools_workspace_roots.py
           Tests/Agents/test_tool_disclosure_diagnostics.py
           Tests/Agents/test_agent_runtime_review_hook.py
           Tests/Agents/test_agent_loop_load_dedupe.py

@@ -737,6 +737,8 @@ class FirstRequestSchemaPlan:
     agent_definitions: tuple[AgentDefinition, ...] | None = None
     fleet_max_live: int | None = None
     request_fits: bool = True
+    # Compact disclosure must keep this ceiling when loading catalog schemas.
+    schema_input_budget_tokens: int | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1000,6 +1002,51 @@ def build_first_request_schema_plan(
             agent_definitions=agent_definitions,
             fleet_max_live=fleet_max_live,
         )
+        # ADR-253: optional runtime schemas must not crowd out a usable
+        # catalog. Keep the caller's session prompt and only the discovery
+        # and already-gated progress surface, then cost the whole request.
+        from .fleet_message_tools import (
+            PEER_INSTRUCTIONS,
+            READ_INSTRUCTIONS,
+            REPORT_INSTRUCTIONS,
+        )
+
+        compact_names = MESSAGE_TOOL_NAMES | {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
+        compact_runtime = tuple(
+            schema
+            for schema in discovery.runtime_schemas
+            if schema.name in compact_names
+        )
+        compact_prompt = (
+            no_tools.system_prompt
+            + "\n\nUse find_tools to discover available tools, then call load_tools "
+            "alone with ids for every tool to retain before calling those tools."
+        )
+        for enabled, instruction in (
+            (progress_available and agent_kind == AGENT_KIND_PRIMARY, READ_INSTRUCTIONS),
+            (
+                reporting_available and agent_kind == AGENT_KIND_SUBAGENT,
+                REPORT_INSTRUCTIONS,
+            ),
+            (peers_available and agent_kind == AGENT_KIND_SUBAGENT, PEER_INSTRUCTIONS),
+        ):
+            if enabled and instruction not in compact_prompt:
+                compact_prompt += "\n\n" + instruction
+        compact = dataclasses.replace(
+            no_tools,
+            runtime_schemas=compact_runtime,
+            offer_find_load=True,
+            system_prompt=compact_prompt,
+            schema_input_budget_tokens=context_limit - config.response_reserve_tokens,
+        )
+        if _first_request_plan_fits(
+            compact,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        ):
+            return compact
         return dataclasses.replace(
             no_tools,
             request_fits=_first_request_plan_fits(
@@ -2812,8 +2859,10 @@ class AgentService:
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
+        *,
+        input_budget_tokens: int | None = None,
     ) -> bool:
-        """Return whether an exact staged request fits its raw input budget."""
+        """Fit an exact request, optionally narrowed by its compact plan."""
         try:
             limit = get_model_token_limit(config.model, api_endpoint)
             reserve = config.response_reserve_tokens
@@ -2847,7 +2896,12 @@ class AgentService:
                 used += schema_tokens
         except Exception:
             return False
-        return used <= limit - reserve
+        available = limit - reserve
+        if input_budget_tokens is not None:
+            if type(input_budget_tokens) is not int or input_budget_tokens < 0:
+                return False
+            available = min(available, input_budget_tokens)
+        return used <= available
 
     def _startup_delivery_for_request(
         self,
@@ -5353,7 +5407,10 @@ class AgentService:
             progress_inbox = self._message_inbox or (
                 fleet.message_inbox if fleet is not None else None
             )
-        if progress_sender is not None:
+        # A plain fallback was costed without schemas or progress guidance.
+        # Do not silently turn it back into a tool-bearing request.
+        plan_has_tools = bool(runtime_schemas or active)
+        if progress_sender is not None and plan_has_tools:
             from .fleet_message_tools import (
                 REPORT_TO_SUPERVISOR_SCHEMA,
                 REPORT_INSTRUCTIONS,
@@ -5366,7 +5423,7 @@ class AgentService:
                     config,
                     system_prompt=config.system_prompt + "\n\n" + REPORT_INSTRUCTIONS,
                 )
-        if peer_messenger is not None:
+        if peer_messenger is not None and plan_has_tools:
             from .fleet_message_tools import (
                 LIST_PEER_AGENTS_SCHEMA,
                 PEER_INSTRUCTIONS,
@@ -5381,7 +5438,7 @@ class AgentService:
                     config,
                     system_prompt=config.system_prompt + "\n\n" + PEER_INSTRUCTIONS,
                 )
-        if progress_inbox is not None:
+        if progress_inbox is not None and plan_has_tools:
             from .fleet_message_tools import (
                 READ_AGENT_MESSAGES_SCHEMA,
                 READ_INSTRUCTIONS,
@@ -5628,6 +5685,13 @@ class AgentService:
                         working_set,
                         log_active,
                     )
+                    if schema_plan.schema_input_budget_tokens is not None:
+                        return self._project_instruction_request_fits(
+                            config,
+                            api_endpoint,
+                            request,
+                            input_budget_tokens=schema_plan.schema_input_budget_tokens,
+                        )
                     return self._project_instruction_request_fits(
                         config, api_endpoint, request
                     )

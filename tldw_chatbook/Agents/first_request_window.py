@@ -9,7 +9,8 @@ while the Console's own send preflight had used the window attached to the
 send's resolution. The planner now takes that same window. A window nobody
 verified (a provider or application fallback) is planned as the smallest
 common local window, with the reply reservation capped to a quarter of it,
-so an unknown server gets a plain request instead of an overflow; a verified
+so an unknown server gets a compact discovery request when it fits, or plain
+chat otherwise, instead of an overflow; a verified
 window (catalog, server metadata, user override) is used exactly.
 
 Only a self-hosted provider's guess is clamped (review round 1, F1). A
