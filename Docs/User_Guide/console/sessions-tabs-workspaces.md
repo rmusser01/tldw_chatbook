@@ -131,7 +131,7 @@ On a local-only setup the server lines collapse into one line:
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab, with its own empty draft in the composer straight away |
 | Click a tab | Switches to it at once, even while another tab's agent is running: the tab lights up and its own draft is in the composer before anything else repaints, and the composer keeps the keyboard, so you can type straight away. A second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
-| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, an unsent turn waiting on the shelf, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
@@ -648,7 +648,8 @@ separate from individually archiving a conversation.
 
 Closing a tab removes the open session. Saved history stays in Library; the
 close dialog names the tab and lists only the consequences that apply: unsaved
-messages, drafts, attachments, live or queued work, and pending human decisions.
+messages, drafts, attachments, unsent turns needing attention, live or queued work,
+and pending human decisions.
 The dialog keeps both actions visible when the terminal is short. Press Shift+Tab
 from **Stay** to focus the scrollable consequences, then use arrows, Home or End
 to read them. Tab returns to **Stay**. Resizing keeps the same controls and decision.
@@ -656,6 +657,15 @@ Closing denies pending tool approvals, cancels unanswered questions and declines
 skill, chat-creation and worktree-merge confirmations, cancelling the owning work
 without affecting other tabs. Declining chat creation creates no chat. Declining
 a merge or discard confirmation performs neither action.
+
+Quitting the app (**Ctrl+Q**) closes every open tab, so it asks the same question
+for all of them at once. **Quit Chatbook?** appears whenever closing any open tab
+would lose something: it adds up the same counts the close dialog shows for each
+tab, lists only the ones that are not zero, and names the affected tabs. Apart
+from those tab names it shows no draft or message text. It also reminds you that
+open tabs are not reopened the next time Chatbook starts; saved chats stay in
+the Chats rail. **Stay** keeps every draft, Temporary chat, staged attachment and
+unsent turn as it was. With nothing to lose, Ctrl+Q quits without asking.
 
 ## Assistant recovery choices
 
