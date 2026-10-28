@@ -1,7 +1,7 @@
 # TASK-35582 delivery evidence
 
 AC24 remains open. The delivery candidate carries the implemented review recipe
-onto dev `e3d07afa65927b9d477fe9f13af619550da9e005`; it does not claim that prior
+onto dev `3efe8476cebf70eceafa605d1abed76a4aad4e0e`; it does not claim that prior
 live qualification passed. The single bounded live run is now recorded below; it did not complete AC24.
 
 ## Current boundary
@@ -58,7 +58,7 @@ to MCP destination retirement, so delivery renames the feature decision to
 without changing its contracts. Verbatim historical reviews retain their numbering.
 
 
-Current-dev integration: the delivery branch is rebased onto live dev
+First dev sync (historical): the delivery branch was rebased onto
 7884e11a496a677c8180cc5d67234a57b7d659b9. Only the lessons append and size-table
 rows conflicted; both valid documentation additions and every stricter limit are
 retained. All202 non-overlapping feature files and182 upstream files are byte
@@ -67,3 +67,20 @@ source reviews and Haiku preflight remain valid within their original scope; no
 provider call was repeated. See the [small preservation receipt](offline-repairs/dev-sync.json).
 GitHub Actions status must be read from the normal PR runs on the resulting head;
 CodeRabbit's skipped review is not passing Actions CI.
+
+The current candidate is rebased again onto live dev
+`3efe8476cebf70eceafa605d1abed76a4aad4e0e`. This second sync had a real runtime
+overlap: it preserves upstream first-request schema builders, compact input
+budgets and recoverable disclosure refusals alongside review role/spawn gates.
+The extracted request factories match the combined upstream/feature bodies;
+completion-repair source and tests remain unchanged. All 74 shared size ceilings
+preserve the stricter parent limit (service 9,594; bridge 11,605).
+
+Targeted integration checks passed: 54 upstream runtime controls, 34 review and
+continuation controls, and five affected size/governance cases. The diagnostic
+inventory guard passes after inspection of nine affected owner rows; 696 original
+owner rows and all privacy/sink sections are unchanged. These checks do not
+replace live AC24 evidence or the separately recorded baseline failures. Exact
+commands, logs and preservation proofs remain in
+`/private/tmp/task35582-dev-sync/runtime-conflict-report.md` and its adjacent
+receipts; no new raw archive was added to the PR.
