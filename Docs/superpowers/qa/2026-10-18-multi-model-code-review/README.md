@@ -56,3 +56,14 @@ Historical artifacts call the feature ADR240. Current dev assigned that number
 to MCP destination retirement, so delivery renames the feature decision to
 [ADR-281](../../../../backlog/decisions/281-primary-agent-multi-model-code-review.md)
 without changing its contracts. Verbatim historical reviews retain their numbering.
+
+
+Current-dev integration: the delivery branch is rebased onto live dev
+7884e11a496a677c8180cc5d67234a57b7d659b9. Only the lessons append and size-table
+rows conflicted; both valid documentation additions and every stricter limit are
+retained. All202 non-overlapping feature files and182 upstream files are byte
+identical to their respective tips. Four affected ratchet cases pass. The existing
+source reviews and Haiku preflight remain valid within their original scope; no
+provider call was repeated. See the [small preservation receipt](offline-repairs/dev-sync.json).
+GitHub Actions status must be read from the normal PR runs on the resulting head;
+CodeRabbit's skipped review is not passing Actions CI.
