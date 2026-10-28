@@ -11,6 +11,8 @@ on:
       - Tests/Tools/test_file_tools_workspace_roots.py
       - Tests/hooks_v2_process_support.py
       - Tests/conftest.py
+      - Tests/UI/test_console_turn_resend_ui.py
+      - Tests/UI/test_console_composer_run_controls.py
   workflow_dispatch:
 
 permissions:
@@ -49,6 +51,8 @@ jobs:
           Tests/Agents/test_tool_disclosure_refusals.py
           Tests/Agents/test_first_request_window_honest_plan.py
           Tests/Chat/test_console_agent_project_instructions.py
+          Tests/UI/test_console_turn_resend_ui.py::test_select_llamacpp_console_enables_send_while_another_thread_holds_the_config_locks
+          Tests/UI/test_console_composer_run_controls.py::test_slash_stop_stops_the_viewed_tabs_run_and_clears_itself
           Tests/Agents/test_fleet_message_tools.py
           Tests/Tools/test_file_tools_workspace_roots.py
           Tests/Agents/test_tool_disclosure_diagnostics.py
