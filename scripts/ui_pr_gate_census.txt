@@ -1634,3 +1634,10 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-33628.1 (2026-10-27): the Ctrl+Q loss-guard regressions, appended at the
+# tail as node ids (the whole file is ~60 s; each of these is ~10 s alone): a
+# lone composer draft, a Temporary chat's parked unsent turn, and the tab-close
+# dialog naming that parked turn.
+Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_with_only_a_composer_draft_asks_and_stay_keeps_it
+Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn
+Tests/UI/test_console_quit_loss_guard.py::test_tab_close_reports_a_parked_unsent_turn
