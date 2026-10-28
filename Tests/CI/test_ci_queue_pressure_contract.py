@@ -679,6 +679,12 @@ ADMISSION_2_TARGETS = (
     "Tests/Chat/test_console_light_surface_goal_runs.py",
     "Tests/UI/test_mcp_full_agent_tools_gate.py",
     "Tests/Wizards/test_first_run_tool_surface_summary.py",
+    # TASK-33620.10: every provider streams by default -- the shipped template
+    # and config loads (bootstrap_profile by Tests/conftest.py's test_config_
+    # rule, 68 cases, ~4 s) and a mounted Console send that shows partial
+    # reply text from a drip provider (bootstrap_profile, ~22 s).
+    "Tests/test_config_streaming_default.py",
+    "Tests/UI/test_console_streaming_default_screen.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

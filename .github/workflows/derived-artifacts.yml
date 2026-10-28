@@ -477,6 +477,9 @@ jobs:
     # TASK-34100.5.3 appends plain chat's
     # light tool surface suites (six files and three nodes, 76 tests), here
     # rather than in pr-fast-lane-admission, which keeps dev's targets.
+    # TASK-33620.10 appends the
+    # streaming-default pins: the shipped template and config loads (68
+    # cases, ~4 s) and one mounted Console drip send (~22 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -643,6 +646,8 @@ jobs:
             Tests/Chat/test_console_light_surface_goal_runs.py \
             Tests/UI/test_mcp_full_agent_tools_gate.py \
             Tests/Wizards/test_first_run_tool_surface_summary.py \
+            Tests/test_config_streaming_default.py \
+            Tests/UI/test_console_streaming_default_screen.py \
             --timeout=300 \
             --tb=short
 
