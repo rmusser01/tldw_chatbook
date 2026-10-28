@@ -16642,6 +16642,19 @@ DELETE FROM keywords
             )
             return cursor.rowcount > 0
 
+    def get_report_trajectory_tail(self, conversation_id: str, *, limit: int = 500) -> tuple[dict, ...]:
+        """Return a bounded metadata-only trajectory excerpt for explicit sharing."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("report trajectory limit")
+        with self.transaction() as cursor:
+            rows = cursor.execute(
+                """SELECT message_id, turn_id, seq, event_kind, step_started_at,
+                          first_token_at, completed_at, model, provider
+                     FROM message_trajectory_metadata WHERE conversation_id = ?
+                    ORDER BY seq DESC LIMIT ?""", (conversation_id, limit),
+            ).fetchall()
+        return tuple(dict(row) for row in reversed(rows))
+
     def get_trajectory_rows(self, conversation_id: str) -> List[TrajectoryRowRead]:
         """Return a conversation's trajectory sidecar rows ordered by ``seq``.
 

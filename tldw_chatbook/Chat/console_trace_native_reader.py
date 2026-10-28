@@ -76,6 +76,105 @@ class ConsoleTraceNativeReader:
         self.repository = repository or ConsoleTraceRepository()
         self.service = service or ConsoleTraceService(self.repository)
 
+    def read_report_tool_fields(
+        self, conversation_id: str, events: tuple, *, max_source_bytes: int = 65_536,
+        max_total_source_bytes: int = 262_144, max_fields: int = 500,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Read selected immutable tool components; never reconstruct exchanges."""
+        from tldw_chatbook.Chat.console_semantic_revision import project_semantic_revision_trace_tool_fields
+        from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+
+        if not 1 <= max_fields <= 500 or not 1 <= max_source_bytes <= 65_536 or not 1 <= max_total_source_bytes <= 262_144:
+            raise ValueError("report tool read budget")
+        result = []
+        total = 0
+        output_size = 0
+        with self.database.transaction() as cursor:
+            owner = self.repository.get_attached_owner_by_conversation(cursor, conversation_id)
+            if owner is None:
+                return ()
+            fences: dict[str, int | None] = {}
+            segment_id = owner.root_segment_id
+            upper = None
+            while segment_id and len(fences) < 64:
+                if segment_id in fences:
+                    raise ValueError("report lineage cycle")
+                fences[segment_id] = upper
+                segment = self.repository.get_segment(cursor, segment_id)
+                if segment is None:
+                    break
+                segment_id, upper = segment.parent_segment_id, segment.inherited_through_sequence
+            allowed_conversations = {conversation_id}
+            for owned_segment in fences:
+                rows = cursor.execute("SELECT conversation_id FROM console_trace_owners WHERE root_segment_id = ?", (owned_segment,)).fetchall()
+                allowed_conversations.update(str(row[0]) for row in rows)
+            for event in reversed(events[:max_fields]):
+                if event.event_type not in {"tool_call", "tool_result"}:
+                    continue
+                unavailable = {"event_key": event.event_id, "unavailable": "governed_tool_field_unavailable"}
+                try:
+                    if event.segment_id not in fences or (
+                        fences[event.segment_id] is not None and event.sequence > fences[event.segment_id]
+                    ):
+                        raise ValueError("report tool owner mismatch")
+                    current = self.repository._get_event(cursor, event.event_id)
+                    if current != event:
+                        raise ValueError("report tool reference changed")
+                    call = self.repository.get_call(cursor, event.call_id or "")
+                    if call is None or call.segment_id != event.segment_id:
+                        raise ValueError("report tool policy unavailable")
+                    policy = self.repository.get_policy(cursor, call.policy_id)
+                    if policy is None:
+                        raise ValueError("report tool policy unavailable")
+                    if event.semantic_revision_id is not None:
+                        revision = self.repository.get_semantic_revision(cursor, event.semantic_revision_id)
+                        if revision is None or revision.source_conversation_id not in allowed_conversations or event.event_type != "tool_result":
+                            raise ValueError("report tool revision unavailable")
+                        value = project_semantic_revision_trace_tool_fields(
+                            cursor, revision_id=revision.revision_id,
+                            expected_conversation_id=revision.source_conversation_id,
+                            policy_id=call.policy_id, max_source_bytes=min(max_source_bytes, max_total_source_bytes - total),
+                        )
+                        total += max_source_bytes  # conservative bound for a revision read
+                    elif event.artifact_id is not None:
+                        row = cursor.execute(
+                            """SELECT length(sanitized_bytes),
+                                      CASE WHEN length(sanitized_bytes) <= ? THEN sanitized_bytes ELSE NULL END
+                                 FROM console_trace_artifacts WHERE artifact_id = ?""",
+                            (min(max_source_bytes, max_total_source_bytes - total), event.artifact_id),
+                        ).fetchone()
+                        if row is None or row[1] is None:
+                            raise ValueError("report tool artifact budget")
+                        total += int(row[0])
+                        # These immutable provider-only artifacts have already
+                        # crossed the capture-time credential/PII boundary.
+                        value = json.loads(row[1])
+                        checked = CredentialSanitizer().sanitize(value)
+                        if not checked.available or not isinstance(checked.value, Mapping):
+                            raise ValueError("report tool sanitizer unavailable")
+                        governed = checked.value
+                        if event.event_type == "tool_result":
+                            value = {key: governed[key] for key in ("name", "tool_name", "result", "output", "content") if key in governed}
+                        else:
+                            value = {key: governed[key] for key in ("name", "tool_name", "args", "arguments", "tool_calls") if key in governed}
+                        if not value:
+                            raise ValueError("report tool shape unavailable")
+                    else:
+                        raise ValueError("report tool source omitted")
+                    if total > max_total_source_bytes:
+                        raise ValueError("report aggregate tool budget")
+                    text = sanitize_string(json.dumps(value, ensure_ascii=False, sort_keys=True))
+                    if output_size + len(text.encode("utf-8")) > 8_000:
+                        result.append({**unavailable, "unavailable": "tool_output_budget"})
+                        break
+                    output_size += len(text.encode("utf-8"))
+                    result.append({"event_key": event.event_id, "text": text})
+                except (KeyError, TypeError, ValueError, UnicodeError):
+                    result.append(unavailable)
+                if total >= max_total_source_bytes:
+                    break
+        return tuple(reversed(result))
+
     def read_calls(self, message_id: str) -> tuple[NormalizedTraceCall, ...]:
         """Reconstruct native calls attached to one conversation message.
 

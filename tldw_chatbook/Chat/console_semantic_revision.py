@@ -467,6 +467,65 @@ def project_semantic_revision_trace_message(
     return masked
 
 
+def project_semantic_revision_trace_tool_fields(
+    cursor: sqlite3.Cursor, *, revision_id: str, expected_conversation_id: str,
+    policy_id: str, max_source_bytes: int = 65_536,
+) -> dict[str, object]:
+    """Project a plain tool result under its immutable policy, without media reads.
+
+    Unsupported or oversized envelopes remain unavailable rather than being
+    reconstructed through the provider-facing (unmasked) read path.
+    """
+    if type(max_source_bytes) is not int or not 1 <= max_source_bytes <= 65_536:
+        raise ValueError("report source byte limit")
+    repo = ConsoleTraceRepository()
+    revision = repo.get_semantic_revision(cursor, revision_id)
+    policy = repo.get_policy(cursor, policy_id)
+    if revision is None or policy is None or revision.source_conversation_id != expected_conversation_id:
+        raise ValueError("report revision owner or policy unavailable")
+    unavailable = {"unavailable": "governed_tool_field_unavailable"}
+    if revision.normalized_role not in {"tool", "tool_result"}:
+        return unavailable
+    binding = repo.get_revision_policy_binding(cursor, revision_id=revision_id, policy_id=policy_id)
+    if binding is not None and binding.omission_reason_code:
+        return unavailable
+    if revision.live_message_id is None:
+        # Materialized revisions can contain multimodal envelopes; do not use
+        # their broad canonical reconstruction as a tool-only fallback.
+        return unavailable
+    row = cursor.execute(
+        """SELECT conversation_id, id,
+                  CASE WHEN length(CAST(content AS BLOB)) <= ? THEN content ELSE NULL END
+             FROM messages WHERE id = ?""", (max_source_bytes, revision.live_message_id),
+    ).fetchone()
+    if row is None or row[0] != expected_conversation_id or row[1] != revision.source_message_id:
+        raise ValueError("report revision locator mismatch")
+    if not isinstance(row[2], str):
+        return unavailable
+    projected = CredentialSanitizer().sanitize({"role": revision.normalized_role, "content": row[2]})
+    if not projected.available or not isinstance(projected.value, dict):
+        return unavailable
+    value = projected.value
+    if policy.pii_redaction_enabled:
+        masks: dict[str, list[PIIRedactionSpan]] = {}
+        for span in repo.read_source_redaction_spans(
+            cursor, policy_id=policy_id, semantic_revision_id=revision_id, artifact_id=None,
+        ):
+            if span.field_path.startswith(TRACE_RESPONSE_PII_FIELD_PREFIX):
+                continue
+            if span.outcome != "applied":
+                return unavailable
+            masks.setdefault(span.field_path, []).append(PIIRedactionSpan(
+                span.start_codepoint, span.end_codepoint, span.category, span.rule_id, span.detector_version,
+            ))
+        if not masks:
+            return unavailable
+        value = apply_frozen_pii_masks(value, masks)
+    if not isinstance(value, dict) or not isinstance(value.get("content"), str):
+        return unavailable
+    return {"result": value["content"]}
+
+
 def project_semantic_revision_provider_continuations(
     cursor: sqlite3.Cursor,
     *,

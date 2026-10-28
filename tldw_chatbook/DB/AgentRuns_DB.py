@@ -2873,6 +2873,48 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchone()
         return self._metadata_row_to_dict(row) if row else None
 
+    def get_report_event_tail(self, conversation_id: str, *, limit: int = 500) -> tuple[dict, ...]:
+        """Read bounded step facts without hydrating task, result, or step bodies."""
+        import time
+
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("report agent event limit")
+        with self.connection() as conn:
+            previous_busy = int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+            deadline = time.monotonic() + 5.0
+            work = 0
+
+            def stop_read():
+                nonlocal work
+                work += 1000
+                return int(work >= 1_000_000 or time.monotonic() >= deadline)
+
+            try:
+                conn.set_progress_handler(stop_read, 1000)
+                conn.execute("PRAGMA busy_timeout = 200")
+                rows = conn.execute(
+                    """SELECT runs.id AS run_id, runs.parent_run_id, runs.status,
+                          runs.agent_kind, runs.resolved_provider AS provider,
+                          runs.resolved_model AS model, steps.seq, steps.created_at,
+                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
+                                    AND json_valid(steps.payload)
+                               THEN substr(json_extract(steps.payload, '$.kind'), 1, 128)
+                               ELSE 'unavailable' END AS event_kind,
+                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
+                                    AND json_valid(steps.payload)
+                               THEN substr(json_extract(steps.payload, '$.tool_name'), 1, 128)
+                               ELSE NULL END AS tool_name
+                     FROM agent_run_steps AS steps
+                     JOIN agent_runs AS runs ON runs.id = steps.run_id
+                    WHERE runs.conversation_id = ?
+                    ORDER BY steps.created_at DESC, runs.id DESC, steps.seq DESC LIMIT ?""",
+                    (conversation_id, limit),
+                ).fetchall()
+            finally:
+                conn.set_progress_handler(None, 0)
+                conn.execute(f"PRAGMA busy_timeout = {previous_busy}")
+        return tuple(dict(row) for row in reversed(rows))
+
     def list_runs(
         self,
         conversation_id: str,

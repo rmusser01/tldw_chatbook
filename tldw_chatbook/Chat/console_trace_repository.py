@@ -270,6 +270,15 @@ class TraceResponseLinkRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TraceReportEventTail:
+    """Bounded metadata excerpt; ancestors may be outside the read budget."""
+
+    events: tuple[TraceEventRecord, ...] = ()
+    has_older: bool = False
+    lineage_truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class TraceRedactionSpanRecord:
     """One immutable content-free mask bound to a source and policy."""
 
@@ -3681,6 +3690,43 @@ class ConsoleTraceRepository:
         record = self._get_event(cursor, event_id)
         assert record is not None
         return record
+
+    def read_report_event_tail(
+        self, cursor: sqlite3.Cursor, conversation_id: str, *, limit: int = 500,
+        max_segments: int = 64,
+    ) -> TraceReportEventTail:
+        """Read newest attached-lineage events without materializing content."""
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("report event limit")
+        if type(max_segments) is not int or not 1 <= max_segments <= 64:
+            raise ValueError("report segment limit")
+        owner = self.get_attached_owner_by_conversation(cursor, conversation_id)
+        if owner is None:
+            return TraceReportEventTail()
+        segment_id: str | None = owner.root_segment_id
+        upper: int | None = None
+        selected: list[TraceEventRecord] = []
+        seen: set[str] = set()
+        older = False
+        while segment_id and len(seen) < max_segments and len(selected) < limit:
+            if segment_id in seen:
+                raise ValueError("trace lineage cycle")
+            seen.add(segment_id)
+            segment = self.get_segment(cursor, segment_id)
+            if segment is None:
+                raise ValueError("trace lineage unavailable")
+            remaining = limit - len(selected)
+            clause = "" if upper is None else " AND sequence <= ?"
+            params = (segment_id, remaining + 1) if upper is None else (segment_id, upper, remaining + 1)
+            rows = cursor.execute(
+                self._event_select() + " WHERE segment_id = ?" + clause
+                + " ORDER BY sequence DESC, event_id DESC LIMIT ?", params,
+            ).fetchall()
+            older = older or len(rows) > remaining
+            selected.extend(TraceEventRecord(*row) for row in rows[:remaining])
+            segment_id = segment.parent_segment_id
+            upper = segment.inherited_through_sequence
+        return TraceReportEventTail(tuple(reversed(selected)), older, bool(segment_id))
 
     def read_events(
         self,
