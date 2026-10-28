@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-26 14:32'
-updated_date: '2026-10-27 21:48'
+updated_date: '2026-10-28 01:50'
 labels:
   - console
   - performance
@@ -28,6 +28,16 @@ TASK-36012 lets the Conversations tray repaint a run's start and end in place: o
 - [x] #2 The patch still lands the same geometry, paint, classes and tooltips as a rebuild (the TASK-36012 A/B stays green)
 - [x] #3 CPU for a patched running-marker sync, measured with process_time at 12 and 40 rows, falls below the dev baseline
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Planned and carried out under TASK-33620.15.20 (its plan steps 2-4), recorded here after the fact:
+1. Test-first: pin that a patched running marker composes the tray no more than once (red on origin/dev: two composes).
+2. Record, at compose, the values a run can change on each browser row and header; decide the patch by comparing that record with the incoming row data instead of composing.
+3. Keep TASK-36012's A/B green and add one A/B case per patchable browser field.
+4. Measure a patched running-marker sync with process_time at 12 and 40 rows against origin/dev, headless, interleaved runs.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
