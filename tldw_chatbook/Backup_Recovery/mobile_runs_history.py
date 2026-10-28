@@ -62,6 +62,10 @@ def _frame_runs(raw, runs, primary, budget):
         newline = raw.find(b"\n", position)
         if newline < 0 or not raw.startswith(b"#@# ", position):
             raise ValueError("native_history_partial")
+        from tldw_chatbook.Agents.run_log_paging import MAX_HEADER_BYTES
+
+        if newline - position + 1 > MAX_HEADER_BYTES:
+            raise ValueError("native_history_partial")
         _admit_header(raw, position, newline, budget)
         decoded = decode_record_header(raw[position:newline])
         if decoded is None:
@@ -91,7 +95,7 @@ def _frame_runs(raw, runs, primary, budget):
     return tuple(sorted(found))
 
 
-def _qualify_history(reads, runs, identities, *, _read_budget):
+def _qualify_history_census(reads, runs, identities, *, _read_budget):
     from .mobile_consolidation_apply import _MobileCapturePartition
     from .mobile_trace_inputs import _check_trace_members
 
@@ -123,6 +127,32 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
     budget.container((len(members) + len(document.files)) * 5)
     payloads = {p.logical_id: p for p in document.files}
     proofs, blockers = [], []
+    budget.container(len(members) * 5)
+    segment_keys, root_bytes = set(), {}
+    for member in members:
+        root_bytes[member.root_id] = root_bytes.get(member.root_id, 0) + member.size
+        path = PurePosixPath(member.relative_path)
+        match = _SEGMENT.fullmatch(path.name)
+        if member.sha256 is not None and match:
+            budget.value(member.relative_path, text_copies=2)
+            budget.container(3)
+            key = (member.root_id, str(path.parent), int(match[1]))
+            if key in segment_keys:
+                blockers.append(
+                    _ContentBlocker(
+                        "agents.history",
+                        (member.logical_id,),
+                        "native_history_segment_ambiguous",
+                    )
+                )
+            segment_keys.add(key)
+    for root_id, size in root_bytes.items():
+        if size > 16 * 1024 * 1024:
+            blockers.append(
+                _ContentBlocker(
+                    "agents.history", (root_id,), "native_history_root_byte_limit"
+                )
+            )
     budget.container(len(members) * 3)
     by_path = {}
     manifest_segments = {}
@@ -306,4 +336,12 @@ def _qualify_history(reads, runs, identities, *, _read_budget):
     reads.check()
     _check_trace_members(reads)
     budget.container(len(proofs) + len(blockers))
-    return tuple(proofs), tuple(blockers)
+    return tuple(proofs), tuple(blockers), members
+
+
+def _qualify_history(reads, runs, identities, *, _read_budget):
+    """Retain the existing pure qualification result for component callers."""
+    proofs, blockers, _members = _qualify_history_census(
+        reads, runs, identities, _read_budget=_read_budget
+    )
+    return proofs, blockers

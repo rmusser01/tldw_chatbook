@@ -7,6 +7,7 @@ import json
 import stat
 from collections.abc import Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Literal
 
@@ -234,7 +235,52 @@ class _Prepared(_Evidence):
     )
 
 
-def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> dict:
+@dataclass(frozen=True)
+class _ArtifactObservationLimits:
+    """Numeric resource ceilings only; no path, membership or observed authority."""
+
+    entry_count: int
+    total_file_bytes: int
+    total_relative_characters: int
+    maximum_relative_length: int
+    maximum_depth: int
+    maximum_component_length: int
+
+    def __post_init__(self):
+        if (any(type(getattr(self, field.name)) is not int or getattr(self, field.name) < 0 for field in fields(self))
+                or self.entry_count > MAX_EVENTS or self.total_file_bytes > 1024**4
+                or self.maximum_depth > MAX_EVENTS or self.maximum_component_length == 0):
+            raise ValueError("artifact_limits_invalid")
+
+
+def _artifact_component_limit(fd):
+    """Use only the actual supported bounded descriptor backend and native limit."""
+    # WindowsOS.scandir eagerly materializes listdir. Never route around that
+    # native wrapper or claim its names were admitted one at a time.
+    if getattr(os, "name", None) != "posix" or not hasattr(os, "fpathconf"):
+        raise ValueError("artifact_bounded_enumeration_unavailable")
+    try:
+        limit = os.fpathconf(fd, "PC_NAME_MAX")
+    except (OSError, ValueError):
+        raise ValueError("artifact_bounded_enumeration_unavailable") from None
+    if type(limit) is not int or limit <= 0:
+        raise ValueError("artifact_bounded_enumeration_unavailable")
+    return limit
+
+
+def _qualify_artifact_enumeration(fd, custody):
+    """Qualify actual descriptor iterator creation/retirement before effects."""
+    limit = _artifact_component_limit(fd)
+    iterator = os.scandir(fd)
+    custody.directory_iterators.append(iterator)
+    custody.close_directory_iterator(iterator)
+    info = os.fstat(fd)
+    if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (info.st_dev, info.st_ino)):
+        raise ValueError("artifact_physical_scalar_unrepresentable")
+    return limit
+
+
+def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limits=None) -> dict:
     """Read bounded no-follow file/tree identity and bytes for local reconciliation.
 
     Modes are deliberately separate from content identity: native publication
@@ -242,8 +288,41 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> di
     Directory evidence includes every child and empty directory, never just names
     from an intended payload list.
     """
+    if _limits is not None and (type(_limits) is not _ArtifactObservationLimits or _custody is None):
+        raise ValueError("artifact_limits_invalid")
     count, total = 0, 0
     observed = {}
+    # Each complete name census has its own bounded counters. They describe
+    # retained names, not a replenishable materialization allowance.
+    scans = {"read": [1, 0], "immediate": [1, 0], "final": [1, 0]} if _limits is not None else None
+
+    def names_at(fd, relative, phase):
+        if _limits is None:
+            return sorted(os.listdir(fd))
+        if _artifact_component_limit(fd) > _limits.maximum_component_length:
+            raise ValueError("artifact_bounded_enumeration_unavailable")
+        names = []
+        iterator = os.scandir(fd)
+        _custody.directory_iterators.append(iterator)
+        try:
+            for entry in iterator:
+                name = entry.name
+                length = len(relative) + 1 + len(name)
+                depth = relative.count("/") + 1
+                census = scans[phase]
+                if (len(name) > _limits.maximum_component_length
+                        or census[0] >= _limits.entry_count
+                        or length > _limits.maximum_relative_length
+                        or depth > _limits.maximum_depth
+                        or census[1] + length > _limits.total_relative_characters):
+                    raise ValueError("artifact_limit")
+                census[0] += 1
+                census[1] += length
+                names.append(name)
+        finally:
+            _custody.close_directory_iterator(iterator)
+        names.sort()
+        return names
 
     def identity(info):
         return (
@@ -260,7 +339,7 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> di
         if identity(os.fstat(fd)) != expected:
             raise ValueError("artifact_changed")
         if names is not None:
-            if sorted(os.listdir(fd)) != names:
+            if names_at(fd, relative, "final") != names:
                 raise ValueError("artifact_changed")
             for name in names:
                 child = os.open(
@@ -278,6 +357,11 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> di
         before = os.fstat(fd)
         names = None
         count += 1
+        if _limits is not None:
+            if count > _limits.entry_count:
+                raise ValueError("artifact_limit")
+            if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (before.st_dev, before.st_ino)):
+                raise ValueError("artifact_physical_scalar_unrepresentable")
         if (
             count > MAX_EVENTS
             or before.st_dev != device
@@ -287,6 +371,8 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> di
         if stat.S_ISREG(before.st_mode):
             if before.st_nlink != 1 or before.st_size > 256 * 1024**3:
                 raise ValueError("artifact_unverified")
+            if _limits is not None and (before.st_size < 0 or before.st_size > _limits.total_file_bytes - total):
+                raise ValueError("artifact_limit")
             digest = hashlib.sha256()
             size = 0
             while chunk := os.read(fd, 64 * 1024):
@@ -298,7 +384,7 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> di
             rows = [(relative, "file", size, digest.hexdigest())]
             kind = "file"
         elif stat.S_ISDIR(before.st_mode):
-            names = sorted(os.listdir(fd))
+            names = names_at(fd, relative, "read")
             if len(names) > MAX_EVENTS - count:
                 raise ValueError("artifact_limit")
             rows = [(relative, "directory")]
@@ -314,7 +400,7 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None) -> di
                     rows.extend(child_rows)
                 finally:
                     _close_owned(child, _custody)
-            if names != sorted(os.listdir(fd)):
+            if names != names_at(fd, relative, "immediate"):
                 raise ValueError("artifact_changed")
         else:
             raise ValueError("artifact_unverified")

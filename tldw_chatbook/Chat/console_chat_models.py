@@ -606,11 +606,22 @@ class ConsoleDispatchRecoveryState:
                 and truth.evidence_reconstructable
                 and truth.prefill_reconstructable
             )
-            actions = _console_dispatch_actions(
-                self.kind,
-                reconstructable=reconstructable,
-                in_flight=False,
-            )
+            if (
+                self.kind is ConsoleDispatchRecoveryKind.QUARANTINED
+                and self.error_code == "imported_history"
+                and self.checkpoint is not None
+                and len(self.actions) == 1
+                and self.actions[0].action_id is ConsoleDispatchRecoveryActionId.DISCARD
+            ):
+                # Restore only the action offered by the validated native owner.
+                # The actual mutation rereads receipt/identity/version evidence.
+                actions = (replace(self.actions[0], enabled=True, disabled_reason=""),)
+            else:
+                actions = _console_dispatch_actions(
+                    self.kind,
+                    reconstructable=reconstructable,
+                    in_flight=False,
+                )
         return replace(self, actions=actions, in_flight=in_flight)
 
     def with_runtime_truth(

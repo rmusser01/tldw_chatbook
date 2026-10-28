@@ -604,15 +604,22 @@ class GoalRunsStore:
 
     def remove_payloads(self, goal_id: str) -> GoalSnapshot:
         """Remove settled private bodies only; retain non-resumable accounting identity."""
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        from .mobile_imported_goal_privacy import (
+            _goal_for_privacy,
+            _historical_goal_family,
+        )
+
+        budget = _TraceReadBudget()
         with self.db.automatic_work.transaction() as conn:
-            row = conn.execute(
-                "SELECT * FROM goal_runs WHERE id=?", (goal_id,)
-            ).fetchone()
+            row = _goal_for_privacy(conn, goal_id, budget)
             if row is None:
                 raise ValueError("unknown_goal")
             if row["status"] == "removed":
                 return self._snapshot(conn, row)
-            unsettled = self.unsettled_root(conn, row["chain_id"])
+            historical = _historical_goal_family(self.db, conn, row, budget)
+            unsettled = self.unsettled_root(conn, row["chain_id"]) and not historical
             if (
                 row["status"]
                 not in ("paused", "completed", "awaiting_result_review", "stopped")

@@ -249,6 +249,27 @@ def _trajectory_payload(builder, row, successor):
     return raw
 
 
+def _hook_metadata_join(row, messages):
+    """Require the actual native receipt's USER/assistant/parent audit relation."""
+    child = messages[row["assistant_message_id"]]
+    user = messages[child["parent_message_id"]]
+    if (
+        child["role"] != "assistant"
+        or user["role"] != "user"
+        or child["conversation_id"] != row["conversation_id"]
+        or user["conversation_id"] != row["conversation_id"]
+        or user["parent_message_id"] != row["parent_assistant_message_id"]
+        or _object(user["metadata_json"])
+        != {
+            "origin": "hook",
+            "initiator": "hook_continuation",
+            "parent_turn_id": row["parent_turn_id"],
+            "stop_event_id": row["stop_event_id"],
+        }
+    ):
+        raise ValueError("invalid_hook_message_relation")
+
+
 def _checkpoint_join(row, conversations, messages):
     conversation = conversations[row["conversation_id"]]
     user, assistant = (
@@ -475,6 +496,8 @@ def _plan_content_workflows(reads):
                 raise ValueError("missing_genuine_hook_receipt")
         elif row["initiator"] != "hook_continuation":
             raise ValueError("invalid_hook_initiator")
+        if not machine:
+            _hook_metadata_join(row, originals["messages"])
         parent = originals["messages"][row["parent_assistant_message_id"]]
         child = originals["messages"][row["assistant_message_id"]]
         if parent["role"] != "assistant" or child["role"] != "assistant":
@@ -486,6 +509,8 @@ def _plan_content_workflows(reads):
             ),
             "assistant_message_id": message_ref(row, "assistant_message_id"),
         }
+        if not machine:
+            _hook_metadata_join(values, projected["messages"])
         builder.emit(table, row, values, proofs=("S:imported_followup_quarantine",))
 
     builder.handle(_TABLES[1], lambda row: receipt(row, machine=False))

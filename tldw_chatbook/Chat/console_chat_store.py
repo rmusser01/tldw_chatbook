@@ -3357,6 +3357,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 checkpoint = recovery.checkpoint
                 if (
                     checkpoint is not None
+                    and recovery.error_code != "imported_history"
                     and checkpoint.origin == "queued"
                     and checkpoint.queue_entry_id is not None
                 ):
@@ -3678,6 +3679,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             checkpoint = current.checkpoint
             if (
                 checkpoint is not None
+                and current.error_code != "imported_history"
                 and checkpoint.origin == "queued"
                 and checkpoint.queue_entry_id is not None
             ):

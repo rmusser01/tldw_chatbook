@@ -13,7 +13,12 @@ from . import archive_reader, control_records, native_files, sqlite_validation
 from .archive_models import ArchiveManifest
 from .journal import _mobile_active_owner, _mobile_state
 from .limits import ArchiveLimits
-from .mobile_consolidation_apply import _CapturedMobile, _MobileCapturePartition
+from .mobile_consolidation_apply import (
+    _CapturedMobile,
+    _MobileCapturePartition,
+    _SourceClaim,
+    _verify_capture_archives,
+)
 from .models import DiscoverySelections
 from .storage_admission import MaintenanceSession, _CaptureFileDescriptors, _local
 
@@ -67,16 +72,43 @@ class _CapturedSQLite:
             or self.session._mobile_journal is not self.journal
         ):
             raise ValueError("mobile_sqlite_inactive")
-        captured.check()
+        _CapturedMobile._check_binding(captured)
+        _SourceClaim._check_binding(captured.claim)
         with self.journal._locked(exclusive=False) as fd:
             records = self.journal._records(fd)
-        prepared, _ = _mobile_state(records)
+        prepared, witnesses = _mobile_state(records)
         control_records._mobile_pending(self.session, self.journal, prepared)
+        _verify_capture_archives(records)
+        from .mobile_native_operation import _require_readers_retired
+        from .storage_admission import _mobile_admission, _mobile_check_witnesses
+
+        admission = _mobile_admission(self.session)
         if (
-            self.operation_id != self.journal.operation_id
-            or _mobile_active_owner(records) is not None
+            admission is not self.admission
+            or admission[1] is not self.owner_history
+            or admission[3] is not self.discovery_bindings
         ):
+            raise ValueError("mobile_sqlite_admission_changed")
+        if self.operation_id != self.journal.operation_id:
             raise ValueError("mobile_sqlite_operation_changed")
+        if self.recovery_anchor is None:
+            if _mobile_active_owner(records) is not None:
+                raise ValueError("mobile_sqlite_operation_changed")
+        else:
+            if admission[1] or admission[2] is not self.read_budget:
+                raise ValueError("mobile_sqlite_operation_changed")
+            _require_readers_retired(self.session, _reader=self)
+            if _owner_observation(records, self.read_budget) != self.recovery_anchor:
+                raise ValueError("mobile_sqlite_operation_changed")
+            from .mobile_consolidation import _path_witnesses
+
+            if (
+                prepared.source_fingerprint != captured.preview.source_fingerprint
+                or _path_witnesses((captured.preview.source_dir,))[0][1]
+                != captured.preview.source_witnesses
+            ):
+                raise ValueError("mobile_source_changed")
+            _mobile_check_witnesses(records, witnesses, recovering_mode=True)
         if any(
             getattr(resource, "close_failed", False)
             or getattr(resource, "resource_close_failed", False)
@@ -453,84 +485,125 @@ def _runs24_receipts_absent(reads, purpose, family, table):
     return True
 
 
-def _members(scope, partition, document):
-    """Requalify the actual partition's installed, admitted fixed declarations."""
-    partition.check()
-    inventory = scope.session._discover_capture_inventory(
-        partition.selectors,
-        DiscoverySelections(),
-        partition.scope_digest,
-        _mobile_partition=partition,
+def _members(scope):
+    """One fresh installed discovery for both exact authenticated partitions."""
+    scope.check()
+    originals = tuple(
+        row
+        for row in (scope._source_archive, scope._canonical_archive)
+        if row is not None
     )
-    with scope.session._discovery_reads(private_sqlite=True):
-        projected = partition.project(scope.session, inventory)
-    producers = {row.logical_id: row for row in document.producer_inventory}
-    payloads = {row.logical_id: row for row in document.files}
-    owner_versions = {row.owner_id: row.schema_version for row in document.owners}
-    result = []
-    for family, owner, leaf, legacy, canonical in _FAMILIES:
-        path = (
-            scope.captured.preview.source_dir / leaf
+    if not originals or scope._canonical_archive is None:
+        raise ValueError("mobile_sqlite_partition_changed")
+    if scope.read_budget is not None:
+        scope.read_budget.container(len(originals) * 8)
+    first = originals[0][0]
+    for partition, document, sealed in originals:
+        partition.check()
+        source = (
+            scope.captured.source
             if partition.purpose == "legacy"
-            else dict(
-                zip(
-                    (row[1] for row in _FAMILIES),
-                    scope.captured.preview.destination.paths,
-                    strict=True,
-                )
-            )[owner]
+            else scope.captured.canonical
         )
-        declarations = sorted(
-            (row for row in projected.items if row.owner == owner and row.path == path),
-            key=lambda row: row.logical_id,
-        )
-        if not declarations:
-            raise ValueError("mobile_sqlite_declaration_changed")
-        selected = []
-        expected = owner_versions.get(owner)
-        supported = legacy if partition.purpose == "legacy" else (canonical,)
-        for declared in declarations:
-            producer = producers.get(declared.logical_id)
-            if producer is None or (
-                producer.owner_id,
-                producer.status,
-                producer.dependencies,
-                producer.shared_group,
-            ) != (
-                declared.owner,
-                declared.status,
-                declared.dependencies,
-                declared.shared_group,
-            ):
-                raise ValueError("mobile_sqlite_inventory_changed")
-            payload = payloads.get(declared.logical_id)
-            if declared.status == "unused" and payload is None:
+        if (
+            type(partition) is not _MobileCapturePartition
+            or partition.session is not scope.session
+            or partition.claim is not scope.captured.claim
+            or partition.journal is not scope.journal
+            or partition.review_only
+            or partition.selectors != first.selectors
+            or partition.scope_digest != first.scope_digest
+            or source is None
+            or partition.destination != source.path
+            or sealed.manifest_bytes != source.manifest_bytes
+            or sealed.encrypted_source is None
+            or sealed.encrypted_source.digest != source.digest
+        ):
+            raise ValueError("mobile_sqlite_partition_changed")
+    inventory = scope.session._discover_capture_inventory(
+        first.selectors,
+        DiscoverySelections(),
+        first.scope_digest,
+        _mobile_partition=first,
+    )
+    schedules = {}
+    for partition, document, sealed in originals:
+        partition.check()
+        with scope.session._discovery_reads(private_sqlite=True):
+            projected = partition.project(scope.session, inventory)
+        producers = {row.logical_id: row for row in document.producer_inventory}
+        payloads = {row.logical_id: row for row in document.files}
+        owner_versions = {row.owner_id: row.schema_version for row in document.owners}
+        result = []
+        for family, owner, leaf, legacy, canonical in _FAMILIES:
+            path = (
+                scope.captured.preview.source_dir / leaf
+                if partition.purpose == "legacy"
+                else dict(
+                    zip(
+                        (row[1] for row in _FAMILIES),
+                        scope.captured.preview.destination.paths,
+                        strict=True,
+                    )
+                )[owner]
+            )
+            declarations = sorted(
+                (
+                    row
+                    for row in projected.items
+                    if row.owner == owner and row.path == path
+                ),
+                key=lambda row: row.logical_id,
+            )
+            if not declarations:
+                raise ValueError("mobile_sqlite_declaration_changed")
+            selected = []
+            expected = owner_versions.get(owner)
+            supported = legacy if partition.purpose == "legacy" else (canonical,)
+            for declared in declarations:
+                producer = producers.get(declared.logical_id)
+                if producer is None or (
+                    producer.owner_id,
+                    producer.status,
+                    producer.dependencies,
+                    producer.shared_group,
+                ) != (
+                    declared.owner,
+                    declared.status,
+                    declared.dependencies,
+                    declared.shared_group,
+                ):
+                    raise ValueError("mobile_sqlite_inventory_changed")
+                payload = payloads.get(declared.logical_id)
+                if declared.status == "unused" and payload is None:
+                    continue
+                if (
+                    declared.status != "included"
+                    or payload is None
+                    or payload.owner_id != owner
+                    or expected not in supported
+                ):
+                    raise ValueError("mobile_sqlite_member_changed")
+                selected.append(payload)
+            if not selected:
                 continue
-            if (
-                declared.status != "included"
-                or payload is None
-                or payload.owner_id != owner
-                or expected not in supported
-            ):
-                raise ValueError("mobile_sqlite_member_changed")
-            selected.append(payload)
-        if not selected:
-            continue
-        if len(selected) != len(declarations):
-            raise ValueError("mobile_sqlite_declaration_changed")
-        if len(declarations) > 1:
-            from .mobile_consolidation import _resource_identity
+            if len(selected) != len(declarations):
+                raise ValueError("mobile_sqlite_declaration_changed")
+            if len(declarations) > 1:
+                from .mobile_consolidation import _resource_identity
 
-            group = declarations[0].shared_group
-            if not group or any(row.shared_group != group for row in declarations):
-                raise ValueError("mobile_sqlite_alias_unproven")
-            identities = {_resource_identity(row.path)[1:] for row in declarations}
-            if len(identities) != 1 or len(next(iter(identities))) != 2:
-                raise ValueError("mobile_sqlite_alias_unproven")
-            if len({(row.size, row.sha256) for row in selected}) != 1:
-                raise ValueError("mobile_sqlite_alias_payload_changed")
-        result.append((family, owner, expected, selected[0]))
-    return result
+                group = declarations[0].shared_group
+                if not group or any(row.shared_group != group for row in declarations):
+                    raise ValueError("mobile_sqlite_alias_unproven")
+                identities = {_resource_identity(row.path)[1:] for row in declarations}
+                if len(identities) != 1 or len(next(iter(identities))) != 2:
+                    raise ValueError("mobile_sqlite_alias_unproven")
+                if len({(row.size, row.sha256) for row in selected}) != 1:
+                    raise ValueError("mobile_sqlite_alias_payload_changed")
+            result.append((family, owner, expected, selected[0]))
+        schedules[partition.purpose] = result
+    scope.check()
+    return schedules
 
 
 def _extract(scope, sealed, members, root):
@@ -567,6 +640,40 @@ def _extract(scope, sealed, members, root):
     archive_reader.verify_sealed(sealed, scope.cancel, _custody=scope.custody)
 
 
+def _owner_observation(records, budget):
+    """Fingerprint exact native events, pre-admitting only new representations."""
+    from .journal import _encoded
+
+    if _mobile_active_owner(records) is None:
+        return None
+    if budget is None:
+        raise ValueError("mobile_sqlite_original_budget_required")
+    opened = next(
+        row for row in reversed(records) if row.event == "mobile_owner_opened"
+    )
+    tail = records[-1]
+    budget.container(5)
+    budget.container(2)
+    for row in (opened,) if tail is opened else (opened, tail):
+        budget.container(12)
+        budget.value(row.operation_id, text_copies=4)
+        budget.value(row.previous, text_copies=4)
+        budget.value(row.event, text_copies=4)
+        budget.value(row.evidence, text_copies=4)
+        budget.reserve(512)
+        fingerprint = hashlib.sha256(_encoded(row)).hexdigest()
+        if row is opened:
+            opened_hash = fingerprint
+        tail_hash = fingerprint
+    return (
+        opened.sequence,
+        opened_hash,
+        tail.sequence,
+        tail.previous,
+        tail_hash,
+    )
+
+
 @contextmanager
 def _sqlite_reads(captured, *, password, cancel):
     if (
@@ -590,7 +697,20 @@ def _sqlite_reads(captured, *, password, cancel):
         )
     ):
         raise ValueError("mobile_sqlite_scope_busy")
+    from .mobile_native_operation import _native_preopen
+    from .storage_admission import _mobile_admission
+
+    _native_preopen(captured, cancel)
+    admission = _mobile_admission(session)
+    with captured.journal._locked(exclusive=False) as fd:
+        records = captured.journal._records(fd)
+    if _mobile_active_owner(records) is not None and admission[1]:
+        raise ValueError("mobile_sqlite_operation_changed")
+    anchor = _owner_observation(records, admission[2])
     scope = object.__new__(_CapturedSQLite)
+    scope.admission, scope.owner_history = admission, admission[1]
+    scope.discovery_bindings = admission[3]
+    scope.read_budget, scope.recovery_anchor = admission[2], anchor
     scope.session, scope.captured, scope.journal = session, captured, captured.journal
     scope.operation_id = captured.journal.operation_id
     scope.binding = (
@@ -615,6 +735,7 @@ def _sqlite_reads(captured, *, password, cancel):
         with ExitStack() as connections:
             versions = []
             prepared = []
+            authenticated = []
             for purpose, source in (
                 ("legacy", captured.source),
                 ("canonical", captured.canonical),
@@ -654,11 +775,16 @@ def _sqlite_reads(captured, *, password, cancel):
                 ):
                     raise ValueError("mobile_sqlite_capture_changed")
                 document = ArchiveManifest.model_validate_json(sealed.manifest_bytes)
-                members = _members(scope, partition, document)
                 if purpose == "canonical":
                     scope._canonical_archive = (partition, document, sealed)
                 else:
                     scope._source_archive = (partition, document, sealed)
+                authenticated.append((purpose, partition, document, sealed, root))
+            # Both original authenticated before-images are available before
+            # current discovery; no target member is made a captured source.
+            schedules = _members(scope)
+            for purpose, partition, document, sealed, root in authenticated:
+                members = schedules[purpose]
                 # Exhaust the generator, including final sealed-byte verification,
                 # before any connection's single native budget starts.
                 prepared.extend(

@@ -799,25 +799,30 @@ def discover(
         result,
         complete=result.complete and not issues,
         issues=tuple(sorted(issues)),
-        scope_digest=hashlib.sha256(
-            json.dumps(
-                (
-                    result.scope_digest,
-                    tuple(
-                        str(profile_paths.lexical_path(p))
-                        for p in selections.external_roots
-                    ),
-                    selections.model_ids,
-                    selections.temporary_media,
-                    selections.diagnostics,
-                    str(profile_paths.lexical_path(selections.planned_output_root))
-                    if selections.planned_output_root
-                    else None,
-                ),
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest(),
+        scope_digest=_selection_scope_digest(result.scope_digest, selections),
     )
+
+
+def _selection_scope_digest(scope_digest, selections):
+    """Bind native coverage choices to the classified declaration digest."""
+    return hashlib.sha256(
+        json.dumps(
+            (
+                scope_digest,
+                tuple(
+                    str(profile_paths.lexical_path(p))
+                    for p in selections.external_roots
+                ),
+                selections.model_ids,
+                selections.temporary_media,
+                selections.diagnostics,
+                str(profile_paths.lexical_path(selections.planned_output_root))
+                if selections.planned_output_root
+                else None,
+            ),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
 
 
 def _merge_chachanotes_cohort(

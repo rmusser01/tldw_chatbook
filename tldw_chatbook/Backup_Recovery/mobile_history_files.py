@@ -163,6 +163,11 @@ class _HistoryFiles:
             self.members,
         ):
             raise ValueError("mobile_history_binding_changed")
+        if (
+            self.observation_bounds is not self.observation_binding
+            or self.observation_counts is not self.observation_count_binding
+        ):
+            raise ValueError("mobile_history_observation_binding_changed")
         self.session._check()
         self.captured.check()
         if (
@@ -244,8 +249,55 @@ class _HistoryFiles:
             raise ValueError("mobile_history_parent_changed")
 
     def _observe(self, path):
+        self.check()
+        limits = None
+        bounds, counts = self.observation_bounds, self.observation_counts
         custody = _CaptureFileDescriptors(self)
         try:
+            if bounds is not None:
+                if path in (bounds.temporary, bounds.publication):
+                    if counts[0] >= 4:
+                        raise ValueError("mobile_history_observation_schedule_exceeded")
+                    counts[0] += 1
+                    # Only the leaf ENOENT under a successfully pinned parent
+                    # is the separately admitted missing-root probe. Every
+                    # present-root attempt spends a full slot before traversal.
+                    absent = False
+                    try:
+                        with native_files.pinned_directory(
+                            path.parent, _custody=custody
+                        ) as parent:
+                            try:
+                                os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                            except FileNotFoundError:
+                                absent = True
+                    except FileNotFoundError:
+                        raise ValueError("artifact_changed") from None
+                    if absent:
+                        if counts[2] >= 1:
+                            raise ValueError(
+                                "mobile_history_observation_schedule_exceeded"
+                            )
+                        counts[2] += 1
+                        raise FileNotFoundError("mobile_history_root_absent")
+                    if counts[1] >= 3:
+                        raise ValueError("mobile_history_observation_schedule_exceeded")
+                    counts[1] += 1
+                    limits = bounds.whole
+                else:
+                    limits = next(
+                        (limit for target, limit in bounds.members if target == path),
+                        None,
+                    )
+                    if limits is None or path in counts[3]:
+                        raise ValueError("mobile_history_observation_schedule_exceeded")
+                    counts[3].add(path)
+                try:
+                    return observe_artifact(path, _custody=custody, _limits=limits)
+                except FileNotFoundError:
+                    # Partial traversal is current-object uncertainty, never a
+                    # cheap missing-root probe that publish may swallow.
+                    raise ValueError("artifact_changed") from None
             return observe_artifact(path, _custody=custody)
         finally:
             custody.retire()
@@ -512,6 +564,8 @@ def _history_files(session, captured, *, password, cancel):
     scope = object.__new__(_HistoryFiles)
     scope.session, scope.captured, scope.journal = session, captured, captured.journal
     scope.active, scope.resources, scope.cancel = True, [], cancel
+    scope.observation_bounds = scope.observation_binding = None
+    scope.observation_counts = scope.observation_count_binding = None
     scope.data_root = user_data_dir(
         read_profile_config(captured.preview.target_selector)
     )

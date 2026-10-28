@@ -327,3 +327,56 @@ omit blocked legacy history. File-backed note, dictionary or persona references
 without a qualified legacy binding remain blocked. Source runs and claims are
 never reconciled during preview or capture. This command currently supports
 preview only.
+
+The native import implementation also refuses two specific trace histories before
+any import effect: a populated detached trace whose deleted original conversation
+cannot be lawfully reconstructed, and calls recorded as `post_dispatch_promoted`
+through the current Voice authorization path. An empty detached trace is not
+blocked merely because it is detached. These restrictions preserve native parentage
+and call provenance; they do not discard those records or import the rest of a
+blocked profile. Keep the original stores and authenticated recovery captures with
+the exact owner/call diagnostic. Do not edit provenance flags, create replacement
+parents, remove history or use an older binary to force an import. The public
+command remains preview-only until the remaining cutover qualification is complete.
+
+
+Imported unfinished response recovery remains visible but cannot retry or resume
+old work. When its committed provenance and current checkpoint are valid, the
+existing explicit Discard action retains the user message and permits a later
+fresh Send. Invalid provenance leaves recovery blocked without an action. Imported
+queued work and fleet messages remain history and do not restart a queue or consume
+fresh delivery capacity. Discard does not release imported execution permissions.
+
+Interrupted first publication of the canonical history directory may resume only
+from its original authenticated capture and recorded native directory identities.
+Changed or additional files remain retained and block qualification. Do not remove
+pending recovery records or modify source/provenance to force progress. Public
+cutover and ordinary access to the produced target still require the separate
+native completion/release workflow; the command remains preview-only.
+
+
+The explicit native `Remove payloads` action can erase local private Goal bodies
+when the complete committed receipt and unchanged current allowance family prove
+that unsettled facts are imported history. Missing or changed accounting, current
+work, incomplete receipts, or missing/reviewed holds still refuse. Historical
+uncertainty and all execution holds remain; this does not settle remote work or
+release old authority. Previously erased body rows are never restored from
+receipts. This consumer proof does not replace ordinary access to a produced
+profile after the pending operation is legitimately completed.
+
+
+An imported active provider continuation without a real dispatch checkpoint stays
+paused as read-only history. There is no supported local recovery action for that
+retained owner in this increment. The explicit Discard path for a validated actual
+imported dispatch checkpoint does not apply to a checkpoint-free continuation;
+no checkpoint, branch, current permission or release is synthesized.
+
+Failed change-tracking snapshots retain their recorded error, counters, tips and
+original project locator; their native review path displays the failure without
+opening Git. Other snapshot rows require actual installed physical Git proof,
+including proof of a genuinely pruned/unavailable state. This mobile operation
+currently has no admitted shadow-Git reader/publisher or current selected writable
+worktree authority. Otherwise valid profiles containing those unresolved physical
+dependencies therefore block the whole consolidation before publication or owner
+writes. A path, hash or recorded SHA is not physical authority; original history,
+files and statuses are retained, and no failure/pruned status is manufactured.

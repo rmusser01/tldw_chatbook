@@ -16,7 +16,6 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
-from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
@@ -155,6 +154,9 @@ def _starts_user_turn(row: Mapping[str, Any]) -> bool:
 
 
 def _is_tool_loop_row(row: Mapping[str, Any]) -> bool:
+    # Historical trace readers import freeze_json without starting live agents.
+    from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
+
     role = row.get("role")
     return (
         role == "tool"

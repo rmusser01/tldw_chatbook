@@ -18,6 +18,7 @@ from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -34,6 +35,17 @@ _holds: dict[tuple[int, str], "_Hold"] = {}
 _retiring_holds: set["_Hold"] = set()
 _startups: dict[tuple[int, str], "StorageLease"] = {}
 _forked_with_owners = False
+
+# Native issuance history survives scope retirement and local marker removal.
+_mobile_admissions = WeakKeyDictionary()
+
+
+def _mobile_admission(session):
+    session._check()
+    state = _mobile_admissions.get(session)
+    if state is None or state[0] is not session._scopes:
+        raise bootstrap.RecoveryRequired("mobile_admission_registry_changed")
+    return state
 
 
 # This local gate intentionally covers all roots: an acquisition may still be
@@ -2834,6 +2846,9 @@ class MaintenanceSession:
             private_sqlite=private_sqlite or _mobile_partition is not None
         ):
             current = discover(selectors, selections=selections)
+        if current.scope_digest != approved_scope and _mobile_partition is not None:
+            from .mobile_native_history import _original_history_inventory
+            current = _original_history_inventory(self, _mobile_partition, current, selections, approved_scope)
         if current.scope_digest != approved_scope:
             raise ValueError("scope_changed")
         sources = []
@@ -2871,10 +2886,28 @@ class MaintenanceSession:
                 raise ValueError("invalid_preview_budget")
         elif limits is not None or byte_budget is not None:
             raise ValueError("invalid_discovery_copy_options")
+        # Only this native issuer can bind its own private-copy child to the
+        # current captured reader. Matching fields on a copied scope grant nothing.
+        reader = getattr(_local, "mobile_sqlite_scope", None)
+        binding_map = None
+        if reader is not None and private_sqlite:
+            from .mobile_captured_sqlite import _CapturedSQLite
+
+            if type(reader) is not _CapturedSQLite or reader.session is not self:
+                raise ValueError("mobile_native_reader_changed")
+            reader.check()
+            admission = _mobile_admission(self)
+            if reader.read_budget is not None:
+                if admission[2] is not reader.read_budget or admission[3] is not reader.discovery_bindings:
+                    raise ValueError("mobile_sqlite_admission_changed")
+                reader.read_budget.container(12)
+                binding_map = reader.discovery_bindings
         scope = _DiscoveryScope(
             self, private_sqlite=private_sqlite, limits=limits, byte_budget=byte_budget
         )
         self._scopes.append(scope)
+        if binding_map is not None:
+            binding_map[scope] = (reader, scope.sqlite_copies, scope.resources, scope.sqlite_copies.resources)
         _local.discovery_scope = scope
         try:
             yield
@@ -3379,6 +3412,7 @@ class MaintenanceSession:
         scope.repository = object.__new__(classes[owner_id])
         scope.repository._mobile_consolidation_scope = scope
         self._scopes.append(scope)
+        _mobile_admission(self)[1].append(scope)
         if not recovering_owner:
             with journal._locked(exclusive=True) as parent:
                 journal._append(parent, "mobile_owner_opened", owner)
@@ -3429,6 +3463,7 @@ class MaintenanceSession:
         self._active = False
         for scope in self._scopes:
             scope.retire()
+        _mobile_admissions.pop(self, None)
         if getattr(_local, "maintenance_session", None) is self:
             _local.maintenance_session = None
 
@@ -3459,6 +3494,7 @@ def _mint_maintenance_session(
     session._thread = threading.get_ident()
     session._active = True
     session._scopes = []
+    _mobile_admissions[session] = [session._scopes, [], None, None]
     session._mobile_attempted_journal = None
     _local.maintenance_session = session
     try:
@@ -3542,6 +3578,7 @@ class _CaptureFileDescriptors:
     def __init__(self, scope):
         self.scope = scope
         self.fds = []
+        self.directory_iterators = []
         self.close_failed = False
         if scope is not None:
             scope.resources.append(self)
@@ -3558,12 +3595,25 @@ class _CaptureFileDescriptors:
             self.close_failed = True
             raise bootstrap.RecoveryRequired("capture_resources_not_retired") from None
 
+    def close_directory_iterator(self, iterator) -> None:
+        """Retain an actual native iterator after any ambiguous close outcome."""
+        if self.close_failed or not any(item is iterator for item in self.directory_iterators):
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        try:
+            iterator.close()
+        except BaseException:  # noqa: BLE001 -- Every uncertain close, including cancellation, retains custody.
+            self.close_failed = True
+            raise bootstrap.RecoveryRequired("capture_resources_not_retired") from None
+        self.directory_iterators.remove(iterator)
+
     def pinned_directory(self, root: Path):
         return bootstrap.pinned_directory(root, _close=self.close_descriptor)
 
     def retire(self):
         if self.close_failed:
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
+        while self.directory_iterators:
+            self.close_directory_iterator(self.directory_iterators[-1])
         while self.fds:
             fd = self.fds[-1]
             self.close_descriptor(fd)

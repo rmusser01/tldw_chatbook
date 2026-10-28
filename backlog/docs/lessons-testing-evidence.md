@@ -20442,3 +20442,19 @@ disposable copied canonical DB, reached actual native preview (64.21 seconds).
 Assert the restored paths are the existing private test environment. Preserve the
 pending evidence and ordinary admission guards; a copied DB and constructor do not
 create source authority, and an unreached reader is not reader qualification.
+
+
+### 2026-10-27: Explicit native owners in enrolled RunLog fixtures
+
+The targeted mobile-owner runner23332 stalled after38 progress dots. One bounded
+native sample showed Python lock waits and a GC callback waiting on an RLock;
+a one-level private-fixture listing last reached the second enrolled RunLog case.
+The shared test helper holds its RLock while acquiring a native owner and uses a
+weakref finalizer taking the same lock. This is consistent with a circular wait,
+but the sample did not capture Python frame names and does not prove that cause.
+The new RunLog fixture now acquires a real ConsoleExecutionOwner explicitly and
+closes its DB before closing that owner; all five focused reader cases passed in
+runner94827. The prior PID was retired with one authorized SIGTERM (RC-15,
+source hashes unchanged), which proves process retirement, not clean native close
+or a passing test. Preserve that interrupted evidence separately; do not substitute
+GC cleanup for explicit fixture ownership or infer a cause from elapsed time alone.

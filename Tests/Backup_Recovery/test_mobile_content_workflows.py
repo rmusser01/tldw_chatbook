@@ -142,8 +142,62 @@ def test_captured_workflow_ledgers_map_native_references_and_keep_authority_pend
     def seed(stores, **kwargs):
         return original_seed(stores, **kwargs, linked_chat_seed=linked)
 
+    def native_hook(db, purpose):
+        if purpose != "legacy":
+            return
+        from Tests.Chat.test_console_dispatch_recovery import _acceptance, _insert
+        from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+        from tldw_chatbook.Chat.console_dispatch_repository import (
+            ConsoleDispatchRepository,
+        )
+        from tldw_chatbook.Chat.response_rules.corrections import MachineFollowupReceipt
+
+        # Replace the old synthetic receipt pair before legacy finalization.
+        with db.transaction() as cursor:
+            cursor.execute("DELETE FROM console_hook_continuation_receipts")
+            cursor.execute("DELETE FROM console_machine_followup_receipts")
+        cid = db.add_conversation({"id": "workflow-hook-chat"})
+        parent = db.add_message(
+            {
+                "id": "workflow-hook-parent",
+                "conversation_id": cid,
+                "sender": "assistant",
+                "role": "assistant",
+                "content": "Native parent",
+                "assistant_generation_state": "complete",
+            }
+        )
+        with db.transaction() as cursor:
+            cursor.execute(
+                "INSERT INTO console_conversation_library_policy (conversation_id,auto_retrieve_on_send,assistant_library_access,policy_revision,updated_at) VALUES (?,0,0,1,CURRENT_TIMESTAMP)",
+                (cid,),
+            )
+        acceptance = replace(
+            _acceptance(cid, origin="queued", queue_entry_id="workflow-hook-queue"),
+            user_message_id="workflow-hook-user",
+            assistant_message_id="workflow-hook-answer",
+            parent_message_id=parent,
+            continuation_receipt=ContinuationReceipt(
+                "turn-opaque", "stop-opaque", parent, "chain-opaque", 1
+            ),
+            machine_followup_receipt=MachineFollowupReceipt(
+                "operation-opaque",
+                "turn-opaque",
+                "settled-opaque",
+                parent,
+                "chain-opaque",
+                1,
+                1,
+                ("native", "hook"),
+                db.get_message_by_id(parent)["version"],
+            ),
+        )
+        _insert(db, ConsoleDispatchRepository(db), acceptance)
+
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
-    with content_reads(tmp_path, monkeypatch, _seed_workflows) as reads:
+    with content_reads(
+        tmp_path, monkeypatch, _seed_workflows, native_seed=native_hook
+    ) as reads:
         build = getattr(reads, "content_workflow_plan", None)
         assert callable(build), "captured native reader needs C2b workflow planning"
         plan = build()
@@ -153,6 +207,10 @@ def test_captured_workflow_ledgers_map_native_references_and_keep_authority_pend
             r.table: dict(r.values)
             for r in plan.rows
             if r.table != "message_trajectory_metadata"
+            and (
+                r.table != "console_dispatch_checkpoints"
+                or r.original == ("graph-answer",)
+            )
         }
         ids = plan.identities
         checkpoint = rows["console_dispatch_checkpoints"]
@@ -379,14 +437,18 @@ def _native_consumers(plan):
     ids = plan.identities
     cid = ids.mapped("conversation", "conversation")
     with closing(CharactersRAGDB(":memory:", "workflow-consumer")) as db:
+        hook_cid = ids.mapped("conversation", "workflow-hook-chat")
         db.add_conversation({"id": cid})
-        messages = [
+        db.add_conversation({"id": hook_cid})
+        all_messages = [
             dict(r.values)
             for r in plan.rows
-            if r.table == "messages" and dict(r.values)["conversation_id"] == cid
+            if r.table == "messages"
+            and dict(r.values)["conversation_id"] in {cid, hook_cid}
         ]
+        messages = [row for row in all_messages if row["conversation_id"] == cid]
         with db.transaction() as cursor:
-            for row in messages:
+            for row in all_messages:
                 cursor.execute(
                     "INSERT INTO messages ("
                     + ",".join(row)
@@ -419,8 +481,8 @@ def _native_consumers(plan):
             ids.mapped("note", "note-a"),
         )
         assert ResponseRuleRepository(db).historical_machine_parent(
-            cid, ids.mapped("message", "graph-variant")
-        ) == ids.mapped("message", "graph-answer")
+            hook_cid, ids.mapped("message", "workflow-hook-answer")
+        ) == ids.mapped("message", "workflow-hook-parent")
         reports = FleetProgressRepository(db).load(cid)
         assert reports[0].identity.handle_id == "handle-opaque"
         assert reports[0].body == "graph-user is body text"

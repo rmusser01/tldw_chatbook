@@ -1128,3 +1128,428 @@ populated positive operations. Crash recovery reconstructs admission and consult
 actual committed receipts first; saved frames and journal progress are not receipts.
 Undefined definition, current Goal/binding, runtime RunLog membership, allocator
 and Git dispositions still need their concrete native contracts.
+
+### Fixed owning receipts and historical native consumers (R108)
+
+The fixed coordinator must complete all supported Chat, Workspace and Run writers
+inside the same operation frame. Existing Chat82/Workspace9/Runs26 tables remain
+unchanged. This contract supersedes R106/R107's undefined receipt, definition and
+RunLog consumer dispositions; it does not relax their custody, original allowance,
+physical retirement, exact pre-effect refusal or hard pure-completion guards.
+
+Each owner atomically commits its actual rows, typed identity mappings, provenance,
+exact installed holds and a separate `mobile_consolidation_batches` completion.
+Runs includes the existing passive `history.command` master/children in that same
+transaction. A passive command receipt never certifies Runs completion. Native
+transactions revalidate the original cohort and inspect committed owning receipts
+first on fresh admission. Exact source/owner, full census/digest and current mapped
+rows/holds establish only that owner's pending-import completion. Partial masters,
+matching primary keys, journal progress and saved plans grant no completion.
+
+Masters have keys `chat`, `workspaces`, `runs` and exactly these JSON fields:
+`version` (integer 1), `kind` (`owner_completion`), `owner` (respectively
+`db.chachanotes.primary`, `db.workspaces`, `db.agent_runs`),
+`source_manifest_sha256`, `canonical_manifest_sha256` (lowercase 64-hex or null
+only for authenticated absent partitions), `entry_count` (nonnegative integer),
+`entries_sha256` (64-hex), `command_history_count` (nonnegative integer for Runs,
+null otherwise), `source_runs_version` (24/25 for present source Runs, null for
+actual absent source Runs and other owners). A source24 member has its real
+capture hash and explicit zero passive command manifest; it is not source25-empty
+or an absent member. Booleans are never accepted as integers.
+
+Children are `<master>.entry:<canonical decimal ordinal>` numbered consecutively
+from zero, without leading zeros. Each has exactly `version:1`, `kind`, `data`.
+Kind order is `identity`, `row`, `provenance`, `runlog_root`, `runlog`,
+`history_publication`; within each kind order by canonical `data` JSON bytes.
+JSON uses UTF-8, ensure_ascii=False, allow_nan=False, sorted keys and compact
+comma/colon separators. Reject duplicate keys and require exact re-encoding.
+Numeric SQL ordering uses fixed-prefix key length then binary key order. The
+master digest hashes, for every child in numeric order, uint64 big-endian key
+byte length, key bytes, uint64 payload byte length, payload bytes. No gaps,
+aliases, foreign source/owner/version or incomplete candidate is accepted.
+
+Identity data has exactly `domain`, `original`, `mapped`: an installed typed domain
+with its declared owner/table and native scalar or composite identity shape.
+Domain names are data, never SQL identifiers or authority. Row data has exactly
+`table`, `original`, `mapped`, `source_sha256`, `mapped_sha256`; identities are
+arrays of native string/integer identity scalars and table is a fixed manifest
+entry. Hash complete columns in manifest order with SHA256 over ASCII
+`tldw-mobile-row-v1` plus NUL, length-framed UTF-8 table, uint64 column count,
+then length-framed column name, scalar tag and length-framed scalar payload.
+Tags are N (null/empty), I (canonical signed SQLite integer ASCII, excluding bool),
+R (IEEE754 big-endian binary64), T (exact UTF-8), B (exact BLOB bytes). No repr,
+normalization, recursive payload rewriting or JSON-body substitute is permitted.
+
+Provenance data has exactly `family`, `record`; the eleven literal grammars are:
+
+- `goal`: `table` (goal_runs/checkpoints/evidence/reports/iterations with their
+  actual `goal_` prefix), `original` (identity array), `original_hash`,
+  `mapped_hash` (64-hex), `artifact_digest` (64-hex/null).
+- `note_snapshot`: `original_note` (SQLite integer), `original_snapshot`,
+  `mapped_snapshot` (SQLite integer/null), `original_run`, `original_root`
+  (strings), `missing` (boolean). A historical root never grants file access.
+- `snapshot_allocator`: `source_sequence`, `canonical_sequence` (nonnegative
+  SQLite integer/null for absent sequence row), `required_frontier` (0..2**63-2).
+  Exactly one Runs record, including an empty snapshot population.
+- `sync_source`: `change_id` (SQLite integer), `entity` (messages, conversations,
+  notes, character_cards, keywords, keyword_collections, chat_dictionaries,
+  world_books or world_book_entries), `original_id` (string), `operation`
+  (create/update/delete), `timestamp`, `client_id` (strings), `version` (positive
+  integer), `source_digest`, `source_manifest_digest` (64-hex).
+- `sync_frontier`: `entity` (same enum), `original_id`, `mapped_id` (string/SQLite
+  integer), `version` (positive integer), `operation` (same enum), `timestamp`,
+  `client_id` (strings), `payload_sha256` (64-hex), `payload_hash` (native sha256:64-hex/null),
+  `previous_payload_sha256` (bare64-hex/null), `previous_hash` (native sha256:64-hex/null), `previous_operation`
+  (same enum/null), `previous_timestamp`, `previous_client_id` (string/null),
+  `current_disposition` (native_insert_current_unique,
+  replace_native_create_with_body_free_tombstone or retain_native_body_free_hard_delete),
+  `source_change_ids` (integer array), `owner_table` (fixed table),
+  `owner_original` (identity array). Receipt bodies are hashes only.
+- `operational`: `table`, `original` (identity array), `source_digest`,
+  `source_manifest_digest` (64-hex), `disposition`. Exactly the five
+  character_conversation_search_{dirty,documents,generations,revision,state}
+  tables pair with retain_destination_authority_native_derived; exactly
+  console_trace_{graph_epoch,migration_state,maintenance_state,compaction_state}
+  pair with retain_canonical_operational_authority.
+- `runtime_owner`: `singleton` (integer 1), `owner_id` (string). Historical
+  automatic_work_runtime_owner facts never replace current runtime authority.
+- `semantic`: `table` (fixed table), `original` (identity array), `handler`
+  (C2b/C2c/C3/T/S/A-runs/I), `domain` (fixed typed domain), `original_id`,
+  `mapped_id` (string/SQLite integer).
+- `citation`: `original` (identity array), `source_manifest_digest`,
+  `canonical_manifest_digest` (64-hex), `disposition`
+  (sql_no_history_context_not_adopted).
+- `trace_incidence`: `original_call_id`, `mapped_call_id` (strings),
+  `source_manifest_digest`, `canonical_manifest_digest` (64-hex), `inputs`
+  (array of [fixed table, identity array]).
+- `workflow`: `table` (message_trajectory_metadata/transcript_annotations),
+  `original` (identity array), `source_identity`, `projected_identity` (strings),
+  `meaning` (historical_source_event/native_sidecar_event for trajectory;
+  native_message_anchor for annotation).
+
+No arbitrary dataclass/asdict or semantic fallback is durable grammar. Exact
+original and mapped bodies remain in owning rows and authenticated retained
+captures. Receipts do not duplicate Sync, Goal request or trace reconstruction
+bodies. Native privacy removal remains authoritative; runtime lookup must never
+retrieve capture bodies or replay old hashes to undo later edits/erasure.
+
+Encoded master/child size is at most16MiB, checked by SQL BLOB byte length before
+Python body fetch. Each runtime lookup/page has one nonrenewable16MiB
+representation allowance, default50/max100 returned receipt entries. All relevant
+committed master/child grammar, complete census, ordering and digest validate
+before any body or filtered roster is returned. Count/length queries and bounded
+pages are used, never aggregate JSON or unbounded bodies. The existing PK indexes
+operation+batch only; no mapped-ID index is implied. Bounded complete relevant
+Runs receipt scans are required. Missing masters, malformed/foreign/incomplete or
+oversized candidates and allowance exhaustion fail the whole consumer call
+closed, never silently become native or yield a partly filtered result. Stores
+without import candidates retain native behavior.
+
+All fixed writer/consumer dispositions and prospective receipt readability must be
+qualified on the original writer allowance before the first effect. Future native
+publication/commit observations alone may be precharged at their exact bounded
+shapes, filled only from actual observations after the legal effect, and validated
+on the same remaining allowance before owner commit. A placeholder is never
+proof of missing semantics. One existing fixed A-files streaming publication phase
+is permitted after captured SQLite physical retirement and before DB owners. It
+uses the same frame's already-qualified authenticated member proofs, without
+replanning/reopening SQL, another allowance or a new reader role. All history,
+crypto, file descriptors and staging resources retire before DB owner admission;
+maintenance exclusion remains on failure.
+
+Imported definitions retain every SQL field. Only enabled-roster queries exclude
+exact `agent_definitions` rows identified by the installed `agent_definition`
+identity domain in valid committed Runs mappings. Unfiltered
+list/get remains historical/editor access. Both bridge and AgentService/named spawn
+use the filtered roster. Preset provider/model precedence bypasses ad-hoc override
+allowlists, so historical enabled fields cannot advertise current instructions or
+routing. Editing an imported ID does not release it; fresh native IDs follow current
+validation, duplicate-name constraints, routing and tool narrowing. No flag
+rewrite, fuzzy matching, permission grant, new hold kind or release API is added.
+
+The admitted canonical AgentRuns owner exposes
+`read_imported_run_log_page(mapped_run_id, operation_id, source_fingerprint,
+*, cursor=None)`. No caller root/path/manifest or maintenance HistoryFiles object
+supplies runtime authority. Committed identity and actual per-root framed
+membership resolve original IDs. Root ownership, historical MANIFEST references
+and actual frames are distinct. A healthy root owner may locate its own filtered
+(empty if descendant-only) evidence; it never inherits descendant frames.
+
+`runlog_root` data has exactly `root_id`, `location`, `artifact`, one per original
+root. `runlog` data has exactly `logical_id`, `root_id`, `relative_path`, `location`,
+`size`, `sha256`, `owner`, `framed_runs`, `historical_run_ids`, `segment_ids`,
+`artifact`: IDs/path strings; nonnegative integer size; raw member64-hex/null digest;
+original/mapped owner pair or null; arrays of original/mapped framed pairs, original
+historical IDs and segment IDs. Location is a confined relative path. Artifact
+witnesses are actual native _Object values with exact `path`, `device`, `inode`,
+`kind`, `size`, `sha256`: absolute path, nonnegative integers, file/directory kind,
+and64-hex witness digest. File raw digest and native witness digest are separate.
+`history_publication` has exactly `destination_identity`, `source_fingerprint`,
+`location`, `artifact`, bound to the real journal observation. Its creation artifact
+may be an ancestor: check binding/path/device/inode, but do not freeze that ancestor's
+old size/tree digest against legitimate future sibling imports. Requested root and
+member witnesses plus their complete census detect extras, omissions, symlinks,
+foreign files and byte-identical inode replacement.
+
+The only namespace is the actual prepared target profile's user_data_dir,
+`agent_history/imports/<destination_identity>/<source_fingerprint>`, then native
+_HistoryMember.location. Runtime requires the actual current selected canonical
+DB/profile association and genuinely enrolled StorageLease.execution_context with
+non-None namespaces. UNBOUND/unqualified lease acquisition is not admission.
+Separate actual root/member leases precede no-follow descriptor-relative opens;
+installed agents.history enrollment and pins remain through hashing and paging.
+Check named/held identities before and after; physically retire handles before
+leases. Failed close retains the actual lease and quarantine, never retrying a
+numeric descriptor or clearing flags. Ordinary runtime admission still refuses
+pending maintenance; it is not bypassed to manufacture a positive test.
+
+The native pager receives only private pinned descriptors, never a validated path
+it reopens. Preserve ORIGINAL Run-ID filtering, original historical headers,
+100 fragments/256000 content bytes/4500000 scan bytes, MAX_HEADER_BYTES16384+9
+allowance and UTF-8 continuation. Empty pages with progressing continuation remain
+valid, distinct from R105 command paging. Pre-admit receipt/tree/name/JSON/frame/
+output representations on the same runtime allowance. The requested root's declared
+aggregate regular-file bytes must be <=16MiB before verification; at most two
+bounded root/selected-member digest passes plus the unchanged native parser scan
+are allowed. Never scan unrelated publication ancestors. Writer preflight must
+qualify this complete runtime readability on its original allowance.
+
+Existing exact Goal+chain mutation guards preserve get/evidence/privacy removal.
+R103 allocator advancement remains atomic, without synthetic snapshots or ID reuse.
+Git requires genuine native physical proof or exact pre-effect refusal. This ruling
+grants no detached-trace import exception, voice terminal-call grant reuse, captured
+Git role, source flag rewrite or disabled trigger. Those exact native cases must be
+resolved separately. Public cutover, full Task8 and later review/hardware gates
+remain mandatory; receipt delivery alone is not task completion.
+
+### Exact unrepresentable native trace cases (R109)
+
+A populated detached owner whose attached-fenced descendants have no proved
+original conversation mapping or lawful native replay schedule fails the entire
+preflight before any file publication, owner path/open/schema, row, mapping, hold
+or receipt effect. The source native CHECK requires detached owners to have no
+conversation; descendant mutations require an attached effective owner and the
+owner update trigger permits only one-way detach (v55→56). Never invent a parent,
+borrow an unrelated conversation, revive a detached prefix or rewrite chronology.
+This is not an attached=0 blanket refusal: an empty lawful detached graph or an
+actually proved original relationship may be qualified under unchanged constraints.
+
+A source `post_dispatch_promoted` call fails whole-operation preflight at its exact
+call/provenance dependency. The v71→72 native guard requires a current Voice-only
+exact-connection terminal-insert grant; source SQL is not that current authority.
+The transaction-owning voice importer rejects an existing owner transaction and
+cannot be nested or repurposed as a historical copier. No terminal INSERT, grant
+reuse, crash_durable_reserved relabel, immutable-provenance/status/clock rewrite,
+trigger disabling or manufactured execution is authorized.
+
+Both refusals preserve every original byte and identify only the exact body-free
+owner/call and native reason. They do not permit silent omission, partial import or
+leaving ordinary attached/crash_durable_reserved trace families unsupported. Native
+source controls must demonstrate no first effect alongside the actual supported
+populated positive. A future historical-restore seam requires its own explicit
+source/transaction/custody/schema/authorization contract; this decision creates no
+new seam or implied future work. Conservatively blocked profiles are an explicit
+cost; fabricated parentage and execution authority are unacceptable alternatives.
+
+### Native Sync hash spelling (R110)
+
+The sync_frontier `payload_hash` and `previous_hash` retain the exact native
+`sha256:` prefix followed by 64 lowercase hexadecimal characters, or null under
+the existing frontier meaning. `payload_sha256` and `previous_payload_sha256`
+remain separate bare-hex digests of raw payload strings. Do not strip the prefix,
+substitute either digest, recompute unrelated hashes or change the producer version.
+The initial bare-hex spelling was disproved by the actual native projection test
+before owner writes; this correction preserves that evidence and original data.
+Semantic provenance domains likewise retain the finite _SettingsSuccessor
+producer/table/handler meanings, distinct from identity reservation domains.
+No aliases, extra provenance families or authority are introduced.
+
+
+### Cold original-capture recovery and coherent checks (R111)
+
+An unresolved journal owner may outlive its process. Only a genuinely fresh native
+exclusive MaintenanceSession for the original pending operation, with reacquired
+source claim and no _MobileScope ever issued in that admission, may read the
+original authenticated archives before recovering that owner. Preserve actual
+scope issuance history and registry identity. Before creating any reader resource,
+require native physical retirement of every prior scope, nested claim uncertainty,
+execution handle, staging resource and retained lock. Current live owners and
+ambiguous closure still refuse; no caller recovery flag or substitute scope list
+grants access.
+
+The actual issued reader binds the unmatched owner-open ordinal/content and the
+observed journal tail sequence/previous/content fingerprint using native event
+encoding, together with its original operation/cohort. Re-read the journal at
+every check and require those observations unchanged. Only that reader's own
+healthy resources may be live. Preserve all exact session/claim/archive/member/
+candidate/schema/selector/target/cancel checks; no current target SQL or new role.
+Pre-admit new anchor representations on the original operation allowance; no
+budget, native 30-second/5M-step limit, or attempted-operation marker renewal.
+
+After complete original all-owner preflight and physical reader retirement,
+existing native owner recovery may settle an out-of-order stale owner under its
+actual locks. This recovery-only opening inspects the expected receipt first and
+physically retires; it does not import merely to clear journal state. Ordinary
+owning transactions validate the complete local receipt/R105 census first, then
+exact mapped rows, holds, Sync and allocator: valid committed receipt skips
+insertion, absence permits only already-qualified writes, partial or mismatch
+refuses. Journal events never substitute for committed receipts.
+
+One fixed internal same-call path may share a fresh coherent journal read and
+pending/prepared validation across the nested claim, captured lifecycle and
+SQLite checks. Keep lock ordering and all physical descriptor/name/private claim
+receipt/archive/candidate/hash/namespace/target checks. Standalone public checks
+remain complete. No public trusted-record argument, reusable observation, cache,
+callback, skipped hash or cross-call memoization is introduced. Subsequent calls
+repeat current checks.
+
+Qualify with actual process death after owning COMMIT and before retirement, cold
+exclusive admission, original ciphertext reuse, complete three-owner receipts and
+no duplicate insertion. Live owner, replaced scope/cohort, same-valued changed
+owner event/tail, held lock/failed resource, changed archive/claim/target and
+repeated attempt controls remain refusals. Prior ordinary retired-owner resource
+failures and inclusive instrumentation are separate evidence, not performance or
+replay correctness claims. RunLog publication and all remaining integration and
+review gates remain required.
+
+
+R111 native discovery child custody clarification: the existing captured-reader
+inventory call may issue a native private SQLite-copy discovery child. The
+native `_discovery_reads` issuer checks the actual registered current parent
+before creating the child and pre-admits its finite identity binding on the
+same original operation allowance. The actual admission registry binds only
+that exact issued child, its originally constructed private-copy object and
+both original resource-list identities; the reader retains the registry map's
+identity. This gives no new inventory, SQL, source or target authority.
+
+During stale-owner capture checks, only that active current-TLS child in the
+same session may remain live with its own healthy resources. Native reciprocal
+child/copy checks and installed source/read-only/root restrictions still apply.
+Copied, substituted, foreign, retired-as-live, replaced-map/list and failed-close
+states refuse. Retired children undergo the ordinary physical-retirement checks;
+no retained map entry excuses resources or uncertainty. Before every owner
+path/schema/transaction effect the no-reader-exception guard still requires all
+actual reader, discovery and private-copy resources physically retired.
+
+
+### Imported checkpoint Discard and live Fleet capacity (R112)
+
+A complete, valid committed Chat receipt census identifies imported message,
+fleet_message and exact checkpoint rows. An imported valid checkpoint remains
+visible as QUARANTINED/imported_history with its actual checkpoint and assistant,
+and only the native Discard action. Invalid, incomplete, conflicting or exhausted
+evidence offers no action. The actual store action claim and controller/native
+commit/repository transaction retain their current identity, state and all three
+version comparisons. Only explicit Discard may settle that imported checkpoint:
+retain USER, use the native discarded assistant, delete the exact checkpoint.
+Fresh subsequent Send uses ordinary new identities and permissions. Reconcile,
+retry, dispatch CAS, provider handoff and non-discard settlement cannot mutate or
+execute imported recovery. No other imported hold or authority is released.
+
+Runtime queue/preparation projections are None without rewriting stored facts.
+Even forced hydration cannot recreate an imported queue, pending hydration, hook
+admission or continuation. Historical ancestry remains data. Current offered
+Discard and its actual native claim remain necessary; a terminal string alone
+is not user authorization. Ordinary nonimported behavior stays unchanged.
+
+Each complete consumer call uses one original 16-MiB allowance for the entire
+strict canonical numeric/framed, source/operation-bound receipt census, bounded
+fetches of at most 100 and every subsequent representation. Preadmit SQL encoded
+byte lengths before body fetch; native character limits remain character limits.
+Fleet load, append and in-memory restoration/capacity exclude exact committed
+imported IDs before FIFO selection and global/child message and character limits.
+Append uses that same live subset inside its actual immediate transaction.
+Invalid evidence refuses delivery and mutation; raw historical rows, FIFO
+sequences and explicit erase remain. Later explicit Discard/edit/erase never
+causes historical row hashes to restore old data.
+
+### Original scope after first history-root publication (R113)
+
+Only the actual issued mobile partition in its original admission, source claim,
+prepared operation, authenticated source/canonical capture and selector cohort
+may reconcile the first creation of the installed canonical agent_history root.
+Fresh native journal/pending/cohort checks and the same original budget apply on
+every call. The authenticated original before-image and approved scope must prove
+that exact root unused, resolved_path=None and metadata=None. Require one native
+history intent selecting that wholly absent root, exact fixed imports/destination/
+source namespace, parent witness, manifest/member digests and valid native phases.
+Current no-follow named/held root and ancestor identities/kinds must match the
+actual recorded publication and admission. Unknown, foreign, linked, replaced or
+ambiguous objects refuse. A staged-only rename qualifies only when the publication
+has the staged directory identity and the temporary name is absent under no-follow
+checks, including broken links. Ordinary staging before rename stays with the
+existing publisher.
+
+Complete current discovery still runs. Solely for original-source scope and
+inventory, reconstruct that one exact unused declaration and exclude its created
+canonical descendants. Re-run native classification and selection and require the
+unchanged prepared/partition approved digest. Every unrelated change refuses; no
+published file gains a source/SQL role. This inverse is neither byte verification
+nor write readiness. After all SQLite resources physically retire, the existing
+single AFiles phase independently verifies full actual publication custody,
+digest, census and member witnesses before owner effects. Extra/replaced files
+remain retained with pending exclusion. Precharge new metadata/journal/identity/
+comparison representations on the original allowance; no cache, alternate digest,
+replan, new stream while SQLite lives or renewed budget. Runtime ancestor witness
+semantics remain unchanged across later legitimate imports.
+
+PublicB native final verification, cutover, completion and pending retirement,
+and ordinary reader E2E on this same produced target, remain separate mandatory
+gates. Neither R112 nor R113 releases maintenance or authorizes user migration.
+
+
+### Explicit local Goal payload erasure (R114)
+
+Implementation status: the earlier source write was rejected for missing human
+authorization and did not occur. Explicit human approval for code and isolated
+tests was subsequently received ("Approve code and isolated tests"). The bounded
+transaction-local implementation follows the contract below; this approval does
+not authorize deleting actual user data. The earlier RED evidence and rejected/no-edit history remain
+separate from subsequent qualification.
+
+Only the existing native remove_payloads transaction may exclude proven imported
+historical unsettled accounting from its privacy decision. Keep its allowed Goal
+statuses, already-removed idempotence and native deletion/result shape; general
+unsettled_root and all current execution/mutation predicates stay unchanged.
+Complete the relevant strict Runs receipt census on one original 16-MiB allowance,
+with SQL encoded-byte preadmission and fetch<=100. Resolve the whole actual native
+allowance-root family and its descendant Run/Goal/chain/wake/chat-start/progress,
+attempt and reservation relationships. Require each exact committed mapped row
+and applicable matching unreviewed hold; bounded current scalar-row digests must
+still match that operation's mapped projection. Missing, conflicting, changed,
+reviewed, exhausted or unproved evidence refuses without body mutation.
+
+Exact imported reserved/uncertain/token-committed and prepared/accepted/review-
+required facts may be historical for local erase only. Their uncertainty and
+accounting remain unchanged: no settlement, cancellation, clock/owner/reservation
+or authority release is implied. New/current/nonimported or unproved-uncertain
+family facts still block. Canonical runtime-owner authority is neither compared
+to nor replaced by historical source provenance. Only existing privacy body
+removals (including native Goal payload-reservation deletion), emptied request,
+removed/payload_removed state and revision update occur. All holds remain. Old
+hashes/captures never restore erased bodies. Native owned-fixture qualification
+is separate from ordinary access to the still-pending produced target after B.
+
+
+### Native history observation resource accounting (R108 implementation clarification)
+
+The fixed writer derives frozen numeric observation ceilings from its actual
+authenticated member census and publication prefix, before any publication effect.
+Bounded descriptor enumeration checks each name before retention, relative-path
+construction, sorting or file streaming; the complete native DFS encoding, object
+identity and named/held comparisons remain. The original one-call allowance prices
+three full publication observations, four separately priced root/path/custody
+probes (including a genuinely absent root), and each actual root/member observation. Iterator close uncertainty retains native
+custody and maintenance exclusion. No refund, new allowance or caller-ready value
+is introduced; prospective unsigned-64-bit scalar widths are discarded codec
+reservations, and actual observed objects alone become committed receipt evidence.
+
+The ordinary observer `_limits=None` retains its existing behavior. Bounded mode
+requires actual supported descriptor enumeration and a finite native filename
+ceiling before effects. The installed Windows scandir facade eagerly materializes
+listdir output and is not streaming evidence; no wrapper bypass, Windows rewrite,
+or cross-platform qualification is implied. Unavailable bounded native resources
+refuse before effects. Current Mac/POSIX verification and later phone gates are
+distinct. Source representation accounting and the exact failed-path schedule are
+recorded in the owning implementation allocation ledger; it is not a heap or
+performance claim.

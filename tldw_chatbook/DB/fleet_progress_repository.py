@@ -47,6 +47,58 @@ def _parameters(conversation_id: str, message: ProgressMessage) -> tuple:
     )
 
 
+def _live_rows(cursor, conversation_id, budget):
+    """Validate all committed history, then admit live metadata before bodies."""
+    from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_chat_records
+
+    imported = _imported_chat_records(cursor.connection, budget)["fleet_message"]
+    count, id_bytes = cursor.execute(
+        "SELECT count(*),coalesce(sum(length(CAST(message_id AS BLOB))+length(CAST(run_id AS BLOB))),0) FROM fleet_progress_messages WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    budget.container(count * 8)
+    budget.reserve(id_bytes * 4)
+    scan = cursor.connection.execute(
+        "SELECT message_id,run_id,length(body) AS chars,length(CAST(body AS BLOB)) AS body_bytes,instr(body,char(0)) AS nul FROM fleet_progress_messages WHERE conversation_id = ? ORDER BY sequence",
+        (conversation_id,),
+    )
+    rows = []
+    try:
+        while True:
+            page = scan.fetchmany(100)
+            if not page:
+                break
+            for row in page:
+                if row["message_id"] in imported:
+                    continue
+                if row["nul"] or row["chars"] is None or row["body_bytes"] is None:
+                    raise MessageError("durable_unavailable")
+                rows.append(row)
+    finally:
+        scan.close()
+    return rows
+
+
+def _body_rows(cursor, rows, budget):
+    result = []
+    for row in rows:
+        size = cursor.execute(
+            "SELECT length(CAST(message_id AS BLOB))+length(CAST(handle_id AS BLOB))+length(CAST(run_id AS BLOB))+length(CAST(parent_run_id AS BLOB))+coalesce(length(CAST(chain_id AS BLOB)),0)+length(CAST(agent AS BLOB))+length(CAST(body AS BLOB))+length(CAST(created_at AS BLOB)) FROM fleet_progress_messages WHERE message_id=?",
+            (row["message_id"],),
+        ).fetchone()
+        if size is None or size[0] is None:
+            raise MessageError("durable_unavailable")
+        budget.reserve(size[0] * 4)
+        budget.container(24)
+        result.append(
+            cursor.execute(
+                "SELECT message_id,handle_id,run_id,parent_run_id,chain_id,agent,body,created_at FROM fleet_progress_messages WHERE message_id=?",
+                (row["message_id"],),
+            ).fetchone()
+        )
+    return result
+
+
 class FleetProgressRepository:
     """Persist reports without allocating or restoring any execution capability."""
 
@@ -62,12 +114,18 @@ class FleetProgressRepository:
                 ).fetchone()
                 if conversation is None or conversation["deleted"]:
                     raise MessageError("unavailable")
-                rows = cursor.execute(
-                    "SELECT message_id, handle_id, run_id, parent_run_id, chain_id, agent, body, created_at "
-                    "FROM fleet_progress_messages WHERE conversation_id = ? "
-                    "ORDER BY sequence LIMIT ?",
-                    (conversation_id, MAX_INBOX_PENDING + 1),
-                ).fetchall()
+                from tldw_chatbook.Chat.console_trace_read_budget import (
+                    _TraceReadBudget,
+                )
+
+                budget = _TraceReadBudget()
+                metadata = _live_rows(cursor, conversation_id, budget)
+                if (
+                    len(metadata) > MAX_INBOX_PENDING
+                    or sum(row["chars"] for row in metadata) > MAX_INBOX_PENDING_CHARS
+                ):
+                    raise MessageError("queue_full")
+                rows = _body_rows(cursor, metadata, budget)
         except MessageError:
             raise
         except Exception:  # noqa: BLE001 - loading cannot break unrelated owners
@@ -93,16 +151,34 @@ class FleetProgressRepository:
             for row in rows
         )
 
+    def filter_restored(self, conversation_id, messages):
+        """Exclude retained imported IDs before in-memory restoration limits."""
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+        from tldw_chatbook.DB.mobile_consolidation_receipts import (
+            _imported_chat_records,
+        )
+
+        budget = _TraceReadBudget()
+        with self.db.transaction() as cursor:
+            imported = _imported_chat_records(cursor.connection, budget)[
+                "fleet_message"
+            ]
+            budget.container(len(messages) * 2)
+            return tuple(
+                message for message in messages if message.message_id not in imported
+            )
+
     def append(self, conversation_id: str, message: ProgressMessage) -> None:
         """Commit one admitted stable ID before its successful send receipt."""
         with _core_operation(self.db):
             if self.db.get_connection().in_transaction:
                 raise MessageError("durable_unavailable")
             with self.db.transaction(immediate=True) as cursor:
-                rows = cursor.execute(
-                    "SELECT run_id, length(body) AS chars FROM fleet_progress_messages WHERE conversation_id = ? LIMIT ?",
-                    (conversation_id, MAX_INBOX_PENDING + 1),
-                ).fetchall()
+                from tldw_chatbook.Chat.console_trace_read_budget import (
+                    _TraceReadBudget,
+                )
+
+                rows = _live_rows(cursor, conversation_id, _TraceReadBudget())
                 child = [
                     row for row in rows if row["run_id"] == message.identity.run_id
                 ]

@@ -99,6 +99,7 @@ class _RunsPreflight:
     operational_history: tuple[_OperationalHistory, ...] = field(repr=False)
     history: tuple = field(repr=False)
     history_observations: tuple = field(repr=False)
+    history_members: tuple = field(repr=False)
     goal_provenance: tuple
     note_provenance: tuple
     snapshot_allocator: object
@@ -492,9 +493,9 @@ def _plan_runs(reads, *, _read_budget=None):
                 blockers.append(
                     _ContentBlocker(table, key, "native_run_content_invalid")
                 )
-    from .mobile_runs_history import _qualify_history
+    from .mobile_runs_history import _qualify_history_census
 
-    history, history_blockers = _qualify_history(
+    history, history_blockers, history_members = _qualify_history_census(
         reads, source_runs, identities, _read_budget=budget
     )
     blockers.extend(history_blockers)
@@ -697,6 +698,7 @@ def _plan_runs(reads, *, _read_budget=None):
         tuple(historical),
         history,
         history_observations,
+        history_members,
         goals.provenance,
         note_provenance,
         snapshot_allocator,

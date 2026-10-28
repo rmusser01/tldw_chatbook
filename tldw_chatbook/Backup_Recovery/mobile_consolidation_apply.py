@@ -30,18 +30,25 @@ class _SourceClaim:
         raise TypeError("mobile_source_claim_is_native_issued")
 
     def check(self):
+        _SourceClaim._check_binding(self)
+        if getattr(self, "journal", None) is not None:
+            with self.journal._locked(exclusive=False) as fd:
+                prepared, _ = _mobile_state(self.journal._records(fd))
+            control_records._mobile_pending(self.session, self.journal, prepared)
+
+    def _check_binding(self):
         if (
-            type(self.session) is not MaintenanceSession
+            type(self) is not _SourceClaim
+            or type(self.session) is not MaintenanceSession
             or self not in self.session._scopes
         ):
             raise ValueError("mobile_source_claim_inactive")
         self.session._check()
-        if getattr(self, "journal", None) is not None:
-            if self.session._mobile_journal is not self.journal:
-                raise ValueError("mobile_native_preparation_required")
-            with self.journal._locked(exclusive=False) as fd:
-                prepared, _ = _mobile_state(self.journal._records(fd))
-            control_records._mobile_pending(self.session, self.journal, prepared)
+        if (
+            getattr(self, "journal", None) is not None
+            and self.session._mobile_journal is not self.journal
+        ):
+            raise ValueError("mobile_native_preparation_required")
         if self.descriptor not in self.custody.fds:
             raise ValueError("mobile_source_claim_inactive")
         info = os.fstat(self.descriptor)
@@ -483,6 +490,14 @@ class _MobileCapturePartition:
         self.observe_publication(self.destination)
 
 
+def _verify_capture_archives(records):
+    for row in records:
+        if row.event == "mobile_capture_verified":
+            artifact = row.evidence["archive"]
+            if observe_artifact(Path(artifact["path"])) != artifact:
+                raise ValueError("mobile_capture_changed")
+
+
 class _CapturedMobile:
     """Private, session-bound verified archives and native owner access for C2."""
 
@@ -490,6 +505,15 @@ class _CapturedMobile:
         raise TypeError("mobile_lifecycle_is_native_issued")
 
     def check(self):
+        _CapturedMobile._check_binding(self)
+        _SourceClaim._check_binding(self.claim)
+        with self.journal._locked(exclusive=False) as fd:
+            records = self.journal._records(fd)
+        prepared, _ = _mobile_state(records)
+        control_records._mobile_pending(self.session, self.journal, prepared)
+        _verify_capture_archives(records)
+
+    def _check_binding(self):
         if (
             type(self) is not _CapturedMobile
             or type(self.session) is not MaintenanceSession
@@ -519,15 +543,6 @@ class _CapturedMobile:
         from .archive_reader import _check
 
         _check(self.cancel)
-        self.claim.check()
-        with self.journal._locked(exclusive=False) as fd:
-            records = self.journal._records(fd)
-        receipts = [
-            row.evidence for row in records if row.event == "mobile_capture_verified"
-        ]
-        for row in receipts:
-            if observe_artifact(Path(row["archive"]["path"])) != row["archive"]:
-                raise ValueError("mobile_capture_changed")
 
     @contextmanager
     def owner(self, owner_id):

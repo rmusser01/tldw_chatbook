@@ -22,6 +22,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        AuxiliaryCompletionResult,
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+    )
     from tldw_chatbook.Chat.console_chat_controller import (
         ConsoleSubmitResult,
         ContextCompactionHold,
@@ -42,8 +47,8 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_context_repository import (
     AuxiliaryAttemptStart,
-    AuxiliaryPricingProvenance,
     AuxiliaryAttemptStatus,
+    AuxiliaryPricingProvenance,
     BranchMemoryCommit,
     ConsoleContextRepository,
     ConsoleMemoryRecord,
@@ -54,7 +59,6 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemorySelectionKind,
     validate_branch_memory_commit,
 )
-from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_prepared_request import (
     IDLE_REQUEST_SENTINEL,
     PERSISTED_CONVERSATION_ID_KEY,
@@ -66,12 +70,6 @@ from tldw_chatbook.Chat.console_prepared_request import (
     tagged_memory_message,
     thaw_json,
 )
-from tldw_chatbook.Chat.console_provider_gateway import (
-    AuxiliaryCompletionRequest,
-    AuxiliaryCompletionResult,
-    ConsoleProviderGateway,
-    ConsoleProviderResolution,
-)
 from tldw_chatbook.Chat.console_trace_provenance import (
     ConsoleRequestRoute,
     TraceProvenance,
@@ -79,8 +77,8 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     compaction_transform_provenance,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
-
 
 COMPACTION_PROMPT_ID = "console.rewind_summarize"
 
@@ -2814,6 +2812,10 @@ class ConsoleCompactionService:
         outer cancellation propagates. Returns the completion and the
         engine that produced it ("provider_native" | "local").
         """
+        from tldw_chatbook.Chat.console_provider_gateway import (
+            AuxiliaryCompletionRequest,
+        )
+
         request = AuxiliaryCompletionRequest(
             resolution=resolution,
             messages=messages,

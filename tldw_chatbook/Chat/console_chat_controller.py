@@ -6009,6 +6009,7 @@ class ConsoleChatController:
         checkpoint = recovery.checkpoint if recovery is not None else None
         if (
             checkpoint is None
+            or recovery.error_code == "imported_history"
             or checkpoint.origin != "queued"
             or checkpoint.queue_entry_id is None
         ):

@@ -173,86 +173,88 @@ def _encoded(value, budget):
     return raw
 
 
-def _retain_command_history(
-    database, connection, operation_id, source_fingerprint, rows, *, _read_budget
-):
-    """Borrow the real owner transaction; this component grants no import readiness.
-
-    The future importer must supply freshly proved operational rows and its original
-    composed allowance, after complete same-operation all-owner readiness.
-    """
+def _prepare_command_history(operation_id, source_fingerprint, rows, budget):
+    """Pre-admit all passive record encodings before the operation's first effect."""
     from tldw_chatbook.Backup_Recovery.mobile_runs_preflight import _OperationalHistory
 
+    _identity(operation_id, source_fingerprint)
+    if type(budget) is not _TraceReadBudget or type(rows) is not tuple:
+        raise ValueError("command_history_native_input_required")
+    budget.container(len(rows) * 3)
+    prepared, seen = [], set()
+    budget.container(3)
+    manifest = {"version": 1, "kind": "command_history", "record_count": len(rows)}
+    master = _encoded(manifest, budget)
+    # Account every future complete-record read on the original allowance.
+    # No record receives a fresh allowance to make an unreadable record fit.
+    for row in rows:
+        if (
+            type(row) is not _OperationalHistory
+            or type(row.values) is not tuple
+            or len(row.values) != len(_COLUMNS)
+        ):
+            raise ValueError("command_history_native_input_required")
+        budget.container(len(_COLUMNS))
+        if any(
+            type(pair) is not tuple
+            or len(pair) != 2
+            or type(pair[1]) not in (str, int, type(None))
+            for pair in row.values
+        ):
+            raise ValueError("command_history_native_input_required")
+        if (
+            type(row) is not _OperationalHistory
+            or row.table != "console_command_receipts"
+            or type(row.original) is not tuple
+            or len(row.original) != 1
+            or type(row.associations) is not tuple
+            or tuple(key for key, _ in row.values) != _COLUMNS
+        ):
+            raise ValueError("command_history_native_input_required")
+        command_id = row.original[0]
+        validate_opaque_identifier(command_id)
+        if command_id in seen:
+            raise ValueError("command_history_duplicate_record")
+        budget.value(row.values)
+        budget.value(row.associations)
+        budget.value(command_id)
+        budget.container(6 + 3 * len(row.associations))
+        if any(
+            type(pair) is not tuple or len(pair) != 3 or pair[0] != "run"
+            for pair in row.associations
+        ):
+            raise ValueError("command_history_association_invalid")
+        payload = {
+            "version": 1,
+            "record": dict(row.values),
+            "run_associations": [[pair[1], pair[2]] for pair in row.associations],
+        }
+        raw = _encoded(payload, budget)
+        _page_header(budget, operation_id, source_fingerprint)
+        budget.reserve(64 + 4 * len(master))
+        _parse(master, budget)
+        budget.value(_PREFIX)
+        budget.value(command_id)
+        budget.reserve(64 + 4 * len(raw))
+        _decode_child(_parse(raw, budget), command_id, budget)
+        seen.add(command_id)
+        prepared.append((_PREFIX + command_id, raw))
+    budget.container(6)
+    prepared.append((_MANIFEST, master))
+    budget.container(len(prepared))
+    return tuple(prepared)
+
+
+def _commit_command_history(
+    database, connection, operation_id, source_fingerprint, prepared
+):
+    """Write prevalidated bytes only inside the actual native owner's transaction."""
     _native(database)
     _identity(operation_id, source_fingerprint)
     database._require_execution_owner()
-    if type(_read_budget) is not _TraceReadBudget or type(rows) is not tuple:
-        raise ValueError("command_history_native_input_required")
     with database.connection() as owned:
         if owned is not connection or not connection.in_transaction:
             raise ValueError("command_history_owner_transaction_required")
-        budget = _read_budget
-        budget.container(len(rows) * 3)
-        prepared, seen = [], set()
-        budget.container(3)
-        manifest = {"version": 1, "kind": "command_history", "record_count": len(rows)}
-        master = _encoded(manifest, budget)
-        # Account every future complete-record read on the original allowance.
-        # No record receives a fresh allowance to make an unreadable record fit.
-        for row in rows:
-            if (
-                type(row) is not _OperationalHistory
-                or type(row.values) is not tuple
-                or len(row.values) != len(_COLUMNS)
-            ):
-                raise ValueError("command_history_native_input_required")
-            budget.container(len(_COLUMNS))
-            if any(
-                type(pair) is not tuple
-                or len(pair) != 2
-                or type(pair[1]) not in (str, int, type(None))
-                for pair in row.values
-            ):
-                raise ValueError("command_history_native_input_required")
-            if (
-                type(row) is not _OperationalHistory
-                or row.table != "console_command_receipts"
-                or type(row.original) is not tuple
-                or len(row.original) != 1
-                or type(row.associations) is not tuple
-                or tuple(key for key, _ in row.values) != _COLUMNS
-            ):
-                raise ValueError("command_history_native_input_required")
-            command_id = row.original[0]
-            validate_opaque_identifier(command_id)
-            if command_id in seen:
-                raise ValueError("command_history_duplicate_record")
-            budget.value(row.values)
-            budget.value(row.associations)
-            budget.value(command_id)
-            budget.container(6 + 3 * len(row.associations))
-            if any(
-                type(pair) is not tuple or len(pair) != 3 or pair[0] != "run"
-                for pair in row.associations
-            ):
-                raise ValueError("command_history_association_invalid")
-            payload = {
-                "version": 1,
-                "record": dict(row.values),
-                "run_associations": [[pair[1], pair[2]] for pair in row.associations],
-            }
-            raw = _encoded(payload, budget)
-            _page_header(budget, operation_id, source_fingerprint)
-            budget.reserve(64 + 4 * len(master))
-            _parse(master, budget)
-            budget.value(_PREFIX)
-            budget.value(command_id)
-            budget.reserve(64 + 4 * len(raw))
-            _decode_child(_parse(raw, budget), command_id, budget)
-            seen.add(command_id)
-            prepared.append((_PREFIX + command_id, raw))
-        budget.container(6)
-        prepared.append((_MANIFEST, master))
         if connection.execute(
             "SELECT 1 FROM mobile_consolidation_batches WHERE operation_id=? AND substr(batch_key,1,?)=? LIMIT 1",
             (operation_id, len(_MANIFEST), _MANIFEST),
@@ -271,6 +273,24 @@ def _retain_command_history(
             raise
         finally:
             connection.execute("RELEASE command_history_retention")
+
+
+def _retain_command_history(
+    database, connection, operation_id, source_fingerprint, rows, *, _read_budget
+):
+    """Retain the existing passive component without conferring import readiness."""
+    _native(database)
+    _identity(operation_id, source_fingerprint)
+    database._require_execution_owner()
+    with database.connection() as owned:
+        if owned is not connection or not connection.in_transaction:
+            raise ValueError("command_history_owner_transaction_required")
+        prepared = _prepare_command_history(
+            operation_id, source_fingerprint, rows, _read_budget
+        )
+        _commit_command_history(
+            database, connection, operation_id, source_fingerprint, prepared
+        )
 
 
 def _read_payload(connection, operation_id, source_fingerprint, key, size, budget):
@@ -315,6 +335,35 @@ def _list_command_history(
             )
         finally:
             connection.rollback()
+
+
+def _validate_complete_history(
+    connection, operation_id, source_fingerprint, expected_count, budget
+):
+    """Validate all passive facts in the owning caller's current snapshot/allowance."""
+    if not connection.in_transaction or type(budget) is not _TraceReadBudget:
+        raise ValueError("command_history_owner_snapshot_required")
+    if type(expected_count) is not int or expected_count < 0:
+        raise ValueError("command_history_count_invalid")
+    _identity(operation_id, source_fingerprint)
+    cursor, count = None, 0
+    while True:
+        _page_header(budget, operation_id, source_fingerprint)
+        budget.value(cursor)
+        page = _read_page(
+            connection, operation_id, source_fingerprint, cursor, 100, budget
+        )
+        count += len(page.items)
+        if count > expected_count:
+            raise ValueError("command_history_owner_count_changed")
+        following = page.next_cursor
+        if following is None:
+            if count != expected_count:
+                raise ValueError("command_history_owner_count_changed")
+            return
+        if not page.items or (cursor is not None and following.after <= cursor.after):
+            raise ValueError("command_history_incomplete")
+        cursor = following
 
 
 def _read_page(connection, operation_id, source_fingerprint, cursor, limit, budget):

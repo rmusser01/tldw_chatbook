@@ -1021,6 +1021,12 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 finally:
                     conn.execute("RELEASE SAVEPOINT mobile_import_v26")
 
+    def read_imported_run_log_page(self, mapped_run_id: str, operation_id: str, source_fingerprint: str, *, cursor=None):
+        """Read receipt-bound original-ID history through actual enrolled pins."""
+        from .mobile_imported_run_log import _read_page
+
+        return _read_page(self, mapped_run_id, operation_id, source_fingerprint, cursor)
+
     def hold_imported_authority(
         self,
         cursor: sqlite3.Connection | sqlite3.Cursor,
@@ -1817,6 +1823,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         placeholders = ",".join("?" for _ in ids)
         stamp = _now_iso()
         with self.transaction() as conn:
+            if delivered_by_run_id is not None:
+                from .automatic_work import AutomaticWorkRefused
+                from .mobile_import_authority import run_allowed
+                if not run_allowed(conn, delivered_by_run_id):
+                    raise AutomaticWorkRefused("import_review_required")
             conn.execute(
                 f"UPDATE change_notes SET delivered_at = ?, "
                 f"delivered_by_run_id = ? "
@@ -2208,7 +2219,23 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             query += " AND enabled = 1"
         query += " ORDER BY name"
         with self.connection() as conn:
-            rows = conn.execute(query).fetchall()
+            if not enabled_only:
+                rows = conn.execute(query).fetchall()
+            else:
+                from tldw_chatbook.Chat.console_trace_read_budget import (
+                    _TraceReadBudget,
+                )
+
+                from .mobile_consolidation_receipts import _imported_definition_ids
+
+                if conn.in_transaction:
+                    raise ValueError("mobile_owner_receipt_committed_snapshot_required")
+                conn.execute("BEGIN")
+                try:
+                    imported = _imported_definition_ids(conn, _TraceReadBudget())
+                    rows = [row for row in conn.execute(query) if row["id"] not in imported]
+                finally:
+                    conn.rollback()
         return [self._definition_row_to_dict(row) for row in rows]
 
     def get_agent_definition(self, definition_id: str) -> dict | None:

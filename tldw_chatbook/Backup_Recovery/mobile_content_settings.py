@@ -389,6 +389,20 @@ def _message_metadata(builder, raw, successor, *, message_id=None):
         if parsed[2] is not None:
             successor("T", "trace_turn", parsed[2], parsed[2])
         return raw
+    if set(value) & {"initiator", "parent_turn_id", "stop_event_id"}:
+        if (
+            set(value) != {"origin", "initiator", "parent_turn_id", "stop_event_id"}
+            or value["origin"] != "hook"
+            or value["initiator"] != "hook_continuation"
+            or any(
+                type(value[name]) is not str or not 0 < len(value[name]) <= 256
+                for name in ("parent_turn_id", "stop_event_id")
+            )
+        ):
+            raise ValueError("invalid_hook_message_metadata")
+        # Native host lineage keys are opaque audit values. The S receipt owns
+        # the separately mapped conversation and parent/child message relation.
+        return raw
     native = _typed(_METADATA_JSON, raw)
     if native.agent_chat_start is not None:
         source = native.agent_chat_start

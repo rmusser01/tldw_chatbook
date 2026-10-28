@@ -97,12 +97,6 @@ from tldw_chatbook.Chat.sampling_params import (
     THINKING_EFFORT_VALUES as _THINKING_EFFORT_VALUES,
     VERBOSITY_VALUES as _VERBOSITY_VALUES,
 )
-from tldw_chatbook.config import (
-    DEFAULT_CONFIG_FROM_TOML,
-    ProviderSettingsError,
-    provider_settings_for_key,
-    resolve_provider_api_key,
-)
 from tldw_chatbook.model_capabilities import anthropic_model_rejects_disabled_thinking
 from tldw_chatbook.Utils.input_validation import (
     validate_env_var_reference,
@@ -971,11 +965,6 @@ def build_console_rail_system_line(system_prompt: str | None) -> str:
     return f"System: {preview}"
 
 
-_CUSTOM_AND_LEGACY_GROUP_KEYS = frozenset(
-    provider_config_key(key) for key in PROVIDER_CUSTOM_GROUP_KEYS
-)
-
-
 def _provider_option_group_rank(
     provider_key: str,
     requires_api_key_by_provider: Mapping[str, bool],
@@ -987,7 +976,10 @@ def _provider_option_group_rank(
     together. Off-catalog keys (e.g. configured WIP providers) sort with the
     custom-and-legacy group rather than interleaving into cloud/local.
     """
-    if provider_key in _CUSTOM_AND_LEGACY_GROUP_KEYS:
+    custom_and_legacy_group_keys = frozenset(
+        provider_config_key(key) for key in PROVIDER_CUSTOM_GROUP_KEYS
+    )
+    if provider_key in custom_and_legacy_group_keys:
         return 2
     if provider_key not in requires_api_key_by_provider:
         return 2
@@ -2449,6 +2441,7 @@ def console_provider_settings(
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         custom_endpoint_provider_settings,
     )
+    from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 
     custom_endpoint_settings = custom_endpoint_provider_settings(
         app_config, provider_key
@@ -2499,6 +2492,8 @@ def _custom_endpoint_declared_credential(
         when a declared credential resolves, else None (nothing declared, or
         nothing that resolves).
     """
+    from tldw_chatbook.config import resolve_provider_api_key
+
     env = environ if environ is not None else os.environ
     if entry.api_key_env:
         if (
@@ -2628,6 +2623,11 @@ def provider_left_at_shipped_default(
     # Lazy: custom_endpoint_registry imports this module (a module-level
     # import would cycle).
     from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
+    from tldw_chatbook.config import (
+        DEFAULT_CONFIG_FROM_TOML,
+        ProviderSettingsError,
+        provider_settings_for_key,
+    )
 
     if provider_key.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
         return False
@@ -2665,6 +2665,8 @@ def _custom_endpoint_missing_key_readiness(
         A not-ready ``ProviderReadiness`` naming the recovery, or None when
         the family readiness should stand.
     """
+    from tldw_chatbook.config import resolve_provider_api_key
+
     env = environ if environ is not None else os.environ
     stored_key = resolve_provider_api_key(entry.api_key)
     env_key = (
@@ -2728,13 +2730,13 @@ def _provider_settings_with_validity(
     app_config: Mapping[str, object], provider_key: str
 ) -> tuple[Mapping[str, object], bool]:
     """Return selected provider settings and whether their table is malformed."""
-
     # ADR-146: a registry entry is its own settings carrier, so an entry
     # provider is never "missing from api_settings" -- route it through the
     # registry-aware reader and skip the table-validity walk.
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         custom_endpoint_provider_settings,
     )
+    from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
 
     custom = custom_endpoint_provider_settings(app_config, provider_key)
     if custom is not None:
