@@ -52,6 +52,14 @@ painted and that the loop made no database read.
 
 ---
 
+## A new Console row outside `CONSOLE_TAB_REGIONS` is in the focus chain but never reached by Tab (TASK-33620.2, 2026-10-27)
+
+**Incident.** TASK-33620.2 added a vision-block row ("<model> can't accept images", Remove image, Switch model) above the status line. Its two buttons appeared in `screen.focus_chain` between the transcript and the status text, yet a mounted test pressing Shift+Tab from the composer walked to the control bar's Help button, and Tab from the transcript went straight to the status text. Live, fourteen Tabs never changed the row. `ChatScreen.action_focus_next` cycles only within the focused widget's region, the union of the root ids in `CONSOLE_TAB_REGIONS`; the new row's id was in none of them. Adding `console-attachment-block` to the composer's region (and to `CONSOLE_FOCUS_PANE_FOR_WIDGET` for F6) made Shift+Tab from the composer reach Switch model, then Remove image.
+
+**What to do.** When you mount a new focusable row in the Console shell, put its root id in the right `CONSOLE_TAB_REGIONS` tuple and in `CONSOLE_FOCUS_PANE_FOR_WIDGET`, and test it by pressing keys from the composer, not by reading `focus_chain`.
+
+---
+
 ## A warning-free batch can still retain worker-owned database files
 
 **TASK-31245 / TASK-33620.9, 2026-10-04.** After explicit Console fixture
