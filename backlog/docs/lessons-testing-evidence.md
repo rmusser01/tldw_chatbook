@@ -22200,3 +22200,18 @@ Before publishing this work, updating to current dev showed that commit
 `6fe22b80ba` had already fixed the same Windows identity mismatch. Retain the
 existing upstream implementation and tests instead of publishing a duplicate.
 The original report was from Fedora Linux; the Windows finding was separate.
+
+## A platform refusal can make both positive and negative command tests lie
+
+**TASK-37204 / PR #3284, 2026-10-28.** The Windows hook pipeline batch had
+19 failures and a fleet-fixture teardown error because real command tests expected
+launches that ADR-163 explicitly refuses there. The invalid-replacement negative
+case passed for the same unrelated platform refusal. A fresh run also showed that
+the Windows refusal control restored `sys.platform` and then incorrectly assumed
+it had restored POSIX. Mark only command-execution cases with the backend's
+platform requirement, including negative-output cases; retain neutral controls.
+Repeat native refusal and inspect owner, environment, launch, record and ticket
+boundaries before testing successful post-refusal execution on a supported host.
+The corrected native Windows selection passed 72 cases with 20 explicit POSIX
+skips and no failure or teardown error. Run the actual command controls on Linux;
+Windows refusal evidence cannot qualify them.

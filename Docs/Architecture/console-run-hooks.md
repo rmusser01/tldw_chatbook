@@ -68,6 +68,21 @@ In addition to the legacy event names, v2 handles `SessionStart`, `SessionEnd`, 
 
 Tool phases transform input, validate final arguments, then apply normal permission review and fresh dispatch checks. MCP-backed hooks retain ordinary tool schemas, approvals, cancellation and causal-cycle checks. A hook cannot bypass permission authority. Stop continuations use bounded scheduler ownership rather than recursive execution. V2 output is parsed through its closed protocol; legacy stdout is never inferred to be v2.
 
+## Platform qualification
+
+V2 command hooks refuse native Windows with `unsupported_platform` before root
+reservation, environment access or subprocess launch (ADR-163). Only tests that
+need actual command execution require the POSIX backend; validation, unavailable
+handlers, pre-dispatch refusals, empty-engine recovery and typed preparation
+controls remain active on Windows. The native refusal control also checks repeated
+refusal on the same engine and absence of retained process records or budget leaks.
+
+`.github/workflows/tool-recovery.yml` runs native/fenced schema reload recovery,
+skill gates, working-set replacement, the full tool pipeline and real bounded
+command/cleanup controls on Linux/Python 3.12, retaining JUnit evidence. This is
+Linux runtime qualification; it does not reproduce the reporter's exact Fedora
+configuration or establish the original run's undisclosed discovery history.
+
 ## Legacy dataflow
 
 1. `load_hooks_config` parses `[hooks]`; `ConsoleRuntime.ensure_run_hooks()` builds one engine (an unconfigured engine returns `None` and does not latch — configuring hooks later in the same app run works).
