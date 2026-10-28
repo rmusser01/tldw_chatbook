@@ -22141,3 +22141,8 @@ the real sync/client/API-method chain before asserting queue removal. The one-ti
 control also verifies stable stored top-level idempotency metadata and its absence
 from the API request. Test the actual full form and replay seam; JSON encodability
 and a title-only update do not establish a replayable schedule mutation.
+
+
+## A captured render-error boundary also needs the diagnostic inventory refresh (PR #3283, 2026-10-28)
+
+PR #3283 passed all 23 application test jobs, all 17 UI shards and Perf Guard, then its required artifact job failed: moving Prompt rendering before worker admission added a second sanitized failure warning, and the inventory still recorded three calls instead of four in `library_file_export.py`. The missing refresh cost a full hosted CI attempt despite clean behavior tests and code review. `--statements ... --since 773cc9729cfbc9c13c14b56724fcb02efd3a54a3` identified exactly one added warning carrying only Prompt ID and exception category. The repair changes that owner's count/digest; all 698 other owners, 116 privacy candidates and 16 sinks stay identical. Run `scripts/check_persistent_diagnostic_inventory.py` before publication whenever an error boundary adds a logger call, inspect its statement-level delta, and regenerate only the intended snapshot. Passing behavior tests does not establish this artifact is current.

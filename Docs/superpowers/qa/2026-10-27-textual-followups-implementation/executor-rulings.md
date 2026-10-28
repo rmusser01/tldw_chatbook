@@ -1,6 +1,6 @@
 # Rulings I made
 
-Decisions are preserved in chronological order with their stated cost if wrong. Later superseding rulings take precedence.
+Every ledger ruling, in chronological order, with its stated cost if wrong. Superseding rulings are explicit.
 
 - Ruling: Proceed from the four explicit task specifications without a new design-approval round — the user has just authorized their concrete outcomes and requested burn-down/PR; these are bounded repairs within existing ADRs — cost if wrong: implementation rework if a task omitted a desired behavior; acceptance and independent review remain binding.
 
@@ -53,3 +53,27 @@ Decisions are preserved in chronological order with their stated cost if wrong. 
 - Ruling: Correct only oldfreshcapabilitysnapshot test4/4->4/5 and add explicitinspectorLocalOmniVoice:missing whilekeeping4readyrowsandpartialfixture — existingmodel _LOCAL_CAPABILITIES has5; fixtureomits onnxruntime/tokenizers, rootverifiedactualsource — costifwrong: summaryassertion followsincorrectlegacycatalog; untouchedmodel/presentation sourcepins andexplicitmissingrowguard remainrequired. No newfifthpane row/productcapabilitychange authorized.
 
 - Ruling: Gate2computed Speech shortcut functions whole instead of4individualparameter IDs because checker correctly cannot staticallyresolve set/dictargvalues — preservesall4actualcasesandfuturemembers withouttest/guard edits — costifwrong: groupedcost/order; aggregateallparamcosts andcurrentCI verify. Firstgroupingassert expectedwrong3+1 vsactual2+2 stoppedbeforewrite, excludedtoolattempt. Finalcensus1076/floor1076PASS, notprovisional1078. Otherdev965selectorpositionsidenticalexceptonewholeSettingsfile->cheapexactnode; all19exactSettingscases collectedsetequal. Final95actualtaskcases representedby93selectors+18otherSettingsnodes; forecastsmax1122.096s,17shards/1200s unchanged.
+
+- Ruling: PublishauthorizeddraftPRafteralllocalgatesand4taskreviewswhilewholebranchreviewruns — parallelhostedCIreducesdeliverylatency; useralreadyrequestsPR/CI, draftdoesnotmerge — costifwrong: a finalfindingwastesCIandrequiresfreshhead/recheck. Stayactiveuntilreview/CIclear; finaltaskclosureandreadinessnotclaimedyet.
+
+- Ruling: Leave unchanged Character-bench Save publication with its separate owner — the authorized Evals repair is the word-bench path — cost if wrong: existing Character refresh may still replace later input; no new Character guarantee is made.
+
+- Ruling: Retain existing voluntary-Save discard of target mini-form text already present at submission — later accepted edits are the repaired distinction — cost if wrong: uncreated pre-submit target text can still be discarded under the existing behavior.
+
+- Ruling: Keep navigation/shutdown lifetime and physical remote rollback outside this bounded fix — existing native owner lifetime remains, but same-reminder mounted overlap I1 is now explicitly included — cost if wrong: departure can retire a waiter without undoing an external effect; durability is not promised.
+
+- Ruling: Preserve the existing remote-null omission/live-server/retry-idempotency boundaries — queue/client/schema settlement is proven locally, transport contract remains unchanged — cost if wrong: an explicit null still cannot clear a remote field and live-server consistency remains unqualified; no remote-clear claim is allowed.
+
+- Ruling: Do not infer a storage-latency distribution or half-second SLA from the held Prompt witness — it proves actual dispatch before physical completion with existing3s watchdog — cost if wrong: slow storage/metadata or sub3s UI delays outside that causal result remain possible.
+
+- Ruling: Leave unchanged Notes/Report scheduling and pre-existing initial metadata-probe failure behavior to their existing owners — only Prompt write scheduling/new late recheck is changed — cost if wrong: sibling exports can still block and initial destination metadata errors retain existing behavior; no sibling responsiveness claim.
+
+- Ruling: Keep full audio/device/provider operation and new Speech axis/view persistence outside this no-audio scope — availability and native target lifecycle are tested, existing state semantics retained — cost if wrong: hardware/provider failures and existing recompose state loss may remain; no new persistence guarantee.
+
+- Ruling: Do not expand to broad legacy-suite/warning/Windows-governance/MRO/import-speed cleanup — exact inherited evidence is preserved and actual current-head hosted gates still required — cost if wrong: known local debt/uncovered legacy behavior remains; no all-suite/all-gates-green statement is allowed.
+
+- Ruling: Treat historical PR/audit receipts as pinned provenance, not freshly re-established remote evidence — root separately anchors current PR/head/CI — cost if wrong: an old remote claim may be stale, but it cannot qualify current delivery gates.
+
+- Ruling: Retain native serialization within the mounted full-form owner; unchanged inline, bulk and global service callers keep their existing contracts — the fix introduces no new global coordinator — cost if wrong: an independent caller can still race the same record; no service-wide ordering or navigation durability guarantee is made.
+
+- Ruling: Close the implemented tasks with the reviewed diagnostic-inventory metadata repair after all23 hosted test jobs, Perf and local inventory validation pass; keep final PR delivery dependent on successor-head hosted CI — cost if wrong: a metadata failure can require a task to reopen or another fix; the failed prior artifact job is retained and never reported green. This combines clerical closure with the actual CI repair without changing product/test/CI code or skipping the new-head checks.

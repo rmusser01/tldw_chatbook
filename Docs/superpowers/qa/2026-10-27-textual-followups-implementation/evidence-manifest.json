@@ -1,17 +1,41 @@
 {
-  "note": "Portable evidence Markdown/JSON is LF-normalized; embedded native source/XML hashes retain their original meaning. Raw profiles/logs remain local. Task1 original review artifact was not retained; final whole-branch review independently covers its implementation.",
+  "note": "Portable Markdown/JSON is LF-normalized. Embedded native source/XML hashes retain their original meaning. Historical reports are frozen; hosted-functional-ci-proof pins the tested functional head. Later-head status remains on the PR. Task1 original review artifact was not retained; final whole-branch review independently covers it.",
   "files": [
     {
       "file": "computed-param-selector-proof.json",
       "sha256": "0a0afd9111f61732e78d47983a3711f7f86398ae41f23769c868b8deb6f47aec"
     },
     {
+      "file": "diagnostic-inventory-repair-proof.json",
+      "sha256": "77dbe6a8324180a4a7fae01ea28e5eafd26be762feb80842e8e67a6729b38be0"
+    },
+    {
       "file": "executor-rulings.md",
-      "sha256": "8cd3f70527156b63097f091c2806a4cf4c4f876bbfd7088d621425c4907fb7c7"
+      "sha256": "4c9c703535a75e6c1b9e60d73590d862c7771c633001f5f30c21b661b2167179"
     },
     {
       "file": "final-census-capacity-proof.json",
-      "sha256": "7717a1ad73cfe40ee47eb73e4e981cb92477b7d4fe00810ed8ca991d014a29b3"
+      "sha256": "bd4563e3dbedfccd3d156b3faa17289674098b4b9486376b9108af8d3dcefd43"
+    },
+    {
+      "file": "final-fix-ci-contract-proof.json",
+      "sha256": "aa690f35732ac8cee77ae48298af1b8b1d1e59b86cd17e4f79173cc5e17c91b8"
+    },
+    {
+      "file": "final-fix-guard-proof.json",
+      "sha256": "b2ca1e64f1b6a35507184e2c8e6a68d94c75baf33582558fe350865f9d292e12"
+    },
+    {
+      "file": "final-fix-report.md",
+      "sha256": "7b20616fbc1b713fb8753c70ff1c4154b9d37bd1123708bb3a7e7522715e0f73"
+    },
+    {
+      "file": "final-fix-rereview.md",
+      "sha256": "6e7e59aa91495f7ef9e2c69f3e0ea3e2ed4a00ce1fd50170f4dece932b3310a3"
+    },
+    {
+      "file": "final-fix-source-proof.json",
+      "sha256": "874998a2ab1b69884cc4ecaa1e6af7615f59171c49430be84cf60b9a1d212a75"
     },
     {
       "file": "final-guard-ci-proof.json",
@@ -19,11 +43,27 @@
     },
     {
       "file": "final-native-source-hashes.json",
-      "sha256": "2da24521435e1333a76dee2fc2a48c62aee814736b69cf3516257d838f00b019"
+      "sha256": "2787940142d8a82f51c326477bd0971f913bf56633d338bf08aea1d070f0ecd8"
+    },
+    {
+      "file": "final-review.md",
+      "sha256": "8c80d2b36c3d7a656c8dad113de9fc221152e69ffd2600e03fc8f329aa1da188"
+    },
+    {
+      "file": "hosted-functional-ci-proof.json",
+      "sha256": "8b0a153fea3dd1e507c4ff6be7d4df9ec16ede89daa7582a7aad14b028b95cb2"
+    },
+    {
+      "file": "metadata-source-qualification.json",
+      "sha256": "906e16c8e01df5aa7d8c72961f0dc1d82f1fe628ae5dcac708cd1036ddb9cded"
     },
     {
       "file": "rebase-dev773-proof.json",
       "sha256": "e4963a812656538ff2d402e374c0b33af29b7ddc65aa5c503c866fea21c7bc98"
+    },
+    {
+      "file": "root-final-fix-child-proof.json",
+      "sha256": "e3a1706ba90e027627b112cb9cb4f01d432aa84ac81e5cd63f9d44468b6de230"
     },
     {
       "file": "root-final-new01-proof.json",

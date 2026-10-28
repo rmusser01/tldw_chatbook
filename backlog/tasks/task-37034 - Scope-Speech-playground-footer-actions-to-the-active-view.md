@@ -1,7 +1,7 @@
 ---
 id: TASK-37034
 title: Scope Speech playground footer actions to the active view
-status: In Progress
+status: Done
 created_date: 2026-10-27 18:01
 labels:
 - textual-patterns
@@ -14,7 +14,7 @@ references:
 - Docs/superpowers/qa/2026-10-27-textual-book-after-pr3251.md
 assignee:
 - '@codex'
-updated_date: 2026-10-27 23:52
+updated_date: 2026-10-28 03:01
 ---
 
 ## Description
@@ -56,4 +56,5 @@ Implemented target-backed Speech Playground mirror availability and custom foote
 Tests/UI/test_speech_footer_scope.py proves actual production-CSS rail Clear, Effects Enter, absent/restored custom-footer child text and native bindings, held return mount, printable input, held native screen recomposition and old-owner rejection. Both original behavior and recomposition gaps produced clean RED parent/private-child assertions. Final task4-final02 has 9 parent passes and 2 actual private-child passes, no errors/skips; all relevant old Speech behavior controls qualified across scoped runs. Exact native profile-guard chains justified supported bootstrap_profile opt-ins in four legacy modules. Native mount/Studio worker settlement preserves their substantive assertions and budgets. The stale snapshot expectation was corrected to fixture-consistent 4/5 plus explicit OmniVoice-missing inspector evidence; capability product files are unchanged.
 Fresh boot count 680/686 and preimport 558/558 modules, 424406/425347 LOC, maximum route 130690/135111 LOC pass unchanged limits. Focused Ruff passes; seven inherited E721 findings and two existing formatting debts are source-qualified. Broad unchanged MRO scanner reports five pre-existing sites; unchanged 8-second import-time guard fails with both candidate (15.1088s) and exact original Speech files (16.3614s), with native bytes restored in finally. Five prior Windows visual guard failures remain explicitly source-qualified with 87 unchanged inputs; no styles/tokens changed or allowances raised. Full evidence and raw/XML identities: .superpowers/sdd/2026-10-27-textual-37031-37034/task-4-report.md. Status remains In Progress for root review, integration, current-head CI and final AC closure.
 Independent Superpowers task review approved: spec compliant, zero Critical/Important findings; final 9 parent cases and 2 actual private children passed with zero errors/skips. Root is completing rebased combined verification, whole-branch review and current-head CI before final task closure. Existing lint/format/MRO/native timing qualifications remain explicit; no allowances changed.
+Both new mounted Speech lifecycle/footer journeys and enrolled legacy compatibility controls passed hosted. Native availability follows the attached current target through replacement/recomposition; audio/provider operation and new persistence semantics remain unclaimed. Delivered in PR #3283 against dev: https://github.com/rmusser01/tldw_chatbook/pull/3283. Tested functional head 73cff62fff16fa299aef7afd938bb5b66565ca72 passed all 23 application test jobs in Derived Artifacts 40610052403 and Perf Guard 40609661845. The final artifact job failed only the stale diagnostic pin; the exact two-field Library owner repair was manually reviewed and the unchanged local inventory checker passes. Actual successor-head PR checks remain the final delivery gate. Task and final Superpowers reviews have no open Critical/Important findings. Existing ADR assessment remains unchanged. Portable qualification: Docs/superpowers/qa/2026-10-27-textual-followups-implementation.md. Final task/QA closure changes only metadata; later-head CI remains visible on the PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

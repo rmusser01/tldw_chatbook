@@ -1,7 +1,7 @@
 ---
 id: TASK-37033
 title: Keep saved-Prompt export writes off the UI loop
-status: In Progress
+status: Done
 created_date: 2026-10-27 18:01
 labels:
 - textual-patterns
@@ -15,7 +15,7 @@ references:
 - Docs/superpowers/qa/2026-10-27-textual-book-after-pr3251.md
 assignee:
 - '@codex'
-updated_date: 2026-10-27 22:39
+updated_date: 2026-10-28 03:00
 ---
 
 ## Description
@@ -55,4 +55,5 @@ Evidence, source pins, book pages, controls and limitations: [post-merge Textual
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Saved Prompt export now captures Markdown and destination before submitting a native screen worker; FileSave and Replace callbacks return immediately, filesystem-only writing runs off-loop, and scoped UI receipts retain the captured Prompt identity. Late no-clobber collisions reopen the existing Replace prompt. Render/write failures keep safe feedback and retry. Added real SQLite/FileSave controls and adapted existing tests to await native export completion without weakening assertions. Final minimal ordinary/held New/Replace controls: 4 parent passes and 4 actual private-child passes, zero errors/skips. Also verified race Cancel/Replace, 34 helper cases, 3 navigation scopes, 64 size/wiring controls and unchanged native preimport budget at 558/558 modules. Fourteen existing native Windows mode/symlink/CRLF/receipt expectations and two unchanged inventory/import guard failures reproduce on original source; all raw receipts and causal witness methodology are retained in .superpowers/sdd/2026-10-27-textual-37031-37034/task-3-report.md. Updated Docs/Architecture/library-shell.md. ADR required: no; existing backlog/decisions/033-application-session-state-ownership.md, 036-application-service-composition-lifecycle.md, 031-tui-keybinding-and-footer-hint-conventions.md, 150-design-token-system-and-design-language.md and 161-component-pattern-library.md preserve existing ownership. Task remains In Progress for coordinator independent review and current-head CI; no full suite or allowance increases.
 Review fix round1 (I1): placed late-collision metadata recheck inside the existing Prompt-only recoverable export error boundary. Permission failures now report the captured sanitized exception category instead of escaping as a fatal native worker failure; worker defaults, named nonexclusive ownership, generic helper and Notes/Report remain unchanged. New native App regression arms a destination Path.lstat PermissionError only after a real atomic no-clobber refusal, verifies file preservation, safe feedback, App survival and explicit same-destination Replace retry with captured content. TDD: task3-r1-red01 has one intended WorkerFailed(PermissionError) failure and no errors/skips; task3-r1-green01 passes all10 focused parent cases and both actual private racing-file children with zero failures/errors/skips. Focused Ruff/format pass. AST qualification preserves ordinary writer await, existing error feedback/success receipt, captured/modal/worker ownership and every function/import outside Prompt export. ADR required: no; existing canonical ADRs in the plan remain applicable. M1 inherited dependency/test warnings remain deferred; task stays In Progress pending coordinator scoped rereview and final combined-source/CI gates.
+All six mounted Prompt export scenarios passed hosted. The existing PR Fast Lane also passed the new render-error/retry and late collision metadata-error/retry helper controls. Captured write dispatch remains causal responsiveness evidence, without a half-second SLA or sibling-export claim. Delivered in PR #3283 against dev: https://github.com/rmusser01/tldw_chatbook/pull/3283. Tested functional head 73cff62fff16fa299aef7afd938bb5b66565ca72 passed all 23 application test jobs in Derived Artifacts 40610052403 and Perf Guard 40609661845. The final artifact job failed only the stale diagnostic pin; the exact two-field Library owner repair was manually reviewed and the unchanged local inventory checker passes. Actual successor-head PR checks remain the final delivery gate. Task and final Superpowers reviews have no open Critical/Important findings. Existing ADR assessment remains unchanged. Portable qualification: Docs/superpowers/qa/2026-10-27-textual-followups-implementation.md. Final task/QA closure changes only metadata; later-head CI remains visible on the PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
