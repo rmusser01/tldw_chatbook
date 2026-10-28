@@ -630,7 +630,7 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
         assert "Saved history stays in Library" in dialog.message
         assert "Temporary or unsaved messages: 1" in dialog.message
-        assert "Live agent turns:" not in dialog.message
+        assert "Live agent runs:" not in dialog.message
         assert "Unsent queued prompts:" not in dialog.message
         # Still open: the confirmation is a gate, not a notification.
         assert doomed.id in {session.id for session in store.sessions()}
@@ -691,7 +691,7 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
         dialog = await _wait_for_confirmation(host)
 
         assert "Temporary or unsaved messages:" not in dialog.message
-        assert "Live agent turns:" not in dialog.message
+        assert "Live agent runs:" not in dialog.message
         assert "Unsent queued prompts: 1" in dialog.message
         assert "secret queued close text" not in dialog.message
 

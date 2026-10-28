@@ -669,6 +669,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7058.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7154,
+    # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
+    # The integrated value is remeasured after the rebase.
     "tldw_chatbook/UI/Console_Modules/session.py": 7065,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
