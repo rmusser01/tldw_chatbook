@@ -10,6 +10,18 @@
       "sha256": "513c61ec18faa79b1349eeb60aa89c628c56ee62828b207ceb39743765a12845"
     },
     {
+      "file": "bounded-capacity-37236-contracts.json",
+      "sha256": "db2e6bcdc3b6848731ac09e2388a5746adb1313b6f2ee0e93b80b75f4d16c5b7"
+    },
+    {
+      "file": "bounded-capacity-37236-proof.json",
+      "sha256": "bcbf4d9db0aada501aa004aa828fba973d9cba78224a9e5f1992fbbbeea9ee83"
+    },
+    {
+      "file": "bounded-capacity-37236-static.json",
+      "sha256": "b0837cc94c2a5cac967b889eaaf9cef1667302e434efbe8d6eba30dda206e396"
+    },
+    {
       "file": "capacity-48ef-proof.json",
       "sha256": "e6817320b41635db683de968ffdfde71a30641b75aec0b3cef023f6f08c66ede"
     },
@@ -44,6 +56,10 @@
     {
       "file": "ci-ack-gap-task-id-allocation.json",
       "sha256": "359e3e941b11028b0257296dcbd5ab802a2cba19385fc9a85e48d0f68f71ab12"
+    },
+    {
+      "file": "ci-capacity-37236-report.md",
+      "sha256": "d8502b1011868bb91a9cdb7e21514c15f86b282e41b41e9335eb89b697d11f45"
     },
     {
       "file": "ci-media-37235-report.md",
@@ -132,6 +148,10 @@
     {
       "file": "final-static-baseline-proof.json",
       "sha256": "964d9aeace64cb44e634491af5b2a0b7443ac8b6c4ff5d0ce44fb44db0663a10"
+    },
+    {
+      "file": "hosted-012ca-failure-proof.json",
+      "sha256": "b008ecf4236ba03050540c63c5a73bc21aabf64a26f99125c499dfb07c3ec8b0"
     },
     {
       "file": "hosted-48ef-timeout-proof.json",
