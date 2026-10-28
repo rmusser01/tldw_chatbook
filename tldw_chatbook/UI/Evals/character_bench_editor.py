@@ -161,17 +161,16 @@ class CharacterBenchEditor(Vertical):
     docstring."""
 
     class Saved(Message, namespace="character_bench_editor"):
-        """Posted after ``save_character_bench`` succeeds. Carries the
-        bench's own ``eval_tasks`` id (unchanged across a save -- this is
-        always an edit, never a create) so a future routing handler
-        (Task 5) can re-select it the same way ``BenchEditor.Saved`` is
-        handled today, without this widget reaching into ``self.screen``
-        itself.
+        """Successful write and its originating raw form, for conditional reload.
+
+        The snapshot is ephemeral UI state, never persisted or logged.
         """
 
-        def __init__(self, bench_id: str) -> None:
+        def __init__(self, editor: CharacterBenchEditor) -> None:
             super().__init__()
-            self.bench_id = bench_id
+            self.bench_id = editor._bench_id
+            self.editor = editor
+            self.form_state = editor.save_publication_state()
 
     def __init__(
         self,
@@ -401,6 +400,14 @@ class CharacterBenchEditor(Vertical):
             return True
 
         return False
+
+    def save_publication_state(self) -> tuple[Any, ...]:
+        """Capture the successful baseline and raw form for conditional reload."""
+        return (
+            self._loaded_config,
+            tuple((field.id, field.value) for field in self.query(Input)),
+            self.query_one(CardPicker).selected_ids(),
+        )
 
     def _build_probe_set_section(
         self, db: EvalsDB, config: CharacterProbeConfig
@@ -673,7 +680,9 @@ class CharacterBenchEditor(Vertical):
             self._show_form_error(str(exc))
             return
 
-        self.post_message(self.Saved(self._bench_id))
+        # Later edits compare against this submitted config even without a reload.
+        self._loaded_config = config
+        self.post_message(self.Saved(self))
 
     @on(Button.Pressed, "#evals-cb-revert")
     def _on_revert_pressed(self, event: Button.Pressed) -> None:
