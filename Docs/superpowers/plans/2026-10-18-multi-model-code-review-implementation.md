@@ -1638,3 +1638,27 @@ exact scope. No full suite, new source fix, push, merge, Done or new allowance a
 ADR required:no newADR; evidence-only closeout underADR281/134/135/179.
 Exact receipts and independent review:
 Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh43-after-haiku-outcome/.
+
+
+### Bounded delivery recovery (2026-10-28)
+
+The user froze feature scope and prohibited another broad repair/requalification
+cycle. Delivery is isolated on current dev e3d07afa; the original worktree and
+raw history remain preserved. PR3286 is draft. The supplied result gate is
+adopted in the next private runner; real Haiku tool-result/accounting preflight
+must precede one final Console journey with native [2,1], presented originals
+and complete dispositions/mapping/unified output. Reuse unchanged evidence.
+New failures receive only a first-causal-boundary reproduction and narrow fix.
+
+Actual historical receipts total255 requests/18 children with zero remaining.
+One consolidated question proposes66 additional requests (preflight6, including
+at most one manual causal-fix retry; one final run60) and3 fresh children. It is
+pending, not a grant; do not revive any historical allowance or automatically
+rerun the full workflow. See the bounded delivery recovery QA summary for exact
+CI corrections, offline evidence and remaining acceptance boundary. AC24 remains
+unchecked, task In Progress; no merge is authorized.
+
+ADR required: yes (existing ADR281).
+ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md.
+Reason: the existing runtime/ownership contracts are preserved; these integration
+corrections introduce no new architecture.

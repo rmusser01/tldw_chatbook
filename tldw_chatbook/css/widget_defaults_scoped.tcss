@@ -2059,7 +2059,7 @@ ConsoleCodeReviewModal #code-review-dialog {
 }
 ConsoleCodeReviewModal #code-review-body { height: 1fr; }
 ConsoleCodeReviewModal #code-review-actions { height: auto; }
-ConsoleCodeReviewModal #code-review-actions Button { min-width: 6; width: 1fr; }
+ConsoleCodeReviewModal Button.code-review-action { min-width: 6; width: 1fr; }
 
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 

@@ -27,7 +27,9 @@ admission failures, descriptor/static warnings, a Minor precedence-fixture gap,
 and bounded recovery limits are not relabeled green. Current delivery integration passed97 focused tests and2 current-dev Stop/stall
 controls. The [integration report](integration-report.md) and
 [scoped integration review](integration-review.md) record exact boundaries; the
-review found no integration findings. Live qualification remains pending.
+review found no integration findings. Live qualification remains pending. The [bounded delivery recovery](delivery-recovery.md)
+records the subsequent narrow CI corrections and offline preparation; it adds no
+live success or spending authorization.
 
 ## Preservation and review footprint
 

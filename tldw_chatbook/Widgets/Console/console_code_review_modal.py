@@ -30,7 +30,7 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
     }
     #code-review-body { height: 1fr; }
     #code-review-actions { height: auto; }
-    #code-review-actions Button { min-width: $ds-control-action-min-width; width: 1fr; }
+    Button.code-review-action { min-width: $ds-control-action-min-width; width: 1fr; }
     """
 
     def __init__(self, *, service, review_id: str) -> None:
@@ -59,11 +59,11 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
             )
             yield TextArea(read_only=True, id="code-review-body", soft_wrap=True)
             with Horizontal(id="code-review-actions", classes="dialog-buttons"):
-                yield Button("Previous", id="code-review-previous", compact=True)
-                yield Button("Next", id="code-review-next", compact=True)
-                yield Button("Export", id="code-review-export", compact=True)
-                yield Button("Release", id="code-review-release", compact=True)
-                yield Button("Close", id="code-review-close", compact=True)
+                yield Button("Previous", id="code-review-previous", classes="code-review-action", compact=True)
+                yield Button("Next", id="code-review-next", classes="code-review-action", compact=True)
+                yield Button("Export", id="code-review-export", classes="code-review-action", compact=True)
+                yield Button("Release", id="code-review-release", classes="code-review-action", compact=True)
+                yield Button("Close", id="code-review-close", classes="code-review-action", compact=True)
 
     def on_mount(self) -> None:
         self.run_worker(self._load_options(), exclusive=True, group="review-reader")

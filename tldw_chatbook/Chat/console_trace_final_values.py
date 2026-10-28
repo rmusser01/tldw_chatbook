@@ -6,11 +6,13 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import cast
-from tldw_chatbook.Chat.console_trace_continuation import (
-    LiveNativeContinuationCustody,
-    LiveNativeContinuationWitness,
-)
+from typing import TYPE_CHECKING, cast
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_trace_continuation import (
+        LiveNativeContinuationCustody,
+        LiveNativeContinuationWitness,
+    )
+
 from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
@@ -443,6 +445,10 @@ class SurfaceDeltaAdmission:
         if not self.descriptors and self.predecessor_surface_head_id is None:
             raise ValueError("surface_delta_admission")
         if self.live_native is not None:
+            from tldw_chatbook.Chat.console_trace_continuation import (
+                LiveNativeContinuationWitness,
+            )
+
             witness = self.live_native
             if (
                 type(witness) is not LiveNativeContinuationWitness
@@ -507,6 +513,10 @@ class VerifiedSurfaceDelta:
         ):
             raise ValueError("surface_delta_identity")
         if self.live_native is not None:
+            from tldw_chatbook.Chat.console_trace_continuation import (
+                LiveNativeContinuationWitness,
+            )
+
             witness = self.live_native
             if (
                 type(witness) is not LiveNativeContinuationWitness

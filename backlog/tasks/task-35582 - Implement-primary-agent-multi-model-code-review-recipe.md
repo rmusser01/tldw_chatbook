@@ -101,5 +101,12 @@ Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md and its retenti
 manifest. Historical notes/receipts remain recoverable from the preserved source
 commit3bce87f15c; they are summarized here to keep the delivery review usable.
 
+PR https://github.com/rmusser01/tldw_chatbook/pull/3286 targets dev. Narrow CI
+corrections defer review imports without raising startup/style limits, serialize
+first-use owner/ledger attachment, and declare the new modal in the existing
+test inventory. The result gate and native tool-result/accounting preflight
+passed offline controls only. One consolidated spending question is pending;
+recovery spending is zero. See the linked delivery evidence for exact checks.
+
 No merge is authorized. Keep the PR draft and this task In Progress until the
 remaining live qualification and Definition of Done are actually met.
