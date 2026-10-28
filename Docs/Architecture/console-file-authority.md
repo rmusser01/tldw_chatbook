@@ -32,6 +32,17 @@ Per-**tab**, not per-conversation: each open Console tab gets its own opaque roo
 
 At run start, `capture_run_admitted_workspace_roots` freezes the run's authority as an immutable tuple of `RunAdmittedWorkspaceRoot` records — workspace id, binding id/alias, root path, locator fingerprint, root identity (name/dev/ino/mode), `allow_write`, and a guard closure that re-checks registry membership, locator, identity, and access on use. The Default/global workspace admits `()` — path tools are simply not advertised. With a project-instruction binding selected, that binding is the run's **only** admitted root. Frozen roots are revalidated at use: existing, non-symlink, non-drifted, identity-matching.
 
+### Native Windows root identity
+
+The workspace helper retains a no-follow directory handle and verifies its
+volume/file identity before and after selecting its current directory. On
+Python 3.12+, `workspace_root_pin._windows_open_directory` reads
+`GetFileInformationByHandleEx(FileIdInfo)` so its 64-bit volume serial and
+128-bit file identifier match `os.stat`/`os.lstat`. The older handle-information
+query remains for reparse attributes; its truncated volume/file fields are not
+used for identity. Missing native metadata still refuses the operation and
+closes the retained handle. See ADR-101 and TASK-37174.
+
 ### Read-only bindings
 
 `allow_write=False` (or no writable root) filters every mutating spec — `fs_write`, `fs_edit`, `fs_mkdir`, `fs_patch`, todo tools are not advertised at all ("read-only binding omits patching entirely").
