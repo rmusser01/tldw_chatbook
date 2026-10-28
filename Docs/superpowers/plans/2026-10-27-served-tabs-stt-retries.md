@@ -55,3 +55,9 @@ Files: STT/parakeet_onnx.py, executor.py, executor_worker.py and a small typed d
 - Open a PR against dev and obtain a fresh Superpowers review of the committed diff.
 - Resolve review feedback and wait for required CI, following the repository merge queue policy.
 - Confirm the merged commit is present on origin/dev.
+
+## CI startup-budget follow-up
+
+- Reproduced eager STT diagnostic loading in a fresh app-import subprocess, then deferred its three startup edges until failure handling. The same regression verifies diagnostic-free legacy envelopes stay lazy and typed failures survive pickling.
+- Added the diagnostic module to the existing first-paint absence guard; no budget or pinned snapshot changed (existing ADR-097, no new ADR required).
+- Focused checks: 38 passed; the Windows census measured 1032/1031 on both the patched branch and an isolated dev f9baac8706 archive, with windows_files resident and failure_diagnostics absent. Eight additional worker/parse/retry checks passed. Fresh independent review passed 35 checks with no findings. Linux CI remains the absolute-budget merge gate.

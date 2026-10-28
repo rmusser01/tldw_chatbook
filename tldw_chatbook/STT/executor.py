@@ -18,7 +18,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Utils.fd_protection import protect_file_descriptors
 from .contracts import (
@@ -33,7 +33,9 @@ from .executor_process_tree import (
     ProcessContainmentError,
     WorkerContainmentIdentity,
 )
-from .failure_diagnostics import STTFailureDiagnostic
+
+if TYPE_CHECKING:
+    from .failure_diagnostics import STTFailureDiagnostic
 
 _MAX_RECOVERY_ACTIONS = 8
 _MAX_RECOVERY_ACTION_LENGTH = 80
@@ -387,11 +389,11 @@ class ExecutorFailure:
             and type(self.failed_device) is not ExecutionDevice
         ):
             raise TypeError("failed_device must be an ExecutionDevice")
-        if (
-            self.diagnostic is not None
-            and type(self.diagnostic) is not STTFailureDiagnostic
-        ):
-            raise TypeError("diagnostic must be an STTFailureDiagnostic")
+        if self.diagnostic is not None:
+            from .failure_diagnostics import STTFailureDiagnostic
+
+            if type(self.diagnostic) is not STTFailureDiagnostic:
+                raise TypeError("diagnostic must be an STTFailureDiagnostic")
 
 
 class _AttemptTerminalGuard:
@@ -1138,7 +1140,6 @@ __all__ = [
     "LocalSourceSnapshot",
     "LocalSTTExecutor",
     "ModelIdentity",
-    "STTFailureDiagnostic",
     "WorkerPhase",
     "snapshot_local_source",
     "validate_local_source_snapshot",

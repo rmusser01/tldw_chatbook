@@ -256,9 +256,9 @@ def test_untrusted_exception_class_name_is_not_diagnostic_metadata(
 
 
 def test_diagnostic_protocol_rejects_arbitrary_text(tmp_path):
-    from tldw_chatbook.STT.executor import STTFailureDiagnostic
     from tldw_chatbook.STT.failure_diagnostics import (
         STTExceptionCategory,
+        STTFailureDiagnostic,
         STTFailureStage,
     )
 

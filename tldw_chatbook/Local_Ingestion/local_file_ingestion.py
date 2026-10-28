@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from loguru import logger
 
-from ..STT.failure_diagnostics import STTFailureDiagnostic
-
 if TYPE_CHECKING:
+    from ..STT.failure_diagnostics import STTFailureDiagnostic
     from ..Utils.egress import UrlProvenance
 
 # Per-format processing libraries (process_pdf/process_document/process_ebook/
@@ -242,13 +241,16 @@ class DirectLocalSTTIngestError(FileIngestionError):
         *,
         error_detail: dict[str, Any],
         failed_attempt: dict[str, Any],
-        diagnostic: STTFailureDiagnostic | None = None,
+        diagnostic: "STTFailureDiagnostic | None" = None,
     ) -> None:
         self.error_detail = error_detail
         self.stt_failure_provenance = failed_attempt
-        self.stt_diagnostic = (
-            diagnostic if type(diagnostic) is STTFailureDiagnostic else None
-        )
+        self.stt_diagnostic: "STTFailureDiagnostic | None" = None
+        if diagnostic is not None:
+            from ..STT.failure_diagnostics import STTFailureDiagnostic
+
+            if type(diagnostic) is STTFailureDiagnostic:
+                self.stt_diagnostic = diagnostic
         super().__init__(message)
 
 

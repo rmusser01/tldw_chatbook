@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-27 23:04'
-updated_date: '2026-10-27 23:49'
+updated_date: '2026-10-28 01:15'
 labels: []
 dependencies: []
 priority: high
@@ -36,6 +36,8 @@ Reason: correct per-page terminal ownership under shared device authentication w
 2. Retry: reproduce a successful transcript being rejected on a retry whose previous job lacks an STT failure attempt; omit incomplete STT lineage while retaining the Library job retry link, and preserve complete valid lineage.
 3. Diagnostics: add typed, finite failure-stage and exception-category attribution from Parakeet runtime through the worker failure to the parent log. Cover decoding, VAD/inference, normalization/provenance and model loading. No native exception text, source/paths, secrets, traceback, or model downloads in tests.
 4. Verify focused web/Canvas, STT executor/runtime/provenance, ingestion options/retry and diagnostic tests; run Ruff, format, census and diagnostic inventory checks. Ensure regression files are in required CI targets. Review all edits, finalize task notes and ACs. No full suite, push, PR or merge is included in this follow-up.
+
+CI follow-up: reproduce the UI-ready census breach and assert STT diagnostics stay off the app-import and first-paint paths; defer diagnostic-only imports at executor validation, parse failure construction and parent failure handling; re-run focused import/census and diagnostic regressions, obtain fresh review, then publish and re-arm. ADR required: no; existing ADR-097 governs deferral, with no budget or boundary changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -56,4 +58,6 @@ Scoped Ruff, changed-range formatting, whitespace, task uniqueness/readability, 
 Architecture docs, plan and the observed capacity/late-response lesson are updated. No full-suite sweep, model download, actual native ONNX inference, commit, push, PR or merge in this follow-up. A fresh user transcription attempt is needed to attribute the original Parakeet failure with the new diagnostics.
 
 Publication follow-up authorized by the user: commit these fixes and regression tests, open a PR against dev, rebase, perform a fresh Superpowers code review, and merge once CI is green. Fresh pre-commit regression verification passed all 86 affected checks. Current origin/dev remains 773cc9729cfbc9c13c14b56724fcb02efd3a54a3, the implementation base; merge queue mode is on. Full local suite remains outside the requested verification scope.
+
+PR #3282 CI follow-up: reproduced the app-import regression, then deferred STT diagnostics at the three startup import edges. Legacy envelopes and parse errors keep diagnostics unloaded; typed failure validation, pickling and parent attribution remain covered. Added an explicit first-paint absence guard without changing any budget or snapshot. Focused verification: 38 passed plus the Windows census at 1032/1031; an isolated origin/dev f9baac8706 archive measured the same 1032 with windows_files resident and diagnostics absent, establishing inherited platform behavior. Eight additional protocol/parse/retry cases passed; independent Superpowers review passed 35 diagnostic/import cases with no findings. Scoped Ruff, changed-range formatting and whitespace pass; diagnostic inventory has no drift (699 owners, 16 sinks). Rebased onto dev with exact original patch equivalence. ADR required: no; existing ADR-097 deferral policy applies. Linux PR CI must confirm the original 1032-to-1031 regression is resolved before merge.
 <!-- SECTION:NOTES:END -->

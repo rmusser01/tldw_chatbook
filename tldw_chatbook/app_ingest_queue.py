@@ -129,7 +129,6 @@ from tldw_chatbook.STT.executor import (
     ExecutorUnavailableError,
     LocalSTTExecutor,
     ModelIdentity,
-    STTFailureDiagnostic,
     WorkerPhase,
     snapshot_local_source,
 )
@@ -3164,6 +3163,8 @@ class LibraryIngestQueueMixin:
         if failure.code is TranscriptionFailureCode.CANCELLED:
             self.library_ingest_jobs.mark_cancelled(job_id, reason=message)
         else:
+            from tldw_chatbook.STT.failure_diagnostics import STTFailureDiagnostic
+
             # Worker log sinks are silenced; this parent owns the application
             # log. Preserve correlation and stage without native exception text
             # or caller-controlled paths/progress messages.

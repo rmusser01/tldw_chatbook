@@ -235,6 +235,48 @@ def _measure_app_import(tmp_path: Path) -> dict:
     return json.loads(last_line)
 
 
+def test_ingest_diagnostics_load_only_when_a_failure_has_diagnostics(tmp_path):
+    """App startup and legacy failures do not pay for provider diagnostics."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+import pickle
+import sys
+
+import tldw_chatbook.app
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import DirectLocalSTTIngestError
+from tldw_chatbook.STT.contracts import TranscriptionFailureCode
+from tldw_chatbook.STT.executor import ExecutorFailure
+
+module = "tldw_chatbook.STT.failure_diagnostics"
+assert module not in sys.modules, "app import eagerly loaded STT diagnostics"
+legacy = ExecutorFailure(1, "attempt-1", TranscriptionFailureCode.INFERENCE_FAILED)
+parse_error = DirectLocalSTTIngestError("failed", error_detail={}, failed_attempt={})
+assert legacy.diagnostic is None
+assert parse_error.stt_diagnostic is None
+assert module not in sys.modules, "legacy failure eagerly loaded STT diagnostics"
+
+from tldw_chatbook.STT.failure_diagnostics import (
+    STTExceptionCategory, STTFailureDiagnostic, STTFailureStage,
+)
+diagnostic = STTFailureDiagnostic(STTFailureStage.INFERENCE, STTExceptionCategory.RUNTIME_ERROR)
+failure = ExecutorFailure(
+    1, "attempt-2", TranscriptionFailureCode.INFERENCE_FAILED, diagnostic=diagnostic,
+)
+assert pickle.loads(pickle.dumps(failure)) == failure
+parse_error = DirectLocalSTTIngestError(
+    "failed", error_detail={}, failed_attempt={}, diagnostic=diagnostic,
+)
+assert parse_error.stt_diagnostic is diagnostic
+print("diagnostics deferred and failure transport preserved")
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip().splitlines()[-1] == (
+        "diagnostics deferred and failure transport preserved"
+    )
+
+
 def test_local_conversation_state_normalization_avoids_api_models(tmp_path):
     """Local row reads must not initialize unrelated API request models."""
     result = _run_isolated_python(
