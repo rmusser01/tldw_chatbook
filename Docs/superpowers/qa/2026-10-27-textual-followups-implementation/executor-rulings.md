@@ -209,3 +209,36 @@ Ruling: Accept unchanged functional behavior/whole-branch design outside the sec
 Ruling: Leave live App behavior, runner variance and order sensitivity to actual final-headCI rather than the second metadata review — cost if wrong: another capacity or ordering failure can appear; preserve it and fix the cause without raising limits or dropping tests.
 
 Ruling: Own final amended evidence hashes and hosted outcome after the second reviewer verifies source/census/model coverage — cost if wrong: a metadata amendment or publication could misattribute the reviewed work. Verify normalized manifest hashes against committed Git blobs and exact reviewed source identity, then every actual current-head workflow/review item before claiming delivery.
+
+
+Ruling: Create atomic TASK-37235 for the native publication observer, linked to completed34000.18 and ADR084/055, rather than changing correct product identity routing — cost if wrong: another original-CI trigger can remain; controlled native RED/GREEN, independent review and successor-headCI are required.
+
+Ruling: Accept the Media reviewer's original-CI interval boundary: its uninstrumented execution is inferred from a matching native witness — cost if wrong: attribution may be incomplete; preserve the actual failure and require the exact original node in finalCI.
+
+Ruling: Accept physical-terminal behavior and natural frequency outside the Media review — cost if wrong: another terminal-specific issue remains untested; no hardware, natural-frequency or product-latency claim is made from headless frames.
+
+Ruling: Keep hostedCI, shard capacity and TASK37236 root-owned outside Media review — cost if wrong: a valid observer can still fail in combined scheduling; every actual final-head shard and required aggregate must pass.
+
+Ruling: Reuse previously approved functional reviews outside the Media range with source identity — cost if wrong: new co-location can expose old interactions; combined final-headCI remains binding.
+
+Ruling: Supersede the earlier17-shard implementation choice with28serialshards/maxparallel17 under atomicTASK37236 after official full-phase replay and observed checkout289s — cost if wrong: eleven extra eligible jobs add setup and later-wave latency; per-workflow peak remains17UI/23application/24Perf, and existing20minute/180second limits remain.
+
+Ruling: Amend existing canonicalADR103 for eligible-versus-concurrent job counts instead of duplicating the required-gate policy — cost if wrong: future changes can confuse scheduling volume with peak demand; executable topology/count/mutation contracts pin both.
+
+Ruling: Use failed/cancelled logs only as timing observations and pad actual localMedia116.644s to120s in the official replay — cost if wrong: hosted variance can exceed the model; all68input hashes, zero unmeasured selectors, conservative310s setup and actual final-headCI remain required. No failed run or local timing is called hosted capacity proof.
+
+Ruling: Close implemented37235/37236 after their localAC/static/native evidence and independent reviews, keeping finalPR delivery separate — cost if wrong: an actual regression can require reopening a task; do not claim current-headCIgreen or finish the user goal until all required hosted checks and feedback are clear.
+
+Ruling: Preserve the earlier failed17-shard models and mixed diagnostic attempts as qualified evidence rather than rewriting them green — cost if wrong: historical evidence can be misread; explicit heads/outcomes and final actual source-qualified CI separate prediction from execution.
+
+Ruling: Accept unchanged Media/product behavior outside the capacity review using exact source identity and prior reviews — cost if wrong: composition can differ; final combined applicationCI must qualify it.
+
+Ruling: Accept historical failed layouts solely as timing inputs, outside any passing-coverage judgment — cost if wrong: partial data can understate work; worst-observed complete sources, explicit fallback/provenance and actual execution remain mandatory.
+
+Ruling: Keep account-wide concurrency across PRs, billing, queue latency and total duration outside the per-matrix ceiling claim — cost if wrong: additional eligible jobs can cost more or finish later; that trade-off is documented, with no global guarantee.
+
+Ruling: Leave liveApp behavior, natural runner variance and actual28-shard capacity to hosted execution — cost if wrong: a forecast can still miss; inspect and repair actual failures without dropping targets or raising limits.
+
+Ruling: Own final metadata hashes, task closure and publication after scoped capacity approval — cost if wrong: a clerical amendment can misattribute reviewed source; verify Git-normalized portable hashes and exact reviewed executable blobs, then all current-head workflows. No merge is authorized.
+
+Ruling: Integrate deve3d07afa65 before final publication, preserving all16incoming paths and exact reviewed code/census/workflow blobs — cost if wrong: nativeWindows driver selection can interact with App guards; verify incoming/source/lesson identity and run its targeted tests plus final combined hostedCI.

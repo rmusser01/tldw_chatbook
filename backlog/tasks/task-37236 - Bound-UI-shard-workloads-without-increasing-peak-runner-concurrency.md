@@ -1,7 +1,7 @@
 ---
 id: TASK-37236
 title: Bound UI shard workloads without increasing peak runner concurrency
-status: In Progress
+status: Done
 created_date: 2026-10-28 19:08
 labels:
 - ci
@@ -14,7 +14,7 @@ references:
 - backlog/tasks/task-35834 - UI-Fast-Lane-job-9-runs-within-a-minute-of-its-20-minute-cap-on-dev.md
 assignee:
 - '@codex'
-updated_date: 2026-10-28 19:38
+updated_date: 2026-10-28 19:52
 ---
 
 ## Description
@@ -29,7 +29,7 @@ Make the existing UI gate finish with its documented headroom despite observed c
 - [x] #2 The UI matrix has28serial shards with max-parallel17, preserving the prior23-test-runner peak (24withPerf); the20-minute job and180-second test limits remain.
 - [x] #3 Official all-phase/progress replay across retained CI runs plus observed checkout reserve and15percentvariance supports the layout under the existing1020-second target; projected new Media controls are explicitly budgeted until measured.
 - [x] #4 Executable CI contracts distinguish total eligible jobs from peak concurrency and reject missing/raised parallel limits, missing shards and inconsistent count statements.
-- [ ] #5 ADR-103, active count statements and the implementation plan document the measured capacity decision and why limited-prefix balancing was insufficient; targeted contracts and scoped Superpowers review pass.
+- [x] #5 ADR-103, active count statements and the implementation plan document the measured capacity decision and why limited-prefix balancing was insufficient; targeted contracts and scoped Superpowers review pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,6 +55,7 @@ Three prior17-shard layouts remain failed evidence. Actual012ca checkout took289
 TDD:8new policy/count tests fail against oldconfig (0errors/skips); new format checkpoint separately fails beforeitsheaderexists. First broad candidate197pass/1formatfail preserved. Corrected fullcheckpoint + current28CLI split + dispatch/count/queue/replay contracts:204passed0F/E/S97.65s; after AST-preserving style and measured-allowance reweighting,21final pins pass0F/E/S16.18s. New mutations reject missing/raised parallel limits and missing/duplicate shards. Topology pins distinguish total eligible jobs from peak concurrency at different ceilings. Allnewlintchecks pass; existing large-file formatter debt remains baseline-qualified. PureCI tests only, nofullsuite.
 
 Evidence: .test-tmp/textual-37031-37034/capacity-full-phase/final-proof.json and capacity37236-{red01,format-red01,green01,green02,final-pins01}/. TaskremainsInProgress/AC5open for root independentSuperpowersreview and finaldelivery. ExistingADR103 plus earlierTASK35834capacity work; TASK37235controls are budgeted aswhole-file additions, notduplicated selectors.
+Independent scoped Superpowers spec/code-quality review approved (96c8a33e to24602cd1), Critical0/Important0. The only Minor was ADR wording:1450.75seconds is the measured17-shard LPT result, not ideal; final metadata includes that correction. Reviewer independently reproduced exact1140selector conservation/order,68input hashes/all-phase costs,120s local-control allowance,28shard forecast1003.13597s and27lowerbound1027.70137s, actual204+21passingXML and fail-closed mutations. All5ACcomplete. Maxparallel17 is per workflow; no account-wide queue/billing/duration guarantee. Actual final-head combinedCI remains a separate mandatory root delivery gate; no hosted capacity pass inferred from forecast.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-37235
 title: Observe Library Media cues after native replacement rows publish
-status: In Progress
+status: Done
 created_date: 2026-10-28 18:55
 labels:
 - textual
@@ -15,7 +15,7 @@ references:
 - backlog/decisions/055-library-destructive-action-reversibility-rule.md
 assignee:
 - '@codex'
-updated_date: 2026-10-28 19:30
+updated_date: 2026-10-28 19:47
 ---
 
 ## Description
@@ -30,7 +30,7 @@ Keep the Library Media action journey deterministic when a saved Reader title la
 - [x] #2 A controlled native mount hold proves the publication condition cannot settle while replacement rows are absent and does settle after release, with normal guards and cleanup.
 - [x] #3 A published list with the selected cue deliberately removed remains a failing semantic control; the publication wait does not wait on or weaken the highlight assertion.
 - [x] #4 Targeted original and neighboring Media tests plus static checks pass; production source, native lifecycle, timeouts, profile guards and existing acceptance semantics remain unchanged.
-- [ ] #5 Existing TASK-34000.18 and ADR-084/055 are linked; actual RED/GREEN receipts and scoped Superpowers review are retained.
+- [x] #5 Existing TASK-34000.18 and ADR-084/055 are linked; actual RED/GREEN receipts and scoped Superpowers review are retained.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,6 +54,7 @@ Test-only repair for the native publication interval in completed TASK-34000.18.
 Authoritative RED03: both native held-mount controls fail the old Reader-only observer at the intended early-publication assertion,2failures0errors/skips. Earlier RED01/02 mixed diagnostic timeout/query errors remain disclosed and are not cleanRED. Final whole original file:12passed0failures/errors/skips,585.55s loaded localWindows session. Both native-hold and missing-cue arms execute; missing-cue uses real apply_reader_state and requires the unchanged semantic assertion to fail independently of readiness. Actual XML/hash/source snapshots and report are retained in .superpowers/sdd/2026-10-27-textual-37031-37034/ci-media-37235-report.md and .test-tmp/textual-37031-37034/media-37235-evidence/. SourceSHA66241205a4ef70430e4fb0feda973fde267febcdab939cebc0d162b7add33567. Ruff/diff checks pass; ten inherited formatter regions remain exact.
 
 Existing ADR-084/055 and TASK-34000.18 apply; no newADR. No demonstrated identity loss or live-terminal defect is claimed: the controlled native probe preserves canonical3 and last render-eligible cue through batched emptyDOM; attribution of the original uninstrumented CI execution is an inference. Implementation/self-review complete; task remains InProgress with AC5 awaiting root independent Superpowers review, final source/evidence recording and actual successor-headCI delivery.
+Independent scoped Superpowers spec/code-quality review approved (012ca47c to96c8a33e), Critical0/Important0/Minor0. Reviewer independently checked actual authoritative XML, all12 original assertions, RED/GREEN helper-only AST delta, final source hash, raw decoded frame hashes and all11 portable Media evidence files. All5AC complete; no production change. Actual current-head combined PR CI and delivery remain root-owned separate gates; no hosted pass or natural race frequency is inferred.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

@@ -344,7 +344,7 @@ new control measurement exceeds its allowance; no hosted pass is inferred.
 The additional eligible jobs can run in a later wave. This adds checkout/setup
 work and can lengthen the tail of a workflow, but it preserves instantaneous
 runner demand and avoids repeated whole-matrix retries or timeout increases.
-Keeping 17 shards, even with ideal whole-census balance, forecasts 1,450.75
+Keeping 17 shards with the measured LPT ordering forecasts 1,450.75
 seconds under the same reserve/variance basis; increasing the job timeout would
 hide the capacity problem. Raising simultaneous UI runners would increase
 account-wide queue pressure, so the concurrency ceiling stays 17.

@@ -62,8 +62,16 @@
       "sha256": "d8502b1011868bb91a9cdb7e21514c15f86b282e41b41e9335eb89b697d11f45"
     },
     {
+      "file": "ci-capacity-37236-review.md",
+      "sha256": "04e7d788f89535105013d09ab0be895470e4671ca00c380ba0615f4f3e238b20"
+    },
+    {
       "file": "ci-media-37235-report.md",
       "sha256": "5cdc35dd6e848db471ff10b4da3c65c569d53400744c26b24160bc74d8f93786"
+    },
+    {
+      "file": "ci-media-37235-review.md",
+      "sha256": "69b6915991493b4cad61c347f94e25a1504d80620bfc230f7732664262360762"
     },
     {
       "file": "ci-repair-37144-report.md",
@@ -103,7 +111,7 @@
     },
     {
       "file": "executor-rulings.md",
-      "sha256": "9b10fceaeb31b941140001dd1743ff95707a522f4d0eb6aa4466c74095fac2d1"
+      "sha256": "02ee4cccde07a9e473801390df11063c8fc65457dc2dad1ca4c31974f4b0a134"
     },
     {
       "file": "final-census-capacity-proof.json",
