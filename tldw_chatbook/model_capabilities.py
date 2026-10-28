@@ -268,6 +268,38 @@ def _anthropic_is_modern_request_family(model: object) -> bool:
     return _anthropic_family_matches(model, _ANTHROPIC_MODERN_REQUEST_FAMILIES)
 
 
+#: TASK-33620.2: the first major version of the tier-first Claude names
+#: (``claude-<tier>-<major>``) -- every one of them reads images. Verified
+#: 2026-10-27 against ``GET /v1/models`` (``capabilities.image_input``) for
+#: every Claude the API still serves, the shipped haiku-4-5 / opus-5 /
+#: fable-5 / sonnet-5 among them.
+_ANTHROPIC_VISION_MIN_MAJOR = 4
+
+
+def _anthropic_family_reads_images(provider: object, model: object) -> bool:
+    """Return whether an Anthropic-routed ``model`` is a Claude that reads images.
+
+    The capability tables are config data a user's config.toml replaces
+    outright: a file written before TASK-33620.2 carries an Anthropic pattern
+    list naming only claude-3 / opus-4 / sonnet-4, which hid haiku-4-5 (the
+    shipped Anthropic default), opus-5 and fable-5. This rule sits beneath
+    the user's own direct and pattern rows, so an explicit ``vision = false``
+    still wins, and above the unknown-model default.
+
+    Args:
+        provider: The provider name; only Anthropic itself qualifies, so a
+            local server's alias that happens to read ``claude-...`` does not.
+        model: The model identifier.
+
+    Returns:
+        True for ``claude-<tier>-<major>`` ids with major 4 or later.
+    """
+    if not isinstance(provider, str) or provider.strip().lower() != "anthropic":
+        return False
+    family = _anthropic_model_family(model)
+    return family is not None and family[1] >= _ANTHROPIC_VISION_MIN_MAJOR
+
+
 def anthropic_model_rejects_sampling_params(model: object) -> bool:
     """Return whether ``model`` rejects ``temperature``/``top_p``/``top_k``.
 
@@ -1083,6 +1115,12 @@ class ModelCapabilities:
                             f"Pattern matched for {provider}/{model}: {capabilities}"
                         )
                         break
+
+        # TASK-33620.2: Claude's tier-first families read images even when
+        # an older config.toml's pattern list (which replaces the shipped
+        # one) never names them.
+        if not capabilities and _anthropic_family_reads_images(provider, model):
+            capabilities = {"vision": True}
 
         # 3. TASK-26023: upstream models.dev gap-fill, BENEATH the hand-
         # maintained direct/pattern entries above (AC#2). Disabled by
