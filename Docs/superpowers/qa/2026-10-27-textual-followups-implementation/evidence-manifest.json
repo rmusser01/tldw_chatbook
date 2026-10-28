@@ -10,6 +10,18 @@
       "sha256": "513c61ec18faa79b1349eeb60aa89c628c56ee62828b207ceb39743765a12845"
     },
     {
+      "file": "capacity-48ef-proof.json",
+      "sha256": "e6817320b41635db683de968ffdfde71a30641b75aec0b3cef023f6f08c66ede"
+    },
+    {
+      "file": "capacity-48ef-review.md",
+      "sha256": "57e604953db9f6be2edaaeafc22e97ca919896cb20f718901fc4b758ad51395c"
+    },
+    {
+      "file": "capacity-48ef-source-collection-proof.json",
+      "sha256": "aa9150299b791adbd35fbc08957033186f487c0ae589bc0c627789bc50366d54"
+    },
+    {
       "file": "capacity-d48-proof.json",
       "sha256": "3e3c808fc7df7fe0cb88d6170b7d8b14c85acb7e32fc860d32af7c72ba72d7c4"
     },
@@ -71,7 +83,7 @@
     },
     {
       "file": "executor-rulings.md",
-      "sha256": "bd80e45bf531ffac9f0e737005c80e951e17a498312febca0ae889edede5b473"
+      "sha256": "9b10fceaeb31b941140001dd1743ff95707a522f4d0eb6aa4466c74095fac2d1"
     },
     {
       "file": "final-census-capacity-proof.json",
@@ -116,6 +128,10 @@
     {
       "file": "final-static-baseline-proof.json",
       "sha256": "964d9aeace64cb44e634491af5b2a0b7443ac8b6c4ff5d0ce44fb44db0663a10"
+    },
+    {
+      "file": "hosted-48ef-timeout-proof.json",
+      "sha256": "98f84bc3bda0898e837f0739cdde2a72ea1379af9b285a8c2dba454969de479d"
     },
     {
       "file": "hosted-860-ci-proof.json",

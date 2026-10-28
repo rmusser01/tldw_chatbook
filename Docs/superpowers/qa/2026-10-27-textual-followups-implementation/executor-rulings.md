@@ -197,3 +197,15 @@ Ruling: Accept whole-branch/task design outside this metadata review because its
 Ruling: Leave live App behavior, natural runner variance and co-location effects to actual successor-head CI rather than metadata inspection — cost if wrong: another shard can time out or expose order sensitivity; inspect every run and fix actual failures without raising limits.
 
 Ruling: Remove the key-shaped synthetic parameter from portable CI evidence after GitHub rejects unpublished97fb; independently evaluate the existing test fixture expression, preserve counts/log hashes and amend only the unpublished owned commit — cost if wrong: a receipt could lose exact textual identity. Explicit redaction qualification, retained private original/log digest, fresh manifest verification and exact source/census/checker blob comparison bound that loss; no key is disclosed and no push-protection bypass is used.
+
+
+Ruling: Correct the three48efcapacity timeouts using the worse inferred prefix estimate from both runs, a complete29-case advanced Settings split and four heavy/cheap whole-selection exchanges. Preserve all previous coverage and limits;1140entries/167tail, nine changed prefix positions — cost if wrong: natural runner variance or co-location can still exceed capacity. Keep both failed matrices and all measurements qualified, require175passing contracts, fresh scoped review and actual successor-headCI;1162.31seconds is a more conservative forecast, not a claimed improvement or pass.
+
+Ruling: Normalize only the verified long receipt-parameter pytest8/pytest9ID alias for timing/coverage comparison, while selecting its entire three-case function in the census — cost if wrong: a changed source parameter could be misattributed. Exact source Git blob identity,29case collection/value conservation, explicit alias recording and final hosted29case verification bound the mapping; no test IDs, source, checker grammar or limits are changed.
+
+
+Ruling: Accept unchanged functional behavior/whole-branch design outside the second capacity review using prior independent reviews and exact source blobs — cost if wrong: co-location can still expose an interaction; actual successor-head applicationCI remains required.
+
+Ruling: Leave live App behavior, runner variance and order sensitivity to actual final-headCI rather than the second metadata review — cost if wrong: another capacity or ordering failure can appear; preserve it and fix the cause without raising limits or dropping tests.
+
+Ruling: Own final amended evidence hashes and hosted outcome after the second reviewer verifies source/census/model coverage — cost if wrong: a metadata amendment or publication could misattribute the reviewed work. Verify normalized manifest hashes against committed Git blobs and exact reviewed source identity, then every actual current-head workflow/review item before claiming delivery.
