@@ -62,3 +62,5 @@ Related repair: ADR-252 records the typed preparation refusal contract. The shar
 - Final guard RED: a typed blocked preparation result whose error text was exactly `proceed` incorrectly dispatched. A fixed `ERROR:` prefix prevents refusal text from colliding with the guard allow verdict; the regression checks no acceptance, review, dispatch, or invented denial.
 
 Final verification: 67 integrated targeted tests passed (195.48s), followed by 10 final refusal/guard/hooked-recovery checks (17.60s). E9/F lint passed, seven source/test files passed formatting, existing service formatter differences match HEAD, whitespace checks passed, and the canonical generated worker matches source and imports with the standard library only. No full-repository suite was run.
+
+Post-rebase verification on current dev: 86 targeted tests passed (553.63s), including native/fenced reload recovery, typed preparation guards, skill gates, the upstream native root-pin controls, and isolated real folder-access/policy cases. Lint, changed-file formatting, generated-worker drift, task/ADR uniqueness, and patch whitespace checks pass. Fedora and live-model reproduction remain unconfirmed.

@@ -33,7 +33,7 @@ The reporting user was running Fedora Linux. These tool-discovery corrections ar
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: yes; ADR path: backlog/decisions/252-tool-availability-refusals-before-hook-preparation.md; existing: backlog/decisions/104-token-budgeted-agent-tool-disclosure.md, backlog/decisions/078-structured-agent-tool-outcome-provenance.md, backlog/decisions/154-agent-denial-streak-boundary.md; Reason: routine correction of model-facing diagnostics under existing disclosure and permission contracts. 1. Add failing service-level refusal and reload regressions. 2. Share the narrow availability check across ordinary and skill dispatch without widening authority. 3. Run targeted tests, lint, format, and self-review; update architecture and task notes.
+ADR required: yes; ADR path: backlog/decisions/252-tool-availability-refusals-before-hook-preparation.md; existing: backlog/decisions/104-token-budgeted-agent-tool-disclosure.md, backlog/decisions/078-structured-agent-tool-outcome-provenance.md, backlog/decisions/154-agent-denial-streak-boundary.md; Reason: typed preparation refusals extend the runtime callback contract while preserving existing disclosure and permission rules. 1. Add failing service-level refusal and reload regressions. 2. Share the narrow availability check across ordinary and skill dispatch without widening authority. 3. Run targeted tests, lint, format, and self-review; update architecture and task notes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -46,6 +46,7 @@ Validation: test-first RED for ordinary/native/fenced/replaced-schema and skill 
 Baseline qualification: the broader existing Windows hook/approval batch had the identical 19 failures and one teardown error on HEAD and on this patch (HEAD: 51 passed; patch: 56 passed including five new controls). An unchanged low-level command-hook test reports unsupported_platform; command hooks intentionally refuse Windows. These existing platform limitations were not bypassed. No full test sweep or live model was used. The reporting user's exact initial trigger remains unconfirmed without their run log.
 
 Files: Agents/agent_service.py, Agents/agent_runtime.py, focused Agent tests, the living agent-runtime architecture reference, design/plan, and ADR-252. ADR-252 records the additive typed preparation contract; ADR-104, ADR-078 and ADR-154 authority/disclosure rules remain in force. The Windows identity issue encountered during local validation is separate from the Fedora report and is already fixed on dev by commit 6fe22b80ba.
+Post-rebase verification on current dev: 86 targeted tests passed (553.63s), including native/fenced reload recovery, typed preparation guards, skill gates, the upstream native root-pin controls, and isolated real folder-access/policy cases. Lint, changed-file formatting, generated-worker drift, task/ADR uniqueness, and patch whitespace checks pass. Fedora and live-model reproduction remain unconfirmed.
 <!-- SECTION:NOTES:END -->
 
 Related repair: ADR-252 records the typed preparation refusal contract. The shared availability check also verifies catalog membership before promising reload recovery.

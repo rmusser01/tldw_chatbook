@@ -22175,3 +22175,28 @@ PR #3283 passed all 23 application test jobs, all 17 UI shards and Perf Guard, t
 PR3283's Media journey saw no highlighted rows after Edit Save even though the Reader had the edited title. A held native Canvas mount reproduced that exact boundary: loading was false and scopes matched, but DOM rows were empty inside Textual's batch; canonical selection/action identity stayed on item3 and the last render-eligible frame retained its cue. Releasing mount published the edited row and cue. The uninstrumented CI interval is inferred from this matching witness, not directly captured.
 
 Wait for the accepted replacement row objects and edited title before the separate semantic cue assertion. Do not treat settled service/controller flags as a DOM publication receipt, wait on the cue itself, or add an arbitrary pause. A cue-removed negative control must still fail after publication. Actual RED03/GREEN source/XML receipts and native hold evidence are retained in the Textual follow-up QA records.
+## Native Windows handle identity must match Python stat widths
+
+**TASK-37174, 2026-10-28.** While validating Console tool-disclosure recovery
+on an older checkout,
+an unchanged project folder failed the real worker test with a root-pin
+refusal. A new native handle/stat comparison showed the old Windows handle
+reader returned only a 32-bit volume serial while Python 3.12 returned its full
+64-bit value. The file identifier matched on the tested NTFS directory. Reading
+`FILE_ID_INFO` from the same retained no-follow handle fixed the comparison;
+root replacement/confinement tests and the actual Console folder listing passed.
+Keep the full 64-bit volume serial and 128-bit file identifier; do not weaken
+identity comparison or fall back to a path-based stat after retaining the handle.
+
+The first worker rerun still failed because the shared interpreter's `-I -m`
+child imported the original checkout through its editable install. Parent tests
+had imported the worktree from their current directory, hiding the mismatch.
+An isolated worktree runtime with its own trusted source path, and the existing
+dependencies' normal site bootstrap (including pywin32), then exercised the fixed
+worker and passed. Verify the child's package location, not only the parent's
+current directory, whenever a subprocess ignores ambient import paths.
+
+Before publishing this work, updating to current dev showed that commit
+`6fe22b80ba` had already fixed the same Windows identity mismatch. Retain the
+existing upstream implementation and tests instead of publishing a duplicate.
+The original report was from Fedora Linux; the Windows finding was separate.
