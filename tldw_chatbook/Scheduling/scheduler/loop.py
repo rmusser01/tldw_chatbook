@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from functools import wraps
 import threading
 import time
@@ -51,15 +51,56 @@ def _admitted_dispatch(method):
 
     @wraps(method)
     async def admitted(self, *args, **kwargs):
-        with (
-            self._maintenance_operation(),
-            execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-        ):
+        async with self._admitted() as allowed:
             if not allowed:
                 return False
             return await method(self, *args, **kwargs)
 
     return admitted
+
+
+class _OffLoopExecutionScope:
+    """One ``execution_scope`` whose entry and release both run on a worker.
+
+    TASK-33620.15.24: storage admission stats and resolves paths and reads
+    control records. Entered on the app's event loop, the 30-second tick's two
+    admissions held keyboard input for up to ~60 ms. The lease itself has no
+    thread affinity, so it is acquired and closed on worker threads and only
+    held across the awaited body. That is what this seam relies on: if a
+    storage lease ever gains thread affinity, this must change (guarded by
+    ``test_scope_lease_acquired_on_one_thread_closes_on_another``).
+
+    A release that overtakes an entry still in flight (its waiter was
+    cancelled) marks the scope released; the entry then closes the lease it
+    acquired itself, so a cancelled wait can never leak admission.
+    """
+
+    def __init__(self, owners: tuple[str, ...], path: Path | None) -> None:
+        self._owners = owners
+        self._path = path
+        self._lock = threading.Lock()
+        self._stack: ExitStack | None = None
+        self._released = False
+
+    def enter(self) -> bool:
+        """Acquire admission (worker thread); False for a refusal."""
+        stack = ExitStack()
+        # Looked up at call time: the module global is the seam tests replace.
+        allowed = stack.enter_context(execution_scope(self._owners, self._path))
+        with self._lock:
+            if not self._released:
+                self._stack = stack
+                return allowed
+        stack.close()
+        return False
+
+    def release(self) -> None:
+        """Close the acquired lease (worker thread). Idempotent."""
+        with self._lock:
+            self._released = True
+            stack, self._stack = self._stack, None
+        if stack is not None:
+            stack.close()
 
 
 @dataclass(frozen=True)
@@ -236,6 +277,24 @@ class SchedulerLoop:
             else:
                 del self._maintenance_tasks[task]
             self._maintenance_changed.set()
+
+    @asynccontextmanager
+    async def _admitted(self):
+        """Hold a maintenance operation and this loop's storage admission.
+
+        The maintenance fence is entered on the loop (no I/O), so a closed
+        fence still refuses at once. Admission is resolved and released
+        through :meth:`_offload` (TASK-33620.15.24): the body waits for it, so
+        nothing runs before admission resolves and a refusal still yields
+        False, while the event loop stays free. Both hops are owned by the
+        maintenance drain even when their awaiter is cancelled.
+        """
+        with self._maintenance_operation():
+            scope = _OffLoopExecutionScope(("db.scheduled_tasks",), self.db.db_path)
+            try:
+                yield await self._offload(scope.enter)
+            finally:
+                await self._offload(scope.release)
 
     def _maintenance_close_admission(self) -> None:
         """Fence new ticks/manual dispatch; admitted work finishes naturally."""
@@ -473,10 +532,7 @@ class SchedulerLoop:
                 if not self._maintenance_closed:
                     break
                 self._maintenance_open.clear()
-            with (
-                self._maintenance_operation(),
-                execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
-            ):
+            async with self._admitted() as allowed:
                 if not allowed:
                     return
                 await self._reload_queue()
@@ -504,14 +560,14 @@ class SchedulerLoop:
                 # handler was active and then put the loop to sleep for a full
                 # poll interval despite the still-pending serial.
                 reload_event.clear()
-                with (
-                    self._maintenance_operation(),
-                    execution_scope(
-                        ("db.scheduled_tasks",), self.db.db_path
-                    ) as allowed,
-                ):
+                async with self._admitted() as allowed:
                     if not allowed:
                         return
+                    if self._maintenance_closed or not self.running:
+                        # Admission resolves off the loop, so a pause or stop()
+                        # can land while it does. This tick had not begun:
+                        # skip it, and let the loop top hold or exit.
+                        continue
                     if (
                         self._tick_count > 0
                         and self._tick_count % self.queue_reload_interval_ticks == 0
@@ -653,9 +709,24 @@ class SchedulerLoop:
     async def _emergency_stopped(self) -> bool:
         """Whether the global emergency stop holds new dispatches (26004).
 
-        The stop-state read is blocking file I/O, so it runs off the event
-        loop (TASK-31507). Fail-safe is preserved: an offload failure reads
-        as stopped, holding work rather than proceeding on doubt.
+        The whole check runs off the event loop: the stop-state read is
+        blocking file I/O (TASK-31507), and resolving the default path is a
+        guarded config read that can enter storage admission
+        (TASK-33620.15.24; live, 98 ms on the loop in one tick). Fail-safe is
+        preserved: a refused lookup or a failed read reads as stopped,
+        holding work rather than proceeding on doubt.
+        """
+        try:
+            return await self._offload(self._read_emergency_stop)
+        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
+            return True
+
+    def _read_emergency_stop(self) -> bool:
+        """Resolve the stop path and read its state (worker thread).
+
+        The deferred import sits inside this guarded hop too, so a failure to
+        import the stop module also reads as stopped (it used to raise out of
+        the tick): the fail-safe direction, holding work on doubt.
         """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
         from tldw_chatbook.emergency_stop import (
@@ -663,16 +734,13 @@ class SchedulerLoop:
             is_emergency_stopped,
         )
 
-        try:
-            # Config can refuse this lookup when native backup intent arrives
-            # before local scheduler settlement. An unknown stop state holds
-            # dispatch just like an unreadable sentinel; the next tick retries.
-            path = getattr(self, "_emergency_stop_path", None) or (
-                default_emergency_stop_path()
-            )
-            return await self._offload(is_emergency_stopped, path)
-        except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
-            return True
+        # Config can refuse this lookup when native backup intent arrives
+        # before local scheduler settlement. An unknown stop state holds
+        # dispatch just like an unreadable sentinel; the next tick retries.
+        path = getattr(self, "_emergency_stop_path", None) or (
+            default_emergency_stop_path()
+        )
+        return is_emergency_stopped(path)
 
     async def _reconcile_and_prune_run_ledger(self) -> None:
         """Startup maintenance for the TASK-26026 run ledger. Never raises."""

@@ -20,6 +20,25 @@ when the criterion is a ceiling; keep a read on the loop only where its
 answer is needed before the callback returns (here, the Refresh press's
 acknowledgment), and say so.
 
+## A live driver that types straight after Enter gets every send refused: count provider requests first (TASK-33620.15.24, 2026-10-27)
+
+**Incident.** To land the 30-second scheduler tick on a Console send, the
+driver pressed Enter just before each predicted tick and then typed the next
+prompt at once. Two base launches (10 sends) produced zero provider requests:
+every turn ended `Console runtime turn ended with exception_type=RecoveryRequired`,
+the transcript stayed "No messages yet", and the composer kept the unsent text
+with the new typing appended. The tick numbers from those launches looked
+normal, so nothing on the probe side flagged that the windows held no send at
+all. Three single-launch controls on the same build separated the cause: a 3 s
+pause after Enter reached the provider 4/4, a 12 s pause between typing and
+Enter 3/3, typing straight after Enter 1/5. The earlier pf2 driver waited 9.5 s
+after each Enter and never hit it. Filed as TASK-33620.15.25.
+
+**What to do.** Before you read any timing from a send-driving round, count
+the provider requests (a probe `post` record, or the timing relay's log)
+against the Enters, and treat a mismatch as a broken round. Leave a pause after
+Enter unless typing during the send is what you are measuring.
+
 ## On a quiet host, 4 ms stack samples cannot rank the parts of a 20 ms callback: time the suspects (TASK-33620.15.8, 2026-10-23)
 
 **Incident.** TASK-33620.15.8 was filed from samples taken at load averages of
