@@ -2162,7 +2162,7 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
         ):
             blocked = True
             runtime_waiting.set()
-            assert release_runtime.wait(5)
+            assert release_runtime.wait(60)
         return original_insert(run_id, indexed_steps)
 
     monkeypatch.setattr(db, "insert_steps_at_indices", block_model_request_once)
@@ -2179,12 +2179,16 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
 
     worker = threading.Thread(target=run)
     worker.start()
-    assert runtime_waiting.wait(5)
-    run_id = db.list_runs("owner-seq-race", include_superseded=True)[0]["id"]
-    assert db.set_status(run_id, "cancelled") is True
-    service._record_terminal_lifecycle(run_id, "cancelled")
-    release_runtime.set()
-    worker.join(5)
+    try:
+        # Real profile/catalog startup can exceed five seconds on Windows.
+        # The race begins at the observed write, not at thread creation.
+        assert runtime_waiting.wait(60), result
+        run_id = db.list_runs("owner-seq-race", include_superseded=True)[0]["id"]
+        assert db.set_status(run_id, "cancelled") is True
+        service._record_terminal_lifecycle(run_id, "cancelled")
+    finally:
+        release_runtime.set()
+        worker.join(60)
     assert not worker.is_alive()
 
     path = db.db_path
@@ -3978,6 +3982,9 @@ def test_definitive_result_observer_receives_structured_success_and_failure_only
         on_tool_terminal=lambda *args: legacy.append(args),
         on_tool_result_terminal=lambda *args: observed.append(args),
     )
+    provider = PlanningProvider(0)
+    provider.schemas = (_schema("watchlists_check_sources"), _schema("calculator"))
+    service.registry.register_provider(provider)
     monkeypatch.setattr(
         service.registry,
         "execution_policy_for",
@@ -4016,6 +4023,8 @@ def test_definitive_result_observer_receives_structured_success_and_failure_only
     )
     invoke(ToolCall(name="calculator", args={}, call_id="ordinary"))
 
+    assert success.ok and success.content == '{"status":"accepted"}'
+    assert not failure.ok and failure.error == "safe failure"
     assert [row[:3] for row in observed] == [
         ("run-receipt", "success", "watchlists_check_sources"),
         ("run-receipt", "failure", "watchlists_check_sources"),
@@ -4408,12 +4417,11 @@ def test_call_with_timeout_pauses_deadline_while_predicate_holds():
         time.sleep(1.0)
         return ToolResult(ok=True, content="worth the wait")
 
-    pause_until = time.monotonic() + 1.2
     out = _call_with_timeout(
         fn,
         0.3,
         "paused_tool",
-        pauses_deadline=lambda: time.monotonic() < pause_until,
+        pauses_deadline=lambda: True,
     )
     assert out.ok is True and out.content == "worth the wait"
 

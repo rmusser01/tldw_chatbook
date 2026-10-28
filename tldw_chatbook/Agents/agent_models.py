@@ -926,6 +926,22 @@ class AgentDefinition:
     fallback_models: tuple[tuple[str, str], ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class FirstRequestSchemaPlan:
+    """Pure disclosure/runtime-schema plan for a primary first request."""
+
+    active_schemas: tuple[ToolSchema, ...]
+    runtime_schemas: tuple[ToolSchema, ...]
+    offer_find_load: bool
+    log_active: bool
+    system_prompt: str
+    agent_definitions: tuple[AgentDefinition, ...] | None = None
+    fleet_max_live: int | None = None
+    request_fits: bool = True
+    # Compact disclosure keeps this ceiling through all request additions.
+    schema_input_budget_tokens: int | None = None
+
+
 def validate_agent_definition(defn: AgentDefinition) -> list[str]:
     """Return validation errors for ``defn``; empty list means valid."""
     errors: list[str] = []

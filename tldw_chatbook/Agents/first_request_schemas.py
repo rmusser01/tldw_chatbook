@@ -13,6 +13,7 @@ from .agent_models import (
     LOAD_TOOLS_NAME,
     AgentConfig,
     AgentDefinition,
+    FirstRequestSchemaPlan,
     ToolSchema,
 )
 from .tool_catalog import (
@@ -33,22 +34,6 @@ from .tool_catalog import (
     build_find_tools_schema,
     build_spawn_schema,
 )
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class FirstRequestSchemaPlan:
-    """Pure disclosure/runtime-schema plan for a primary first request."""
-
-    active_schemas: tuple[ToolSchema, ...]
-    runtime_schemas: tuple[ToolSchema, ...]
-    offer_find_load: bool
-    log_active: bool
-    system_prompt: str
-    agent_definitions: tuple[AgentDefinition, ...] | None = None
-    fleet_max_live: int | None = None
-    request_fits: bool = True
-    # Compact disclosure keeps this ceiling through all request additions.
-    schema_input_budget_tokens: int | None = None
 
 
 def build_runtime_schema_plan(
