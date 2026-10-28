@@ -25,3 +25,15 @@ The first Linux job (40741825139) installed the targeted dependencies but exited
 does not install. No test ran and no JUnit artifact existed. Removed the
 unnecessary coverage-plugin flag instead of adding a dependency; coverage is not
 requested and addopts is explicitly empty. Actual Linux execution remains pending.
+
+Final Linux qualification: run 40742429112 on implementation head 5157f909ac,
+Ubuntu 24.04 / Python 3.12.15, passed all 142 tests in 59.68s. Retained JUnit
+independently reports 142 tests, zero failures/errors/skips (59.672s). This includes
+the full real command-execution and pipeline suites, Windows refusal simulation,
+native/fenced recovery, working-set replacement and skill gates. No Linux runtime
+repair was necessary. The only Linux-run failure was the corrected CLI setup flag;
+no tests ran in that failed attempt. ADR-163/spec and the living hook architecture
+now record the qualified Linux controls without claiming exact Fedora/live-model
+reproduction. Task/ADR uniqueness, formatting and diff whitespace checks pass;
+independent review found no actionable issue. The PR description carries the exact
+run and Windows counts. No full suite was run.

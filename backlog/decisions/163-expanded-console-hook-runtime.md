@@ -178,8 +178,15 @@ record and counters for explicit reconciliation. Darwin local process groups
 are qualified by controlled children; deliberately escaped descendants and
 Windows tree-terminal proof remain outside this qualification. R47 refuses
 Windows v2 commands with `unsupported_platform` before launch, root reservation
-or environment access; no execution/lifetime ticket leaks. Linux POSIX behavior
-remains unqualified until its own real controls run. Legacy hooks are unchanged.
+or environment access; no execution/lifetime ticket leaks. Linux POSIX qualification was initially deferred. Legacy hooks are unchanged.
+
+**Linux qualification, 2026-10-28 (TASK-37204):** Ubuntu 24.04 / Python 3.12.15
+ran the complete command-execution and tool-pipeline controls together with
+native/fenced schema recovery, working-set replacement and skill gates: 142
+passed, zero failures/errors/skips (59.68s). The [run and retained JUnit artifact](https://github.com/rmusser01/tldw_chatbook/actions/runs/40742429112)
+identify implementation head `5157f909ac`. This qualifies those controlled Linux
+paths, preserving the process-group/escaped-descendant limits above; it does not
+establish the reporting user's exact Fedora configuration or live-model behavior.
 
 Authority callback exceptions become fixed `authority_check_failed` outcomes at
 admission and final acceptance. Dependency metadata failures become

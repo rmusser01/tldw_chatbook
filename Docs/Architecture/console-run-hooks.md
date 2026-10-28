@@ -83,6 +83,11 @@ command/cleanup controls on Linux/Python 3.12, retaining JUnit evidence. This is
 Linux runtime qualification; it does not reproduce the reporter's exact Fedora
 configuration or establish the original run's undisclosed discovery history.
 
+The [2026-10-28 Linux run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40742429112) passed all 142 selected cases with zero skips,
+failures or errors on Ubuntu 24.04 / Python 3.12.15. Native Windows qualification
+passed 72 cases with 20 explicit POSIX-command skips and no failure or teardown
+error; Windows v2 commands remain refused. See TASK-37204 and ADR-163.
+
 ## Legacy dataflow
 
 1. `load_hooks_config` parses `[hooks]`; `ConsoleRuntime.ensure_run_hooks()` builds one engine (an unconfigured engine returns `None` and does not latch — configuring hooks later in the same app run works).
