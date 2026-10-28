@@ -1,0 +1,26 @@
+{
+  "collected": [
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_value",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_shown_negative_integer_can_be_backspaced_away",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_defaults",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_an_unset_streaming_fallback_can_be_pinned_on_and_reverted",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[saved-off]",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset]",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_default_after_an_option_stops_sending_a_choice_with_no_option",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_each_fallback_says_its_source_and_a_blank_says_what_it_sends",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[211x44]",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[235x52]",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_legacy_enable_streaming_is_still_read_and_shown",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_reverting_streaming_restores_the_saved_value_word_and_a_clean_draft",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_sampling_state_names_what_fits_and_counts_the_rest",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults",
+    "Tests/UI/test_settings_console_fallback_rows.py::test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosure"
+  ],
+  "equals_all19_qualified_split_selectors": true,
+  "tests_executed": 0,
+  "collection_exit_code": 0
+}

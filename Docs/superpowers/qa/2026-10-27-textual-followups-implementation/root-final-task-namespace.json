@@ -1,0 +1,70 @@
+{
+  "refs": 365,
+  "distinct_active_task_paths": [
+    "backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md",
+    "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md",
+    "backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md",
+    "backlog/tasks/task-37142 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md"
+  ],
+  "ref_matches": [
+    {
+      "ref": "refs/heads/codex/textual-book-followups-after-3251",
+      "path": "backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md"
+    },
+    {
+      "ref": "refs/heads/codex/textual-book-followups-after-3251",
+      "path": "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "ref": "refs/heads/codex/textual-book-followups-after-3251",
+      "path": "backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md"
+    },
+    {
+      "ref": "refs/heads/codex/textual-task-37031-37034",
+      "path": "backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md"
+    },
+    {
+      "ref": "refs/heads/codex/textual-task-37031-37034",
+      "path": "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "ref": "refs/heads/codex/textual-task-37031-37034",
+      "path": "backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md"
+    },
+    {
+      "ref": "refs/heads/codex/textual-task-37031-37034",
+      "path": "backlog/tasks/task-37142 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/textual-book-followups-after-3251",
+      "path": "backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/textual-book-followups-after-3251",
+      "path": "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/textual-book-followups-after-3251",
+      "path": "backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md"
+    }
+  ],
+  "worktree_matches": [
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "path": "backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md"
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "path": "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "path": "backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md"
+    },
+    {
+      "worktree": "C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "path": "backlog/tasks/task-37142 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md"
+    }
+  ],
+  "result": "Four current task IDs have no different-filename owners. Historical Evals37031 remains only in preserved original audit refs, explicitly renumbered37142 in this shipped slice."
+}

@@ -14,7 +14,7 @@ references:
 - Docs/superpowers/qa/2026-10-27-textual-book-after-pr3251.md
 assignee:
 - '@codex'
-updated_date: 2026-10-27 23:30
+updated_date: 2026-10-27 23:52
 ---
 
 ## Description
@@ -33,10 +33,10 @@ Evidence, source pins, book pages, controls and limitations: [post-merge Textual
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 When the active Speech view has no Playground target, the custom footer does not advertise its Generate, Random text, Clear, Play or Stop no-op actions; applicable mode and global hints remain available.
-- [ ] #2 Returning from Effects to Playground restores the applicable Playground hints and the existing working rail Clear action.
-- [ ] #3 Preserve printable input routing, current mode/global shortcuts and reserved-key conventions; computing action availability starts no audio, recording, playback or provider work.
-- [ ] #4 Mounted tests drive the actual Effects rail via Enter and the Playground return, assert rendered custom-footer text and actual action behavior, and include the ordinary Playground Clear control without audio services.
+- [x] #1 When the active Speech view has no Playground target, the custom footer does not advertise its Generate, Random text, Clear, Play or Stop no-op actions; applicable mode and global hints remain available.
+- [x] #2 Returning from Effects to Playground restores the applicable Playground hints and the existing working rail Clear action.
+- [x] #3 Preserve printable input routing, current mode/global shortcuts and reserved-key conventions; computing action availability starts no audio, recording, playback or provider work.
+- [x] #4 Mounted tests drive the actual Effects rail via Enter and the Playground return, assert rendered custom-footer text and actual action behavior, and include the ordinary Playground Clear control without audio services.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -55,4 +55,5 @@ Root-authorized same-AC recomposition follow-up: revoke retired STTSWindow owner
 Implemented target-backed Speech Playground mirror availability and custom footer registration in UI/Screens/stts_screen.py. The existing STTS_Window.py now emits one typed owner-tagged content-change notification after actual removal/replacement readiness; retired owners cannot restore stale hints. Screen recomposition revokes the old owner and clears cached/rendered hints before native removal, while a refused native swap restores only its still-attached owner. Existing save_state/current-view/axis semantics remain unchanged. Docs/Architecture/speech.md documents ownership. ADR required: no; direct existing backlog/decisions/011-chatbook-workbench-ui-system.md and backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md contracts, preserving backlog/decisions/150-design-token-system-and-design-language.md and backlog/decisions/161-component-pattern-library.md.
 Tests/UI/test_speech_footer_scope.py proves actual production-CSS rail Clear, Effects Enter, absent/restored custom-footer child text and native bindings, held return mount, printable input, held native screen recomposition and old-owner rejection. Both original behavior and recomposition gaps produced clean RED parent/private-child assertions. Final task4-final02 has 9 parent passes and 2 actual private-child passes, no errors/skips; all relevant old Speech behavior controls qualified across scoped runs. Exact native profile-guard chains justified supported bootstrap_profile opt-ins in four legacy modules. Native mount/Studio worker settlement preserves their substantive assertions and budgets. The stale snapshot expectation was corrected to fixture-consistent 4/5 plus explicit OmniVoice-missing inspector evidence; capability product files are unchanged.
 Fresh boot count 680/686 and preimport 558/558 modules, 424406/425347 LOC, maximum route 130690/135111 LOC pass unchanged limits. Focused Ruff passes; seven inherited E721 findings and two existing formatting debts are source-qualified. Broad unchanged MRO scanner reports five pre-existing sites; unchanged 8-second import-time guard fails with both candidate (15.1088s) and exact original Speech files (16.3614s), with native bytes restored in finally. Five prior Windows visual guard failures remain explicitly source-qualified with 87 unchanged inputs; no styles/tokens changed or allowances raised. Full evidence and raw/XML identities: .superpowers/sdd/2026-10-27-textual-37031-37034/task-4-report.md. Status remains In Progress for root review, integration, current-head CI and final AC closure.
+Independent Superpowers task review approved: spec compliant, zero Critical/Important findings; final 9 parent cases and 2 actual private children passed with zero errors/skips. Root is completing rebased combined verification, whole-branch review and current-head CI before final task closure. Existing lint/format/MRO/native timing qualifications remain explicit; no allowances changed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

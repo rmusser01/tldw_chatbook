@@ -1,0 +1,81 @@
+{
+  "note": "Portable evidence Markdown/JSON is LF-normalized; embedded native source/XML hashes retain their original meaning. Raw profiles/logs remain local. Task1 original review artifact was not retained; final whole-branch review independently covers its implementation.",
+  "files": [
+    {
+      "file": "computed-param-selector-proof.json",
+      "sha256": "0a0afd9111f61732e78d47983a3711f7f86398ae41f23769c868b8deb6f47aec"
+    },
+    {
+      "file": "executor-rulings.md",
+      "sha256": "8cd3f70527156b63097f091c2806a4cf4c4f876bbfd7088d621425c4907fb7c7"
+    },
+    {
+      "file": "final-census-capacity-proof.json",
+      "sha256": "7717a1ad73cfe40ee47eb73e4e981cb92477b7d4fe00810ed8ca991d014a29b3"
+    },
+    {
+      "file": "final-guard-ci-proof.json",
+      "sha256": "345db1b65830c01c33c81c2cd7acf862dab53aa7f68a28d2ba7be64a556c7b8e"
+    },
+    {
+      "file": "final-native-source-hashes.json",
+      "sha256": "2da24521435e1333a76dee2fc2a48c62aee814736b69cf3516257d838f00b019"
+    },
+    {
+      "file": "rebase-dev773-proof.json",
+      "sha256": "e4963a812656538ff2d402e374c0b33af29b7ddc65aa5c503c866fea21c7bc98"
+    },
+    {
+      "file": "root-final-new01-proof.json",
+      "sha256": "9ee7d188768af4fc17f76e16ba36e4fdb916529b060d5b4f839b6b76e58b6861"
+    },
+    {
+      "file": "root-final-task-namespace.json",
+      "sha256": "211e7fb2a5b486c58b4719a27f5102f3fe6d1cf79089ce75336f894ec5d94a6c"
+    },
+    {
+      "file": "root-settings-split-collection-proof.json",
+      "sha256": "b92d4b09e604488e593d43fc40beae90448fff1e777b95909b61385143b47f9c"
+    },
+    {
+      "file": "static-ruff-baseline-proof.json",
+      "sha256": "ac1d52fe789b162f369d441592f610e0949dc7c83c2eb5916ca1d3aab688cb6f"
+    },
+    {
+      "file": "static-summary.json",
+      "sha256": "6e89be62dcacb1f0c4ce2f046618c23b75392031a461f6d4849683a62141fd7d"
+    },
+    {
+      "file": "task-1-report.md",
+      "sha256": "cd9d359e071ab0339123b14579ba731764ecdda2a6248ca4620ea5e1750ac1f2"
+    },
+    {
+      "file": "task-2-report.md",
+      "sha256": "59aa9fd24dfda7d5439250753fcbc4302c6b076dbbed08e7ee6301322861d92e"
+    },
+    {
+      "file": "task-2-review.md",
+      "sha256": "5d83b90d0fa67f76da1551668bbe4a4c678782b703d22c6070be47fea9d4982b"
+    },
+    {
+      "file": "task-3-report.md",
+      "sha256": "998e2492e23e0c848305e999065cfd63f1e5df9f0e2ab2f1365526c1be3b1969"
+    },
+    {
+      "file": "task-3-rereview-r1.md",
+      "sha256": "77a51e8d011b42913ffffe10328698742c77701a322d0bad1bd0268030e032df"
+    },
+    {
+      "file": "task-3-review.md",
+      "sha256": "6293972a42678d4bde515edd57a6c583f2a2219028f0ee251805812377bf8eb3"
+    },
+    {
+      "file": "task-4-report.md",
+      "sha256": "5f05446c5ff0619b5fa91ae8764930137d3c16a86e1571f145467071b583854d"
+    },
+    {
+      "file": "task-4-review.md",
+      "sha256": "596e7363ffd8ca5e2a5ebd335daa8df041cce45035207492b7560ca06aa2ec81"
+    }
+  ]
+}
