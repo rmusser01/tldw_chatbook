@@ -174,6 +174,9 @@ aggregate storage limits before implementation planning.
     raw output separately; do not reconstruct a purportedly complete finding list
     from prose. One record is at most 8 KiB and one submission at most eight records,
     narrowed by actual tool/model capacity and aggregate quotas.
+    Rejected IDs remain outstanding until corrected under that same ID. Completion
+    refuses other outstanding rejections; bounded field/type feedback tells the
+    participant how to repair without exposing raw invalid input values.
 
 13. **Bound accumulated model input, not only transport pages.** The primary
     coordinates from the host finding index, not concatenated original reports.
@@ -188,6 +191,10 @@ aggregate storage limits before implementation planning.
     independent of primary-only run-log eviction, preserving live tool/continuation
     state. Irreducible protocol state produces a request-level gap rather than a
     falsely oversized claim. Reduction cannot erase progress; unfinished units stay unresolved.
+    Cached pages remain immutable, including their historical revisions. A bounded
+    verifier-only live checkpoint read supplies current revision/cursor and
+    distinguishes pending delivered units from completion of the whole unit map;
+    it reveals no original provenance and grants no new authority.
     Batching grants no extra child, call, time or token budget.
     Complete model-bound response envelopes also fit the smaller positive runtime
     result-character cap and the existing 16,000-character native ceiling, applied

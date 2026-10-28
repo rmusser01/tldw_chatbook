@@ -15,9 +15,13 @@ and cleanup were preserved. AC24 is unchecked; PR3286 stays draft.
 The approved grant used59 new generation requests and3 children, for cumulative
 314 requests/21 children. Seven financial requests are unused, but the permitted
 retry/final invocation and child scope are consumed; no live replay is authorized.
-The exact failure boundaries were reproduced offline. Eight module-size CI
-failures also reproduce; one composer-state CI failure passes locally. See the
-linked report and [independent assessment](bounded-final/outcome-review.md).
+The demonstrated R2/V1 boundaries are now repaired and verified offline, and all
+eight module-size guards pass locally without increased limits. See the
+[offline repair evidence](offline-repairs/report.md) for recovery, extraction,
+startup and baseline-failure results. No new live call or product child launch
+was made. The live result above and its [independent assessment](bounded-final/outcome-review.md)
+remain unchanged. The separate composer-state CI failure previously passed its
+exact local test and is not claimed fixed.
 
 The prior fresh43 run and earlier failures remain historical evidence in the
 retained reviews/archive. Their HTTP200 responses never established completion.
