@@ -1,5 +1,11 @@
 # Lessons: verifying against the real thing
 
+## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
+
+**Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
+
+**What to do.** Record terminal environment, actual output TTY status, OS dimensions, and settled widget regions separately. A native process alone does not establish a faithful terminal environment. Remove an automation-only dumb-terminal override in the probe; do not change application layout to compensate for it. When automation cannot target Terminal windows, user-operated resize gestures plus native traces still test the real driver; Pilot does not.
+
 ## On a loaded host, one blocking read left on the UI loop still costs 100+ ms: move it, do not just count it (TASK-33620.15.1.6, 2026-10-27)
 
 **Incident.** Each Console Environment refresh made two or three Change
