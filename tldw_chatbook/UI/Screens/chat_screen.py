@@ -1831,6 +1831,7 @@ class ChatScreen(BaseAppScreen):
         # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
         # of the Console vocabulary.
         Binding("y", "open_trajectory_view", "Trace", show=True),
+        Binding("u", "open_code_review_reports", "Review reports", show=True),
         Binding("alt+m", "open_console_model_popover", "Switch model", show=True),
         Binding("ctrl+o", "open_console_session_settings", "Chat settings", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
@@ -5329,6 +5330,27 @@ class ChatScreen(BaseAppScreen):
             group="console-character-switcher-handoff",
         )
         return True
+
+    def action_open_code_review_reports(self) -> None:
+        """Open retained review evidence for the current Console chat."""
+        from ...Agents.code_review_models import ReviewRefused
+        from ...Widgets.Console.console_code_review_modal import ConsoleCodeReviewModal
+
+        controller = self._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        if not session_id:
+            self.notify("No active conversation.", severity="warning")
+            return
+        try:
+            review_id, service = controller.code_review.report_service(session_id)
+        except ReviewRefused:
+            self.notify(
+                "No retained review reports in this session.", severity="warning"
+            )
+            return
+        self.app.push_screen(
+            ConsoleCodeReviewModal(service=service, review_id=review_id)
+        )
 
     def action_open_trajectory_view(self) -> None:
         """Open Trace for the active Console conversation (``y``)."""

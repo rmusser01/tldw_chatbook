@@ -64,3 +64,7 @@ global-exclude __pycache__
 # Bundled pixel-migu character resources.
 recursive-include tldw_chatbook/assets/characters/pixel_migu *.json *.png *.md
 recursive-include tldw_chatbook/assets/persona_visual/pixel_migu *.json *.png *.md
+
+# Fixed primary-agent review recipes (ADR-240).
+include tldw_chatbook/Agents/code_review_guides/review.md
+include tldw_chatbook/Agents/code_review_guides/verify.md

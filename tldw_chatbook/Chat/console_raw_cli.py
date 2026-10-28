@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 import math
 import threading
 import time
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ContextManager, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -602,6 +603,15 @@ class RawCliRuntime:
             self._clear_model_session_grants_locked()
             return revoked
 
+    def review_check_boundary_factory(self):
+        """Return an executor's enforcing boundary factory, absent on stock Raw CLI.
+
+        The factory must enforce aggregate bytes and file counts before any
+        materialization or execution, and own deletion/settlement receipts.
+        Output clipping and per-file limits do not qualify.
+        """
+        return getattr(self._executor_or_default(), "reserve_review_boundary", None)
+
     def execute(
         self,
         request: RawCliRequest,
@@ -609,6 +619,7 @@ class RawCliRuntime:
         *,
         on_registered: RawCliRegisteredSink | None = None,
         on_started: RawCliStartedSink | None = None,
+        admission_scope: Callable[[], ContextManager[None]] | None = None,
     ) -> RawCliResult:
         """Synchronously execute one request through the guarded admission seam."""
         request = _raw_cli_executor().validate_raw_cli_request(request)
@@ -653,19 +664,24 @@ class RawCliRuntime:
                     if not authority_allows_launch_locked():
                         return False
                 tree.admit()
-                with self._lock:
-                    # The second check and commit are the atomic launch boundary.
-                    if not authority_allows_launch_locked():
+                # Optional native owner fence encloses only commit/acceptance.
+                # Ordinary calls retain the existing admission path unchanged.
+                with (
+                    admission_scope() if admission_scope is not None else nullcontext()
+                ):
+                    with self._lock:
+                        # The second check and commit are the atomic launch boundary.
+                        if not authority_allows_launch_locked():
+                            return False
+                        started_at = commit_launch()
+                    if started_at is None:
                         return False
-                    started_at = commit_launch()
-                if started_at is None:
-                    return False
-                if on_started is not None:
-                    try:
-                        on_started(started_at)
-                    except Exception:
-                        pass
-                return True
+                    if on_started is not None:
+                        try:
+                            on_started(started_at)
+                        except Exception:
+                            pass
+                    return True
 
         try:
             if on_registered is not None:

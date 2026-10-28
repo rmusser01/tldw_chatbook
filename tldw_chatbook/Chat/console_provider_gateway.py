@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
 from tldw_chatbook.Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
+    adapter_api_base_url,
     effective_provider_endpoint,
     generic_endpoint_differs,
     meaningful_adapter_base_url,
@@ -3028,10 +3029,7 @@ def build_llamacpp_chat_payload(
 
 def _adapter_api_base_url(resolution: ConsoleProviderResolution) -> str | None:
     """The custom engine adds its route; legacy slots accept the full endpoint."""
-    base_url = resolution.base_url
-    if resolution.execution_key == "custom-hosted":
-        base_url = base_url.rstrip("/").removesuffix("/chat/completions")
-    return base_url or None
+    return adapter_api_base_url(resolution.execution_key, resolution.base_url)
 
 
 def _meaningful_adapter_base_url(
@@ -3648,6 +3646,17 @@ class ConsoleProviderGateway:
         if client is not None:
             await client.aclose()
 
+    @staticmethod
+    def expand_provider_continuation(
+        checkpoint: ProviderContinuationCheckpoint,
+    ) -> list[dict[str, Any]]:
+        """Project validated recovery state after the host's explicit Resume gate."""
+        from tldw_chatbook.Chat.provider_continuation import (
+            project_provider_continuation,
+        )
+
+        return project_provider_continuation(checkpoint)
+
     def prepare_chat_request(
         self,
         resolution: ConsoleProviderResolution,
@@ -3691,26 +3700,10 @@ class ConsoleProviderGateway:
         if thinking_sidecars and not thinking_owner_key:
             raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None and (
-            # Provider spellings must compare under ONE normalization: the
-            # target pins whatever the bridge recorded (for engine-driven
-            # keys like the custom-hosted swap, the hyphenated execution
-            # key), so both sides go through provider_config_key instead of
-            # normalizing only the resolution side. The resolution accepts
-            # EITHER its execution key or its identity spelling: a swapped
-            # custom-ep selection carries the raw ``custom-ep:<slug>``
-            # identity on ``provider`` while checkpoints and targets are
-            # pinned under the execution key, so an identity-only
-            # comparison matched nothing (ADR-179, Qodo follow-up), and an
-            # execution-only comparison would refuse the deliberately
-            # split doubles that exercise displayable thinking replay
-            # alongside continuation history (the two provider families
-            # are disjoint; production resolutions keep the spellings
-            # equal everywhere else).
-            provider_config_key(continuation_target.provider)
-            not in {
-                provider_config_key(resolution.execution_key or resolution.provider),
-                provider_config_key(resolution.provider),
-            }
+            continuation_target.provider
+            != (resolution.execution_key or resolution.provider)
+            or continuation_target.selected_provider
+            != (resolution.selected_provider or resolution.provider)
             or continuation_target.model != (resolution.model or "")
             or normalize_generic_endpoint_for_compare(continuation_target.api_base_url)
             != normalize_generic_endpoint_for_compare(resolution.base_url)
@@ -4331,8 +4324,32 @@ class ConsoleProviderGateway:
 
     async def resolve_context_window(self, settings: Any) -> ContextWindowResolution:
         """Refresh optional serving metadata without running a generation."""
+        if isinstance(settings, ConsoleProviderResolution):
+            from .console_context_window import ContextWindowTarget
+
+            if (
+                not settings.ready
+                or settings.resolved_destination is None
+                or settings.resolved_destination
+                != resolve_console_destination(settings)
+                or (
+                    settings.selected_provider
+                    and settings.selected_provider
+                    != settings.resolved_destination.provider
+                )
+            ):
+                raise ValueError("review_metadata_target_changed")
+            target = ContextWindowTarget(
+                settings.selected_provider or settings.provider,
+                settings.readiness_key or settings.provider,
+                settings.base_url,
+                settings.model or "",
+                settings.api_key,
+            )
+        else:
+            target = self._context_window_target(settings)
         return await self._get_context_windows().resolve(
-            self._context_window_target(settings), self._active_http_client()
+            target, self._active_http_client()
         )
 
     async def _resolve_reasoning_history(
@@ -7983,6 +8000,16 @@ def _maybe_record_usage(
     if signals is None:
         return
     usage = payload.get("usage")
+    if "usage" not in payload:
+        choices = payload.get("choices")
+        if (
+            isinstance(choices, list)
+            and len(choices) == 1
+            and isinstance(choices[0], Mapping)
+            and isinstance(choices[0].get("finish_reason"), str)
+            and choices[0]["finish_reason"]
+        ):
+            usage = choices[0].get("usage")
     if isinstance(usage, Mapping) and usage:
         signals.record_usage_payload(usage)
 

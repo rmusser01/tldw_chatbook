@@ -174,3 +174,15 @@ def test_openai_predicates_survive_a_user_configured_capability_table():
     )
     assert openai_model_rejects_sampling_params("gpt-5") is True
     assert openai_model_requires_max_completion_tokens("gpt-5") is True
+
+
+@pytest.mark.parametrize("model", ["gpt-6-luna", "GPT-6-LUNA", " openai/GPT-6-LUNA "])
+def test_openai_luna_token_cap_does_not_infer_sampling_rejection(model):
+    assert openai_model_requires_max_completion_tokens(model) is True
+    assert openai_model_rejects_sampling_params(model) is False
+
+
+@pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6.1-luna", "gpt-6-lunatic"])
+def test_openai_luna_cap_does_not_infer_other_gpt_6_models(model):
+    assert openai_model_requires_max_completion_tokens(model) is False
+    assert openai_model_rejects_sampling_params(model) is False

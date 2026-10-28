@@ -634,3 +634,159 @@ async def test_local_stream_rechecks_after_client_acquisition(db, monkeypatch):
         assert dispatched == []
     finally:
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("usage_location", ["choice", "event", "nonstream"])
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"prompt_tokens": 7, "completion_tokens": 3},
+        None,
+        {"prompt_tokens": 7},
+        {"prompt_tokens": -1, "completion_tokens": 3},
+        {"prompt_tokens": 7, "completion_tokens": True},
+    ],
+)
+async def test_custom_hosted_native_usage_settles_automatic_call(
+    db, monkeypatch, usage_location, usage
+):
+    """Validated terminal usage must reach the call ledger in either wire shape."""
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+    from tldw_chatbook.LLM_Calls.hosted_chat import SSERecord
+
+    streaming = usage_location != "nonstream"
+    complete = usage == {"prompt_tokens": 7, "completion_tokens": 3}
+    dispatched = []
+
+    def transport(**kwargs):
+        dispatched.append(kwargs["payload"])
+        if not streaming:
+            return {
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "finished"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": usage,
+            }
+        terminal = {
+            "index": 0,
+            "delta": {"content": "finished"},
+            "finish_reason": "stop",
+        }
+        events = [{"choices": [terminal]}]
+        if usage_location == "choice" and usage is not None:
+            terminal["usage"] = usage
+        elif usage is not None and kwargs["payload"].get("stream_options") == {
+            "include_usage": True
+        }:
+            events.append({"choices": [], "usage": usage})
+        return iter(
+            [
+                *[SSERecord(event=None, data=json.dumps(event)) for event in events],
+                SSERecord(event=None, data="[DONE]"),
+            ]
+        )
+
+    monkeypatch.setattr(hosted_provider_engine, "owned_json_post", transport)
+    monkeypatch.setattr(
+        hosted_provider_engine,
+        "resolve_hosted_request",
+        lambda record, **kwargs: hosted_provider_engine.HostedProviderResolution(
+            provider="custom-hosted",
+            model="test-model",
+            api_key="",
+            base_url="https://custom.invalid/v1",
+            timeout=90,
+            retries=0,
+            retry_delay=0,
+            streaming=streaming,
+        ),
+    )
+    context = context_for(db, model_calls=2, output_tokens=11)
+    selected = resolution(
+        provider="custom-ep:test",
+        execution_key="custom-hosted",
+        base_url="https://custom.invalid/v1",
+        model="test-model",
+        streaming=streaming,
+    )
+    signals = ConsoleProviderStreamSignals().new_usage_call()
+    gateway = ConsoleProviderGateway()
+    try:
+        with context.scope():
+            assert await collect(gateway, selected, signals=signals) == ["finished"]
+            if complete:
+                context.check()
+            else:
+                with pytest.raises(AutomaticWorkRefused, match="usage_unknown"):
+                    context.check()
+        assert len(dispatched) == 1
+        if streaming:
+            assert dispatched[0]["stream_options"] == {"include_usage": True}
+        else:
+            assert "stream_options" not in dispatched[0]
+        assert signals.usage_snapshot() == usage
+        snapshot = db.automatic_work.snapshot(context.chain_id)
+        assert snapshot.used["model_call"] == 1
+        if complete:
+            assert snapshot.used["tokens"] == 10
+            assert snapshot.reserved["tokens"] == 0
+        else:
+            assert snapshot.reserved["tokens"] > 11
+            assert snapshot.status == "review_required"
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.parametrize(
+    "top_usage, expected",
+    [
+        (None, None),
+        ({}, None),
+        ({"prompt_tokens": 7}, {"prompt_tokens": 7}),
+        ("invalid", None),
+    ],
+)
+def test_terminal_choice_usage_never_replaces_present_top_level_usage(
+    top_usage, expected
+):
+    payload = {
+        "choices": [
+            {
+                "delta": {"content": "finished"},
+                "finish_reason": "stop",
+                "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+            }
+        ],
+        "usage": top_usage,
+    }
+    original = json.dumps(payload)
+    signals = ConsoleProviderStreamSignals().new_usage_call()
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(payload, signals=signals)
+    ) == ["finished"]
+    assert signals.usage_snapshot() == expected
+    assert json.dumps(payload) == original
+
+
+@pytest.mark.parametrize(
+    "finish_reason, choices_count",
+    [(None, 1), ("", 1), (False, 1), (1, 1), ("stop", 2)],
+)
+def test_choice_usage_requires_one_terminal_choice(finish_reason, choices_count):
+    choice = {
+        "delta": {"content": "finished"},
+        "usage": {"prompt_tokens": 7, "completion_tokens": 3},
+    }
+    choice["finish_reason"] = finish_reason
+    signals = ConsoleProviderStreamSignals().new_usage_call()
+    assert list(
+        ConsoleProviderGateway.normalize_provider_response(
+            {"choices": [choice] * choices_count}, signals=signals
+        )
+    ) == ["finished"]
+    assert signals.usage_snapshot() is None

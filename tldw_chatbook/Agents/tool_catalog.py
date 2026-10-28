@@ -113,6 +113,11 @@ CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+CODE_REVIEW_RESERVED_TOOL_NAMES = frozenset(
+    "code_review_" + name for name in ("guide", "prepare", "read", "submit", "release")
+)
+
+
 class ToolExecutionPolicy(StrEnum):
     """How the agent runtime may stop waiting after a tool starts."""
 
@@ -150,6 +155,48 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
         "required": ["task"],
     },
 )
+
+
+def review_spawn_schema(schema: ToolSchema) -> ToolSchema:
+    """Add the mutually exclusive host-prepared slot form to ordinary spawn."""
+    parameters = dict(schema.parameters)
+    properties = dict(parameters["properties"])
+    properties.update(
+        review_id={"type": "string", "minLength": 1},
+        review_slot_id={"type": "string", "minLength": 1},
+    )
+    parameters.pop("required", None)
+    parameters.update(
+        properties=properties,
+        oneOf=[
+            {
+                "required": ["task"],
+                "not": {
+                    "anyOf": [
+                        {"required": ["review_id"]},
+                        {"required": ["review_slot_id"]},
+                    ]
+                },
+            },
+            {
+                "required": ["review_id", "review_slot_id"],
+                "not": {
+                    "anyOf": [
+                        {"required": [name]}
+                        for name in properties
+                        if name not in {"review_id", "review_slot_id"}
+                    ]
+                },
+            },
+        ],
+    )
+    return _dataclass_replace(
+        schema,
+        parameters=parameters,
+        description=schema.description
+        + " For an admitted review slot, supply only review_id and review_slot_id; "
+        "do not combine them with task, agent, provider, model or isolation.",
+    )
 
 
 def build_spawn_schema(
@@ -1867,6 +1914,17 @@ class ToolCatalogRegistry:
         # registry was composed and its policy armed, and BEFORE dispatch.
         # Clearing there would disarm every run's caps.
         self._run_tool_policy: RunToolPolicy | None = None
+        self._review_service = None
+
+    def for_review_child(self, service) -> ToolCatalogRegistry:
+        """Give one authenticated child a private, closed review catalog."""
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        registry = ToolCatalogRegistry(ephemeral=self._ephemeral)
+        registry.set_run_tool_policy(self._run_tool_policy)
+        registry.register_provider(CodeReviewToolProvider(service))
+        registry._review_service = service
+        return registry
 
     def set_run_tool_policy(self, policy: RunToolPolicy | None) -> None:
         """Arm (or clear) this registry's per-run persona-policy call caps.
@@ -2093,6 +2151,24 @@ class ToolCatalogRegistry:
         ranked.sort(key=lambda item: item[:4])
         return [item[4] for item in ranked[: max(int(limit), 0)]]
 
+    def _authenticated_review_provider(self, provider) -> bool:
+        from .code_review_service import CodeReviewService, ReviewStageIssuer
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        if self._ephemeral or type(provider) is not CodeReviewToolProvider:
+            return False
+        service = provider.service
+        if (
+            type(service) is not CodeReviewService
+            or type(service.issuer) is not ReviewStageIssuer
+        ):
+            return False
+        try:
+            service.validate_authority()
+            return service.enabled
+        except ValueError:
+            return False
+
     def _build_owner_cache(
         self,
     ) -> _CatalogSnapshot:
@@ -2101,6 +2177,11 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    entry.name in CODE_REVIEW_RESERVED_TOOL_NAMES
+                    and not self._authenticated_review_provider(provider)
+                ):
+                    continue
                 if (
                     entry.name in CANVAS_RESERVED_TOOL_NAMES
                     and not self._authenticated_canvas_name(provider, entry.name)
@@ -2306,6 +2387,26 @@ class ToolCatalogRegistry:
             )
         return repaired
 
+    def authorize_review_source(
+        self, name, args, *, allowed_names, expected_binding_id
+    ):
+        """Use the composed local owner and the same per-run policy counters."""
+        from .local_tool_provider import LocalToolProvider
+
+        if name not in allowed_names:
+            return "source_permission_denied"
+        with self._catalog_lock:
+            record = self._owner_record_for_name(name)
+        if record is None or not isinstance(record.provider, LocalToolProvider):
+            return "source_permission_unavailable"
+        if self._run_tool_policy is not None:
+            allowed, _ = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return "source_policy_call_cap_reached"
+        return record.provider.authorize_review_source(
+            name, args, expected_binding_id=expected_binding_id
+        )
+
     def invoke_by_name(
         self,
         name: str,
@@ -2313,6 +2414,11 @@ class ToolCatalogRegistry:
         *,
         expected_definition: ToolDefinitionSnapshot | None = None,
     ) -> ToolResult:
+        if self._review_service is not None and name not in {
+            "code_review_read",
+            "code_review_submit",
+        }:
+            return ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
         with self._catalog_lock:
             if expected_definition is not None:
                 try:
@@ -2326,6 +2432,11 @@ class ToolCatalogRegistry:
                 ok=False, error=f"Unknown tool: {name}", dispatch_state="not_started"
             )
         tool_id, provider = record.tool_id, record.provider
+        if (
+            name in CODE_REVIEW_RESERVED_TOOL_NAMES
+            and not self._authenticated_review_provider(provider)
+        ):
+            return ToolResult.blocked("Review authority is unavailable.")
         if name in CANVAS_RESERVED_TOOL_NAMES:
             if not self._authenticated_canvas_name(provider, name):
                 from .canvas_tool_provider import CanvasToolProvider

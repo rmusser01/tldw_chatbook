@@ -115,6 +115,7 @@ $ds-space-inset: $ds-space-1;
 
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
+$ds-control-action-min-width: 6;
 
 $ds-textarea-min-height: 5;
 

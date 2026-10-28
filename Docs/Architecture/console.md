@@ -128,6 +128,18 @@ Four separately-owned concepts: the model context window (server/model data with
 
 Interrupted turns persist a `ProviderContinuationCheckpoint`; the resume path validates the target/settings and stamps visible warnings, offering retry or discard. `ConsoleDispatchRecoveryState` plus the recovery region present retry/discard from the durable `ConsoleDispatchCheckpoint`. The 0.2 s transcript sync timer plus a 1 s "survivor tick" keep sub-agent activity visible after the primary turn settles.
 
+Native handoff freezes two identities before admission (`console_library_destination.resolve_console_destination`): the exact selected provider and the canonical execution provider/protocol/full credential-free API base. The latter tuple lives in destination JSON V2 inside the existing dispatch column; the display origin stays origin-only. Ephemeral session-only bases never enter that tuple. `ConsoleTurnContext` copies it, and dispatch retry compares the entire destination. The 2048-byte destination limit is unchanged.
+
+The bridge binds each provider candidate to its actual resolution as continuation JSON V3 before the runtime retains it. A child uses its own effective resolution. Store and repository validate the run target and accepted destination before signing or atomic handoff/CAS; after dispatch deletion the private assistant checkpoint retains the exact selection. Complete private history and explicit Resume therefore reject a different custom slug even at the same URL/model. V1/V2 bytes remain readable; legacy unbound virtual destinations cannot prove the original selection and refuse host recovery. Direct built-in legacy recovery remains supported (ADRs 063, 147, 179).
+
+`AgentService._make_call_model` attaches the full live continuation once, at its newest exact native batch in a copied send payload. Earlier uniquely matching batches for that same owner lose only their redundant marker. Assistant/tool rows, call IDs, argument strings, results, steering order, other owners and original runtime history remain intact; malformed, duplicate or foreign markers are not normalized away. The strict request-owner guard, private token accounting and verifier protection of all checkpoint call IDs remain unchanged.
+
+Capture On uses `LiveNativeContinuationCustody` only for the current host invocation. After projected persistence succeeds, the optional runtime acknowledgment binds the exact runtime checkpoint and each capped model result to the store's projected, optionally sealed checkpoint. The current generation, active path, message version and checkpoint are checked under the generation scope and again in the trace transaction. The issued surface retains one current raw reference with diagnostic representations suppressed; cold trace bytes cannot recreate that authority.
+
+For a later native batch, `console_trace_service` proves the unchanged raw prefix, exact new call/result suffix, other continuation groups and frozen policy. It atomically replaces one continuation node and appends the new messages. `console_trace_continuation` stores a `native-continuation-round-v1` artifact containing only the new projected round and bounded metadata; the existing replacement edge identifies its predecessor. Both durable comparisons and the native reader resolve that node-aware chain with checkpoint limits. The ordinary full base stays readable. This makes new trace artifact and metadata storage linear in unique captured rounds; current assistant checkpoints and reconstruction CPU retain their existing costs. Fork/GC reachability follows the existing edges. Final-owner sweeping uses an operation-owned savepoint and temporary FK deferral for the segment/event cycle, checks every FK before release and restores the caller's mode on success or rollback (ADR097).
+
+Explicit Resume projects only assistant text, exact native calls and existing results through `ConsoleProviderGateway.expand_provider_continuation`. After existing target, runtime and permission checks, `begin_generation_attempt` rechecks the active checkpoint and persisted owner version under the generation scope before resetting live attempt bookkeeping; it preserves partial text, private bytes and durable versions. Executing, foreign or stale owners refuse. It does not retry or activate automatically. A final-only response without prior native state still follows ordinary text settlement.
+
 The recovery subtree in `UI/Console_Modules/provider_continuation_recovery.py` defers `ProviderContinuationTranscriptRegion.sync_recovery()` until mounted. Its `on_mount` queues a fresh builder read after Textual sets `is_mounted`, so a partial-mount poll cannot query pending action buttons or leave an old recovery state behind.
 
 ## Config keys (`[console]`, parsed in `config.py`)
@@ -182,3 +194,74 @@ Rule phase events refresh the visible run chip directly from current in-memory s
 Disable, Exclude and Delete first revoke affected assessment authority under a short current-user-scope fence, even if later persistence fails. That fence is released before writer admission. The mutation then rechecks the user scope and binding CAS, and invalidates again to fence work started during the wait. Rule writes acquire SQLite writer admission before the store/currentness mutation locks, recheck source and binding CAS after admission, and retain the short fences through commit or rollback. Temporary publication follows successful settlement; transcript adoption still uses its caller-owned transaction and completion observer. Waiting for another SQLite writer therefore cannot hold the synchronous Stop/source-revocation locks.
 
 Recovery-card synchronization runs before the transcript message-token gate: pre-send holds and continuation changes must remain visible even when message projection is unchanged. The expensive message pipeline retains its existing gate.
+
+
+### Native multi-model review (ADR281)
+
+`console_code_review.py::ConsoleCodeReviewCoordinator` binds accepted USER intent,
+narrows exact request grants, owns retained-review offers and binds actual later
+primary actors. `_run_agent_reply` composes its authenticated provider only from
+native acceptance or an accepted `AgentWakeAuthorization.review_boundary`.
+Native accepted requests include “do multi-model code review” and “Can you review
+my changes?”. A leading `$multi-model-review` alias consumes only original USER
+arguments after the real skill substitution owner admitted its trusted binding;
+expanded skill/source text cannot grant stages. Qualified verification still needs
+later explicit native acceptance.
+Local source reads reuse the composed permission owner; selected destinations reuse
+project-instruction dispatch confirmation. Settlement hands an off-loop, bounded
+original page to a mounted `ConsoleCodeReviewModal` for the exact active session;
+only successful display acknowledges presentation before an authorized verifier.
+The transcript carries a body-free session reference. Reusing the reader for R2
+updates both selector and body and fences older reads with a generation counter.
+`ConsoleFleetWakeCoordinator.on_review_boundary` preserves ordinary-spawn counts,
+finite chain allowance, manual priority and stop/close fencing.
+
+Only an exact accepted review boundary gets `_resolve_accepted_review_capacity`
+before capacity/schema freeze. It rechecks the accepted attempt, retained grant,
+source, session, destination and priority before and after bounded metadata work;
+no source lease or publication lock spans the metadata await. The gateway projects
+that immutable resolution into the existing context cache target, without reading
+mutable selection settings. Unverified capacity refuses the accepted continuation
+without replay or refund. The normal first-request planner must still disclose or
+permit discovery of review reading/guidance and retain `spawn_subagent`; otherwise
+it pauses with `review_stage_tools_unreachable`. Ordinary sends and other wake
+kinds retain nonblocking metadata and the conservative bootstrap fallback.
+
+Completed engine history is serialized by `console_prepared_request` from the
+admitted saved owner/checkpoint through `project_provider_continuation`: recorded
+assistant/tool rows followed by the exact saved final assistant once. Runtime's
+already-expanded canonical rows normalize back to that single semantic owner
+before counting and whole-unit eviction. Persisted review-tool records retain
+`CodeReviewToolProvider`'s body-free projection; replay never restores ephemeral
+raw arguments. Selected historical groups coexist with the live group only in
+the primary; child histories do not inherit the primary sidecar.
+
+Captured eligible MANUAL/QUEUED turns derive replay provenance from the exact
+saved revision plus continuation attachment. `ConsoleTraceService` recomputes
+canonical rows and checks terminal response lineage, frozen policy and bounded
+old span before the existing compound replacement. Old trace checkpoint rows
+compare through the frozen credential/PII disclosure projection; provider rows
+remain canonical. A first new host-custodied native batch uses existing per-domain
+bootstrap append with exact retained message/attachment prefixes and current
+origin proof. Existing native advance/retry, final binding, CAS and rollback gates
+remain in place. Automatic AGENT_WAKE still uses CaptureOff; its transcript SYSTEM
+notice remains a payload USER row.
+
+Native report pages materialize at most 8,192 input characters, sanitize off-loop
+(control escapes expand by at most four),
+and keep source evidence as explicit captured references. The source selector reads
+each captured document independently in at most 8,192 bytes per page, preserving
+UTF-8 boundaries. First report display never expands cited source ranges. Whole
+accepted originals and raw streams remain retained and exportable beyond model
+transport limits. Export contains full original records, dispositions and evidence
+references; it does not duplicate source documents for every citation. Source pages
+expire with the session bundle. Explicit export/release still uses the existing
+native destination/discard UI; model flags confer no permission.
+
+Source guards can synchronously enter Textual. Service/source readers and native
+stage/boundary callbacks pin a lease, call guards outside publication locks, then
+revalidate live context, binding/revision/epoch and exact attempt/receipt as
+applicable under the publication lock. Manual stage publication acquires boundary
+admission before publication, after source callbacks. Guard exit also runs after
+publication unlock. Stop can therefore acquire publication while a reader awaits
+its UI guard; the reader subsequently fails closed on revoked authority.

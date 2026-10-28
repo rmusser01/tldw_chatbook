@@ -89,9 +89,34 @@ def resolve_console_destination(
         resolution.provider if isinstance(resolution.provider, str) else "unknown"
     )
     model = resolution.model if isinstance(resolution.model, str) else None
+    continuation = {}
+    if (
+        getattr(resolution, "continuation_protocol", None) is not None
+        and getattr(resolution, "endpoint_provenance", None)
+        != ConsoleEndpointProvenance.EPHEMERAL_SESSION
+    ):
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationRestoreTarget,
+            validate_continuation_target,
+        )
+
+        target = ContinuationRestoreTarget(
+            provider=resolution.execution_key,
+            protocol=resolution.continuation_protocol,
+            model=model,
+            api_base_url=resolution.base_url,
+            selected_provider=provider,
+        )
+        validate_continuation_target(target)
+        continuation = {
+            "continuation_provider": target.provider,
+            "continuation_protocol": target.protocol,
+            "continuation_base_url": target.api_base_url,
+        }
     parsed = _parse_endpoint_origin(resolution.base_url)
     if parsed is None:
         return ConsoleResolvedDestination(
+            **continuation,
             provider=provider,
             model=model,
             endpoint_identity=_UNKNOWN_ENDPOINT_IDENTITY,
@@ -111,6 +136,7 @@ def resolve_console_destination(
         endpoint_identity = _origin_identity(scheme, hostname, port, ip)
         egress_class = _classify_origin(scheme, hostname, port, ip)
     return ConsoleResolvedDestination(
+        **continuation,
         provider=provider,
         model=model,
         endpoint_identity=endpoint_identity,

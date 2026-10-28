@@ -2670,6 +2670,8 @@ def _continuation_restore_target_for_resolution(
         model=str(model),
         protocol=str(protocol),
         api_base_url=base_url,
+        selected_provider=getattr(resolution, "selected_provider", None)
+        or resolution.provider,
     )
 
 
@@ -3634,6 +3636,72 @@ class ConsoleChatController:
     #: and no way forward. Generous enough for a slow first TLS handshake;
     #: finite so the composer never wedges.
     PROVIDER_VALIDATION_TIMEOUT_SECONDS = 30.0
+
+    async def _resolve_accepted_review_capacity(
+        self, session, authorization, resolution, turn_context
+    ):
+        """Resolve only this accepted review target before capacity/schema freeze."""
+        from tldw_chatbook.Agents.code_review_models import ReviewRefused
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        receipt = authorization.review_boundary
+        context = authorization.context
+
+        def validate_binding():
+            if (
+                not self._fleet_wake.authorizes(authorization, session.id)
+                or not authorization.accepted
+                or self._disposed
+                or self._shutdown_requested.is_set()
+                or session.id in self._session_close_generations
+                or self.store._session_or_raise(session.id) is not session
+                or authorization.review_boundary is not receipt
+                or authorization.context is not context
+                or context.chain_id != receipt.chain_id
+                or context.attempt_id != authorization.attempt_id
+                or context.owner_id != authorization.owner_id
+                or receipt.session_id != session.id
+                or receipt.conversation_id != authorization.conversation_id
+                or resolution.resolved_destination != turn_context.resolved_destination
+                or not self._fleet_wake._priority_allows(session.id, accepting=True)
+            ):
+                raise ReviewRefused("review_boundary_unavailable")
+
+        def validate_attempt():
+            snapshot = context.check()
+            attempt = context.ledger.read_attempt(
+                context.attempt_id, owner_id=context.owner_id
+            )
+            if (
+                attempt.state != "accepted"
+                or attempt.review_boundary_id != receipt.boundary_id
+                or attempt.session_id != session.id
+                or attempt.conversation_id != receipt.conversation_id
+            ):
+                raise ReviewRefused("review_boundary_unavailable")
+            return snapshot
+
+        async def validate():
+            validate_binding()
+            snapshot = await run_owned_db_call(context.ledger._db, validate_attempt)
+            # Source/native guards use composition's off-loop owner; all locks
+            # are released before the optional metadata await.
+            await asyncio.to_thread(
+                self.code_review._accepted_boundary_service, receipt
+            )
+            validate_binding()
+            return snapshot
+
+        snapshot = await validate()
+        ceiling = self.PROVIDER_VALIDATION_TIMEOUT_SECONDS
+        if snapshot.deadline_at is not None:
+            ceiling = min(ceiling, max(0.0, snapshot.deadline_at - time.time()))
+        async with asyncio.timeout(ceiling):
+            window = await self.provider_gateway.resolve_context_window(resolution)
+            await validate()
+        if not window.verified:
+            raise ReviewRefused("review_context_capacity_unknown")
+        return replace(resolution, context_window=window)
 
     async def _auxiliary_compaction_resolution(self, main_selection, main_resolution):
         """Resolve a cheaper auxiliary model for compaction, or fall back.
@@ -4672,6 +4740,18 @@ class ConsoleChatController:
         #: state`'s terminal retry hook always has it; registered on the
         #: bridge fan-out next to the usage fold above.
         self._fleet_wake = ConsoleFleetWakeCoordinator(self)
+        from .console_code_review import ConsoleCodeReviewCoordinator
+
+        self.code_review = ConsoleCodeReviewCoordinator(
+            self.store,
+            runtime_owner_id=self._fleet_wake.runtime_owner_id,
+            on_boundary=self._fleet_wake.on_review_boundary,
+            on_boundary_retired=self._fleet_wake.on_review_boundary_retired,
+        )
+        self.code_review.present_report = self._present_review_report
+        self.code_review.present_offer = self._present_review_offer
+        self.code_review.present_status = self._present_review_status
+        self._review_ledger = None
         self._chat_start = ConsoleChatStartCoordinator(self)
         self.store._agent_handoff_changed = self._chat_start.withdraw_prepared
         #: PR3a-2 Task 5, user-wins-ties: screen-wired probe returning
@@ -7080,7 +7160,7 @@ class ConsoleChatController:
                     or "",
                     message.persisted_message_id or message.id,
                 )
-            elif checkpoint.schema_version == 2:
+            elif checkpoint.managed_resume is not None:
                 raise PermissionError("Managed continuation service unavailable.")
             else:
                 maximum["plugin_resume_constraint"] = "zero"
@@ -7158,6 +7238,7 @@ class ConsoleChatController:
                     restore_provider_target=target,
                     expand_provider_continuation=translator,
                     resume_provider_continuation=True,
+                    restore_provider_message_version=expected_message_version,
                     continuation_sidecar=prior_sidecar,
                     continuation_history_target=prior_target or target,
                     turn_context=turn_context,
@@ -10530,6 +10611,39 @@ class ConsoleChatController:
                     session.id,
                     "Manual work has priority. Background results are saved.",
                 )
+        if (
+            origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            and wake_authorization.review_boundary is not None
+        ):
+            try:
+                resolution = await self._resolve_accepted_review_capacity(
+                    session, wake_authorization, resolution, turn_context
+                )
+            except asyncio.CancelledError:
+                await self._fleet_wake._pause(
+                    wake_authorization.conversation_id,
+                    wake_authorization.work_chain_id,
+                    "review_preflight_cancelled",
+                )
+                raise
+            except Exception as exc:  # noqa: BLE001 - accepted work must fail closed
+                from tldw_chatbook.Agents.code_review_models import ReviewRefused
+
+                reason = (
+                    exc.reason
+                    if isinstance(exc, ReviewRefused)
+                    else "review_capacity_unavailable"
+                )
+                self.code_review.diagnostic = reason
+                await self._fleet_wake._pause(
+                    wake_authorization.conversation_id,
+                    wake_authorization.work_chain_id,
+                    reason,
+                )
+                return self._block(
+                    session.id,
+                    f"Review continuation blocked: {reason}. Reports are saved.",
+                )
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
@@ -13069,7 +13183,7 @@ class ConsoleChatController:
         frozen_authority = checkpoint.frozen_authority
         if (
             not self._dispatch_authority_matches(authority, frozen_authority)
-            or destination.identity_key != checkpoint.resolved_destination.identity_key
+            or destination != checkpoint.resolved_destination
         ):
             raise _DispatchRecoveryRefusal(
                 "The provider destination or Library authority changed. Review it "
@@ -14247,6 +14361,7 @@ class ConsoleChatController:
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
         # parent cannot reserve a child in the cancellation-to-drain window.
+        self.code_review.fence_session(session_id)
         fence_wake = getattr(self._fleet_wake, "fence_conversation", None)
         if callable(fence_wake):
             for conversation_id in fleet_conversation_ids:
@@ -14629,6 +14744,7 @@ class ConsoleChatController:
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
         """
+        self.code_review.fence_session(session_id)
         self._interrupt_host.cancel_hook_reviews(session_id)
         received = self.store.received_turn_for_session(session_id)
         if received is not None:
@@ -17877,6 +17993,12 @@ class ConsoleChatController:
         ``leave_console`` supplies the reversible per-visit cancellation
         boundary for the same app-owned controller.
         """
+        self.code_review.close()
+        if self._review_ledger is not None:
+            self._review_ledger.unregister_review_boundary_authority(
+                self._fleet_wake.runtime_owner_id
+            )
+            self._review_ledger = None
         self.begin_shutdown()
         recovery_cancelled = await self._fleet_wake.drain_recovery()
         from .console_preparation_reads import drain_preparation_reads
@@ -24741,6 +24863,98 @@ class ConsoleChatController:
         if callable(register):
             register("usage-reattach", self._on_fleet_drained_reattach_usage)
 
+    def _present_review_status(self, session_id, review_id, status):
+        def present():
+            if self._disposed or session_id in self._session_close_generations:
+                return
+            self.store.append_message(
+                session_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content=f"Review {review_id}: {status}. Captured progress is retained; a new explicit request can resume an available stage.",
+            )
+
+        loop = self._fleet_wake._loop
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            present()
+        elif loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(present)
+
+    def _present_review_offer(self, session_id, review_id):
+        async def present():
+            if self._disposed or session_id in self._session_close_generations:
+                return False
+            self.store.append_message(
+                session_id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content=f"Verification is available for review {review_id}. Reply yes to verify this review, or no to decline.",
+            )
+            return True
+
+        loop = self._fleet_wake._loop
+        if loop is not None and loop.is_running():
+            return asyncio.run_coroutine_threadsafe(present(), loop).result()
+        return False
+
+    def _present_review_report(self, session_id, review_id, report):
+        """Acknowledge mounted native originals before an authorized verifier starts."""
+        from ..Widgets.Console.console_code_review_modal import ConsoleCodeReviewModal
+
+        def available():
+            return (
+                not self._disposed
+                and session_id not in self._session_close_generations
+                and self.store.active_session_id == session_id
+                and not (
+                    self._active_cancel_events.get(session_id) is not None
+                    and self._active_cancel_events[session_id].is_set()
+                )
+            )
+
+        async def present():
+            if not available():
+                return False
+            try:
+                _, service = self.code_review.report_service(session_id, review_id)
+                page = await asyncio.to_thread(
+                    ConsoleCodeReviewModal.literal_page, report["original_page"]
+                )
+                modal = self.app.screen
+                if (
+                    not isinstance(modal, ConsoleCodeReviewModal)
+                    or modal._review_id != review_id
+                ):
+                    modal = ConsoleCodeReviewModal(service=service, review_id=review_id)
+                    await self.app.push_screen(modal)
+                if not available():
+                    await modal.request_safe_cancel(source="review_closed")
+                    return False
+                if not modal.present_original(report["slot_id"], page):
+                    return False
+                self.store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=f"Original report {report['slot_id']} for review {review_id} is open in Review reports (u). Full originals and raw output are retained for this session; export to keep them. Saved chat references cannot restore an expired report bundle.",
+                )
+                return True
+            except Exception:
+                # A closed/unavailable screen does not acknowledge presentation.
+                return False
+
+        loop = self._fleet_wake._loop
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if not on_loop and loop is not None and loop.is_running():
+            call_from_thread = getattr(self.app, "call_from_thread", None)
+            if callable(call_from_thread):
+                return bool(call_from_thread(present))
+        return False
+
     @property
     def fleet_wake(self) -> ConsoleFleetWakeCoordinator:
         """The auto-wake coordinator (PR3a-2 Task 5): the screen wires its
@@ -24763,6 +24977,22 @@ class ConsoleChatController:
             bridge: The Console agent bridge to register on, or ``None``.
         """
         self._fleet_wake.capture_loop_if_running()
+        database = getattr(bridge, "runs_db", None)
+        ledger = getattr(database, "automatic_work", None)
+        if ledger is not self._review_ledger:
+            if self._review_ledger is not None:
+                self._review_ledger.unregister_review_boundary_authority(
+                    self._fleet_wake.runtime_owner_id
+                )
+                self.code_review.reset_runtime()
+            self._review_ledger = ledger
+            if ledger is not None:
+                ledger.register_review_boundary_authority(
+                    self._fleet_wake.runtime_owner_id,
+                    validate=self.code_review.validate_boundary,
+                    transition=self.code_review.boundary_transition,
+                    acceptance_scope=self.code_review.boundary_acceptance_scope,
+                )
         if bridge is None:
             return
         progress_register = getattr(bridge, "on_progress_enqueued", None)
@@ -26075,6 +26305,7 @@ class ConsoleChatController:
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
         ) = None,
         resume_provider_continuation: bool = False,
+        restore_provider_message_version: int | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_history_target: ContinuationRestoreTarget | None = None,
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
@@ -26320,23 +26551,17 @@ class ConsoleChatController:
                             project_selection
                         ),
                     )
-                destination_provider = str(
-                    getattr(resolution, "execution_key", "")
-                    or getattr(resolution, "provider", "")
-                    or "agent"
-                )
-                destination_endpoint = getattr(resolution, "base_url", None)
-                notice_key = project_instruction_notice_key(
-                    project_selection.locator_fingerprint,
-                    destination_provider,
-                    destination_endpoint,
-                )
-                expected_project_state = state
+                project_owner_loop = asyncio.get_running_loop()
 
                 def on_owning_loop(callback):
+                    # Retained review authority may run on its captured app loop.
+                    try:
+                        if asyncio.get_running_loop() is project_owner_loop:
+                            return callback()
+                    except RuntimeError:
+                        pass
                     app = self.app
                     call_from_thread = getattr(app, "call_from_thread", None)
-                    # Stock composition checks authority on the app loop too;
                     # Textual only permits call_from_thread from another thread.
                     if callable(call_from_thread) and threading.get_ident() != getattr(
                         app, "_thread_id", None
@@ -26363,15 +26588,25 @@ class ConsoleChatController:
                         )
                     )
 
-                def confirm_project_dispatch(snapshot):
+                def confirm_project_dispatch(snapshot, target_resolution=None):
+                    active_resolution = target_resolution or resolution
+                    active_notice_key = project_instruction_notice_key(
+                        project_selection.locator_fingerprint,
+                        active_resolution.execution_key or active_resolution.provider,
+                        getattr(active_resolution, "base_url", None),
+                    )
+                    active_state = next(
+                        item for item in self.store.sessions() if item.id == session_id
+                    ).project_instruction_state
+
                     def commit_and_record(decision):
                         committed = commit_project_instruction_dispatch_decision(
                             store=self.store,
                             session_id=session_id,
                             registry=registry,
-                            expected_state=expected_project_state,
+                            expected_state=active_state,
                             expected_selection=project_selection,
-                            notice_key=notice_key,
+                            notice_key=active_notice_key,
                             decision=decision,
                         )
                         if committed != "prompt":
@@ -26392,7 +26627,7 @@ class ConsoleChatController:
                     notice = build_project_instruction_dispatch_notice(
                         snapshot,
                         session_id=session_id,
-                        resolution=resolution,
+                        resolution=active_resolution,
                     )
                     decision = callback(notice) if callback is not None else "cancel"
                     if decision not in {"proceed", "cancel", "disable"}:
@@ -26727,7 +26962,17 @@ class ConsoleChatController:
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
             if generation_token is None:
                 generation_token = self.store.begin_generation_attempt(
-                    assistant_message_id
+                    assistant_message_id,
+                    expected_continuation=(
+                        restore_provider_continuation
+                        if resume_provider_continuation
+                        else None
+                    ),
+                    expected_continuation_message_version=(
+                        restore_provider_message_version
+                        if resume_provider_continuation
+                        else None
+                    ),
                 )
             _generation_handoff.issue(generation_token)
             if variant_mode:
@@ -26757,6 +27002,71 @@ class ConsoleChatController:
                         trusted_profile_user_message = candidate
                 except KeyError:
                     pass
+            from tldw_chatbook.Agents.code_review_models import ReviewRefused
+
+            from .console_code_review import compose_native_review_provider
+
+            def review_destination_check(target):
+                if (
+                    project_selection is None
+                    or project_authority_guard is None
+                    or not project_authority_guard()
+                ):
+                    return "source_authority_unavailable"
+                if confirm_project_dispatch is None or startup_candidate is None:
+                    return "destination_consent_required"
+                from tldw_chatbook.Agents.project_instruction_resolver import (
+                    InstructionChainDelivery,
+                    InstructionSnapshot,
+                )
+
+                snapshot = InstructionSnapshot(
+                    binding_id=startup_candidate.binding_id,
+                    binding_root=startup_candidate.binding_root,
+                    locator_fingerprint=startup_candidate.locator_fingerprint,
+                    dispatch_started_wall_ns=startup_candidate.dispatch_started_wall_ns,
+                    startup_source=startup_candidate.source,
+                    global_outcomes=startup_candidate.outcomes,
+                    primary_delivery=InstructionChainDelivery(
+                        source_digests=(), outcomes=startup_candidate.outcomes
+                    ),
+                    warning_codes=(),
+                )
+                selected = replace(
+                    resolution,
+                    provider=target.provider,
+                    execution_key=target.execution_provider or target.provider,
+                    model=target.model,
+                    base_url=target.base_url,
+                )
+                return (
+                    None
+                    if confirm_project_dispatch(snapshot, selected) == "proceed"
+                    else "destination_consent_required"
+                )
+
+            code_review_provider = None
+            try:
+                code_review_provider = await asyncio.to_thread(
+                    compose_native_review_provider,
+                    self,
+                    session_id=session_id,
+                    message=trusted_profile_user_message,
+                    roots=run_admitted_roots,
+                    resolution=resolution,
+                    destination_check=review_destination_check,
+                    conversation_id=conversation_id,
+                    wake_authorization=wake_authorization,
+                    tool_configuration=turn_context.tool_configuration,
+                    trusted_skill_bindings=skill_bindings,
+                )
+            except ReviewRefused as exc:
+                self.code_review.diagnostic = exc.reason
+                self.store.append_message(
+                    session_id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=f"Review needs attention: {exc.reason}. No review stage was admitted.",
+                )
             profile_provider = None
             if personal_context_service is not None and session is not None:
                 profile_provider = await asyncio.to_thread(
@@ -26868,6 +27178,7 @@ class ConsoleChatController:
                 # them as the run's narrowing-only advertising filter and
                 # per-run call caps.
                 persona_policy_rules=turn_context.persona_policy_rules,
+                code_review_provider=code_review_provider,
                 profile_provider=profile_provider,
                 canvas_provider=canvas_provider,
                 canvas_authority=canvas_authority,

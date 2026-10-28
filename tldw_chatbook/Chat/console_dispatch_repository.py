@@ -34,6 +34,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationValidationError,
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    validate_continuation_restore,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
     read_provider_continuation_json,
@@ -1651,12 +1654,25 @@ class ConsoleDispatchRepository:
             destination = parse_console_resolved_destination_json(
                 row["resolved_destination_json"]
             )
-            return bool(
-                continuation.provider == destination.provider
-                and continuation.model == destination.model
-                and continuation.api_base_url == destination.endpoint_identity
+            if continuation.schema_version != 3:
+                return False
+            validate_continuation_restore(
+                continuation,
+                ContinuationRestoreTarget(
+                    provider=destination.continuation_provider,
+                    protocol=destination.continuation_protocol,
+                    model=destination.model,
+                    api_base_url=destination.continuation_base_url,
+                    selected_provider=destination.provider,
+                ),
             )
-        except (AttributeError, ConsoleDispatchCheckpointValidationError):
+            return True
+        except (
+            AttributeError,
+            ContinuationValidationError,
+            ContinuationConflictError,
+            ConsoleDispatchCheckpointValidationError,
+        ):
             return False
 
     @staticmethod

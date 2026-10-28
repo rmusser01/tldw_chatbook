@@ -133,6 +133,7 @@ class AutomaticWakeAttempt:
     run_ids: tuple[str, ...]
     cause: str = "completion"
     message_ids: tuple[str, ...] = ()
+    review_boundary_id: str | None = None
 
 
 @dataclass(frozen=True)

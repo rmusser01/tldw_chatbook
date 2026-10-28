@@ -1029,6 +1029,23 @@ class TraceGarbageCollector:
                 request_id, current_epoch, self._mark_count(cursor, request_id)
             )
 
+    @staticmethod
+    @contextmanager
+    def _atomic_sweep(cursor: sqlite3.Cursor) -> Iterator[None]:
+        """Rollback this sweep even when the caller owns the outer transaction."""
+        deferred = cursor.execute("PRAGMA defer_foreign_keys").fetchone()[0]
+        cursor.execute("SAVEPOINT console_trace_gc_sweep")
+        try:
+            yield
+        except BaseException:
+            cursor.execute("ROLLBACK TO console_trace_gc_sweep")
+            raise
+        finally:
+            cursor.execute("RELEASE console_trace_gc_sweep")
+            cursor.execute(
+                "PRAGMA defer_foreign_keys = " + ("ON" if deferred else "OFF")
+            )
+
     def sweep(self, *, request_id: str) -> TraceGCResult:
         """Sweep only the exact durable mark whose global epoch is unchanged.
 
@@ -1044,7 +1061,7 @@ class TraceGarbageCollector:
         """
 
         self._validate_request_id(request_id)
-        with self.db.transaction(immediate=True) as cursor:
+        with self.db.transaction(immediate=True) as cursor, self._atomic_sweep(cursor):
             completed = self._completed_result(cursor, request_id)
             if completed is not None:
                 return completed
@@ -1124,7 +1141,12 @@ class TraceGarbageCollector:
                     """DELETE FROM console_trace_retention_roots
                         WHERE julianday(retain_until) <= julianday('now')"""
                 )
+                # Fork segments and parent events form a cycle. Validate the
+                # whole deletion before restoring the caller's FK mode.
+                cursor.execute("PRAGMA defer_foreign_keys = ON")
                 deleted_rows = self._sweep_unmarked(cursor, request_id)
+                if cursor.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                    raise RuntimeError("trace_gc_foreign_key_dependency")
             pages_after = int(cursor.execute("PRAGMA page_count").fetchone()[0])
             free_after = int(cursor.execute("PRAGMA freelist_count").fetchone()[0])
             logical_live_bytes = int(

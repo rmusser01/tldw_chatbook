@@ -60,7 +60,8 @@ Hosted (bespoke handlers): openai, anthropic, cohere, groq, openrouter, deepseek
 
 - Config overlay: legacy `[openai_api]` + canonical `[api_settings.openai]`, with only `api_key`/`api_base_url` overlaid from canonical; a missing key raises `ChatConfigurationError`.
 - Param resolution: arg > config > default.
-- API selection: reasoning params switch the Responses API (`/responses`, payload key `input`); Responses stream events are translated back into chat-completions SSE.
+- API selection: reasoning params switch the Responses API (`/responses`, payload key `input`). GPT-5.6 with absent/`none` effort uses Chat Completions unless a nonblank summary/verbosity control is present. Exact unprefixed `gpt-6-luna` (case/outer whitespace normalized) also uses Chat Completions for explicit `none` effort and a nonempty list consisting entirely of canonical nested function tools with object parameter schemas; it forwards `reasoning_effort=none`, unchanged tools/choice/history and `max_completion_tokens`. Summary/verbosity presence (including summary `none`) still selects Responses. Empty/no tools, plain/fenced Luna calls, other IDs and absent/non-`none` effort retain their existing routing. This follows the [Luna model contract](https://developers.openai.com/api/docs/models/gpt-6-luna), which restricts Chat function calling to `none`; sampling remains a separate capability fact.
+- OpenAI Responses limitation: its current normalization handles text only. Native function output items/argument events and canonical assistant/tool continuation are not translated end-to-end, and nested Chat function schemas are not converted to flat Responses tools. Provider-wide native-tool advertising does not establish support on those routes. The narrow Luna Chat exception does not implement Responses native tools.
 - Capability gating via `model_capabilities` predicates: reasoning families drop `temperature`/`top_p`; models that require it swap `max_tokens` → `max_completion_tokens`.
 - Prompt caching: `prompt_cache_key` on canonical OpenAI; Anthropic-side `cache_control` with degrade-retry including a 1-hour TTL tier.
 - Streaming: handlers yield provider-shaped SSE `data:` lines; errors mid-stream are yielded as `data: {"error": …}` events; the `[DONE]` sentinel stays out of `finally` so a consumer's `GeneratorExit` (Console Stop) cannot skip cleanup. `stream_options.include_usage` is added with a 400-retry that drops it for providers that reject it.
@@ -83,6 +84,13 @@ Retry layers: transport retries inside handlers (idempotent POST, 429/5xx) → s
 ## model_capabilities
 
 `ModelCapabilities` resolves per-model facts from `[model_capabilities]`: direct `models` mappings > per-provider `patterns` regex > models.dev gap-fill (opt-in, network-free) > defaults. Consumers: vision gating for attachments (`Chat/attachment_core`), context-window-based truncation (`Utils/token_counter`), per-provider tools payload builders, and thinking configuration (Anthropic enabled/disabled/adaptive budgets vs effort-style shapes; thinking budgets auto-grow `max_tokens` when needed; per-family predicates for moonshot/zai/deepseek too).
+
+The exact Haiku 5.5 family rejects `temperature`, `top_p`, `top_k` and fixed
+`thinking.budget_tokens`, per its [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide).
+The shared Anthropic predicates omit sampling and reuse the existing adaptive
+thinking/effort mapping; Haiku 4.5 keeps its sampling and fixed-budget behavior.
+This is a documented capability correction, separate from the August 2026 live
+probes for older families.
 
 ## Model catalog auto-refresh (ADR-020)
 
@@ -147,3 +155,28 @@ The upstream contracts and client-only qualification scope are recorded in
 - [chat-pipeline.md](./chat-pipeline.md), [console.md](./console.md) — the streaming consumers
 - [rag.md](./rag.md) — embeddings share the provider config surface
 - `backlog/decisions/020-automatic-model-catalog-refresh.md` (amends ADR-002)
+
+## Native continuation identity
+
+Provider engines produce canonical execution state; `console_agent_bridge` binds it to the exact raw selected provider before runtime custody. Continuation JSON V3 retains both identities and composes a nullable managed envelope in the existing private message column. The managed MAC covers the raw pin; legacy V1/V2 serialization and V2 signature input are unchanged. Host history/recovery validates execution provider, protocol, model, full normalized base and exact selection. Engine replay validates only canonical execution identity, after the host check. No display-origin inference or registry lookup can recreate missing durable selection authority.
+
+The custom-hosted entry in `Chat_Functions.CUSTOM_PROVIDER_PARAM_MAP` forwards the existing `provider_continuations` argument, so a second native request includes the saved assistant call and completed result. This is the sole additional forwarding key relative to legacy custom endpoint maps. Moonshot, ZAI and the hosted engine retain their existing wire protocols. Private reasoning stays in the continuation/trace sidecar and is not projected into ordinary assistant text by the recovery translator. Session-only destinations remain ephemeral; their full bases are excluded from durable dispatch identity (ADRs 063, 147, 179).
+
+## Custom hosted streamed usage
+
+`CUSTOM_HOSTED` requests `stream_options.include_usage` on streaming requests
+through the existing preset flag (ADR-179); non-streaming payloads are unchanged.
+The hosted parser still accepts a custom stream that omits usage. Console's
+call-scoped usage tap reads top-level usage first, including its explicit
+null/malformed presence, and otherwise accepts usage from one terminal choice
+without rewriting the event. Automatic work still requires complete nonnegative
+integer usage: missing or malformed counts retain the reservation and pause the
+chain with `usage_unknown` (ADR-134). There is no estimate/refund fallback.
+
+A custom endpoint rejecting `stream_options` returns its ordinary typed provider
+error; the engine does not retry by silently removing the option. Such endpoints
+must use non-streaming requests or the existing legacy custom-engine switch.
+The local synthetic two-request differential for TASK-35582 established that the
+qualification server omitted usage without the option and supplied complete
+usage with it. This diagnoses the current server behavior; the earlier retained
+HTTP-status-only packets cannot establish their exact raw response fields.

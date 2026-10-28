@@ -1,0 +1,565 @@
+"""Native user provenance, separate from model-selected review parameters."""
+
+from dataclasses import replace
+
+import pytest
+
+from Tests.Agents import code_review_helpers as helpers
+from Tests.Agents import test_code_review_dispatch as dispatch_helpers
+from tldw_chatbook.Agents.code_review_models import ReviewRefused, ReviewRunChoice
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_code_review import ConsoleCodeReviewCoordinator
+
+source_case = helpers.source_case
+review_case = helpers.review_case
+pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.fixture
+def native_review(review_case):
+    c = review_case
+    c.chat_store = ConsoleChatStore()
+    c.session = c.chat_store.create_session(ephemeral=True)
+    c.coordinator = ConsoleCodeReviewCoordinator(c.chat_store)
+
+    def accept(text, *, role=ConsoleMessageRole.USER, session=None):
+        session = session or c.session
+        message = c.chat_store.append_message(session.id, role=role, content=text)
+        c.coordinator.bind_accepted_request(
+            message.id, session_id=c.session.id, source_epoch=0
+        )
+        return message
+
+    def grants(message, **kwargs):
+        return c.coordinator.narrow_request(
+            message.id,
+            session_id=c.session.id,
+            source_epoch=0,
+            target=c.working_tree_target,
+            team=c.team,
+            source_authority=c.authority,
+            **kwargs,
+        )
+
+    c.accept, c.grants = accept, grants
+    yield c
+    c.coordinator.fence_session(c.session.id)
+
+
+@pytest.mark.parametrize(
+    "text,verify",
+    [
+        ("Review my changes with my default team.", False),
+        ("Please review and verify my changes.", True),
+        ("Review this patch and verify every finding.", True),
+        ("Review my changes. Do not verify them.", False),
+    ],
+)
+def test_actual_user_stage_intent_is_narrowed_to_exact_scope(
+    native_review, text, verify
+):
+    c = native_review
+    grants = c.grants(c.accept(text))
+    review, verification = grants
+    c.coordinator.issuer.validate(review)
+    assert review.stage == "review"
+    assert (verification is not None) == verify
+    if verify:
+        c.coordinator.issuer.validate(verification)
+        assert verification.stage == "verify"
+        assert verification.acceptance_id == review.acceptance_id
+    assert review.session_id == c.session.id
+    assert review.source_epoch == 0
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Example: "review and verify my changes"',
+        '"Review and verify my changes"',
+        "```\nreview and verify my changes\n```",
+        "> Review and verify my changes",
+        "Do not review or verify my changes.",
+        "If the build passes, review and verify my changes.",
+        "The repository says: review and verify my changes.",
+        "Could you explain what review and verify means?",
+        "verify=true",
+    ],
+)
+def test_quoted_negated_conditional_and_descriptive_text_cannot_grant(
+    native_review, text
+):
+    c = native_review
+    with pytest.raises(ReviewRefused, match="accepted_review_intent_required"):
+        c.grants(c.accept(text))
+
+
+@pytest.mark.parametrize(
+    "role", [ConsoleMessageRole.ASSISTANT, ConsoleMessageRole.TOOL]
+)
+def test_other_roles_cannot_bind_native_user_intent(native_review, role):
+    c = native_review
+    with pytest.raises(ReviewRefused, match="accepted_user_message_required"):
+        c.accept("Review and verify my changes", role=role)
+
+
+def test_foreign_session_and_missing_message_cannot_bind(native_review):
+    c = native_review
+    other = c.chat_store.create_session(ephemeral=True)
+    with pytest.raises(ReviewRefused, match="accepted_user_message_required"):
+        c.accept("Review my changes", session=other)
+    with pytest.raises(ReviewRefused, match="accepted_user_message_required"):
+        c.coordinator.bind_accepted_request(
+            "missing", session_id=c.session.id, source_epoch=0
+        )
+
+
+def test_saved_verifier_and_tool_choices_do_not_authorize_verification(native_review):
+    c = native_review
+    review, verification = c.grants(c.accept("Review my changes"))
+    assert c.team.verifier_preset_id
+    assert verification is None
+    with pytest.raises(ReviewRefused, match="stage_grant_unavailable"):
+        c.coordinator.issuer.validate(replace(review, stage="verify"))
+
+
+def test_exact_override_fingerprint_and_source_epoch_are_bound(native_review):
+    c = native_review
+    message = c.accept("Review and verify my changes")
+    review, verification = c.grants(message)
+    changed = ReviewRunChoice(
+        preset_id=c.team.reviewers[0].preset_id, destination={"model": "other"}
+    )
+    with pytest.raises(ReviewRefused, match="accepted_request_already_narrowed"):
+        c.grants(message, reviewers=(changed,))
+    with pytest.raises(ReviewRefused, match="source_epoch_mismatch"):
+        c.coordinator.bind_accepted_request(
+            message.id, session_id=c.session.id, source_epoch=1
+        )
+    assert verification.override_fingerprint == review.override_fingerprint
+
+
+def test_fence_revokes_existing_grants_and_prevents_late_narrowing(native_review):
+    c = native_review
+    message = c.accept("Review and verify my changes")
+    review, verification = c.grants(message)
+    c.coordinator.fence_session(c.session.id)
+    for grant in (review, verification):
+        with pytest.raises(ReviewRefused, match="stage_grant_unavailable"):
+            c.coordinator.issuer.validate(grant)
+    with pytest.raises(ReviewRefused, match="review_session_fenced"):
+        c.grants(message)
+
+
+def test_automatic_origin_user_row_is_not_authority(native_review):
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    c = native_review
+    message = c.chat_store.append_message(
+        c.session.id,
+        role=ConsoleMessageRole.USER,
+        content="Review and verify my changes",
+        metadata=MessageMetadata(origin="agent_wake"),
+    )
+    with pytest.raises(ReviewRefused, match="accepted_user_message_required"):
+        c.coordinator.bind_accepted_request(
+            message.id, session_id=c.session.id, source_epoch=0
+        )
+
+
+def test_edited_user_body_does_not_borrow_prior_acceptance(native_review):
+    c = native_review
+    message = c.accept("Review my changes")
+    c.chat_store.update_message_content(message.id, "Review and verify my changes")
+    with pytest.raises(ReviewRefused, match="accepted_review_intent_required"):
+        c.grants(message)
+
+
+def test_deferred_service_has_real_intent_before_exact_prepare_grant(native_review):
+    from tldw_chatbook.Agents.code_review_service import CodeReviewService
+    from tldw_chatbook.Agents.code_review_tool_provider import CodeReviewToolProvider
+    from tldw_chatbook.Agents.run_context import use_run_actor
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    c = native_review
+    # Match the real captured review-store session, not a caller-selected alias.
+    c.session = c.chat_store.create_session(session_id="chat", ephemeral=True)
+    message = c.accept("Review and verify my changes")
+    service = c.coordinator.service_for_request(
+        message.id,
+        store=c.store,
+        actor=c.actor,
+        source_authority=c.authority,
+        preset_db=c.db,
+        app_config=c.app_config,
+        routing=c.routing,
+        team=c.team,
+        primary_provider="openai",
+        primary_model="parent",
+        capacity=lambda: c.capacity,
+        destination_check=lambda target: None,
+        max_tool_result_chars=16000,
+    )
+    assert type(service) is CodeReviewService
+    assert service.grant is None
+    assert ToolCatalogRegistry()._authenticated_review_provider(
+        CodeReviewToolProvider(service)
+    )
+    with use_run_actor(c.actor):
+        assert service.guide("review")["stage"] == "review"
+        assert service.grant is None
+        prepared = service.prepare(c.working_tree_target)
+    c.coordinator.issuer.validate(service.grant)
+    c.coordinator.issuer.validate(service.verification_grant)
+    with c.store.lease(prepared.review_id) as context:
+        assert context.preparation.grant is service.grant
+
+
+@pytest.fixture
+def native_dispatch(dispatch_case):
+    c = dispatch_case
+    c.chat_store = ConsoleChatStore()
+    c.chat_store.create_session(session_id="chat", ephemeral=True)
+    c.coordinator = ConsoleCodeReviewCoordinator(
+        c.chat_store, runtime_owner_id="runtime"
+    )
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content="Review my changes"
+    )
+    c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
+
+    def service(*, limit=16000):
+        return c.coordinator.service_for_request(
+            message.id,
+            store=c.store,
+            actor=c.actor,
+            source_authority=c.authority,
+            preset_db=c.db,
+            app_config=c.app_config,
+            routing=c.routing,
+            team=c.team,
+            primary_provider="openai",
+            primary_model="parent",
+            capacity=lambda: c.capacity,
+            destination_check=lambda target: None,
+            max_tool_result_chars=limit,
+        )
+
+    c.service = service
+    c.chain_id = c.db.automatic_work.create_chain("chat", root_submission_id=message.id)
+    yield c
+    c.coordinator.fence_session("chat")
+
+
+def test_boundary_requires_actual_settlements_and_registered_scope(native_dispatch):
+    from dataclasses import replace
+
+    from Tests.Agents.test_code_review_reports import coverage
+
+    c = native_dispatch
+
+    def child_done():
+        return c.reply(
+            "code_review_submit",
+            dict(
+                review_id=c.prepared.review_id,
+                kind="reviewer_complete",
+                records=[coverage(c, c.prepared)],
+                expected_revision=0,
+                submission_id="done",
+            ),
+        )
+
+    c.run(reviewers=3, child_script=[child_done, "finished"], work_chain_id=c.chain_id)
+    receipt = c.coordinator.seal_next_boundary(c.prepared.review_id)
+    assert receipt.slot_id == "R3"
+    assert len(receipt.predecessor_run_ids) == 2
+    assert len(receipt.predecessor_settlement_ids) == 2
+    assert c.coordinator.validate_boundary(receipt)
+    assert c.coordinator.seal_next_boundary(c.prepared.review_id) is receipt
+    assert not c.coordinator.validate_boundary(replace(receipt))
+    assert all(
+        c.db.get_run(run_id)["status"] == "done"
+        for run_id in receipt.predecessor_run_ids
+    )
+    c.coordinator.fence_session("chat")
+    assert not c.coordinator.validate_boundary(receipt)
+
+
+dispatch_case = dispatch_helpers.dispatch_case
+
+
+def test_later_verify_needs_actual_new_acceptance_and_fresh_admission(native_dispatch):
+    from tldw_chatbook.Agents.code_review_service import ReviewCapacity
+
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content="Verify the captured review"
+    )
+    with pytest.raises(ReviewRefused, match="accepted_user_message_required"):
+        c.coordinator.accept_stage(
+            c.prepared.review_id, "verify", accepted_message_id=message.id
+        )
+    c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
+    c.coordinator.bind_stage_admission(
+        message.id,
+        capacity=lambda: ReviewCapacity(2, 2, 1, 10000),
+        routing=c.routing,
+        app_config=c.app_config,
+        destination_check=lambda target: None,
+    )
+    prepared = c.coordinator.accept_stage(
+        c.prepared.review_id, "verify", accepted_message_id=message.id
+    )
+    assert prepared.slots == ("V1",)
+    assert prepared.revision > c.prepared.revision
+    assert c.primary.verification_grant is None
+    assert (
+        c.coordinator.accept_stage(
+            c.prepared.review_id, "verify", accepted_message_id=message.id
+        )
+        == prepared
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Don't verify the review",
+        '"Verify the review"',
+        "If useful, verify the review",
+        "No",
+        "",
+    ],
+)
+def test_declined_quoted_and_ambiguous_later_stage_cannot_grant(native_dispatch, text):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content=text or " "
+    )
+    c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
+    with pytest.raises(ReviewRefused, match="accepted_stage_intent_required"):
+        c.coordinator.accept_stage(
+            c.prepared.review_id, "verify", accepted_message_id=message.id
+        )
+
+
+def test_registered_grant_is_revoked_by_actual_user_edit(native_review):
+    c = native_review
+    message = c.accept("Review my changes")
+    grant, _ = c.grants(message)
+    c.chat_store.update_message_content(message.id, "Do not review my changes")
+    with pytest.raises(ReviewRefused, match="accepted_user_message_changed"):
+        c.coordinator.issuer.validate(grant)
+
+
+def test_standalone_yes_cannot_authorize_verification(native_review):
+    c = native_review
+    message = c.accept("yes")
+    assert not c.coordinator._requests[message.id].stages
+
+
+def test_retry_reviewer_retains_previous_actual_settlement(native_dispatch):
+    c = native_dispatch
+    c.run(reviewers=1, work_chain_id=c.chain_id)
+    with c.store.lease(c.prepared.review_id) as context:
+        previous = context.active_attempts["R1"]
+        receipt = context.streams[("R1", previous.attempt_id)].terminal_receipt
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content="Retry reviewer R1"
+    )
+    c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
+    c.coordinator.bind_stage_admission(
+        message.id,
+        capacity=lambda: c.capacity,
+        routing=c.routing,
+        app_config=c.app_config,
+        destination_check=lambda target: None,
+    )
+    admitted = c.coordinator.accept_stage(
+        c.prepared.review_id,
+        "retry_reviewer",
+        accepted_message_id=message.id,
+        slot_id="R1",
+    )
+    assert admitted.slots == ("R1",)
+    with c.store.lease(c.prepared.review_id) as context:
+        assert context.scheduled_attempts["R1"] != previous.attempt_id
+        assert context.streams[("R1", previous.attempt_id)].terminal_receipt == receipt
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Review my changes but do not review them",
+        "Review changes, never review them",
+        "Retry reviewer R1, but do not retry",
+        "Verify this review but never consolidate it",
+    ],
+)
+def test_contradictory_native_instruction_cannot_authorize(native_review, text):
+    c = native_review
+    message = c.accept(text)
+    assert not c.coordinator._requests[message.id].stages
+
+
+def test_later_stage_revalidates_current_destination_without_mutation(native_dispatch):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content="Verify this review"
+    )
+    c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
+    c.coordinator.bind_stage_admission(
+        message.id,
+        capacity=lambda: c.capacity,
+        routing=c.routing,
+        app_config=c.app_config,
+        destination_check=lambda target: "destination_consent_required",
+    )
+    with pytest.raises(ReviewRefused, match="destination_consent_required"):
+        c.coordinator.accept_stage(
+            c.prepared.review_id, "verify", accepted_message_id=message.id
+        )
+    with c.store.lease(c.prepared.review_id) as context:
+        assert not context.stage_slots
+        assert not context.scheduled_attempts
+    assert message.id not in c.coordinator._accepted_stages
+
+
+def test_native_offer_decline_prevents_later_yes(native_dispatch):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    c.coordinator.offer_stage(c.prepared.review_id)
+    for text in ("no", "yes"):
+        message = c.chat_store.append_message(
+            "chat", role=ConsoleMessageRole.USER, content=text
+        )
+        c.coordinator.bind_accepted_request(
+            message.id, session_id="chat", source_epoch=0
+        )
+    assert not c.coordinator._requests[message.id].stages
+
+
+def test_concurrent_settlement_callbacks_present_each_original_once(native_dispatch):
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    presented = []
+
+    def present(*args):
+        time.sleep(0.02)
+        presented.append(args)
+        return True
+
+    c.coordinator.present_report = present
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(c.coordinator.on_settled, c.prepared.review_id)
+            for _ in range(2)
+        ]
+        for future in futures:
+            future.result(5)
+    assert len(presented) == 1
+
+
+@pytest.mark.asyncio
+async def test_native_issuer_registration_tracks_actual_runtime_attachment(tmp_path):
+    from Tests.Chat.test_console_agent_swap import _controller
+
+    controller, store, db = _controller(tmp_path, [])
+    bridge = controller._agent_bridge
+    owner = controller.fleet_wake.runtime_owner_id
+    try:
+        controller.update_agent_runtime(enabled=False, bridge=None)
+        assert owner not in db.automatic_work._review_authorities
+        controller.update_agent_runtime(enabled=True, bridge=bridge)
+        assert (
+            db.automatic_work._review_authorities[owner][0]
+            == controller.code_review.validate_boundary
+        )
+        session = store.create_session(ephemeral=True)
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.USER, content="Review my changes"
+        )
+        controller.code_review.bind_accepted_request(
+            message.id, session_id=session.id, source_epoch=0
+        )
+        controller.code_review.issuer.validate_intent(
+            controller.code_review._requests[message.id]
+        )
+    finally:
+        await controller.shutdown()
+        store.persistence.db.close()
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "text,stages",
+    [
+        ("Review my changes; the phrase 'and verify all' is a label", frozenset()),
+        (
+            "Review my changes and verify, but do not run verification",
+            frozenset({"review"}),
+        ),
+        ("Verify this review but do not execute verification", frozenset()),
+    ],
+)
+def test_quoted_and_indirectly_negated_stage_controls_fail_closed(
+    native_review, text, stages
+):
+    c = native_review
+    message = c.accept(text)
+    assert c.coordinator._requests[message.id].stages == stages
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Review my changes and verify them only after I approve.",
+        "Review my changes and verify them, but do not automatically verify.",
+        "Review my changes and verify them after approval.",
+        "Review my changes and verify them pending my approval.",
+        "Review my changes and verify them at my discretion.",
+        "Review my changes and verify them following my consent.",
+        "Review my changes and verify them; no automatic verification.",
+        "Review my changes without verification and verify.",
+    ],
+)
+def test_qualified_verification_never_issues_exact_verify_grant(native_review, text):
+    c = native_review
+    review, verification = c.grants(c.accept(text))
+    c.coordinator.issuer.validate(review)
+    assert verification is None
+
+
+@pytest.mark.parametrize(
+    "text,slot,reason",
+    [
+        ("Retry reviewer", "R1", "reviewer_selection_required"),
+        ("Retry reviewer R1", "R2", "accepted_reviewer_selection_mismatch"),
+    ],
+)
+def test_retry_selection_must_come_from_exact_native_user(
+    native_dispatch, text, slot, reason
+):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content=text
+    )
+    c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
+    c.coordinator.bind_stage_admission(
+        message.id,
+        capacity=lambda: c.capacity,
+        routing=c.routing,
+        app_config=c.app_config,
+        destination_check=lambda target: None,
+    )
+    with pytest.raises(ReviewRefused, match=reason):
+        c.coordinator.accept_stage(
+            c.prepared.review_id,
+            "retry_reviewer",
+            accepted_message_id=message.id,
+            slot_id=slot,
+        )
+    assert message.id not in c.coordinator._accepted_stages

@@ -41,3 +41,10 @@ A Console agent run resolves one provider+model at send time and everything it s
 ## Primary selection identity clarification — 2026-09-29 (TASK-32929)
 
 The primary config carries the captured raw selected provider for model-call routing, while service capability/protocol preparation keeps the execution key. A selectable execution spelling such as `llama_cpp`, `ollama` or `custom-openai-api` never replaces the primary's `custom-ep:<slug>` identity. Each explicitly routed child and fallback candidate supplies its own provider identity; a built-in child remains a distinct destination even when its spelling matches the parent's execution family. No alias inference from thread kind or message bodies is introduced.
+
+
+### Durable primary selection identity amendment (TASK-35582, 2026-10-27)
+
+The primary raw selected provider and canonical execution key remain separate through durable Console continuation, not only model-call routing. The host freezes their exact relationship, protocol, model and API base before accepted dispatch and carries the raw selection with the assistant continuation after dispatch ownership is removed, as specified in ADR-063. Neither a shared execution family nor an equal URL/model makes two `custom-ep:<slug>` selections interchangeable.
+
+Candidate binding and request validation use each call's actual resolved destination. A routed child uses its own raw identity and execution tuple and cannot inherit its parent's private continuation pin or history. The canonical checkpoint provider is never relabeled to a raw slug. Current registry aliases, mutable session defaults and message content are not accepted authority; an unprovable legacy virtual binding is refused rather than inferred. This adds no route registry, changes no child budget and grants no execution or destination permission.

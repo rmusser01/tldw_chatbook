@@ -662,6 +662,23 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
                 "sidecar attachment artifact contradicts its owner"
             )
         return
+    if (
+        transform is TraceTransformKind.MESSAGE_REWRITE
+        and artifact is not None
+        and artifact.source is TraceProvenanceSource.PROVIDER_OVERLAY
+    ):
+        if (
+            len(descriptor.inputs) != 2
+            or type(descriptor.inputs[0]) is not SavedRevisionTraceProvenance
+            or type(descriptor.inputs[1]) is not DerivedTraceProvenance
+            or descriptor.inputs[1].transform
+            is not TraceTransformKind.CONTINUATION_ATTACHMENT
+            or descriptor.inputs[1].inputs != (descriptor.inputs[0],)
+        ):
+            raise TraceProvenanceAlignmentError(
+                "completed replay requires its exact saved continuation owner"
+            )
+        return
     required_artifacts = {
         TraceTransformKind.MESSAGE_REWRITE: frozenset({TraceProvenanceSource.THINKING}),
         TraceTransformKind.PROVIDER_OVERLAY: frozenset(
@@ -741,6 +758,18 @@ def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
     if (
         type(descriptor) is DerivedTraceProvenance
         and descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT
+    ):
+        return descriptor.inputs[0].revision_id
+    return None
+
+
+def completed_replay_source_revision_id(descriptor: TraceProvenance) -> str | None:
+    """Identify only the closed saved-owner/continuation replay derivation."""
+    if (
+        type(descriptor) is DerivedTraceProvenance
+        and descriptor.transform is TraceTransformKind.MESSAGE_REWRITE
+        and descriptor.artifact is not None
+        and descriptor.artifact.source is TraceProvenanceSource.PROVIDER_OVERLAY
     ):
         return descriptor.inputs[0].revision_id
     return None

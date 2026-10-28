@@ -822,6 +822,26 @@ the read, assert it returns). Check the stack's siblings too: here three display
 builders made the same call, and fixing only the first would have moved the wait.
 
 **Follow-up (2026-10-19).** That fix was not enough: after it merged the test failed 7 times in 31 runs, every time at a read on the same full UI sync that the first stacks never reached. A pin that runs the whole sync with the rebuild starting at its transcript step then found two more, and fixing those exposed another. Pin the whole path the stack ran on, from the await where the hold can begin, not only the read the stack named; and before making a live read defer, check how often ordinary work holds its lock (here: constantly, so the sync deferred on every pass and another test broke 5 of 5).
+## A fresh kernel connection is not retired by held-cache close (TASK-35582, 2026-10-26)
+
+**Incident.** One native Console review test passed but retained database handles
+after controller/app shutdown. Keeping its exact owners alive showed one Chat
+worker handle, one AgentRuns MainThread handle and seven Workspace foreign-thread
+handles. The test's `db._get_connection()` assertions created an unheld AgentRuns
+connection; ordinary `close()` only retires the held thread-local connection.
+Using the existing held accessor removed that test leak. Chat's existing
+post-shutdown `quiesce_connections` retired its registered handle. Workspace's
+thread-affine handles remained seven; crossing threads raised SQLite's ownership
+error. The ten-case gate still warned at +238 FDs.
+
+**What to do.** Keep read assertions inside the owner's held connection API or
+explicitly close each newly acquired connection at its creation scope. After
+runtime settlement, use existing per-owner quiescence where available and assert
+the native owner count. Do not infer all-thread retirement from ordinary close,
+registry bookkeeping or passing tests. The durable
+[qualification record](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+retains before/after counts and the unresolved Workspace boundary.
+
 
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
@@ -22509,3 +22529,27 @@ test directly replaces settings and before acting on them. Its existing held-rea
 regression verifies old revision 1 is discarded and revision 2 renders; its bounded
 wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
 assertions, rather than retrying the action or weakening its ownership checks.
+
+## Exercise body-free tool projections through actual paging
+
+**TASK-35582 Task5, 2026-10-23.** Real review children reading an unchanged nested
+helper at a 1024-character result cap stopped after two pages even though direct
+source paging tests passed. The provider's privacy projection omitted all call
+arguments, so cycle detection treated resolve, read and cursor operations as the
+same repeated call. An opaque hash of canonical arguments preserves operation
+identity without publishing paths or bodies. Native and fenced gateway tests now
+assert the complete concatenated source, each bounded JSON page, instruction
+activation before evidence, and equal fingerprints only for identical calls.
+Direct source tests alone did not cover the runtime cycle/append boundary.
+
+
+## UI-thread guard routing does not prove Stop lock ordering
+
+**TASK-35582 Task9 review, 2026-10-26.** Owner-loop/worker guard tests passed while
+native report rendering still held the review publication lock across a synchronous
+Textual guard. A competing-thread lock probe failed on original reads, submissions
+and source reads. A mounted native schedule now retains an actual continuation
+boundary, runs Stop while the reader is awaiting its UI guard, and verifies both
+successful fencing and the reader's subsequent refusal. Pin the data with a lease,
+call UI authority outside publication locks (including outer callers), then check
+exact live identities again; correct thread dispatch alone does not prove this.

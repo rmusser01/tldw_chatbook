@@ -488,3 +488,49 @@ def test_streaming_reasoning_only_length_stop_reaches_caller_as_token_limit(
     assert caught.value.status_code == 400
     assert "max-tokens limit before writing a reply" in str(caught.value)
 
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_custom_hosted_requests_usage_only_for_streams_and_preserves_400(
+    monkeypatch, streaming
+):
+    """An unsupported usage option is one typed refusal, never a hidden retry."""
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+    from tldw_chatbook.LLM_Calls import provider_sessions
+    from tldw_chatbook.provider_registry import CUSTOM_HOSTED
+
+    attempts = []
+    response = requests.Response()
+    response.status_code = 400
+    response._content = b'{"error":{"message":"stream_options unsupported"}}'
+    response._content_consumed = True
+
+    class Session:
+        def post(self, _url, **kwargs):
+            attempts.append(kwargs["json"])
+            return response
+
+    monkeypatch.setattr(provider_sessions, "get_session", lambda *_args: Session())
+    monkeypatch.setattr(
+        hosted_provider_engine,
+        "resolve_hosted_request",
+        lambda record, **kwargs: replace(
+            _resolution(streaming=streaming, model="test-model"),
+            provider="custom-hosted",
+            api_key="",
+            base_url="https://custom.invalid/v1",
+        ),
+    )
+    with pytest.raises(ChatBadRequestError) as error:
+        build_hosted_chat_handler(CUSTOM_HOSTED)(
+            input_data=[{"role": "user", "content": "hi"}],
+            streaming=streaming,
+        )
+    assert error.value.status_code == 400
+    assert len(attempts) == 1
+    if streaming:
+        assert attempts[0]["stream_options"] == {"include_usage": True}
+    else:
+        assert "stream_options" not in attempts[0]

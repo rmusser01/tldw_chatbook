@@ -72,6 +72,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.code_review_models import ReviewTeam
     from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
@@ -2812,6 +2813,8 @@ def _load_settings_uncached(
         # [skills] disabled_builtins is read from app_config on every skills
         # read (TASK-32954); without this a disabled built-in returned on restart.
         "skills": copy.deepcopy(toml_config_data.get("skills", {})),
+        "agents": copy.deepcopy(toml_config_data.get("agents", {})),
+        "tools": copy.deepcopy(toml_config_data.get("tools", {})),
         # [analysis_defaults] is the Library's analysis provider/model/call
         # shape: the Media reader's Generate, bulk Analyze and
         # Analyze-after-import all resolve it from app_config through
@@ -4431,6 +4434,10 @@ openai_cache_key = false
 # provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
 # ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
 # spawn_override_allowlist = []
+
+[agents.code_review]
+reviewers = []
+verifier_preset_id = ""
 
 [splash_screen]
 # Splash screen configuration for startup animations
@@ -6115,6 +6122,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # Deep-Search Configuration
 # ==========================================================
 [tools]
+code_review_enabled = true
 # web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
@@ -9827,6 +9835,17 @@ def current_config_identity() -> tuple[int, str]:
         ``(configuration generation, effective config path)``.
     """
     return (_CONFIG_GENERATION, str(_get_effective_config_path()))
+
+
+def get_code_review_team() -> ReviewTeam:
+    """Return strict saved review defaults, retaining unresolved preset IDs.
+
+    Raises:
+        ReviewRefused: When saved choices are malformed; never substitutes a team.
+    """
+    from tldw_chatbook.Agents.code_review_models import parse_review_team
+
+    return parse_review_team(get_cli_setting("agents", "code_review", {}))
 
 
 def get_cli_setting(
