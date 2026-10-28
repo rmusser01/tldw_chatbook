@@ -1,7 +1,7 @@
 ---
 id: TASK-37266
 title: Preserve later Character Bench drafts and selection when queued Save publishes
-status: To Do
+status: In Progress
 created_date: 2026-10-28 22:07
 labels:
 - textual-patterns
@@ -11,6 +11,9 @@ priority: medium
 references:
 - tldw_chatbook/UI/Evals/character_bench_editor.py
 - tldw_chatbook/UI/Screens/evals_screen.py
+assignee:
+- '@codex'
+updated_date: 2026-10-28 23:02
 ---
 
 ## Description
@@ -34,6 +37,20 @@ Book Chapters 7/9 and the actual controls, source pins, ownership screen and lim
 - [ ] #3 Newer supported public shell selection remains authoritative whether already mounted or awaiting the existing region-swap lock when an older character Save publishes.
 - [ ] #4 Ordinary Save/rename refresh, validation/write failures, Revert and existing run-completion dirty-editor guards retain their established outcomes; mounted real-SQLite controls exercise the actual Save producer, native focused-child input and selection interleaves.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no.
+ADR path: N/A (existing ADR-011/033/150/161).
+Reason: bounded Character Bench publication fix preserving Evals service/state and separate message namespaces.
+1. Read TASK-37266, existing word/character Save paths, task-specific plan, audit controls and applicable UI/testing docs.
+2. Promote real SQLite/native Save controls; prove intended RED for later input, post-rail input and newer completed/pending selection, including raw sampler/card/description state.
+3. Capture raw submitted editor applicability and conditionally publish through the existing serialized region swap; retain submitted persistence and normal canonical Save.
+4. Verify GREEN and targeted original character/word/dirty-run controls plus scoped static/size/governance checks; update Evals architecture evidence.
+5. Root commits exact owned changes, obtains independent spec/quality review, enrolls gates, and closes ACs/notes/status only after verified completion.
+Full plan: Docs/superpowers/plans/2026-10-28-textual-37266-37268.md.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
