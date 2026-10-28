@@ -1,7 +1,7 @@
 ---
 id: TASK-37144
 title: Keep Console typing census independent of elapsed draft-pause timers
-status: In Progress
+status: Done
 created_date: 2026-10-28 04:00
 assignee:
 - '@codex'
@@ -17,7 +17,7 @@ references:
 - Tests/Performance/test_console_keystroke_work_census.py
 - backlog/decisions/097-boot-budget-ratchets.md
 - backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
-updated_date: 2026-10-28 04:25
+updated_date: 2026-10-28 04:39
 ---
 
 ## Description
@@ -30,7 +30,7 @@ The PR3283 ready-event Perf run40610052389 counted79 readiness builds for24 keys
 <!-- AC:BEGIN -->
 - [x] #1 The native per-key census remains within its existing positive and upper bounds under controlled elapsed pause intervals between real Pilot key dispatches; the new regression fails before the fix without setup/teardown errors or skips.
 - [x] #2 The existing storage-unit typing-pause, idle and revisit work remains exercised with unchanged callbacks and ceilings; phase separation does not discard its coverage.
-- [ ] #3 Production behavior, dependencies and existing guard caps/timeouts/shard counts are unchanged; the controlled regression is enrolled in the existing Perf Guard step and targeted checks plus scoped Superpowers review qualify the repair. Actual current-head CI remains a separate PR delivery gate.
+- [x] #3 Production behavior, dependencies and existing guard caps/timeouts/shard counts are unchanged; the controlled regression is enrolled in the existing Perf Guard step and targeted checks plus scoped Superpowers review qualify the repair. Actual current-head CI remains a separate PR delivery gate.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,9 +53,10 @@ Related completed ownership: [TASK-36390](task-36390%20-%20Tests-Performance-com
 
 ADR required: no. ADR path: N/A. Existing governance: [backlog/decisions/097-boot-budget-ratchets.md](../decisions/097-boot-budget-ratchets.md) and [backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md](../decisions/103-fast-pr-lane-and-required-gate-aggregation.md). No production behavior, dependency, cap, timeout or shard-count change.
 
-Receipts: .test-tmp/textual-37031-37034/ci-repair37144-{red01,green01,red02,green02}/; consolidated actual child receipts and final static proof are ci-repair37144-child-receipts.json and ci-repair37144-final-static-proof.{py,json} in that parent. Local Python 3.12.10 / pytest 8.3.5 / Textual 8.2.8; inherited asyncio fixture-scope, Pydantic exclude_if and pydub/audioop warnings remain. Scoped Superpowers review and actual current-head hosted CI are root-owned pending gates; leave In Progress and AC3 unchecked. No full suite was run.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
+Receipts: .test-tmp/textual-37031-37034/ci-repair37144-{red01,green01,red02,green02}/; consolidated actual child receipts and final static proof are ci-repair37144-child-receipts.json and ci-repair37144-final-static-proof.{py,json} in that parent. Local Python 3.12.10 / pytest 8.3.5 / Textual 8.2.8; inherited asyncio fixture-scope, Pydantic exclude_if and pydub/audioop warnings remain. Scoped Superpowers review of a0457fe1c7 is approved with zero Critical/Important/Minor findings; root independently verified all six original child XML receipts. AC3 is qualified. Actual current-head hosted CI remains a separate pending PR delivery gate, not a claimed pass. No full suite was run.
 
+Portable evidence and full scoped review: Docs/superpowers/qa/2026-10-27-textual-followups-implementation.md and its linked evidence folder. Root adjudicated all six declined review boundaries with costs. Local repair complete; PR delivery remains pending hosted checks.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

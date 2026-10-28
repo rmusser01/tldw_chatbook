@@ -1,21 +1,45 @@
 {
-  "note": "Portable Markdown/JSON is LF-normalized. Embedded native source/XML hashes retain their original meaning. Historical reports are frozen; hosted-functional-ci-proof pins the tested functional head. Later-head status remains on the PR. Task1 original review artifact was not retained; final whole-branch review independently covers it.",
+  "note": "Portable Markdown/JSON is LF-normalized. Source/XML hashes retain native meaning. Historical receipts are pinned to their stated heads; final PR CI is a separate delivery gate. Original Task1 review artifact was not retained.",
   "files": [
     {
+      "file": "ci-repair-37144-report.md",
+      "sha256": "3715cc82df24b8b91678bd9960b31b8a63419eb2d68ac46c9df6529d6a018195"
+    },
+    {
+      "file": "ci-repair-37144-review.md",
+      "sha256": "a219ee04f65d898e256fcd1e48e00d92108eb68c896d3a1bc99d0c2908227b5b"
+    },
+    {
+      "file": "ci-repair-id-final-ownership.json",
+      "sha256": "38ce500b16c8473e57e2b33d4b93f33a3ac4696a40fa195d96b03f548cd94bdc"
+    },
+    {
+      "file": "ci-repair-task-id-allocation.json",
+      "sha256": "69a3e9c6f2e2553785755538a86a3dc2ae3885bd63a1ae70c83487cca1792a01"
+    },
+    {
+      "file": "ci-repair37144-final-static-proof.json",
+      "sha256": "13f4eebb914924d31405780e01557a28e0b619f62c882534431b65c8736eab6b"
+    },
+    {
       "file": "computed-param-selector-proof.json",
-      "sha256": "0a0afd9111f61732e78d47983a3711f7f86398ae41f23769c868b8deb6f47aec"
+      "sha256": "3e18c2dd717a82349b45d084aafb3d8b6bc42a2b48bd001f3bcbd25d36a47e4e"
     },
     {
       "file": "diagnostic-inventory-repair-proof.json",
       "sha256": "77dbe6a8324180a4a7fae01ea28e5eafd26be762feb80842e8e67a6729b38be0"
     },
     {
+      "file": "duplicate-perf-run-qualification.json",
+      "sha256": "370cf96f7622b6dd0fb50b75c4be554bf773468941f201af76a18639de430c8a"
+    },
+    {
       "file": "executor-rulings.md",
-      "sha256": "4c9c703535a75e6c1b9e60d73590d862c7771c633001f5f30c21b661b2167179"
+      "sha256": "d482d02c216a727bad62816b9554d7bb3a6cbce4b3d2a69983749a1d845af7a6"
     },
     {
       "file": "final-census-capacity-proof.json",
-      "sha256": "bd4563e3dbedfccd3d156b3faa17289674098b4b9486376b9108af8d3dcefd43"
+      "sha256": "4241d4b43ab8cd312a8514d4044ca3bdc0503d458e2b48d08565a650b2afc3a2"
     },
     {
       "file": "final-fix-ci-contract-proof.json",
@@ -23,7 +47,7 @@
     },
     {
       "file": "final-fix-guard-proof.json",
-      "sha256": "b2ca1e64f1b6a35507184e2c8e6a68d94c75baf33582558fe350865f9d292e12"
+      "sha256": "58cdabd436b0bc70265a994fbf5b9281512fe65531d0cbd4783d9790b004e462"
     },
     {
       "file": "final-fix-report.md",
@@ -35,11 +59,11 @@
     },
     {
       "file": "final-fix-source-proof.json",
-      "sha256": "874998a2ab1b69884cc4ecaa1e6af7615f59171c49430be84cf60b9a1d212a75"
+      "sha256": "c7fa1917487b34953b0de50d9c4c2be919ad9142ebfcd3d3e15466f17c735443"
     },
     {
       "file": "final-guard-ci-proof.json",
-      "sha256": "345db1b65830c01c33c81c2cd7acf862dab53aa7f68a28d2ba7be64a556c7b8e"
+      "sha256": "e3053eda2913cf5d2721e87ed8169974416833e99032459804d6e47b4d87d188"
     },
     {
       "file": "final-native-source-hashes.json",
@@ -58,32 +82,52 @@
       "sha256": "906e16c8e01df5aa7d8c72961f0dc1d82f1fe628ae5dcac708cd1036ddb9cded"
     },
     {
+      "file": "readiness-callers-observation.json",
+      "sha256": "9328e4b51e88e69a91f7d80d687c22c4ab65b52427ac295989337f2118be4be8"
+    },
+    {
+      "file": "rebase-dev-f9-census-capacity-proof.json",
+      "sha256": "6f48ccc9fdbc5a8c26a9893bfc4d85d8886db9aaed35f9d4898429c517896149"
+    },
+    {
+      "file": "rebase-dev-f9-ci-contract-proof.json",
+      "sha256": "1ca8afe30aefd063b7db4a38d0c8526f9ad814dc5e24516067065bd13aa047b0"
+    },
+    {
+      "file": "rebase-dev-f9-proof.json",
+      "sha256": "5489d3e0bbb172b668948b59a3ab44b76d36828ca78372ec7c435aaf2b66222d"
+    },
+    {
       "file": "rebase-dev773-proof.json",
-      "sha256": "e4963a812656538ff2d402e374c0b33af29b7ddc65aa5c503c866fea21c7bc98"
+      "sha256": "9afc1826a6cfe9ba34f709b9e99e962f6279bc3edc8b61da2c71a6ffd1077744"
+    },
+    {
+      "file": "root-ci37144-child-proof.json",
+      "sha256": "5b10796cc44e4bcbb615261e232cc7f58ed0691168abf59cc85092eb60aff57a"
     },
     {
       "file": "root-final-fix-child-proof.json",
-      "sha256": "e3a1706ba90e027627b112cb9cb4f01d432aa84ac81e5cd63f9d44468b6de230"
+      "sha256": "90ae9ef37825fd72a92521c1ca5c04c771c9263bb921d958621c7e9885617e4e"
     },
     {
       "file": "root-final-new01-proof.json",
-      "sha256": "9ee7d188768af4fc17f76e16ba36e4fdb916529b060d5b4f839b6b76e58b6861"
+      "sha256": "207d00d78deb7787550eb61127629ca61bb58cec1441e14ed8fd742adc1a0945"
     },
     {
       "file": "root-final-task-namespace.json",
-      "sha256": "211e7fb2a5b486c58b4719a27f5102f3fe6d1cf79089ce75336f894ec5d94a6c"
+      "sha256": "d76b52b71dd3283a25cdc1d760884180255b7174493c390ab5e4483bda32f78b"
     },
     {
       "file": "root-settings-split-collection-proof.json",
-      "sha256": "b92d4b09e604488e593d43fc40beae90448fff1e777b95909b61385143b47f9c"
+      "sha256": "4a99316fab13d6ba8160180054129d8c27dfecd3397b283189ec50187b08a804"
     },
     {
       "file": "static-ruff-baseline-proof.json",
-      "sha256": "ac1d52fe789b162f369d441592f610e0949dc7c83c2eb5916ca1d3aab688cb6f"
+      "sha256": "964d9aeace64cb44e634491af5b2a0b7443ac8b6c4ff5d0ce44fb44db0663a10"
     },
     {
       "file": "static-summary.json",
-      "sha256": "6e89be62dcacb1f0c4ce2f046618c23b75392031a461f6d4849683a62141fd7d"
+      "sha256": "8ec43f746fbc21c06ef68872a7dc4db635e48d212f05d1e6179f3411d08ac0d9"
     },
     {
       "file": "task-1-report.md",

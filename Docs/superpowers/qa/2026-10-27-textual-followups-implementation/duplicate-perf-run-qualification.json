@@ -1,0 +1,11 @@
+{
+  "head": "73cff62fff16fa299aef7afd938bb5b66565ca72",
+  "tested_merge": "b8e2b1e735e0a4d5dfef6d58f0e1a2c3b036b11b",
+  "runtime": "Python3.12.15/pytest9.2.0",
+  "passing_synchronize_run": 40609661845,
+  "failing_ready_run": 40610052389,
+  "failure": "test_keystroke_work_does_not_scale_with_transcript_length:79readinessbuilds/24keys>3",
+  "failed_log_sha256": "0943b5b3148856b6ba3fd76f648d0e9e2895ffec275262718ae55b4da7f6ed87",
+  "qualification": "The prior passing Perf receipt does not waive the ready-event failure. All current-head runs must be checked; TASK-37144 repairs the residual typing/pause phase attribution with unchanged caps.",
+  "native_observation": "Private diagnostic probe03:25empty/38loaded; one/key plus three per elapsed draft-pause refresh, plus occasional controlbar. Diagnostic only, not a guard pass. Probes01/02 failed before useful work outside Tests/conftest and are excluded."
+}
