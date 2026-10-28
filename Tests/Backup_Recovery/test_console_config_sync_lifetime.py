@@ -440,7 +440,18 @@ screen._console_chat_store=None
 # sync's cadence reads it (TASK-33620.15.1).
 screen._console_chat_controller=None
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)
-screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync)
+screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync,_project_project_instruction_binding=no_sync,_project_project_instruction_dispatch=no_sync,_dismiss_project_instruction_decision_projection=no_sync)
+screen._fleet=SimpleNamespace(_console_wake_user_priority=no_sync,_console_wake_conversation_in_view=no_sync,_on_console_wake_delivery_started=no_sync)
+# TASK-33620.15.1.2: since PR #3023 every full sync reads this screen's
+# attach visit. Model the mounted, visible Console these cases interrupt:
+# its visit's attach completed, and the runtime already claimed, as
+# restore_state does before mount (the claim reads console_view_hooks,
+# hence the two owners above).
+screen._console_attach_visit_generation=0
+screen._console_attach_sync_complete=screen._console_attach_reconciled=True
+screen._console_attach_reconcile_running=False
+screen._is_active_console_screen=lambda:True
+screen._console_runtime()
 screen._retrieval=SimpleNamespace(
  _warm_console_effective_scope_cache_if_stale=no_async,
  _refresh_active_dictionaries_summary_if_scope_changed=no_async,
@@ -454,8 +465,11 @@ screen._sync_console_native_session_tabs=no_async
 screen._sync_native_console_transcript=no_async
 screen._console_mode_summary=lambda state:'fixture'
 screen._native_run_status_copy=lambda:None
+# A Static answers its content: the sync compares it before an update (TASK-33620.15.7).
+mode=SimpleNamespace(content='')
+mode.update=lambda content,**kwargs:setattr(mode,'content',content)
 def mode_bar(selector,*args):
- if selector=='#console-mode-bar':return SimpleNamespace(update=no_sync)
+ if selector=='#console-mode-bar':return mode
  return missing(selector,*args)
 screen.query_one=mode_bar
 import tldw_chatbook.UI.Screens.chat_screen as module
@@ -500,6 +514,11 @@ async def main():
  await workers.pop()
  expected='new external request' if case=='native-worker-external' else 'fixture'
  assert rendered==[(expected,expected)]
+ # The refresh recorded the inputs it projected from, chat controller
+ # included (TASK-33620.15.1.2): the tick swallows an unreadable input as
+ # "changed", so without a record every later poll tick would project.
+ from tldw_chatbook.UI.Console_Modules import config_sync
+ assert config_sync._cadence(screen).values is not None
  assert not scheduled and not workers and not screen._console_sync_requested
 try:asyncio.run(main())
 finally:
