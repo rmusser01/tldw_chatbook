@@ -563,3 +563,76 @@ def test_retry_selection_must_come_from_exact_native_user(
             slot_id=slot,
         )
     assert message.id not in c.coordinator._accepted_stages
+
+
+@pytest.mark.asyncio
+async def test_controller_defers_review_owner_until_first_use(tmp_path):
+    from Tests.Chat.test_console_agent_swap import _controller
+
+    controller, store, db = _controller(tmp_path, [])
+    try:
+        assert controller._code_review is None
+        review = controller.code_review
+        assert controller.code_review is review
+        assert review.runtime_owner_id == controller.fleet_wake.runtime_owner_id
+        assert review.present_report == controller._present_review_report
+    finally:
+        await controller.shutdown()
+        db.close()
+        store.persistence.db.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_review_owner_matches_registered_ledger(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from Tests.Chat.test_console_agent_swap import _controller
+    from tldw_chatbook.Chat import console_code_review
+
+    controller, store, db = _controller(tmp_path, [])
+    ledger = db.automatic_work
+    native_constructor = console_code_review.ConsoleCodeReviewCoordinator
+    entered = threading.Event()
+    release = threading.Event()
+    second_attempted = threading.Event()
+    second_finished = threading.Event()
+    constructors = []
+
+    def overlapping_constructor(*args, **kwargs):
+        constructors.append(threading.get_ident())
+        if len(constructors) == 1:
+            entered.set()
+            assert release.wait(5), "first constructor was not released"
+        return native_constructor(*args, **kwargs)
+
+    def second_use():
+        second_attempted.set()
+        try:
+            return controller.code_review
+        finally:
+            second_finished.set()
+
+    monkeypatch.setattr(
+        console_code_review, "ConsoleCodeReviewCoordinator", overlapping_constructor
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(lambda: controller.code_review)
+            assert entered.wait(5)
+            second = workers.submit(second_use)
+            assert second_attempted.wait(5)
+            try:
+                second_finished.wait(0.5)
+            finally:
+                release.set()
+            owners = [first.result(5), second.result(5), controller.code_review]
+        authority = ledger._review_authorities[controller.fleet_wake.runtime_owner_id]
+        owners.extend(callback.__self__ for callback in authority)
+        assert all(owner is owners[0] for owner in owners), [id(owner) for owner in owners]
+        assert len(constructors) == 1
+    finally:
+        release.set()
+        await controller.shutdown()
+        db.close()
+        store.persistence.db.close()

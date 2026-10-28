@@ -46,11 +46,6 @@ from tldw_chatbook.Agents.agent_routing import (
     load_agents_routing_config,
     resolve_spawn_target,
 )
-from tldw_chatbook.Agents.code_review_models import (
-    ReviewRefused,
-    ReviewTeam,
-    parse_review_team,
-)
 from tldw_chatbook.Chat.console_provider_support import (
     supported_console_provider_readiness_keys,
 )
@@ -147,6 +142,8 @@ class AgentsSettingsPanel(Vertical):
         self._selected_id: str | None = None
         self._rows: list[dict] = []
         self._routing_readiness = routing_readiness
+        from tldw_chatbook.Agents.code_review_models import ReviewTeam
+
         self._review_team = ReviewTeam()
 
     def compose(self) -> ComposeResult:
@@ -600,6 +597,8 @@ class AgentsSettingsPanel(Vertical):
 
     # -- saved code-review preferences ------------------------------------
     async def _load_review_team(self) -> None:
+        from tldw_chatbook.Agents.code_review_models import ReviewRefused, ReviewTeam
+
         if self._runs_db is None:
             return
         try:
@@ -699,6 +698,8 @@ class AgentsSettingsPanel(Vertical):
         )
 
     async def _edit_review_team(self, action: str) -> None:
+        from tldw_chatbook.Agents.code_review_models import ReviewRefused, parse_review_team
+
         rows = [choice.model_dump() for choice in self._review_team.reviewers]
         lv = self.query_one("#agents-review-team-list", ListView)
         index = lv.index
@@ -740,6 +741,8 @@ class AgentsSettingsPanel(Vertical):
         await self._render_review_team(index)
 
     async def _save_review_team(self) -> None:
+        from tldw_chatbook.Agents.code_review_models import parse_review_team
+
         if not self._app_config():
             self.query_one("#agents-review-team-status", Static).update(
                 "Team saving needs an app configuration."

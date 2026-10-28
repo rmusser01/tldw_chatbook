@@ -4740,17 +4740,8 @@ class ConsoleChatController:
         #: state`'s terminal retry hook always has it; registered on the
         #: bridge fan-out next to the usage fold above.
         self._fleet_wake = ConsoleFleetWakeCoordinator(self)
-        from .console_code_review import ConsoleCodeReviewCoordinator
-
-        self.code_review = ConsoleCodeReviewCoordinator(
-            self.store,
-            runtime_owner_id=self._fleet_wake.runtime_owner_id,
-            on_boundary=self._fleet_wake.on_review_boundary,
-            on_boundary_retired=self._fleet_wake.on_review_boundary_retired,
-        )
-        self.code_review.present_report = self._present_review_report
-        self.code_review.present_offer = self._present_review_offer
-        self.code_review.present_status = self._present_review_status
+        self._code_review_lock = threading.RLock()
+        self._code_review = None
         self._review_ledger = None
         self._chat_start = ConsoleChatStartCoordinator(self)
         self.store._agent_handoff_changed = self._chat_start.withdraw_prepared
@@ -24956,6 +24947,25 @@ class ConsoleChatController:
         return False
 
     @property
+    def code_review(self) -> Any:
+        """Load the review owner on first use, outside Console first paint."""
+        with self._code_review_lock:
+            if self._code_review is None:
+                from .console_code_review import ConsoleCodeReviewCoordinator
+
+                self._code_review = ConsoleCodeReviewCoordinator(
+                    self.store,
+                    runtime_owner_id=self._fleet_wake.runtime_owner_id,
+                    on_boundary=self._fleet_wake.on_review_boundary,
+                    on_boundary_retired=self._fleet_wake.on_review_boundary_retired,
+                )
+                self._code_review.present_report = self._present_review_report
+                self._code_review.present_offer = self._present_review_offer
+                self._code_review.present_status = self._present_review_status
+                self._register_fleet_wake(self._agent_bridge)
+            return self._code_review
+
+    @property
     def fleet_wake(self) -> ConsoleFleetWakeCoordinator:
         """The auto-wake coordinator (PR3a-2 Task 5): the screen wires its
         app object (``fleet_wake.wire``), calls ``seed_from_marks`` at
@@ -24977,22 +24987,27 @@ class ConsoleChatController:
             bridge: The Console agent bridge to register on, or ``None``.
         """
         self._fleet_wake.capture_loop_if_running()
-        database = getattr(bridge, "runs_db", None)
-        ledger = getattr(database, "automatic_work", None)
-        if ledger is not self._review_ledger:
-            if self._review_ledger is not None:
-                self._review_ledger.unregister_review_boundary_authority(
-                    self._fleet_wake.runtime_owner_id
-                )
-                self.code_review.reset_runtime()
-            self._review_ledger = ledger
-            if ledger is not None:
-                ledger.register_review_boundary_authority(
-                    self._fleet_wake.runtime_owner_id,
-                    validate=self.code_review.validate_boundary,
-                    transition=self.code_review.boundary_transition,
-                    acceptance_scope=self.code_review.boundary_acceptance_scope,
-                )
+        with self._code_review_lock:
+            database = getattr(bridge, "runs_db", None)
+            ledger = (
+                getattr(database, "automatic_work", None)
+                if self._code_review is not None
+                else None
+            )
+            if ledger is not self._review_ledger:
+                if self._review_ledger is not None:
+                    self._review_ledger.unregister_review_boundary_authority(
+                        self._fleet_wake.runtime_owner_id
+                    )
+                    self.code_review.reset_runtime()
+                self._review_ledger = ledger
+                if ledger is not None:
+                    ledger.register_review_boundary_authority(
+                        self._fleet_wake.runtime_owner_id,
+                        validate=self.code_review.validate_boundary,
+                        transition=self.code_review.boundary_transition,
+                        acceptance_scope=self.code_review.boundary_acceptance_scope,
+                    )
         if bridge is None:
             return
         progress_register = getattr(bridge, "on_progress_enqueued", None)
