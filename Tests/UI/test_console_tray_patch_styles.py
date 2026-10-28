@@ -6,23 +6,27 @@ composes of the tray (the state shown and the next one), which were then
 dropped, never mounted.
 
 Measured live on origin/dev 3be493413a (2026-10-27, 160x45, Anthropic
-claude-haiku-4-5, 12 probed sends): in 8 of 12 sends the longest UI-loop
-callback between Enter and the provider POST was the first 0.2 s poll tick
-after acceptance (+260-355 ms, 40-57 ms). Inside it, ``App.update_styles``
-took 21-34 ms for 64-69 nodes: every widget those two composes built,
-restyled as each Button constructor and compose helper set a class. Headless,
-with the app stylesheets, one patched sync built 96 widgets and cost about
-100 ms of CPU at 12 rows (264 widgets, about 290 ms at 40 rows).
+claude-haiku-4-5, 13 probed sends): the first 0.2 s poll tick after a send's
+acceptance (+259-354 ms) spent 35-55 ms of CPU, and it was the longest
+UI-loop callback between Enter and the provider POST by CPU in 10 of 13 sends
+(by wall time in 7). Inside it, ``App.update_styles`` ran 55-69 times for
+21-34 ms of CPU: every widget those two composes built, restyled as each
+Button constructor and compose helper set a class. Headless, with the app
+stylesheets, one patched sync built 96 widgets and cost 87-93 ms of CPU at 12
+rows (264 widgets, 243-266 ms at 40 rows).
 
 The patch now decides from the row data: compose records, per browser row it
 builds, the run-dependent values it wrote (``_BrowserRowPaint``), and the
 patch compares that record with the paint the incoming row gives. Nothing is
 composed, so nothing is built or styled off the DOM.
 
-The A/B cases below are parity pins: each delta in a patchable browser field
-lands what a fresh build of the new state shows, whether the patch takes it
-or rebuilds. They hold on origin/dev's compose diff as well; their job is to
-keep the data-level decision honest as the compose changes.
+The A/B cases below check that each delta in a patchable browser field lands
+what a fresh build of the new state shows, whether the patch takes it or
+rebuilds. All but the colour case also pass on origin/dev f9baac8706; the
+colour case fails there because a plain ``button.label =`` write drops a
+style-only change. ``test_console_tray_patch_sequence.py`` checks the same
+across structural deltas (rows added, removed, renamed or reordered) between
+patches while a run is in flight.
 """
 
 from __future__ import annotations
@@ -364,4 +368,52 @@ async def test_rows_that_drifted_from_their_record_are_rebuilt(monkeypatch) -> N
         menu = tray.query_one("#console-conversation-actions-0", Button)
         if menu.label.plain != "[running]":
             failures.append(f"glyph mode flip: the action shows {menu.label.plain!r}")
+    assert failures == []
+
+
+# -- A glyph that sizes its own box ------------------------------------------
+
+
+class _ContentSizedActionHost(_TrayHost):
+    """The tray with each row's action button as wide as its glyph."""
+
+    CSS = """
+    ConsoleWorkspaceContextTray Button.console-conversation-actions {
+        width: auto;
+        min-width: 0;
+        max-width: 100%;
+    }
+    """
+
+
+async def test_a_glyph_change_in_a_content_sized_action_box_rebuilds(
+    monkeypatch,
+) -> None:
+    """New glyph copy in a box sized by its content needs a layout: a rebuild.
+
+    The app stylesheet gives the action button a fixed width, so the patch
+    writes glyphs in place there. Under a stylesheet that leaves the width to
+    the glyph, the same deltas must rebuild and land a fresh build's result.
+    """
+    requests = _LayoutRequests(monkeypatch)
+    failures: list[str] = []
+    host = _ContentSizedActionHost(_tray_state())
+    async with host.run_test(size=(40, 30)) as pilot:
+        tray = await _settled_tray(host, pilot)
+        # The override took: the action box is sized by its glyph.
+        width = tray.query_one("#console-conversation-actions-0", Button).styles.width
+        assert width is not None and width.is_auto
+        for delta in ("row running", "row icon", "row colour"):
+            shown, incoming, _patched = _PAINT_DELTAS[delta]
+            tray = await _remount(host, pilot, shown())
+            with requests.counting() as calls:
+                tray.sync_state(incoming())
+            if tray not in calls:
+                failures.append(f"{delta}: patched a glyph in a content-sized box")
+            for _ in range(4):
+                await pilot.pause()
+            result = _styled_witness(tray)
+            built = _styled_witness(await _remount(host, pilot, incoming()))
+            if result != built:
+                failures.append(f"{delta}: the result differs from a fresh build")
     assert failures == []
