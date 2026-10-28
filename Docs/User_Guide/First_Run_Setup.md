@@ -256,11 +256,16 @@ says what it holds:
   After encrypting, the step says "✓ Encryption enabled.", the button becomes
   **Change password…**, and the keyboard moves to **Next →**, so Enter
   continues to the summary. A failed attempt's error goes away when you try
-  again, so a success is never shown beside an earlier failure.
+  again, so a success is never shown beside an earlier failure. While the
+  keys are being encrypted (or the password changed), the step's buttons are
+  disabled and **Next →** waits with "Encryption is still running", so setup
+  never records the step before the outcome.
 - **Keys already encrypted** (for example when you run setup again) — "Your
   saved API keys are encrypted", with **Change password…**, which asks for the
   current and the new password. After a change the keyboard moves to
   **Next →** as well. Setup never sets a second password over encrypted keys.
+  A key you typed on this run but haven't saved yet is called out here too,
+  with **Back to Model**.
 - **A key you typed but that isn't saved yet** (you skipped the Model step;
   the key is saved together with the model) — it says so and offers **Back
   to Model**. The keyboard stays on **Next →**, so Enter still moves forward;
@@ -269,13 +274,23 @@ says what it holds:
 - **Keys only from environment variables** — it names them (for example
   `OPENAI_API_KEY`) and says config.toml holds no key to encrypt.
 - **No key at all** — "Nothing to protect".
+- **A saved key that can't be read** (encryption is off, but a value is still
+  encrypted with an earlier master password) — it names up to three such
+  values, providers' keys first, then "and N more", and says where to
+  re-enter or clear them: Settings ▸ Providers & Models when every one is a
+  provider's key, Settings ▸ Advanced Config otherwise. It offers no Encrypt button,
+  because encrypting is refused until that value is fixed. The summary's Key
+  encryption row says the same.
 - **config.toml can't be read** — it says so and offers nothing, rather than
   guessing whether your keys are encrypted (if the file says encryption is
   on, it shows the encrypted state instead).
 
 The progress tracker marks this step ✓ only when your keys are encrypted;
-otherwise (nothing to protect, keys kept as plain text, or a file it couldn't
-read) it shows –.
+otherwise (nothing to protect, keys kept as plain text, a file it couldn't
+read, or a saved key it can't read) it shows –. When you resume setup, the
+step and the tracker follow what config.toml holds now, not what your saved
+progress recorded: if you turned encryption off after leaving setup, Protect
+shows the plain-text offer again.
 
 Every state says where to change this later: Settings ▸ Privacy & Security ▸
 **Encryption**.
@@ -376,9 +391,9 @@ A saved key that is still encrypted is never treated as a usable key. If a
 key cannot be decrypted, its provider shows as not ready, never ready. A
 provider that needs a key reads as missing its key ("API key missing", and
 the API key row's source word **missing** in Providers & Models). A local
-provider that needs no key still says why: "Saved API key is still
-encrypted". Either way, re-enter or clear the key in Settings ▸ Providers &
-Models. A custom endpoint (a local server saved under **Custom endpoints**)
+provider whose saved key is still encrypted reads "Not ready · no key" too,
+even though it would need no key otherwise. Either way, re-enter or clear the
+key in Settings ▸ Providers & Models. A custom endpoint (a local server saved under **Custom endpoints**)
 whose key is still encrypted reads "Not ready · no key" the same way;
 re-enter or clear its key there. A custom endpoint's own key decides: a
 still-encrypted key saved under the provider it is built on (for example
