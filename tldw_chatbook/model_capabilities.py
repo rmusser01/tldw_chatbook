@@ -203,13 +203,16 @@ _ANTHROPIC_FAMILY_RE = re.compile(
 )
 
 # A ``None`` minor means "every minor version in this major line".
-# Verified live against api.anthropic.com on 2026-08-18: each family below
-# returns 400 for `temperature`/`top_p`/`top_k` and for
+# The non-Haiku families below were verified live against api.anthropic.com
+# on 2026-08-18: each returns 400 for `temperature`/`top_p`/`top_k` and for
 # `thinking={"type": "enabled", "budget_tokens": N}`, while Opus 4.6, Sonnet 4.5
 # and Haiku 4.5 return 200 for the same payloads.
 _ANTHROPIC_MODERN_REQUEST_FAMILIES = frozenset(
     {
         ("fable", 5, None),
+        # Haiku 5.5 migration guide: sampling and fixed budgets are unsupported.
+        # https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide
+        ("haiku", 5, 5),
         ("mythos", 5, None),
         ("opus", 5, None),
         ("opus", 4, 8),
@@ -275,11 +278,9 @@ def anthropic_model_rejects_sampling_params(model: object) -> bool:
         model: An Anthropic model identifier (any prefixed or suffixed form).
 
     Returns:
-        True when sending any sampling parameter would be answered with
-        ``400 invalid_request_error: `temperature` is deprecated for this
-        model.`` -- the Fable 5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7 and
-        Sonnet 5 families. False for Opus 4.6 and earlier, Sonnet 4.6/4.5 and
-        Haiku, which still accept them.
+        True for the Fable 5, Haiku 5.5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7
+        and Sonnet 5 families, which reject sampling parameters. False for
+        Opus 4.6 and earlier, Sonnet 4.6/4.5 and Haiku 4.5, which accept them.
     """
     return _anthropic_is_modern_request_family(model)
 
@@ -291,10 +292,9 @@ def anthropic_model_rejects_fixed_thinking_budget(model: object) -> bool:
         model: An Anthropic model identifier (any prefixed or suffixed form).
 
     Returns:
-        True when ``thinking={"type": "enabled", "budget_tokens": N}`` would be
-        answered with ``400 invalid_request_error: "thinking.type.enabled" is
-        not supported for this model``; such a model must use adaptive thinking
-        plus ``output_config.effort`` instead.
+        True when ``thinking={"type": "enabled", "budget_tokens": N}`` is
+        unsupported; such a model must use adaptive thinking plus
+        ``output_config.effort`` instead.
 
     Note:
         This currently covers exactly the same families as
@@ -561,13 +561,13 @@ def openai_model_requires_max_completion_tokens(model: object) -> bool:
         this model. Use 'max_completion_tokens' instead.``
 
     Note:
-        This currently covers the same families as
-        :func:`openai_model_rejects_sampling_params` -- OpenAI changed both
-        rules with the reasoning generation -- but they are separate questions
-        about the request surface and are kept as separate predicates so a
-        future model can answer them differently.
+        GPT-6 Luna also rejects ``max_tokens`` (TASK-35582 diagnostic), without
+        evidence about sampling rejection. Keep these request facts separate.
     """
-    return _openai_is_modern_request_family(model)
+    return _openai_is_modern_request_family(model) or (
+        isinstance(model, str)
+        and model.strip().lower().rsplit("/", 1)[-1] == "gpt-6-luna"
+    )
 
 
 #

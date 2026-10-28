@@ -39,6 +39,24 @@ Most planned migrations subclass `BaseDB`, whose per-call `_get_connection()` op
 - Where a store needs BaseDB's per-call connection for specific operations, it retains that seam explicitly rather than blending the two.
 - Per-store semantic deltas surface at migration time and are decided individually. Deferred-BEGIN contracts are expressed as `_transaction_immediate_default = False` (a class attribute) rather than method overrides: `transaction(*, immediate=None)` resolves None to the store's class default, and an explicit value always wins (the tri-state, decided at migration 3 per the workspace-PR review's recommendation — five stores carry deferred-BEGIN contracts, and per-store method overrides would recreate the boilerplate the kernel deletes). Workspace uses the class attribute; AgentRuns keeps the kernel's immediate default with no override.
 
+### Finite materialized Workspace reads (TASK-35582 AC23)
+
+A value-returning Workspace registry read may wrap its complete synchronous work
+in the existing `operation_owned_connection(self.db)` scope. `get_runtime_binding`
+uses this same policy as `get_workspace` and `list_workspaces`; its scope includes
+the legacy Default-binding repair and resulting transaction before retirement.
+Only a newly acquired exact file-backed owner's handle is retired, on its creating
+thread, after managed DB operations settle. Pre-existing caller handles and
+transactions, in-memory/custom owners, and uncertain native closes retain their
+existing ownership. Canceling an awaiter does not close its still-running producer.
+
+This clarifies finite caller ownership under ADR-126; the kernel's held cache,
+transaction and thread-affinity contracts do not change. TASK-35582's real Console
+probe found seven Workspace handles surviving dead producer threads, all acquired
+through this read. Generic agent worker cleanup's default-registry discovery did
+not cover the actual injected registry, and a modal reader ran independently.
+Fixing the shared finite read covers both without widening shutdown authority.
+
 Two micro-pins deferred to follow-up before the fleet migrates (kernel review, minor): the probe-error asymmetry (a failed probe on a still-live connection must propagate, not replace) and `_configure_connection` applying on revival. Both hold in the current code; they deserve dedicated tests in the next kernel PR.
 
 
@@ -49,3 +67,22 @@ Two micro-pins deferred to follow-up before the fleet migrates (kernel review, m
 - Reviewers of future store PRs can reject hand-rolled `def transaction()` as a regression against this ADR.
 - Risks: the mixin must not perturb `BaseDB`'s operation-owned-connection/quiescence machinery (different concern, per-call vs held); migrating a store changes its failure surface only if its copy had drifted from canonical — each migration's test suite is the guard, and drifts are surfaced and decided individually.
 - Rejected alternatives: (a) collapsing ChaChaNotes' depth-tracked manager for everyone — larger blast radius, no demonstrated need; (b) making participants.py the kernel — it is a coordinator, and overloading it couples backup admission with connection mechanics; (c) leaving the copies — the count grows monotonically and each new copy is a fresh chance to forget task-32801.5.
+
+
+## TASK-35582 AC23-B: retained DB custody during private root preparation
+
+An exact core DB operation cannot grant filesystem authority. The fleet launch
+retains its original counted AgentRuns operation/lease through child handoff or
+refused-launch terminalization/refund. A no-argument Backup_Recovery helper admits
+only the existing profile `agent_worktrees` base through ordinary native storage
+acquisition, suspending core discovery inside that owner and restoring/revalidating
+it in `finally`. Pause/source/private-path guards and `_Operation.check` are
+unchanged. This follows existing retained-core raw-source scopes; generic path
+widening, dropping the launch operation and caller-selected callbacks are rejected.
+
+The full decision and required native pause/symlink/unrelated-path/refused-child/
+uncertain-custody qualification are in
+[ADR-126's TASK-35582 amendment](126-complete-local-backup-and-recovery.md#task-35582-ac23-b-independently-prepare-the-fixed-agent-worktree-root).
+Creation translates exactly `RecoveryRequired`/`PrivatePathError` from this fixed
+preparation into body-free `storage_unavailable`, allowing parent DB cleanup;
+helper callers keep native exceptions and no private exception body is logged.

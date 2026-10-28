@@ -3275,25 +3275,26 @@ class LocalWorkspaceRegistryService:
         """Return one runtime binding if it exists."""
 
         safe_binding_id = _normalize_required_text(binding_id, "binding_id")
-        try:
-            with self.db.connection() as conn:
-                row = conn.execute(
-                    """
-                    SELECT *
-                    FROM workspace_runtime_bindings
-                    WHERE binding_id = ?
-                    """,
-                    (safe_binding_id,),
-                ).fetchone()
-        except sqlite3.Error as exc:
-            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        if row is None:
-            return None
-        if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
-            self._delete_default_runtime_bindings()
-            return None
-        binding = _runtime_binding_from_row(row)
-        return binding
+        with operation_owned_connection(self.db):
+            try:
+                with self.db.connection() as conn:
+                    row = conn.execute(
+                        """
+                        SELECT *
+                        FROM workspace_runtime_bindings
+                        WHERE binding_id = ?
+                        """,
+                        (safe_binding_id,),
+                    ).fetchone()
+            except sqlite3.Error as exc:
+                raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+            if row is None:
+                return None
+            if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
+                self._delete_default_runtime_bindings()
+                return None
+            binding = _runtime_binding_from_row(row)
+            return binding
 
     def list_runtime_bindings(
         self,

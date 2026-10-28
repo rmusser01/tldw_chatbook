@@ -2050,6 +2050,17 @@ ConsoleTracePrivacyDialog #trace-privacy-actions { height: 3; min-height: 3; ali
 ConsoleTracePrivacyDialog #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
 ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
 
+/* ===== WIDGET: ConsoleCodeReviewModal (Widgets/Console/console_code_review_modal.py) ===== */
+
+
+ConsoleCodeReviewModal #code-review-dialog {
+    width: 95%; height: 95%; background: $panel;
+    border: round $tldw-boundary; padding: 1;
+}
+ConsoleCodeReviewModal #code-review-body { height: 1fr; }
+ConsoleCodeReviewModal #code-review-actions { height: auto; }
+ConsoleCodeReviewModal #code-review-actions Button { min-width: 6; width: 1fr; }
+
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
 

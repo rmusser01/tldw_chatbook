@@ -149,6 +149,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     CANVAS_RESERVED_TOOL_NAMES,
+    CODE_REVIEW_RESERVED_TOOL_NAMES,
     LIBRARY_RESERVED_TOOL_NAMES,
     PROFILE_RESERVED_TOOL_NAMES,
     SkillToolProvider,
@@ -190,6 +191,7 @@ from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSideca
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
     PreparedConsoleRequest,
+    PreparedProviderRequest,
     build_console_request,
     freeze_json,
 )
@@ -217,6 +219,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support
+from tldw_chatbook.Chat.console_endpoint_provenance import ConsoleEndpointProvenance
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
 )
@@ -229,6 +232,7 @@ from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope, ThinkingHistory
 from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationOwnerGroup,
+    bind_continuation_to_target,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
@@ -3176,6 +3180,78 @@ class _StreamingModelAdapter:
     fleet.
     """
 
+    def _acknowledge_live_native_continuation(self, original, projected, model_result):
+        from types import MappingProxyType
+
+        from tldw_chatbook.Agents.agent_models import (
+            FinalContinuation,
+            ToolBatchReady,
+            ToolCallExecuting,
+            ToolCallFinished,
+        )
+        from tldw_chatbook.Chat.console_trace_continuation import (
+            LiveNativeContinuationCustody,
+        )
+        from tldw_chatbook.Chat.provider_continuation import transition_provider_call
+
+        self._live_native_custody = None
+        if projected is not self._live_native_persisted_event:
+            raise ValueError("live_native_acknowledgment")
+        self._live_native_persisted_event = None
+        if original.context != projected.context:
+            raise ValueError("live_native_acknowledgment")
+        context = original.context
+        if context.agent_kind != "primary" or context.durability != "persistent":
+            return
+        if context.owner_message_id != self._assistant_message_id:
+            raise ValueError("live_native_owner")
+        if isinstance(original, (ToolBatchReady, FinalContinuation)):
+            checkpoint = original.checkpoint
+            self._live_native_results = {}
+        elif isinstance(original, (ToolCallExecuting, ToolCallFinished)):
+            checkpoint = self._live_native_checkpoint
+            if checkpoint is None:
+                raise ValueError("live_native_acknowledgment")
+            checkpoint = transition_provider_call(
+                checkpoint,
+                call_id=original.call_id,
+                expected_revision=original.expected_checkpoint_revision,
+                target=(
+                    "executing"
+                    if isinstance(original, ToolCallExecuting)
+                    else original.target_state
+                ),
+                result=None
+                if isinstance(original, ToolCallExecuting)
+                else original.result,
+            )
+            if isinstance(original, ToolCallFinished):
+                if type(model_result) is not str:
+                    raise ValueError("live_native_result_projection")
+                self._live_native_results[original.call_id] = model_result
+        else:
+            raise ValueError("live_native_acknowledgment")
+        self._live_native_checkpoint = checkpoint
+        message = self._store.get_message(self._assistant_message_id)
+        durable = message.provider_continuation
+        version = message.provider_continuation_message_version
+        if (
+            durable is None
+            or type(version) is not int
+            or durable.checkpoint_revision != checkpoint.checkpoint_revision
+        ):
+            raise ValueError("live_native_acknowledgment")
+        self._live_native_custody = LiveNativeContinuationCustody(
+            self._live_native_invocation,
+            message.persisted_message_id or message.id,
+            context.run_id,
+            version,
+            checkpoint,
+            MappingProxyType(dict(self._live_native_results)),
+            self,
+            durable,
+        )
+
     def __init__(
         self,
         *,
@@ -3210,6 +3286,11 @@ class _StreamingModelAdapter:
         self._loop = loop
         self._native_tools = native_tools
         self._provider_stream_signals = provider_stream_signals
+        self._live_native_invocation = object()
+        self._live_native_custody = None
+        self._live_native_persisted_event = None
+        self._live_native_checkpoint = None
+        self._live_native_results = {}
         self._continuation_sidecar = tuple(continuation_sidecar)
         self._continuation_target = continuation_target
         self._continuation_owner_key = continuation_owner_key
@@ -3368,6 +3449,16 @@ class _StreamingModelAdapter:
             self._thread_loop.loop = previous
             lifeline.shutdown()
 
+    @contextlib.contextmanager
+    def review_request_admission(self, callback):
+        """Bind a rejection-only host check to this thread's next request."""
+        previous = getattr(self._thread_loop, "review_admission", None)
+        self._thread_loop.review_admission = callback
+        try:
+            yield
+        finally:
+            self._thread_loop.review_admission = previous
+
     def chat_call(
         self,
         *,
@@ -3449,6 +3540,8 @@ class _StreamingModelAdapter:
         from request preparation (the restore target pins the parent's
         provider/model/base_url) -- loud, through that same channel.
         """
+        review_admission = getattr(self._thread_loop, "review_admission", None)
+        review_prepare_kwargs = {"apply_safety_window": False} if review_admission is not None else {}
         attributed = getattr(self._thread_loop, "run_scope", None)
         usage_sequence = getattr(self._thread_loop, "live_usage_sequence", None)
         if attributed is not None:
@@ -3618,10 +3711,6 @@ class _StreamingModelAdapter:
                     call_resolution, **overlays
                 )
         call_continuation_target = self._continuation_target
-        if is_subagent and call_continuation_target is not None:
-            call_continuation_target = dataclass_replace(
-                call_continuation_target, model=call_resolution.model or ""
-            )
         gate = StreamGate()
         any_streamed = False
         received_item = False
@@ -3642,7 +3731,7 @@ class _StreamingModelAdapter:
         @agent_async_worker_guard(self)
         async def _consume() -> None:
             nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled
-            nonlocal received_item
+            nonlocal received_item, call_continuation_target
             if rerouted:
                 # Task 6B: the child names a provider other than the
                 # parent's -- re-resolve through the gateway's send seam
@@ -3654,6 +3743,19 @@ class _StreamingModelAdapter:
                     api_base_url=api_base_url,
                     sampling_overlays=sampling_overlays,
                     execution_provider=execution_provider,
+                )
+            if is_subagent:
+                call_continuation_target = (
+                    ContinuationRestoreTarget(
+                        provider=effective_resolution.execution_key,
+                        protocol=effective_resolution.continuation_protocol,
+                        model=effective_resolution.model or "",
+                        api_base_url=effective_resolution.base_url,
+                        selected_provider=effective_resolution.selected_provider
+                        or effective_resolution.provider,
+                    )
+                    if effective_resolution.continuation_protocol
+                    else None
                 )
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
@@ -3668,11 +3770,46 @@ class _StreamingModelAdapter:
             dispatch_messages = transport_messages
             stream_kwargs = {"tools": tools} if tools is not None else {}
             prepare_request = getattr(self._gateway, "prepare_chat_request", None)
+            call_groups = continuation_groups
+            incoming_owners = [group.owner_message_id for group in call_groups]
+            if len(set(incoming_owners)) != len(incoming_owners):
+                raise ValueError("Continuation owner IDs must be unique.")
+            message_owners = [
+                row.get(self._continuation_owner_key) for row in transport_messages
+            ]
+            if any(message_owners.count(owner) != 1 for owner in incoming_owners):
+                raise ValueError(
+                    "Every continuation group must attach to one request owner."
+                )
             semantic_messages = transport_messages
-            if continuation_groups:
+            if not is_subagent and self._continuation_sidecar:
+                from tldw_chatbook.Chat.console_history_budget import (
+                    provider_continuation_owner_groups,
+                )
+
+                selected = {
+                    row.get(self._continuation_owner_key) for row in transport_messages
+                }
+                retained = provider_continuation_owner_groups(
+                    tuple(
+                        item
+                        for item in self._continuation_sidecar
+                        if item.owner_message_id in selected
+                    ),
+                    target=call_continuation_target,
+                )
+                by_owner = {
+                    group.owner_message_id: group for group in (*retained, *call_groups)
+                }
+                call_groups = tuple(
+                    by_owner.pop(owner)
+                    for row in transport_messages
+                    if (owner := row.get(self._continuation_owner_key)) in by_owner
+                )
+            if call_groups:
                 if call_continuation_target is None or not self._continuation_owner_key:
                     raise ValueError("Provider continuation request is not pinned.")
-                owner_ids = {group.owner_message_id for group in continuation_groups}
+                owner_ids = {group.owner_message_id for group in call_groups}
                 rewritten_messages: list[dict[str, Any]] = []
                 for message in transport_messages:
                     row = dict(message)
@@ -3711,7 +3848,7 @@ class _StreamingModelAdapter:
                         route=route,
                         actor_id=route_actor_id,
                         chain_id=route_chain_id,
-                        continuation_groups=continuation_groups,
+                        continuation_groups=call_groups,
                     ),
                     route=route,
                     route_actor_id=route_actor_id,
@@ -3721,15 +3858,20 @@ class _StreamingModelAdapter:
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=call_thinking_owner_key,
                     capture_mode=self._capture_mode,
+                    **review_prepare_kwargs,
                 )
+                if not is_subagent and call_groups:
+                    dispatch_messages = dataclass_replace(
+                        dispatch_messages, live_native_custody=self._live_native_custody
+                    )
                 stream_kwargs.pop("tools", None)
-            elif continuation_groups and callable(prepare_request):
+            elif call_groups and callable(prepare_request):
                 dispatch_messages = prepare_request(
                     effective_resolution,
                     build_console_request(
                         semantic_messages,
                         tools=tools or (),
-                        continuation_groups=continuation_groups,
+                        continuation_groups=call_groups,
                         capture_mode=self._capture_mode,
                     ),
                     route=route,
@@ -3740,6 +3882,7 @@ class _StreamingModelAdapter:
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=call_thinking_owner_key,
                     capture_mode=self._capture_mode,
+                    **review_prepare_kwargs,
                 )
                 stream_kwargs.pop("tools", None)
             elif (
@@ -3764,8 +3907,24 @@ class _StreamingModelAdapter:
                     thinking_policy=self._thinking_policy,
                     thinking_owner_key=call_thinking_owner_key,
                     capture_mode=self._capture_mode,
+                    **review_prepare_kwargs,
                 )
                 stream_kwargs.pop("tools", None)
+            if review_admission is not None:
+                if not isinstance(dispatch_messages, PreparedProviderRequest):
+                    if not callable(prepare_request):
+                        from tldw_chatbook.Agents.code_review_models import (
+                            ReviewRefused,
+                        )
+                        raise ReviewRefused("review_context_capacity_unknown")
+                    dispatch_messages = prepare_request(
+                        effective_resolution, semantic_messages, tools=tools,
+                        route=route, route_actor_id=route_actor_id,
+                        route_chain_id=route_chain_id, capture_mode=self._capture_mode,
+                        apply_safety_window=False,
+                    )
+                    stream_kwargs.pop("tools", None)
+                review_admission(dispatch_messages)
             if gateway_signals is not None:
                 stream_kwargs["signals"] = gateway_signals
             emission_synthetic: bool | None = None
@@ -4072,6 +4231,24 @@ class _StreamingModelAdapter:
         call_envelope = call_capture.settle(
             "stopped" if stream_cut() else "complete"
         ).envelope
+        if (
+            terminal_metadata is not None
+            and terminal_metadata.provider_continuation is not None
+        ):
+            target = ContinuationRestoreTarget(
+                provider=effective_resolution.execution_key,
+                protocol=effective_resolution.continuation_protocol,
+                model=effective_resolution.model or "",
+                api_base_url=effective_resolution.base_url,
+                selected_provider=effective_resolution.selected_provider
+                or effective_resolution.provider,
+            )
+            terminal_metadata = dataclass_replace(
+                terminal_metadata,
+                provider_continuation=bind_continuation_to_target(
+                    terminal_metadata.provider_continuation, target
+                ),
+            )
         result = _StreamingProviderResponse(response, terminal_metadata, call_envelope)
         return result
 
@@ -4538,6 +4715,7 @@ def _compose_run_registry_and_allowed(
     library_authority: Any | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     profile_provider: Any | None = None,
+    code_review_provider: Any | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
     preview_canvas_profile_snapshot: Any | None = None,
@@ -4671,6 +4849,13 @@ def _compose_run_registry_and_allowed(
         from tldw_chatbook.Agents.canvas_tool_provider import build_canvas_tool_catalog
 
         canvas_names = tuple(entry.name for entry in build_canvas_tool_catalog())
+    review_names: tuple[str, ...] = ()
+    if (
+        code_review_provider is not None
+        and registry._authenticated_review_provider(code_review_provider)
+    ):
+        registry.register_provider(code_review_provider)
+        review_names = tuple(entry.name for entry in code_review_provider.list_catalog())
     local_names: tuple[str, ...] = ()
     if local_provider is not None:
         registry.register_provider(local_provider)
@@ -4701,7 +4886,7 @@ def _compose_run_registry_and_allowed(
         local_names=local_names,
         library_names=LIBRARY_RESERVED_TOOL_NAMES,
         profile_names=PROFILE_RESERVED_TOOL_NAMES,
-        canvas_names=CANVAS_RESERVED_TOOL_NAMES,
+        canvas_names=CANVAS_RESERVED_TOOL_NAMES | CODE_REVIEW_RESERVED_TOOL_NAMES,
     )
     # Defense in depth, NOT the guarantee: a temporary session refuses every
     # skill and MCP call at `ToolCatalogRegistry.invoke_by_name` regardless
@@ -4722,6 +4907,7 @@ def _compose_run_registry_and_allowed(
     allowed_tools = (
         tuple(builtin_names)
         + canvas_names
+        + review_names
         + local_names
         + library_names
         + profile_names
@@ -4734,6 +4920,7 @@ def _compose_run_registry_and_allowed(
             | set(LIBRARY_RESERVED_TOOL_NAMES)
             | set(PROFILE_RESERVED_TOOL_NAMES)
             | set(CANVAS_RESERVED_TOOL_NAMES)
+            | set(CODE_REVIEW_RESERVED_TOOL_NAMES)
             | set(skill_names)
             | RUNTIME_TOOL_NAMES
         )
@@ -4949,6 +5136,7 @@ def build_console_first_request_plan(
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
     profile_context_service: Any | None = None,
     personal_context_snapshot: ProfileContextSnapshot | None = None,
+    code_review_provider: Any | None = None,
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
     preview_canvas_profile_snapshot: Any | None = None,
@@ -5014,6 +5202,7 @@ def build_console_first_request_plan(
         or library_provider is not None
         or profile_provider is not None
         or canvas_provider is not None
+        or code_review_provider is not None
         or preview_canvas_profile_snapshot
         or scratch_root is not None
         or scratch_lease is not None
@@ -5039,6 +5228,7 @@ def build_console_first_request_plan(
                 library_authority=library_authority,
                 persona_policy_rules=persona_policy_rules,
                 profile_provider=profile_provider,
+                code_review_provider=code_review_provider,
                 canvas_provider=canvas_provider,
                 canvas_authority=canvas_authority,
                 preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
@@ -5060,7 +5250,7 @@ def build_console_first_request_plan(
                 local_names=local_names,
                 library_names=LIBRARY_RESERVED_TOOL_NAMES,
                 profile_names=PROFILE_RESERVED_TOOL_NAMES,
-                canvas_names=CANVAS_RESERVED_TOOL_NAMES,
+                canvas_names=CANVAS_RESERVED_TOOL_NAMES | CODE_REVIEW_RESERVED_TOOL_NAMES,
             )
         )
         if skills_present and not ephemeral
@@ -5212,6 +5402,35 @@ def build_console_first_request_plan(
         catalog_entries=catalog_entries,
         schema_loader=schema_loader,
     )
+    review_service = getattr(code_review_provider, "service", None)
+    resume = getattr(review_service, "native_resume", None)
+    if resume is not None and resume[1] is not None:
+        from tldw_chatbook.Agents.code_review_models import ReviewRefused
+
+        required = {"code_review_guide", "code_review_read"}
+        disclosed = {schema.name for schema in schemas.active_schemas}
+        runtime = {schema.name for schema in schemas.runtime_schemas}
+        discoverable = (
+            {
+                entry.name
+                for entry in registry.list_catalog()
+                if not allowed_tools or entry.name in allowed_tools
+            }
+            if schemas.offer_find_load
+            else set()
+        )
+        if (
+            not schemas.request_fits
+            or "spawn_subagent" not in runtime
+            or not required.issubset(disclosed | discoverable)
+        ):
+            reason = "review_stage_tools_unreachable"
+            review_service.native_coordinator.mark_continuation_blocked(
+                resume[1], reason
+            )
+            if automatic is not None:
+                automatic.ledger.pause(automatic.chain_id, reason)
+            raise ReviewRefused(reason)
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
         None if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID else workspace_id
@@ -6117,6 +6336,7 @@ class ConsoleAgentBridge:
         library_authority: Any | None = None,
         managed_skill_promotion_gate: Any | None = None,
         profile_provider: Any | None = None,
+        code_review_provider: Any | None = None,
         canvas_provider: Any | None = None,
         canvas_authority: Any | None = None,
         skills_context: Mapping[str, Any] | None = None,
@@ -6230,6 +6450,7 @@ class ConsoleAgentBridge:
                 protocol=protocol,
                 model=model_name,
                 api_base_url=base_url,
+                selected_provider=resolution.selected_provider or resolution.provider,
             )
         if continuation_target is not None and continuation_owner_key is None:
             continuation_owner_key = CONTINUATION_OWNER_KEY
@@ -6312,7 +6533,7 @@ class ConsoleAgentBridge:
                         assistant_message_id,
                     )
                 )
-            elif restore_provider_continuation.schema_version == 2:
+            elif restore_provider_continuation.managed_resume is not None:
                 raise PermissionError("Managed continuation service unavailable.")
             else:
                 context = dict(context, plugin_resume_constraint="zero")
@@ -6507,6 +6728,7 @@ class ConsoleAgentBridge:
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
+            code_review_provider=code_review_provider,
             canvas_provider=canvas_provider,
             canvas_authority=canvas_authority,
             workspace_id=run_workspace_id,
@@ -7948,12 +8170,20 @@ class ConsoleAgentBridge:
                 and event.context.agent_kind == "primary"
             ):
                 bind_plugin_root(event.context.run_id)
-            return self._store.persist_provider_continuation_event(
+            self._store.persist_provider_continuation_event(
                 event,
+                continuation_target=(
+                    continuation_target
+                    if getattr(resolution, "endpoint_provenance", None)
+                    != ConsoleEndpointProvenance.EPHEMERAL_SESSION
+                    else None
+                ),
                 checkpoint_finalizer=(
                     finalize_managed_checkpoint if plugin_entries else None
                 ),
             )
+            if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+                adapter._live_native_persisted_event = event
 
         hooks_v2_engine = self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
         service = AgentService(
@@ -8037,6 +8267,11 @@ class ConsoleAgentBridge:
                 else None
             ),
             persist_provider_continuation=persist_continuation,
+            acknowledge_provider_continuation=(
+                adapter._acknowledge_live_native_continuation
+                if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                else None
+            ),
             expand_provider_continuation=expand_provider_continuation,
             prepare_provider_continuation_request=bool(
                 continuation_target is not None

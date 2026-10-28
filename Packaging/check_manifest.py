@@ -172,6 +172,11 @@ CANVAS_GUIDE_RESOURCE_PATHS = {
     "tldw_chatbook/Canvas/static/mermaid-authoring.txt",
 }
 
+CODE_REVIEW_GUIDE_RESOURCE_PATHS = {
+    "tldw_chatbook/Agents/code_review_guides/review.md",
+    "tldw_chatbook/Agents/code_review_guides/verify.md",
+}
+
 # Built-in skills read at runtime by Skills_Interop.builtin_skills (TASK-32954).
 BUILTIN_SKILL_RESOURCE_PATHS = {
     "tldw_chatbook/assets/skills/character-creator/SKILL.md",
@@ -206,6 +211,7 @@ REQUIRED_SDIST_PATHS = (
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
     | CANVAS_GUIDE_RESOURCE_PATHS
+    | CODE_REVIEW_GUIDE_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
 )
 
@@ -230,6 +236,7 @@ REQUIRED_WHEEL_PATHS = (
     | PIXEL_MIGU_RESOURCE_PATHS
     | TIKTOKEN_RESOURCE_PATHS
     | CANVAS_GUIDE_RESOURCE_PATHS
+    | CODE_REVIEW_GUIDE_RESOURCE_PATHS
     | BUILTIN_SKILL_RESOURCE_PATHS
 )
 
@@ -519,17 +526,21 @@ def _validate_content(
     for path in sorted((forbidden_paths or set()) & members):
         errors.append(f"{label}: forbidden path: {path}")
 
-    if label == "wheel":
-        for name in sorted(members):
-            if (
-                name.endswith(".md")
-                and not name.startswith("tldw_chatbook/Config_Files/")
-                and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
-                and name not in PIXEL_MIGU_RESOURCE_PATHS
-                and name not in CANVAS_GUIDE_RESOURCE_PATHS
-                and name not in BUILTIN_SKILL_RESOURCE_PATHS
-            ):
-                errors.append(f"{label}: forbidden development Markdown: {name}")
+    for name in sorted(members):
+        if (
+            (
+                label == "wheel"
+                or name.startswith("tldw_chatbook/Agents/code_review_guides/")
+            )
+            and name.endswith(".md")
+            and not name.startswith("tldw_chatbook/Config_Files/")
+            and name != f"{SAMIRA_RESOURCE_ROOT}/ASSET_LICENSE.md"
+            and name not in PIXEL_MIGU_RESOURCE_PATHS
+            and name not in CANVAS_GUIDE_RESOURCE_PATHS
+            and name not in CODE_REVIEW_GUIDE_RESOURCE_PATHS
+            and name not in BUILTIN_SKILL_RESOURCE_PATHS
+        ):
+            errors.append(f"{label}: forbidden development Markdown: {name}")
 
     samira_members = {
         name for name in members if name.startswith(f"{SAMIRA_RESOURCE_ROOT}/")

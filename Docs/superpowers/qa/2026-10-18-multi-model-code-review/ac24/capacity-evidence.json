@@ -1,0 +1,32 @@
+[
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "context_window": 1050000,
+    "max_input_tokens": 922000,
+    "max_output_tokens": 128000,
+    "source_url": "https://developers.openai.com/api/docs/models/gpt-6-luna",
+    "source_kind": "fetched_official_model_documentation",
+    "checked_date": "2026-10-27"
+  },
+  {
+    "provider": "anthropic",
+    "model": "claude-haiku-5-5",
+    "context_window": 1000000,
+    "max_input_tokens": 1000000,
+    "max_output_tokens": 128000,
+    "source_url": "https://platform.claude.com/docs/en/models/overview",
+    "source_kind": "fetched_official_documentation_and_authenticated_models_metadata",
+    "checked_date": "2026-10-27"
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "context_window": 1048576,
+    "max_output_tokens": 393216,
+    "source_url": "https://api-docs.deepseek.com/api/list-models/",
+    "metadata_endpoint": "https://api.deepseek.com/models",
+    "source_kind": "authenticated_models_metadata",
+    "checked_date": "2026-10-27"
+  }
+]

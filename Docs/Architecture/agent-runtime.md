@@ -82,7 +82,7 @@ permission denials count toward the separate denial circuit breaker (ADR-154).
 
 ## Sub-agents and the fleet
 
-`spawn_subagent` is gated by the run's allowed tools and `max_subagents`; child budgets are contained (`contain_child_budget` zeroes the child's own subagent quota — depth-1 only). The fleet switch `[agents] max_live_subagents` (default 3; a cap of 1 falls back to inline synchronous children) runs children on their own threads with model-scope lifelines. Parents steer via `send_to_agent` mailboxes, bounded `wait_agents`, and `drain_mailbox` probes; `redirect_primary`/`steer_primary` cut an in-flight stream while keeping partial output as context. Worktree isolation (`isolation="worktree"` + merge/discard worktree tools) is user-confirm gated.
+`spawn_subagent` is gated by the run's allowed tools and `max_subagents`; child budgets are contained (`contain_child_budget` zeroes the child's own subagent quota — depth-1 only). The fleet switch `[agents] max_live_subagents` (default 3; a cap of 1 falls back to inline synchronous children) runs children on their own threads with model-scope lifelines. Parents steer via `send_to_agent` mailboxes, bounded `wait_agents`, and `drain_mailbox` probes; `redirect_primary`/`steer_primary` cut an in-flight stream while keeping partial output as context. Worktree creation (`isolation="worktree"`) uses the accepted writable named repository binding and fresh identity checks; merge/discard require explicit confirmation (ADR-155). The fixed profile worktree directory uses `Backup_Recovery/agent_worktree_storage.py::prepare_agent_worktrees_base` for independently admitted native preparation while the parent's exact AgentRuns operation remains counted through child handoff or refused-launch cleanup. A new directory admission refusal becomes `storage_unavailable`; it grants no wider source authority and does not silently launch a child.
 
 ## Persistence and memory
 
@@ -150,3 +150,100 @@ the frozen plan type lives in `agent_models.py`.
 input ceiling through schema loading, project startup/nested admission, preview
 and final request checks. Late inboxes cannot expand their frozen schema set.
 Terminal step metadata logging is in `Agents/tool_disclosure_diagnostics.py`.
+
+### Native retained-review association (ADR281)
+
+The runtime binds a native review service only after minting the actual primary
+`CurrentRunActor`; ordinary child spawns cannot replace that primary adapter or
+mutate its remaining-child counter. Each retained context records exact later
+primary/grant associations under its quota. Review-bound children still use private
+capability catalogs and immutable slot attempts. Terminal capture/settlement exits
+the review-store lock before notifying the native coordinator, whose transcript
+receipt and exact next-slot boundary feed the existing automatic-work ledger.
+
+### Blinded verifier request checkpoints (ADR-281, Task 8)
+
+`code_review_verification.py` projects substantive source claims into unrelated opaque
+unit IDs. Exact canonical projections share one unit; the charged scratch ledger
+alone holds the original-to-unit map. Each nonidentical unit needs its own disposition.
+`CodeReviewService.next_verification_batch` admits at most eight whole units against
+both actual remaining input and the existing tool-result ceiling (including the
+native 16,000-character ceiling). Source pages use the same model estimator and a
+maximum 1,024-token evidence budget. Empty originals produce explicit zero coverage.
+
+`verifier_checkpoint` exposes accepted revision/cursors and pending opaque references
+only. `code_review_history.project_verifier_history` uses existing protocol round
+boundaries and continuation ownership; only acknowledged complete rounds can be
+replaced. System/task/guidance, unfinished tool pairs and private owner groups remain.
+This send-only projection works for one native or fenced child with run logs disabled;
+it changes neither the primary eviction gate nor the stored transcript. Settlement
+fills missing decisions with `verification_incomplete`; scratch failures still close
+the native stream and expansion retains an explicit unresolved fallback.
+
+Final review admission is host-only. `AgentService.review_input_capacity` reuses the
+existing message/schema estimator and response reservation for direct requests.
+`_StreamingModelAdapter.review_request_admission` captures a thread-scoped reject-only
+callback before async dispatch, then invokes it on the actual `PreparedProviderRequest`
+after continuation preparation and before streaming. Review preparation disables the
+generic safety-window truncator. Actual prepared accounting and effective destination
+(including fallback) determine capacity; unverified numeric defaults are unknown.
+A direct request with private continuation but no prepared adapter fails closed as
+`review_context_reduction_blocked`. No private state is stripped or conversation reset.
+Request-level gaps preserve accepted decisions and do not label remaining claims too
+large. Ordinary calls have no callback and preserve their existing preparation path.
+
+Task 8 review correction: final prepared admission also retains whether the actual
+request still owns indivisible continuation groups. When that retained state leaves
+a positive remainder too small for a unit within the 4,096-token absolute claim cap,
+batch admission records `review_context_reduction_blocked` and consumes no unit/cursor.
+The host conservatively refuses because owner-free fit is unproven; it does not subtract
+speculative private-state costs. A unit above the absolute cap remains individually
+oversized. The flag is reset for each bound run and refreshed from each actual prepared
+request, never inferred merely from native protocol or historical transcript rows.
+Public batch reads release their store lock before entering source permission callbacks;
+the batch owner retains short authority snapshots and revalidation around approval.
+
+
+Task 9 review correction: `code_review_source._access` pins the retained context,
+snapshots binding/source-state/revision/epoch under the publication lock, invokes
+source authority outside it, and revalidates before yielding protected source work.
+`CodeReviewService._source_context` composes that ownership for submit/claim, check
+preparation/wait and native report reads. Public source reads/instruction-target
+resolution must not wrap that helper in another publication lock. Native page reads
+reuse `ReviewStore.read_file(offset=..., limit=...)`, preserving no-follow and exact
+inode/size checks. Original report records are not truncated to the UI page size;
+reference-backed evidence pages prevent repeated citation amplification.
+
+
+Task 9 action-order correction: an accepted decline and its host-generated terminal
+receipt share the existing immutable action chunk/manifest commit. Failed chunk or
+manifest publication leaves the action revision, pending receipt and native owner
+unchanged. `_submit` applies claim preparation or unstarted cleanup inside its
+already-authorized publication scope; it does not re-enter source/UI guards there.
+Exact action replay reuses the stored acknowledgment/receipt and existing claim.
+A claim whose preparation raises returns no success acknowledgment; its accepted
+action identity remains replayable, and existing reservation rollback retains only
+proven ownership. A native-accepted invocation rejects later decline and retains
+its charges until the actual executor proves cleanup.
+
+
+### Review continuation and qualification
+
+`ConsoleCodeReviewCoordinator` binds accepted user stage intent and exact live
+source/team grants; `ConsoleFleetWakeCoordinator` delivers the exact next slot
+through the existing automatic-work ledger. AgentRuns schema 25 stores body-free
+boundary/attempt links. Prepared abort can release an unconsumed claim; accepted,
+completed and uncertain attempts remain non-replayable. Two reviewers plus
+pre-authorized verification therefore launch `[2, 1]` across primary turns on one
+finite chain. Later explicit verification is new user work referencing the same
+frozen bundle, with a fresh verifier and current permission checks.
+
+The [qualification record](../superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+contains native nonzero journeys and scoped regression evidence. Live qualification
+is blocked by missing saved destinations. Existing profile-guard failures and
+retained Workspace thread-owned handles remain explicit limitations; passing
+scripted journeys do not close those gates.
+
+### Capture-only native continuation acknowledgment (ADR097)
+
+`LoopDeps.acknowledge_provider_continuation` is optional and runs only after the existing projected persistence callback returns successfully. It receives the exact original/projected event pair and, for a finished call, its capped model-facing result. The Console adapter retains only current-batch projection provenance. The callback does not replace persistence, signing, transitions or tool-side-effect barriers; a failed or missing acknowledgment issues no usable trace custody. Ordinary and Capture Off callers leave it unset. Managed envelopes remain the store finalizer's responsibility, and raw event bodies never enter generic event serialization or provider kwargs through this seam.

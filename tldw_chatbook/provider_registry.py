@@ -1538,6 +1538,7 @@ CUSTOM_HOSTED = ProviderRecord(
     auth_scheme="bearer_optional",
     continuation_protocol="chat_completions",
     defaults_settings_section="custom",
+    stream_include_usage=True,
 )
 
 # --- existing cloud providers (opaque identity records) ---

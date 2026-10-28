@@ -321,7 +321,8 @@ def _sanitize_trace_artifact_bytes(
     """Sanitize canonical JSON before its durable identity is calculated."""
 
     if (
-        normalization_version != _CANONICAL_TRACE_JSON
+        normalization_version
+        not in {_CANONICAL_TRACE_JSON, "native-continuation-round-v1"}
         or media_type.split(";", 1)[0].strip().lower() != "application/json"
     ):
         return value

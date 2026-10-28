@@ -809,9 +809,12 @@ async def test_turn_authority_capture_retires_only_its_native_worker_owner(
         )
         runtime = SimpleNamespace(
             _app=host.app_instance,
-            _chat_store=SimpleNamespace(sessions=lambda: [SimpleNamespace(
-                id="private", workspace_id=workspace.workspace_id
-            )]),
+            _chat_store=SimpleNamespace(
+                persistence=None,
+                sessions=lambda: [
+                    SimpleNamespace(id="private", workspace_id=workspace.workspace_id)
+                ],
+            ),
             _chat_controller=controller,
         )
         capture = lambda: ConsoleRuntime._hooks_v2_context_key(runtime, "private")

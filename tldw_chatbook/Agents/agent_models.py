@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal, Self, TypeAlias
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
+    from .code_review_models import ReviewRunBinding
     from .fallback_chain import FallbackCandidate
 
 from tldw_chatbook.Chat.provider_continuation import (
@@ -708,6 +709,10 @@ def failed_tool_record_projection(
     )
 
 
+class SpawnAdmissionReplay(ToolResult):
+    """An existing accepted launch receipt; no new child was dispatched."""
+
+
 class SpawnAdmissionRefusal(ToolResult):
     """A spawn refused before child execution; it consumes no spawn allowance."""
 
@@ -1229,6 +1234,7 @@ class AgentConfig:
     budget: RunBudget = field(default_factory=RunBudget)
     native_tools: bool = True
     reasoning_replay: ReasoningReplayPolicy | None = None
+    review_binding: ReviewRunBinding | None = field(default=None, kw_only=True)
     workspace_context_note: str = ""
     personal_context_block: str = ""
     response_reserve_tokens: int = 2048

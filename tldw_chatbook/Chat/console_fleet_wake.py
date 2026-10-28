@@ -209,6 +209,7 @@ class AgentWakeAuthorization:
         "progress_owner_key",
         "session_id",
         "work_chain_id",
+        "review_boundary",
     )
 
     def __init__(
@@ -224,6 +225,7 @@ class AgentWakeAuthorization:
         context=None,
         progress_owner_key=None,
         message_ids=(),
+        review_boundary=None,
     ):
         if _key is not _WAKE_AUTHORIZATION_KEY:
             raise PermissionError("wake authority is coordinator-internal")
@@ -236,6 +238,7 @@ class AgentWakeAuthorization:
         self.context = context
         self.progress_owner_key = progress_owner_key
         self.message_ids = message_ids
+        self.review_boundary = review_boundary
         self.acceptance_started = False
         self.accepted = False
         self.preflight_refused = False
@@ -267,6 +270,7 @@ class ConsoleFleetWakeCoordinator:
         self._loop = None
         self._registry_lock = threading.RLock()
         self._pending = {}
+        self._pending_reviews = {}
         self._pending_progress: dict[str, dict[str, MessageIdentity]] = {}
         self._progress_owners: dict[str, tuple[str, str]] = {}
         self._active: dict[str, _WakeDelivery] = {}
@@ -288,6 +292,35 @@ class ConsoleFleetWakeCoordinator:
         self._disposed = False
         self._conversation_fences: dict[str, int] = {}
         self._runtime_submitter = None
+
+    def on_review_boundary(self, receipt) -> None:
+        """Stage a live host receipt for the existing finite wake owner."""
+        review = getattr(self._controller, "code_review", None)
+        if review is None or not review.validate_boundary(receipt):
+            return
+        with self._registry_lock:
+            if self._disposed or receipt.conversation_id in self._conversation_fences:
+                return
+            self._pending_reviews.setdefault(receipt.conversation_id, {})[
+                receipt.boundary_id
+            ] = receipt
+            self._pending.setdefault(receipt.conversation_id, {})
+        self.retry_soon()
+
+    def on_review_boundary_retired(self, receipt) -> None:
+        """Remove exact superseded live eligibility without changing ledger charges."""
+        conversation_id = receipt.conversation_id
+        with self._registry_lock:
+            reviews = self._pending_reviews.get(conversation_id, {})
+            if reviews.get(receipt.boundary_id) is not receipt:
+                return
+            reviews.pop(receipt.boundary_id)
+            if not reviews:
+                self._pending_reviews.pop(conversation_id, None)
+                if not self._pending.get(
+                    conversation_id
+                ) and not self._pending_progress.get(conversation_id):
+                    self._pending.pop(conversation_id, None)
 
     @property
     def runtime_owner_id(self) -> str:
@@ -637,7 +670,9 @@ class ConsoleFleetWakeCoordinator:
                 self._result_chains.pop(message_id, None)
             if not bucket:
                 self._pending_progress.pop(conversation_id, None)
-                if not self._pending.get(conversation_id):
+                if not self._pending.get(
+                    conversation_id
+                ) and not self._pending_reviews.get(conversation_id):
                     self._pending.pop(conversation_id, None)
 
     def on_child_settled(self, event: FleetChildSettled) -> None:
@@ -788,9 +823,13 @@ class ConsoleFleetWakeCoordinator:
         with self._registry_lock:
             bucket = self._pending.get(conversation_id)
             progress = self._pending_progress.get(conversation_id, {})
-            if not bucket and not progress:
+            reviews = self._pending_reviews.get(conversation_id, {})
+            if not bucket and not progress and not reviews:
                 return
             if all(
+                (conversation_id, receipt.chain_id) in self._paused
+                for receipt in reviews.values()
+            ) and all(
                 run_id in self._result_chains
                 and (conversation_id, self._result_chains[run_id]) in self._paused
                 for run_id in (*bucket, *progress)
@@ -805,6 +844,13 @@ class ConsoleFleetWakeCoordinator:
             self._schedule_delayed_retry(remaining)
             return
         session_id = self._resolve_session_id(conversation_id)
+        if not autowake_enabled():
+            review_owner = getattr(self._controller, "code_review", None)
+            if review_owner is not None:
+                for receipt in tuple(reviews.values()):
+                    review_owner.mark_continuation_blocked(
+                        receipt, "automatic_wake_disabled"
+                    )
         if session_id is None or not self._priority_allows(session_id):
             return
         loop = self._loop
@@ -915,6 +961,13 @@ class ConsoleFleetWakeCoordinator:
         return True
 
     async def _pause(self, conversation_id, chain_id, reason, *, review=False):
+        review_owner = getattr(self._controller, "code_review", None)
+        with self._registry_lock:
+            receipts = tuple(self._pending_reviews.get(conversation_id, {}).values())
+        if review_owner is not None:
+            for receipt in receipts:
+                if chain_id is None or receipt.chain_id == chain_id:
+                    review_owner.mark_continuation_blocked(receipt, reason)
         self._paused[(conversation_id, chain_id)] = reason
         self._retry_after.pop(conversation_id, None)
         if chain_id is not None:
@@ -1011,11 +1064,49 @@ class ConsoleFleetWakeCoordinator:
             self._discard_pending_progress(
                 conversation_id, set(progress) - {mid for mid, _, _ in progress_sources}
             )
-            if not eligible and not progress_sources:
+            review_owner = getattr(self._controller, "code_review", None)
+            with self._registry_lock:
+                candidates = tuple(
+                    self._pending_reviews.get(conversation_id, {}).values()
+                )
+            valid_reviews = []
+            for receipt in candidates:
+                if review_owner is not None and review_owner.validate_boundary(receipt):
+                    valid_reviews.append(receipt)
+                else:
+                    if review_owner is not None:
+                        review_owner.mark_continuation_blocked(
+                            receipt, "authority_unavailable"
+                        )
+                    with self._registry_lock:
+                        self._pending_reviews.get(conversation_id, {}).pop(
+                            receipt.boundary_id, None
+                        )
+                        if (
+                            not self._pending.get(conversation_id)
+                            and not self._pending_progress.get(conversation_id)
+                            and not self._pending_reviews.get(conversation_id)
+                        ):
+                            self._pending.pop(conversation_id, None)
+            review_boundary = next(
+                (
+                    receipt
+                    for receipt in valid_reviews
+                    if (conversation_id, receipt.chain_id) not in self._paused
+                ),
+                None,
+            )
+            if not eligible and not progress_sources and review_boundary is None:
                 return
             chain_id = (
-                eligible[0]["work_chain_id"] if eligible else progress_sources[0][2]
+                eligible[0]["work_chain_id"]
+                if eligible
+                else progress_sources[0][2]
+                if progress_sources
+                else review_boundary.chain_id
             )
+            if review_boundary is not None and review_boundary.chain_id != chain_id:
+                review_boundary = None
             selected = [row for row in eligible if row["work_chain_id"] == chain_id][
                 : self.MAX_RESULTS_PER_ATTEMPT
             ]
@@ -1042,6 +1133,7 @@ class ConsoleFleetWakeCoordinator:
                     session_id=session_id,
                     run_ids=run_ids,
                     progress_messages=selected_progress,
+                    review_boundary=review_boundary,
                     persistent_progress=any(
                         session.id == session_id
                         and session.persisted_conversation_id is not None
@@ -1071,6 +1163,7 @@ class ConsoleFleetWakeCoordinator:
                 context=context,
                 progress_owner_key=progress_owner_key,
                 message_ids=message_ids,
+                review_boundary=review_boundary,
             )
             if claim_cancelled:
                 authorization.preflight_refused = True
@@ -1093,6 +1186,15 @@ class ConsoleFleetWakeCoordinator:
                 for part in (
                     compose_wake_notice(selected),
                     compose_progress_wake_notice(message_ids),
+                    (
+                        "[Accepted review continuation]\nReview reference: "
+                        + review_boundary.review_id
+                        + "; next admitted slot: "
+                        + review_boundary.slot_id
+                        + ". Continue only the already admitted review slots. This notice grants no new authority."
+                        if review_boundary is not None
+                        else ""
+                    ),
                 )
                 if part
             )
@@ -1185,7 +1287,15 @@ class ConsoleFleetWakeCoordinator:
                     for run_id in attempt.run_ids:
                         bucket.pop(run_id, None)
                         self._result_chains.pop(run_id, None)
-                    if not bucket and not self._pending_progress.get(cid):
+                    if authorization.review_boundary is not None:
+                        self._pending_reviews.get(cid, {}).pop(
+                            authorization.review_boundary.boundary_id, None
+                        )
+                    if (
+                        not bucket
+                        and not self._pending_progress.get(cid)
+                        and not self._pending_reviews.get(cid)
+                    ):
                         self._pending.pop(cid, None)
                 self._discard_pending_progress(cid, attempt.message_ids)
                 with self._registry_lock:
@@ -1425,6 +1535,7 @@ class ConsoleFleetWakeCoordinator:
             if conversation_id in self._conversation_fences:
                 return
             self._conversation_fences[conversation_id] = generation
+            self._pending_reviews.pop(conversation_id, None)
             run_ids = tuple((self._pending.pop(conversation_id, None) or {}).keys())
             self._pending_progress.pop(conversation_id, None)
             self._progress_owners.pop(conversation_id, None)
@@ -1483,6 +1594,7 @@ class ConsoleFleetWakeCoordinator:
             if self._disposed:
                 return
             self._disposed = True
+            self._pending_reviews.clear()
             self._pending.clear()
             self._pending_progress.clear()
             self._progress_owners.clear()
@@ -1624,7 +1736,11 @@ class ConsoleFleetWakeCoordinator:
             if bucket is not None:
                 for run_id in run_ids:
                     bucket.pop(run_id, None)
-                if not bucket and not self._pending_progress.get(conversation_id):
+                if (
+                    not bucket
+                    and not self._pending_progress.get(conversation_id)
+                    and not self._pending_reviews.get(conversation_id)
+                ):
                     self._pending.pop(conversation_id, None)
             delivery = self._active.get(conversation_id)
             idle = not self.has_pending(conversation_id) and (

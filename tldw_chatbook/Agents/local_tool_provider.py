@@ -2342,6 +2342,42 @@ class LocalToolProvider:
 
     # -- invocation -----------------------------------------------------
 
+    def authorize_review_source(
+        self, name: str, args: dict, *, expected_binding_id: str
+    ) -> str | None:
+        """Reuse native read permission/approval without dispatching a second reader.
+
+        Called outside review-store/DB locks. This does not grant write access,
+        execute a local tool, or change the selected binding.
+        """
+        if (
+            name not in {"fs_read", "fs_list", "fs_grep", "git_diff"}
+            or name not in self._specs
+        ):
+            return "source_permission_unavailable"
+        try:
+            authority, clean_args = self._select_admitted_root(name, args)
+            if (
+                authority is None
+                or authority.binding_id != expected_binding_id
+                or not self._authority_is_valid(authority, write=False)
+                or self._kill_switch_engaged()
+            ):
+                return "source_authority_unavailable"
+            gate = self._verdict_for(name, args, current_run_id())
+            if gate.verdict != "allow":
+                return "source_permission_" + gate.verdict
+            # Recheck both the binding and the current deny floor after a
+            # potentially blocking native approval callback.
+            state = self._resolve_state(self.hub_tool_for(name))
+            if state.state == "deny" or not self._authority_is_valid(
+                authority, write=False
+            ):
+                return "source_permission_denied"
+            return None
+        except Exception:
+            return "source_permission_unavailable"
+
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Execute one tool call through the compatible result-only seam."""
         return self.invoke_detailed(tool_id, args).result

@@ -138,8 +138,8 @@ def test_named_custom_slots_untouched() -> None:
 def test_custom_provider_param_map_equals_legacy_surface() -> None:
     legacy = PROVIDER_PARAM_MAP["custom-openai-api"]
     ours = PROVIDER_PARAM_MAP["custom-hosted"]
-    assert set(ours) == set(legacy)
-    assert ours == legacy
+    assert ours == {**legacy, "provider_continuations": "provider_continuations"}
+    assert "provider_continuations" not in legacy
 
 
 # --- Stage 1: closure signature / kwargs ---
@@ -867,6 +867,7 @@ def test_engine_kwargs_forward_continuation_checkpoints() -> None:
         ],
         continuation_target=ContinuationRestoreTarget(
             provider=provider,
+            selected_provider=resolution.provider,
             model=model,
             protocol="chat_completions",
             api_base_url=base_url,
@@ -1078,7 +1079,8 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
     # 4. Gateway restore: the completed checkpoint rides the sidecar under
     #    the pinned target (provider spelled as the bridge records it).
     resolution = ConsoleProviderResolution(
-        provider="custom-hosted",
+        provider="custom-ep:paid",
+        selected_provider="custom-ep:paid",
         base_url=base_url,
         model="test-model",
         ready=True,
@@ -1089,6 +1091,18 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
         continuation_protocol="chat_completions",
     )
     gateway = ConsoleProviderGateway(environ={})
+    from tldw_chatbook.Chat.provider_continuation import bind_continuation_to_target
+
+    complete = bind_continuation_to_target(
+        complete,
+        ContinuationRestoreTarget(
+            provider="custom-hosted",
+            protocol="chat_completions",
+            model="test-model",
+            api_base_url=base_url,
+            selected_provider="custom-ep:paid",
+        ),
+    )
     prepared = gateway.prepare_chat_request(
         resolution,
         [
@@ -1098,6 +1112,7 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
         ],
         continuation_target=ContinuationRestoreTarget(
             provider="custom-hosted",
+            selected_provider="custom-ep:paid",
             model="test-model",
             protocol="chat_completions",
             api_base_url=base_url,
@@ -1158,7 +1173,9 @@ def _swap_console_resolution():
 def _complete_custom_hosted_checkpoint():
     return parse_provider_continuation_json(
         {
-            "schema_version": 1,
+            "schema_version": 3,
+            "selected_provider": "custom-ep:paid",
+            "managed_resume": None,
             "checkpoint_revision": 1,
             "provider": "custom-hosted",
             "protocol": "chat_completions",
@@ -1319,6 +1336,7 @@ def _custom_hosted_target():
 
     return ContinuationRestoreTarget(
         provider="custom-hosted",
+        selected_provider="custom-ep:paid",
         model="test-model",
         protocol="chat_completions",
         api_base_url="https://custom.example/v1",

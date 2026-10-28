@@ -2292,3 +2292,55 @@ def test_continuation_post_tool_hook_receives_uncapped_dispatched_result():
     outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
     assert fired, outcome.steps
     assert fired == [("calculator", "call-1", {"expression": "2+2"}, raw_result, True)]
+
+
+@pytest.mark.parametrize("failure", [None, "persistence", "acknowledgment"])
+def test_capture_acknowledgment_follows_projected_persistence(failure):
+    """Capture sees the exact projection only after its durable barrier."""
+    raw = '{"private_body":"not-for-storage"}'
+    call = ToolCall("calculator", {"private_body": "not-for-storage"}, "call-1", raw)
+    checkpoint = _checkpoint(ContinuationCall("call-1", "calculator", raw, "pending"))
+    persisted, acknowledged, invoked = [], [], []
+
+    def persist(event):
+        if failure == "persistence":
+            raise OSError("storage unavailable")
+        persisted.append(event)
+
+    def acknowledge(original, projected, model_result):
+        assert persisted[-1] is projected
+        acknowledged.append((original, projected, model_result))
+        if failure == "acknowledgment":
+            raise RuntimeError("capture custody unavailable")
+
+    deps = _deps(
+        [_native_turn((call,), checkpoint)],
+        order=[],
+        persist=persist,
+        invoke=lambda tool: (
+            invoked.append(tool) or ToolResult(ok=True, content="unused")
+        ),
+        cancel=lambda: bool(persisted),
+    )
+    deps.acknowledge_provider_continuation = acknowledge
+    deps.has_tool_record_projection = lambda _call: True
+    deps.project_tool_record = lambda audience, _call, result=None: (
+        ToolRecordProjection(
+            arguments={"reference": "safe"},
+            content="safe result",
+            error="safe error",
+            ok=None if result is None else result.ok,
+        )
+    )
+    outcome = run_agent_loop(CONFIG, [], [CALCULATOR], deps)
+    assert not invoked
+    assert len(acknowledged) == (0 if failure == "persistence" else 1)
+    if acknowledged:
+        original, projected, model_result = acknowledged[0]
+        assert original.checkpoint is checkpoint
+        assert original.checkpoint.rounds[0].calls[0].arguments == raw
+        assert json.loads(projected.checkpoint.rounds[0].calls[0].arguments) == {
+            "reference": "safe"
+        }
+        assert model_result is None
+    assert outcome.status == ("cancelled" if failure is None else RUN_ERROR)

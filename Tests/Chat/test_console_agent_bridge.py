@@ -12469,3 +12469,91 @@ def test_primary_custom_endpoint_keeps_identity_with_selectable_execution_key(
             assert resolution.selected_provider == parent.selected_provider
     finally:
         db.close()
+
+
+@pytest.mark.bootstrap_profile
+def test_builtin_child_binds_its_own_native_continuation_under_custom_parent():
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_dispatch_continuation_handoff import _continuation
+    from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationOwnerGroup,
+        ContinuationRestoreTarget,
+        bind_continuation_to_target,
+    )
+
+    target = ContinuationRestoreTarget(
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        selected_provider="deepseek",
+    )
+    child_checkpoint = bind_continuation_to_target(
+        replace(_continuation(), schema_version=1, selected_provider=None), target
+    )
+    group = ContinuationOwnerGroup(
+        "child-owner", child_checkpoint, child_checkpoint.rounds
+    )
+
+    class Gateway(ConsoleProviderGateway):
+        prepared_target = None
+
+        async def resolve_for_send(self, selection):
+            assert selection.provider == "deepseek"
+            return ConsoleProviderResolution(
+                provider="deepseek",
+                selected_provider="deepseek",
+                execution_key="deepseek",
+                model=target.model,
+                base_url=target.api_base_url,
+                continuation_protocol="responses",
+                api_mode="responses",
+                ready=True,
+            )
+
+        def prepare_chat_request(self, resolution, messages, **kwargs):
+            self.prepared_target = kwargs["continuation_target"]
+            return super().prepare_chat_request(resolution, messages, **kwargs)
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            assert isinstance(messages, PreparedProviderRequest)
+            assert messages.continuation_groups[0].checkpoint == child_checkpoint
+            yield ProviderToolCalls(
+                (),
+                ProviderTurnMetadata(
+                    "stop",
+                    replace(child_checkpoint, schema_version=1, selected_provider=None),
+                ),
+            )
+
+    gateway = Gateway(config_provider=dict, environ={})
+    parent = _swapped_custom_ep_parent_resolution()
+    parent_target = ContinuationRestoreTarget(
+        provider="custom-hosted",
+        protocol="chat_completions",
+        model=parent.model,
+        api_base_url=parent.base_url,
+        selected_provider=parent.provider,
+    )
+    messages = _routed_child_messages() + [
+        {"role": "assistant", "content": "", "_owner": "child-owner"}
+    ]
+    with _streaming_adapter(
+        parent,
+        gateway,
+        continuation_target=parent_target,
+        continuation_owner_key="_owner",
+    ) as adapter:
+        response = adapter.chat_call(
+            api_endpoint="deepseek",
+            model=target.model,
+            messages_payload=messages,
+            streaming=False,
+            continuation_groups=(group,),
+        )
+    assert gateway.prepared_target == target
+    assert response.provider_continuation.selected_provider == "deepseek"
+    assert response.provider_continuation.provider == "deepseek"

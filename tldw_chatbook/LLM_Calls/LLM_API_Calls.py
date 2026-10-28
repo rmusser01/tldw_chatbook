@@ -249,15 +249,39 @@ def _normalize_openai_reasoning_effort(value: object) -> Optional[str]:
     return str(value).strip().lower()
 
 
+def _openai_has_chat_function_tools(tools: object) -> bool:
+    """Recognize canonical Chat functions without translating or changing schemas."""
+    if not isinstance(tools, list) or not tools:
+        return False
+    for tool in tools:
+        if not isinstance(tool, Mapping) or set(tool) != {"type", "function"}:
+            return False
+        function = tool.get("function")
+        if tool.get("type") != "function" or not isinstance(function, Mapping):
+            return False
+        if set(function) - {"name", "description", "parameters", "strict"}:
+            return False
+        name = function.get("name")
+        parameters = function.get("parameters")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(parameters, Mapping)
+            or parameters.get("type") != "object"
+        ):
+            return False
+    return True
+
+
 def _openai_use_responses_api(
     normalized_reasoning_effort: Optional[str],
     reasoning_summary: object,
     verbosity: object,
-    is_gpt_5_6_model: bool,
+    supports_chat_none_effort: bool,
 ) -> bool:
     return (
         normalized_reasoning_effort is not None
-        and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
+        and (normalized_reasoning_effort != "none" or not supports_chat_none_effort)
     ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
 
 
@@ -731,11 +755,18 @@ def chat_with_openai(
 
     normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
     is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
+    # Luna supports Chat function calling only with explicit reasoning disabled.
+    luna_native_functions = (
+        isinstance(final_model, str)
+        and final_model.strip().lower() == "gpt-6-luna"
+        and normalized_reasoning_effort == "none"
+        and _openai_has_chat_function_tools(tools)
+    )
     use_responses_api = _openai_use_responses_api(
         normalized_reasoning_effort,
         reasoning_summary,
         verbosity,
-        is_gpt_5_6_model,
+        is_gpt_5_6_model or luna_native_functions,
     )
     payload = {
         "model": final_model,
@@ -821,7 +852,7 @@ def chat_with_openai(
             payload["reasoning"] = reasoning_options
         if _is_present_setting(verbosity):
             payload.setdefault("text", {})["verbosity"] = str(verbosity).strip().lower()
-    elif is_gpt_5_6_model:
+    elif is_gpt_5_6_model or luna_native_functions:
         payload["reasoning_effort"] = normalized_reasoning_effort or "none"
 
     # Then conditionally add tool_choice:

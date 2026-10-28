@@ -53,6 +53,8 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
+pytestmark = pytest.mark.bootstrap_profile
+
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
 DENY = EffectiveToolState(state="deny", origin="tool_override")
@@ -887,6 +889,7 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:fs_list",
         "local:fs_read",
         "local:fs_write",
+        "local:fs_mkdir",
         "local:fs_edit",
         "local:fs_patch",
         "local:fs_glob",
@@ -1078,6 +1081,7 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "fs_list",
         "fs_read",
         "fs_write",
+        "fs_mkdir",
         "fs_edit",
         "fs_patch",
         "fs_glob",
@@ -3973,6 +3977,7 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "fs_list",
         "fs_read",
         "fs_write",
+        "fs_mkdir",
         "fs_edit",
         "fs_patch",
         "fs_glob",
@@ -4453,7 +4458,7 @@ def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, 
     captured = capsys.readouterr()
 
     assert not result.ok
-    assert result.error == "Private scratch space is unavailable; the tool was not run."
+    assert result.error == LOCAL_WORKER_FAILED_REFUSAL
     assert "private/path leaked" not in captured.err
 
 

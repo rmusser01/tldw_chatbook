@@ -711,7 +711,7 @@ class PluginService:
 
         constraint = (
             ResumeConstraint(checkpoint, conversation_id, message_id)
-            if checkpoint.schema_version == 2
+            if checkpoint.managed_resume is not None
             else "zero"
         )
         return await self._call(lambda: constrain_maximum(self, maximum, constraint))

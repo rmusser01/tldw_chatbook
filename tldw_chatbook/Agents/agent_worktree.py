@@ -17,8 +17,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from tldw_chatbook.config import get_user_data_dir
-from tldw_chatbook.Utils.private_paths import secure_private_directory
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Utils.private_paths import PrivatePathError
 from tldw_chatbook.Workspaces.git_workspace import (
     GitWorkspaceError,
     GitWorkspaceInfo,
@@ -79,9 +79,11 @@ def _worktrees_base() -> Path:
     uuid, so nothing collides; only the parent moved off the shared temp.
     Tests monkeypatch this, so they are unaffected.
     """
-    base = get_user_data_dir() / "agent_worktrees"
-    secure_private_directory(base, create=True, application_owned=True)
-    return base
+    from tldw_chatbook.Backup_Recovery.agent_worktree_storage import (
+        prepare_agent_worktrees_base,
+    )
+
+    return prepare_agent_worktrees_base()
 
 
 def _detect(repo_root: Path) -> WorktreeRefusal | None:
@@ -133,9 +135,15 @@ def create_agent_worktree(repo_root: Path, run_id: str) -> AgentWorktree | Workt
         )
     base_sha = out.strip()
     branch = f"{_BRANCH_PREFIX}{run_id}"
-    dest = _worktrees_base() / (
-        f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}-{uuid.uuid4().hex}"
-    )
+    try:
+        dest = _worktrees_base() / (
+            f"agent-{run_id[:_RUN_ID_ABBREV_CHARS]}-{uuid.uuid4().hex}"
+        )
+    except (RecoveryRequired, PrivatePathError):
+        return WorktreeRefusal(
+            "storage_unavailable",
+            "Worktree storage is unavailable; local review may be required.",
+        )
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Canonicalize only this app-owned allocation, never loaded ownership

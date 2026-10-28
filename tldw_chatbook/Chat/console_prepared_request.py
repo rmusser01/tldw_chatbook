@@ -613,6 +613,8 @@ class PreparedProviderRequest:
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     provenance: ProviderRequestProvenance | None = field(default=None, repr=False)
 
+    live_native_custody: object | None = field(default=None, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         if not isinstance(self.semantic, PreparedConsoleRequest):
             raise TypeError("semantic must be a PreparedConsoleRequest.")
@@ -913,6 +915,23 @@ def build_console_request(
         groups_by_owner
     ):
         raise ValueError("Every continuation group must attach to one request owner.")
+    replay_plan = _completed_replay_plan(copied, groups)
+    replay_indices = {
+        index
+        for owner, (_rows, start) in replay_plan.items()
+        for index in range(start, owner)
+    }
+    if replay_indices:
+        # Runtime carries provider rows; budgeting retains one saved semantic owner.
+        copied = [
+            row for index, row in enumerate(copied) if index not in replay_indices
+        ]
+        if capture_on:
+            message_descriptors = tuple(
+                item
+                for index, item in enumerate(message_descriptors)
+                if index not in replay_indices
+            )
     thinking = tuple(thinking_groups)
     thinking_by_owner = {group.owner_message_id: group for group in thinking}
     if len(thinking_by_owner) != len(thinking):
@@ -1199,6 +1218,84 @@ def _project_runtime_guidance(
     return rows, origins
 
 
+def _completed_replay_plan(messages, groups):
+    """Expand only a collapsed, exact completed owner under an engine contract."""
+    from tldw_chatbook.Chat.provider_continuation import project_provider_continuation
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    engine_keys = {record.key for record in ENGINE_RECORDS}
+    projected = {}
+    for group in groups:
+        if (
+            group.checkpoint.state != "complete"
+            or group.checkpoint.provider not in engine_keys
+        ):
+            continue
+        canonical = tuple(project_provider_continuation(group.checkpoint))
+        index = next(
+            i
+            for i, row in enumerate(messages)
+            if row.get(CONTINUATION_OWNER_KEY) == group.owner_message_id
+        )
+
+        def visible(row):
+            return {
+                key: thaw_json(value)
+                for key, value in row.items()
+                if key
+                not in {
+                    MEMORY_OWNER_KEY,
+                    CONTINUATION_OWNER_KEY,
+                    THINKING_OWNER_KEY,
+                    IDLE_REQUEST_OWNER_KEY,
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                    EXCHANGE_CONTINUATION_KEY,
+                    LOCAL_TOOL_RESULT_KEY,
+                }
+            }
+
+        terminal = visible(messages[index])
+        if (
+            terminal.get("role") != "assistant"
+            or type(terminal.get("content")) is not str
+            or set(terminal) != {"role", "content"}
+        ):
+            raise ValueError("completed continuation owner changed")
+        canonical = (*canonical, terminal)
+        call_ids = {call.call_id for round_ in group.rounds for call in round_.calls}
+        native_indices = [
+            i
+            for i, row in enumerate(messages)
+            if row.get("tool_call_id") in call_ids
+            or any(call.get("id") in call_ids for call in row.get("tool_calls", ()))
+        ]
+        start = index - len(canonical) + 1
+        if native_indices and (
+            start < 0
+            or tuple(visible(row) for row in messages[start : index + 1]) != canonical
+            or any(i < start or i > index for i in native_indices)
+        ):
+            raise ValueError("completed continuation replay is partial or duplicated")
+        projected[index] = (canonical, start if native_indices else index)
+    return projected
+
+
+def _completed_replays(semantic: PreparedConsoleRequest):
+    groups = (
+        tuple(
+            group for unit in semantic.compactable for group in unit.continuation_groups
+        )
+        + semantic.active_continuation_groups
+    )
+    return {
+        index: rows
+        for index, (rows, _start) in _completed_replay_plan(
+            semantic.flattened_messages(), groups
+        ).items()
+    }
+
+
 def _serialize_messages(
     semantic: PreparedConsoleRequest, wire_style: WireStyle
 ) -> tuple[str | None, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
@@ -1238,8 +1335,17 @@ def _serialize_messages(
             # Semantic ownership remains "memory" for accounting and safety.
             row["role"] = "user"
         serialized.append(row)
-    transformed, _origins = _project_runtime_guidance(semantic, tuple(serialized))
-    all_messages = tuple(transformed)
+    transformed, origins = _project_runtime_guidance(semantic, tuple(serialized))
+    replays = _completed_replays(semantic)
+    all_messages = tuple(
+        row
+        for value, (indices, changed) in zip(transformed, origins, strict=True)
+        for row in (
+            replays[indices[0]]
+            if len(indices) == 1 and not changed and indices[0] in replays
+            else (value,)
+        )
+    )
     if wire_style == "distinct_roles":
         return None, all_messages, all_messages
 
@@ -1426,6 +1532,38 @@ def _serialize_provenance(
         else flattened[indices[0]]
         for indices, changed in origins
     )
+    replays = _completed_replays(semantic)
+    if replays:
+        expanded = []
+        expanded_tools = []
+        for index, (descriptor, (indices, changed)) in enumerate(
+            zip(flattened_values, origins, strict=True)
+        ):
+            replay = (
+                replays.get(indices[0]) if len(indices) == 1 and not changed else None
+            )
+            if replay is None:
+                if index in tool_loop:
+                    expanded_tools.append(len(expanded))
+                expanded.append(descriptor)
+                continue
+            attachment = next(
+                item for item in continuations if item.inputs == (descriptor,)
+            )
+            derived = DerivedTraceProvenance(
+                TraceTransformKind.MESSAGE_REWRITE,
+                (descriptor, attachment),
+                artifact=ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.PROVIDER_OVERLAY, capture_policy
+                ),
+            )
+            for row in replay[:-1]:
+                if _is_tool_loop_row(row):
+                    expanded_tools.append(len(expanded))
+                expanded.append(derived)
+            expanded.append(descriptor)
+        flattened_values = tuple(expanded)
+        tool_loop = expanded_tools
     if wire_style == "distinct_roles":
         return ProviderRequestProvenance(
             messages=flattened_values,
@@ -1488,8 +1626,17 @@ def _count_wire(
         )
         + semantic.active_continuation_groups
     )
+    replay_owners = {
+        semantic.flattened_messages()[index][CONTINUATION_OWNER_KEY]
+        for index in _completed_replays(semantic)
+    }
     total += sum(
-        count_provider_continuation_tokens(group, model=model, count_fn=count_fn)
+        count_provider_continuation_tokens(
+            group,
+            model=model,
+            count_fn=count_fn,
+            wire_replayed=group.owner_message_id in replay_owners,
+        )
         for group in groups
     )
     return total
