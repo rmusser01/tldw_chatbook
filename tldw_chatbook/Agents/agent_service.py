@@ -168,6 +168,9 @@ from .fleet_coordinator import (
     FleetHandle,
     RetainedTranscript,
 )
+from .first_request_schemas import (
+    FirstRequestSchemaPlan, build_runtime_schema_plan, build_compact_schema_plan,
+)
 from .human_input_wait import human_input_wait_active
 from .native_tools import (
     ensure_tool_call_ids,
@@ -207,24 +210,17 @@ from .project_instruction_runtime import (
     InstructionPreparation,
 )
 from .tool_catalog import (
-    CHECK_AGENTS_SCHEMA,
+    CHECK_AGENTS_SCHEMA as CHECK_AGENTS_SCHEMA,
+    WAIT_AGENTS_SCHEMA as WAIT_AGENTS_SCHEMA,
+    SEND_TO_AGENT_SCHEMA as SEND_TO_AGENT_SCHEMA,
+    build_spawn_schema as build_spawn_schema,
     NEW_CHAT_TOOL_SCHEMA,
     FORK_CHAT_TOOL_SCHEMA,
-    build_chat_create_schema,
-    build_find_tools_schema,
-    INSTALL_SKILL_TOOL_SCHEMA,
-    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
-    LOAD_TOOLS_SCHEMA,
     RUN_LOG_SLICE_TOOL_SCHEMA,
     RUN_LOG_STATS_TOOL_SCHEMA,
-    RUN_SKILL_SCRIPT_TOOL_SCHEMA,
     SEARCH_RUN_LOG_TOOL_SCHEMA,
-    SEND_TO_AGENT_SCHEMA,
-    SKILL_FILE_TOOL_SCHEMA,
-    WAIT_AGENTS_SCHEMA,
     ToolCatalogRegistry,
     ToolExecutionPolicy,
-    build_spawn_schema,
     probe_initial_catalog,
 )
 
@@ -726,22 +722,6 @@ class ModelRequest:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class FirstRequestSchemaPlan:
-    """Pure disclosure/runtime-schema plan for a primary first request."""
-
-    active_schemas: tuple[ToolSchema, ...]
-    runtime_schemas: tuple[ToolSchema, ...]
-    offer_find_load: bool
-    log_active: bool
-    system_prompt: str
-    agent_definitions: tuple[AgentDefinition, ...] | None = None
-    fleet_max_live: int | None = None
-    request_fits: bool = True
-    # Compact disclosure must keep this ceiling when loading catalog schemas.
-    schema_input_budget_tokens: int | None = None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class RunLogRequestPlan:
     """Configured first-request log disclosure and history bounds."""
 
@@ -863,124 +843,28 @@ def build_first_request_schema_plan(
             and (not allowed or entry.name in allowed)
         )
 
-    def make_plan(
-        active: tuple[ToolSchema, ...], offer_find_load: bool, system_prompt: str
-    ) -> FirstRequestSchemaPlan:
-        runtime: list[ToolSchema] = []
-        if config.budget.max_subagents > 0:
-            # ADR-147 Task 7: provider/model override args appear ONLY when
-            # the operator opted in; the enumerated targets let the master
-            # pick a VALID one. With no definitions and the gate closed,
-            # build_spawn_schema returns SPAWN_TOOL_SCHEMA itself -- the
-            # pre-ADR-147 payload stays byte-identical.
-            runtime.append(
-                build_spawn_schema(
-                    agent_definitions or (),
-                    override_enabled=spawn_override_enabled,
-                    override_targets=spawn_override_targets,
-                )
-            )
-        if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.extend(
-                (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
-            )
-            if worktree_merge_enabled:
-                from .tool_catalog import (
-                    DISCARD_AGENT_WORKTREE_SCHEMA,
-                    MERGE_AGENT_WORKTREE_SCHEMA,
-                )
-
-                runtime.extend(
-                    (MERGE_AGENT_WORKTREE_SCHEMA, DISCARD_AGENT_WORKTREE_SCHEMA)
-                )
-        if progress_available and agent_kind == AGENT_KIND_PRIMARY:
-            from .fleet_message_tools import (
-                READ_AGENT_MESSAGES_SCHEMA,
-                READ_INSTRUCTIONS,
-            )
-
-            runtime.append(READ_AGENT_MESSAGES_SCHEMA)
-            if READ_INSTRUCTIONS not in system_prompt:
-                system_prompt += "\n\n" + READ_INSTRUCTIONS
-        if reporting_available and agent_kind == AGENT_KIND_SUBAGENT:
-            from .fleet_message_tools import (
-                REPORT_TO_SUPERVISOR_SCHEMA,
-                REPORT_INSTRUCTIONS,
-            )
-
-            runtime.append(REPORT_TO_SUPERVISOR_SCHEMA)
-            if REPORT_INSTRUCTIONS not in system_prompt:
-                system_prompt += "\n\n" + REPORT_INSTRUCTIONS
-        if peers_available and agent_kind == AGENT_KIND_SUBAGENT:
-            from .fleet_message_tools import (
-                LIST_PEER_AGENTS_SCHEMA,
-                PEER_INSTRUCTIONS,
-                SEND_TO_PEER_SCHEMA,
-            )
-
-            runtime.extend((LIST_PEER_AGENTS_SCHEMA, SEND_TO_PEER_SCHEMA))
-            if PEER_INSTRUCTIONS not in system_prompt:
-                system_prompt += "\n\n" + PEER_INSTRUCTIONS
-        if offer_find_load:
-            # TASK-26007: the deferred surface NAMES what exists -- the
-            # model must never conclude a present capability is absent.
-            runtime.extend(
-                (
-                    build_find_tools_schema(_deferred_names()),
-                    LOAD_TOOLS_SCHEMA,
-                )
-            )
-        if skill_file_enabled:
-            runtime.append(SKILL_FILE_TOOL_SCHEMA)
-        if install_skill_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(INSTALL_SKILL_TOOL_SCHEMA)
-        if managed_skill_promotion_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA)
-        if run_skill_script_enabled:
-            runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
-        if fork_chat_enabled:
-            # TASK-32874: the DISCLOSED schema is built per run (preset
-            # roster + gated override args, ADR-147 pattern); the static
-            # constant remains only as the nothing-to-add identity base.
-            # TASK-32531: disclosed to sub-agents too (children are scoped
-            # to the parent conversation; confirm still gates every call).
-            runtime.append(
-                build_chat_create_schema(
-                    FORK_CHAT_TOOL_SCHEMA,
-                    agent_definitions or (),
-                    override_enabled=spawn_override_enabled,
-                    override_targets=spawn_override_targets,
-                )
-            )
-        if new_chat_enabled:
-            runtime.append(
-                build_chat_create_schema(
-                    NEW_CHAT_TOOL_SCHEMA,
-                    agent_definitions or (),
-                    override_enabled=spawn_override_enabled,
-                    override_targets=spawn_override_targets,
-                )
-            )
-        log_active = bool(
-            agent_kind == AGENT_KIND_PRIMARY and run_log_active and (runtime or active)
-        )
-        if log_active:
-            runtime.extend(
-                (
-                    SEARCH_RUN_LOG_TOOL_SCHEMA,
-                    RUN_LOG_STATS_TOOL_SCHEMA,
-                    RUN_LOG_SLICE_TOOL_SCHEMA,
-                )
-            )
-        return FirstRequestSchemaPlan(
-            active_schemas=active,
-            runtime_schemas=tuple(runtime),
-            offer_find_load=offer_find_load,
-            log_active=log_active,
-            system_prompt=system_prompt,
-            agent_definitions=agent_definitions,
-            fleet_max_live=fleet_max_live,
-        )
+    make_plan = functools.partial(
+        build_runtime_schema_plan,
+        config=config,
+        agent_definitions=agent_definitions,
+        fleet_max_live=fleet_max_live,
+        agent_kind=agent_kind,
+        fleet_active=fleet_active,
+        progress_available=progress_available,
+        reporting_available=reporting_available,
+        peers_available=peers_available,
+        worktree_merge_enabled=worktree_merge_enabled,
+        spawn_override_enabled=spawn_override_enabled,
+        spawn_override_targets=spawn_override_targets,
+        skill_file_enabled=skill_file_enabled,
+        install_skill_enabled=install_skill_enabled,
+        managed_skill_promotion_enabled=managed_skill_promotion_enabled,
+        run_skill_script_enabled=run_skill_script_enabled,
+        fork_chat_enabled=fork_chat_enabled,
+        new_chat_enabled=new_chat_enabled,
+        run_log_active=run_log_active,
+        deferred_names=_deferred_names,
+    )
 
     discovery = make_plan((), True, discovery_prompt)
 
@@ -1002,42 +886,12 @@ def build_first_request_schema_plan(
             agent_definitions=agent_definitions,
             fleet_max_live=fleet_max_live,
         )
-        # ADR-253: optional runtime schemas must not crowd out a usable
-        # catalog. Keep the caller's session prompt and only the discovery
-        # and already-gated progress surface, then cost the whole request.
-        from .fleet_message_tools import (
-            PEER_INSTRUCTIONS,
-            READ_INSTRUCTIONS,
-            REPORT_INSTRUCTIONS,
-        )
-
-        compact_names = MESSAGE_TOOL_NAMES | {FIND_TOOLS_NAME, LOAD_TOOLS_NAME}
-        compact_runtime = tuple(
-            schema
-            for schema in discovery.runtime_schemas
-            if schema.name in compact_names
-        )
-        compact_prompt = (
-            no_tools.system_prompt
-            + "\n\nUse find_tools to discover available tools, then call load_tools "
-            "alone with ids for every tool to retain before calling those tools."
-        )
-        for enabled, instruction in (
-            (progress_available and agent_kind == AGENT_KIND_PRIMARY, READ_INSTRUCTIONS),
-            (
-                reporting_available and agent_kind == AGENT_KIND_SUBAGENT,
-                REPORT_INSTRUCTIONS,
-            ),
-            (peers_available and agent_kind == AGENT_KIND_SUBAGENT, PEER_INSTRUCTIONS),
-        ):
-            if enabled and instruction not in compact_prompt:
-                compact_prompt += "\n\n" + instruction
-        compact = dataclasses.replace(
-            no_tools,
-            runtime_schemas=compact_runtime,
-            offer_find_load=True,
-            system_prompt=compact_prompt,
-            schema_input_budget_tokens=context_limit - config.response_reserve_tokens,
+        compact = build_compact_schema_plan(
+            no_tools, discovery, context_limit=context_limit,
+            response_reserve_tokens=config.response_reserve_tokens,
+            progress_available=progress_available,
+            reporting_available=reporting_available, peers_available=peers_available,
+            agent_kind=agent_kind,
         )
         if _first_request_plan_fits(
             compact,
@@ -2820,6 +2674,7 @@ class AgentService:
         api_endpoint: str,
         request: ModelRequest,
         candidate_rows: list[dict],
+        *, input_budget_tokens: int | None = None,
     ) -> int:
         """Return fail-safe remaining tokens for whole project context rows."""
         try:
@@ -2852,7 +2707,12 @@ class AgentService:
             return 0
         if type(used) is not int or used < 0:
             return 0
-        return max(0, limit - reserve - used)
+        available = limit - reserve
+        if input_budget_tokens is not None:
+            if type(input_budget_tokens) is not int or input_budget_tokens < 0:
+                return 0
+            available = min(available, input_budget_tokens)
+        return max(0, available - used)
 
     def _project_instruction_request_fits(
         self,
@@ -2909,6 +2769,7 @@ class AgentService:
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
+        *, input_budget_tokens: int | None = None,
     ) -> InstructionChainDelivery:
         """Whole-source admit a captured source against one chain request."""
         source = candidate.source
@@ -2917,7 +2778,8 @@ class AgentService:
         if source is not None:
             row = build_project_instruction_row(source)
             available = self.safe_project_instruction_tokens(
-                config, api_endpoint, request, [row]
+                config, api_endpoint, request, [row],
+                input_budget_tokens=input_budget_tokens,
             )
             try:
                 required = count_tokens_messages(
@@ -2944,11 +2806,13 @@ class AgentService:
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
+        *, input_budget_tokens: int | None = None,
     ) -> InstructionSnapshot:
         """Freeze primary admission plus content-free captured metadata."""
         source = candidate.source
         delivery = self._startup_delivery_for_request(
-            candidate, config, api_endpoint, request
+            candidate, config, api_endpoint, request,
+            input_budget_tokens=input_budget_tokens,
         )
         primary_outcomes = delivery.outcomes
         return InstructionSnapshot(
@@ -2987,6 +2851,7 @@ class AgentService:
         runtime_schemas: list,
         messages: list[dict],
         active_schemas: tuple,
+        input_budget_tokens: int | None = None,
         log_active: bool = False,
         trusted_role: Literal["primary", "subagent"] = "primary",
     ) -> tuple[ModelRequest, InstructionSnapshot]:
@@ -3005,6 +2870,7 @@ class AgentService:
             config,
             api_endpoint,
             base_request,
+            input_budget_tokens=input_budget_tokens,
         )
         request_messages = messages
         source = snapshot.startup_source
@@ -3100,6 +2966,7 @@ class AgentService:
         payload_state: InstructionChainPayloadState | None = None,
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
         on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
+        input_budget_tokens: int | None = None,
         first_request_fits: bool = True,
         run_id: str | None = None,
     ):
@@ -3326,7 +3193,8 @@ class AgentService:
                     tools=tuple(call_kwargs.get("tools", ())),
                 )
                 request_fits = self._project_instruction_request_fits(
-                    config, api_endpoint, request
+                    config, api_endpoint, request,
+                    input_budget_tokens=input_budget_tokens,
                 )
                 row_keys = tuple(
                     row.get(PROJECT_INSTRUCTION_ROW_KEY)
@@ -3346,7 +3214,7 @@ class AgentService:
                     ) from None
                 staged.pop("receipt", None)
             if (
-                config.preset_fallback_targets
+                (config.preset_fallback_targets or input_budget_tokens is not None)
                 and not self._project_instruction_request_fits(
                     config,
                     config.execution_provider or api_endpoint,
@@ -3354,10 +3222,11 @@ class AgentService:
                         messages=tuple(dict(row) for row in payload),
                         tools=tuple(call_kwargs.get("tools", ())),
                     ),
+                    input_budget_tokens=input_budget_tokens,
                 )
             ):
                 raise _ProjectInstructionPayloadError(
-                    "request exceeds fallback model context budget"
+                    "request exceeds model context budget"
                 )
             if not first_request_fits:
                 raise _ProjectInstructionPayloadError(
@@ -5410,7 +5279,8 @@ class AgentService:
         # A plain fallback was costed without schemas or progress guidance.
         # Do not silently turn it back into a tool-bearing request.
         plan_has_tools = bool(runtime_schemas or active)
-        if progress_sender is not None and plan_has_tools:
+        late_progress = plan_has_tools and schema_plan.schema_input_budget_tokens is None
+        if progress_sender is not None and late_progress:
             from .fleet_message_tools import (
                 REPORT_TO_SUPERVISOR_SCHEMA,
                 REPORT_INSTRUCTIONS,
@@ -5423,7 +5293,7 @@ class AgentService:
                     config,
                     system_prompt=config.system_prompt + "\n\n" + REPORT_INSTRUCTIONS,
                 )
-        if peer_messenger is not None and plan_has_tools:
+        if peer_messenger is not None and late_progress:
             from .fleet_message_tools import (
                 LIST_PEER_AGENTS_SCHEMA,
                 PEER_INSTRUCTIONS,
@@ -5438,7 +5308,7 @@ class AgentService:
                     config,
                     system_prompt=config.system_prompt + "\n\n" + PEER_INSTRUCTIONS,
                 )
-        if progress_inbox is not None and plan_has_tools:
+        if progress_inbox is not None and late_progress:
             from .fleet_message_tools import (
                 READ_AGENT_MESSAGES_SCHEMA,
                 READ_INSTRUCTIONS,
@@ -5509,7 +5379,8 @@ class AgentService:
                 ),
                 safe_token_allowance=lambda request, rows: (
                     self.safe_project_instruction_tokens(
-                        config, api_endpoint, request, rows
+                        config, api_endpoint, request, rows,
+                        input_budget_tokens=schema_plan.schema_input_budget_tokens,
                     )
                 ),
                 count_tokens=lambda rows: count_tokens_messages(
@@ -5526,6 +5397,7 @@ class AgentService:
         ):
             _request, snapshot = self.build_project_instruction_request(
                 candidate=self.startup_instruction_candidate,
+                input_budget_tokens=schema_plan.schema_input_budget_tokens,
                 config=config,
                 api_endpoint=api_endpoint,
                 runtime_schemas=runtime_schemas,
@@ -5575,6 +5447,7 @@ class AgentService:
                 config,
                 api_endpoint,
                 child_request,
+                input_budget_tokens=schema_plan.schema_input_budget_tokens,
             )
         elif (
             legacy_delivery_enabled and snapshot is not None and chain_delivery is None
@@ -8424,6 +8297,7 @@ class AgentService:
             on_context_assembled=lambda categories: context_callback_ref["callback"](
                 categories
             ),
+            input_budget_tokens=schema_plan.schema_input_budget_tokens,
             first_request_fits=schema_plan.request_fits,
         )
 
@@ -8489,6 +8363,7 @@ class AgentService:
                     on_context_assembled=lambda categories: context_callback_ref[
                         "callback"
                     ](categories),
+                    input_budget_tokens=schema_plan.schema_input_budget_tokens,
                     first_request_fits=True if explicit else schema_plan.request_fits,
                 )
             except Exception:  # noqa: BLE001 -- construction failure remains a visible skip

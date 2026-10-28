@@ -532,9 +532,9 @@ _BUDGETS: dict[str, int] = {
     # `test_every_module_of_the_guard_size_has_a_row` keeps new gaps from opening.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25693,
     "tldw_chatbook/config.py": 12258,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12093,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9629,
+    "tldw_chatbook/Agents/agent_service.py": 9620,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,

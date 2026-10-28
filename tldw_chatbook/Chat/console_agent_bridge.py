@@ -5929,6 +5929,7 @@ class ConsoleAgentBridge:
             runtime_schemas=list(plan.schemas.runtime_schemas),
             messages=list(plan.messages),
             active_schemas=plan.schemas.active_schemas,
+            input_budget_tokens=plan.schemas.schema_input_budget_tokens,
             log_active=False,
         )
         payload: dict[str, Any] = {
@@ -8513,19 +8514,9 @@ class ConsoleAgentBridge:
                 capture_update.envelope,
                 generation_token=generation_token,
             )
-        for step in outcome.steps:
-            logger.info(
-                "agent run step kind={} tool={:.128} outcome={} run={}",
-                step.kind,
-                json.dumps(step.tool_name),
-                step.tool_outcome,
-                run_id,
-                agent_kind=AGENT_KIND_PRIMARY,
-                step_kind=step.kind,
-                tool_name=step.tool_name,
-                summary=step.summary,
-                step_index=step.index,
-            )
+        from tldw_chatbook.Agents.tool_disclosure_diagnostics import log_agent_steps
+
+        log_agent_steps(outcome.steps, run_id)
         logger.info(
             "console agent bridge run_reply end",
             conversation_id=conversation_id,

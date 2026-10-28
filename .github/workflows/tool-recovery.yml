@@ -48,6 +48,7 @@ jobs:
           python -m pytest
           Tests/Agents/test_tool_disclosure_refusals.py
           Tests/Agents/test_first_request_window_honest_plan.py
+          Tests/Chat/test_console_agent_project_instructions.py
           Tests/Agents/test_fleet_message_tools.py
           Tests/Tools/test_file_tools_workspace_roots.py
           Tests/Agents/test_tool_disclosure_diagnostics.py
@@ -59,6 +60,11 @@ jobs:
           Tests/Agents/test_skill_tool_spawn.py::test_skill_tool_executes_after_find_load_discloses_it
           Tests/Agents/test_skill_tool_spawn.py::test_native_spawn_child_cannot_call_a_skill_tool
           Tests/Agents/test_agent_service.py::test_replacement_updates_permission_set_in_lockstep
+          Tests/Agents/test_agent_service.py::test_initial_project_instruction_rows_are_verified_and_marked_before_provider
+          Tests/Agents/test_agent_service.py::test_bounding_that_drops_pending_instruction_row_stops_without_send_or_mark
+          Tests/Agents/test_agent_service.py::test_real_ledger_one_over_final_limit_stops_without_mark_or_send
+          Tests/Agents/test_agent_service.py::test_real_ledger_exact_final_limit_marks_and_sends
+          Tests/Agents/test_agent_service.py::test_later_batch_context_retries_before_review_and_is_marked_on_exact_request
           -q -o addopts= --timeout=120 --junitxml=tool-recovery-results.xml
       - name: Retain targeted test results
         if: always()
