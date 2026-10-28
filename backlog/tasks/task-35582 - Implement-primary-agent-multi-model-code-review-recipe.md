@@ -15,7 +15,7 @@ documentation:
 - Docs/superpowers/specs/2026-10-18-multi-model-code-review-design.md
 - backlog/decisions/281-primary-agent-multi-model-code-review.md
 - Docs/superpowers/plans/2026-10-18-multi-model-code-review-implementation.md
-updated_date: 2026-10-28 22:45
+updated_date: 2026-10-28 23:23
 ---
 
 ## Description
@@ -120,4 +120,5 @@ qualification or budget request was made. AC24 and DoD stay unchecked; the task
 remains In Progress and PR https://github.com/rmusser01/tldw_chatbook/pull/3286
 remains draft against dev. The original worktree/history and evidence are preserved.
 No merge is authorized.
+Current-dev follow-up: rebased onto live dev 3efe8476cebf70eceafa605d1abed76a4aad4e0e, preserving upstream first-request schema/compact-budget/disclosure behavior and existing review gates. The actual overlapping runtime changes pass 54 upstream, 34 review/continuation and five affected size controls. All 74 shared size ceilings retain the stricter parent limit; diagnostic inventory verifies after nine reviewed owner updates with privacy/sink sections unchanged. R2/V1 completion source/tests are unchanged. No provider requests, product children or new qualification; AC24 remains open and PR3286 remains draft. Exact current-dev receipts: /private/tmp/task35582-dev-sync/runtime-conflict-report.md; concise public notes: Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
