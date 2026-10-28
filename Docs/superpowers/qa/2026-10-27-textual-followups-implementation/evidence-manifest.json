@@ -70,8 +70,16 @@
       "sha256": "2787940142d8a82f51c326477bd0971f913bf56633d338bf08aea1d070f0ecd8"
     },
     {
+      "file": "final-rebase-dev323-proof.json",
+      "sha256": "f480ddf9a58ba463dd1df12e7ce70764cd371c67bf5c01a5ab9e6a2526259dba"
+    },
+    {
       "file": "final-review.md",
       "sha256": "8c80d2b36c3d7a656c8dad113de9fc221152e69ffd2600e03fc8f329aa1da188"
+    },
+    {
+      "file": "final-static-baseline-proof.json",
+      "sha256": "964d9aeace64cb44e634491af5b2a0b7443ac8b6c4ff5d0ce44fb44db0663a10"
     },
     {
       "file": "hosted-functional-ci-proof.json",
