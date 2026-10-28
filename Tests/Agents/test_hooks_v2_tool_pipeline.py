@@ -1129,3 +1129,68 @@ async def test_runtime_predispatch_refusal_has_no_posts_but_invocation_settles(
             assert results[0].dispatch_state == "not_started"
     finally:
         await engine.close()
+
+
+@pytest.mark.parametrize(
+    "prepared,expected",
+    [
+        (
+            ToolResult.blocked("Tool schema not loaded: calculator. Call load_tools."),
+            "Call load_tools",
+        ),
+        (ToolResult(ok=True, content="must not dispatch"), "hook: preparation refused"),
+        (
+            ToolResult(ok=False, error="private failure detail"),
+            "hook: preparation refused",
+        ),
+        (
+            ToolResult.blocked("denied detail", approval_decision="denied"),
+            "hook: preparation refused",
+        ),
+        (ToolResult.blocked("proceed"), "ERROR: proceed"),
+        (None, "hook: preparation refused"),
+    ],
+    ids=[
+        "availability-refusal",
+        "invalid-success",
+        "invalid-failure",
+        "invalid-denial",
+        "refusal-text-is-not-approval",
+        "exception",
+    ],
+)
+def test_preparation_refusal_preserves_recovery_without_review_or_dispatch(
+    prepared, expected
+):
+    side_effects = []
+    deps = make_deps(
+        [
+            ModelTurn(tool_calls=(ToolCall("calculator", {}, "call-1"),)),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    def prepare(_call):
+        if prepared is None:
+            raise RuntimeError("private exception detail")
+        return prepared
+
+    deps.prepare_hook_call = prepare
+    deps.accept_hook_preparation = lambda _call: side_effects.append("accept")
+    deps.review_tool_calls = lambda _calls: side_effects.append("review") or {}
+    deps.invoke_tool = lambda _call: side_effects.append("dispatch") or ToolResult(
+        ok=True
+    )
+
+    outcome = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+
+    results = [step for step in outcome.steps if step.kind == "tool_result"]
+    assert outcome.status == "done"
+    assert side_effects == []
+    assert len(results) == 1
+    assert expected in results[0].result
+    assert "private failure detail" not in results[0].result
+    assert "denied detail" not in results[0].result
+    assert "private exception detail" not in results[0].result
+    assert outcome.denial_count == 0
+    assert results[0].tool_outcome == "blocked"

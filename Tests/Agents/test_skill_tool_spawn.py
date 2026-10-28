@@ -339,7 +339,9 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
     assert outcome.status == RUN_DONE
     run = db.get_run(run_id)
     results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    assert "Tool not permitted: code-review" in results[0]["result"]
+    assert "schema not loaded: code-review" in results[0]["result"]
+    assert "load_tools" in results[0]["result"]
+    assert results[0]["tool_outcome"] == "blocked"
     assert runner.ran_with is None  # never actually spawned
     assert db.count_subagent_runs("c1") == 0
 

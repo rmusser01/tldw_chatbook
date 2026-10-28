@@ -44,6 +44,18 @@ This document describes the agent execution loop: the pure control loop in `Agen
 10. **Dispatch** per call: cancel → approval-revoked + `RUN_CANCELLED`; loop detection (repeated identical calls, period-aware) short-circuits; special in-loop tools (spawn, fleet, fork/new-chat, find/load tools, skill tools, run-log tools) execute directly; everything else goes through `deps.invoke_tool`.
 11. **Result capture**: the `tool_call` run-log record is written **before** dispatch (a crash still leaves a durable trace); the `tool_result` after; content is capped with a recovery pointer into the run log. Consecutive same-tool failures (≥3) → `RUN_STUCK`.
 
+Catalog dispatch checks the run's allow-list before checking schema disclosure.
+An excluded or unknown name keeps the generic `Tool not permitted` refusal.
+An allowed tool whose schema is absent instead returns `Tool schema not loaded`
+with a `load_tools` instruction that names the tool and reminds the model to
+include every catalog tool it wants to retain (ADR-104 working-set replacement).
+Ordinary and skill dispatch share `_tool_availability_refusal`; neither refusal
+dispatches a tool or invents an authoritative approval denial. With hooks v2,
+the service performs this check before hook preparation and returns a typed
+blocked/not-started refusal through the existing preparation seam (ADR-252).
+The runtime preserves that error while unrelated preparation exceptions remain
+generic and fail closed. Runtime tools retain their independent gates.
+
 Local file-worker execution errors (including crashes, timeouts, spawn/protocol
 and cleanup failures) are ordinary failures in both `LocalToolProvider` and
 `VirtualCliProvider`, so the same-tool limit applies even when paths change.

@@ -459,7 +459,8 @@ class LoopDeps:
     # Restriction-only guard runs before approval exemptions; exceptions deny.
     guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
     # Required v2 effects are load-bearing; legacy observers remain optional.
-    prepare_hook_call: Callable[[ToolCall], ToolCall] | None = None
+    # A typed blocked/not-started result refuses before any hook executes (ADR-252).
+    prepare_hook_call: Callable[[ToolCall], ToolCall | ToolResult] | None = None
     accept_hook_preparation: Callable[[ToolCall], None] | None = None
     validate_hook_dispatch: Callable[[ToolCall], None] | None = None
     install_tool_checkpoint: Callable[[ToolCall, ToolResult], None] | None = None
@@ -2416,7 +2417,20 @@ def run_agent_loop(
             for call in calls:
                 try:
                     prepared = deps.prepare_hook_call(call)
-                    if prepared.name != call.name or prepared.call_id != call.call_id:
+                    if isinstance(prepared, ToolResult):
+                        if (
+                            prepared.ok
+                            or prepared.outcome != TOOL_OUTCOME_BLOCKED
+                            or prepared.dispatch_state != "not_started"
+                            or prepared.approval_decision is not None
+                            or not isinstance(prepared.error, str)
+                            or not prepared.error
+                        ):
+                            raise ValueError("invalid preparation refusal")
+                        # Refusal data must never equal the guard's allow verdict.
+                        hook_preparation_refusals[id(call)] = f"ERROR: {prepared.error}"
+                        prepared = call
+                    elif prepared.name != call.name or prepared.call_id != call.call_id:
                         raise ValueError("hook changed tool identity")
                 except Exception:  # noqa: BLE001 -- transformation is controlling
                     prepared = call
