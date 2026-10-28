@@ -199,10 +199,16 @@ if sys.argv[1]=='catalog_changed':
  except ValueError as error:assert str(error)=='isolated_catalog_changed'
  else:raise AssertionError('changed catalog launched')
 if sys.argv[1]=='data_alias':
- data.rename(data.with_name('saved-data'));data.symlink_to(data.with_name('saved-data'),target_is_directory=True)
+ import errno
+ from Tests.Backup_Recovery.path_aliases import create_directory_alias
+ saved=data.with_name('saved-data');data.rename(saved)
+ retained=saved/'alias-target.txt';retained.write_bytes(b'keep target bytes')
+ create_directory_alias(data,saved)
  try:_launch_descriptor(profile_id,control)
  except ValueError as error:assert str(error)=='catalog_target_invalid'
+ except OSError as error:assert os.name=='nt' and error.errno==errno.ELOOP and error.strerror=='windows_reparse_point_refused'
  else:raise AssertionError('data alias launched')
+ assert retained.read_bytes()==b'keep target bytes'
 if sys.argv[1]=='activation_missing':
  import shutil
  shutil.rmtree(control/'activation')
@@ -262,13 +268,14 @@ from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
 install()
 profile,control,ids=sys.argv[1:]
+assert Path.home()==Path(os.environ['HOME'])
 from tldw_chatbook.Backup_Recovery.isolated_restore import launch_profile
 import subprocess
 original_call=subprocess.call
 # Exercise the real launcher and fresh CLI with a noninteractive help request.
-# The wrapper supplies only the terminal-mode argument; no authority is replaced.
+# The disposable source copy needs no bytecode writes; native authority is unchanged.
 def help_child(argv,**kwargs):
- result=subprocess.run([*argv,'--help'],**kwargs,capture_output=True,text=True,timeout=30)
+ result=subprocess.run([argv[0],'-B',*argv[1:],'--help'],**kwargs,capture_output=True,text=True,timeout=30)
  assert result.returncode==0,result.stderr[-4000:]
  return result.returncode
 subprocess.call=help_child
@@ -429,6 +436,7 @@ def test_fresh_process_reopens_real_notes_chat_media_and_local_identity(tmp_path
     environment = dict(
         os.environ,
         HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
         TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
         OPENAI_API_KEY="ambient-secret-must-not-be-used",
         TLDW_MEDIA_DB_PATH="/original/custom.db",
@@ -436,6 +444,7 @@ def test_fresh_process_reopens_real_notes_chat_media_and_local_identity(tmp_path
     result = subprocess.run(
         [
             sys.executable,
+            "-B",
             "-c",
             _READ_CHILD,
             descriptor["profile"],

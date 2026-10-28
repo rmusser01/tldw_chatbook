@@ -368,6 +368,9 @@ def _launch_environment() -> dict[str, str]:
         "TEMP",
         "TMP",
         "TMPDIR",
+        "CHATBOOK_WEZTERM_HOME",
+        "CHATBOOK_WEZTERM_DATA_DIR",
+        "CHATBOOK_WEZTERM_RUNTIME_DIR",
     )
     env = {name: os.environ[name] for name in allowed if name in os.environ}
     env.update(

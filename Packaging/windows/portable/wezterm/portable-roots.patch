@@ -1,0 +1,357 @@
+--- a/config/src/lib.rs
++++ b/config/src/lib.rs
+@@ -23,6 +23,10 @@
+ mod bell;
+ mod color;
+ mod config;
++#[cfg(windows)]
++mod portable;
++#[cfg(windows)]
++pub use portable::socket_address as portable_socket_address;
+ mod daemon;
+ mod exec_domain;
+ mod font;
+@@ -63,7 +67,15 @@
+ type ErrorCallback = fn(&str);
+ 
+ lazy_static! {
+-    pub static ref HOME_DIR: PathBuf = dirs_next::home_dir().expect("can't find HOME dir");
++    pub static ref HOME_DIR: PathBuf = {
++        #[cfg(windows)]
++        if let Some(home) = portable::path_override("CHATBOOK_WEZTERM_HOME")
++            .expect("invalid CHATBOOK_WEZTERM_HOME")
++        {
++            return home;
++        }
++        dirs_next::home_dir().expect("can't find HOME dir")
++    };
+     pub static ref CONFIG_DIRS: Vec<PathBuf> = config_dirs();
+     pub static ref RUNTIME_DIR: PathBuf = compute_runtime_dir().unwrap();
+     pub static ref DATA_DIR: PathBuf = compute_data_dir().unwrap();
+--- a/config/src/config.rs
++++ b/config/src/config.rs
+@@ -1662,6 +1662,11 @@
+ }
+ 
+ pub(crate) fn compute_data_dir() -> anyhow::Result<PathBuf> {
++    #[cfg(windows)]
++    if let Some(path) = crate::portable::path_override("CHATBOOK_WEZTERM_DATA_DIR")? {
++        return Ok(path);
++    }
++
+     if let Some(runtime) = dirs_next::data_dir() {
+         return Ok(runtime.join("wezterm"));
+     }
+@@ -1670,6 +1675,11 @@
+ }
+ 
+ pub(crate) fn compute_runtime_dir() -> anyhow::Result<PathBuf> {
++    #[cfg(windows)]
++    if let Some(path) = crate::portable::path_override("CHATBOOK_WEZTERM_RUNTIME_DIR")? {
++        return Ok(path);
++    }
++
+     if let Some(runtime) = dirs_next::runtime_dir() {
+         return Ok(runtime.join("wezterm"));
+     }
+--- a/wezterm-mux-server-impl/src/local.rs
++++ b/wezterm-mux-server-impl/src/local.rs
+@@ -44,6 +44,10 @@
+ /// that prevent other users from manipulating its contents.
+ fn safely_create_sock_path(unix_dom: &UnixDomain) -> anyhow::Result<UnixListener> {
+     let sock_path = &unix_dom.socket_path();
++    #[cfg(windows)]
++    let address = config::portable_socket_address(sock_path)?;
++    #[cfg(not(windows))]
++    let address = sock_path;
+     log::trace!("setting up {}", sock_path.display());
+ 
+     let sock_dir = sock_path
+@@ -85,7 +89,7 @@
+         },
+     }
+ 
+-    let listener = UnixListener::bind(sock_path)
++    let listener = UnixListener::bind(address)
+         .with_context(|| format!("Failed to bind to {}", sock_path.display()))?;
+ 
+     config::set_sticky_bit(&sock_path);
+--- a/wezterm-client/src/client.rs
++++ b/wezterm-client/src/client.rs
+@@ -447,13 +447,20 @@
+             std::thread::sleep(std::time::Duration::from_millis(iter * 50));
+         }
+         match target {
+-            UnixTarget::Socket(path) => match UnixStream::connect(path) {
+-                Ok(stream) => return Ok(stream),
+-                Err(err) => {
+-                    error =
+-                        Some(Err(err).with_context(|| format!("connecting to {}", path.display())))
+-                }
+-            },
++            UnixTarget::Socket(path) => {
++                #[cfg(windows)]
++                let address = config::portable_socket_address(path)?;
++                #[cfg(not(windows))]
++                let address = path;
++                match UnixStream::connect(address) {
++                    Ok(stream) => return Ok(stream),
++                    Err(err) => {
++                        error = Some(
++                            Err(err).with_context(|| format!("connecting to {}", path.display())),
++                        )
++                    }
++                }
++            }
+             UnixTarget::Proxy(argv) => {
+                 let mut cmd = std::process::Command::new(&argv[0]);
+                 cmd.args(&argv[1..]);
+--- a/wezterm-client/src/discovery.rs
++++ b/wezterm-client/src/discovery.rs
+@@ -178,6 +178,25 @@
+         /// names so that we have one per desktop, rather than one
+         /// system wide.
+         fn compute_names(class_name: &str) -> (String, String) {
++            let root = if std::env::var_os("CHATBOOK_WEZTERM_RUNTIME_DIR").is_some() {
++                Some(config::RUNTIME_DIR.as_path())
++            } else {
++                None
++            };
++            Self::compute_names_for(class_name, root)
++        }
++
++        fn compute_names_for(class_name: &str, runtime_root: Option<&Path>) -> (String, String) {
++            use std::hash::{Hash, Hasher};
++            let class_name = match runtime_root {
++                Some(root) => {
++                    // Collision isolation for ephemeral kernel objects, not authentication.
++                    let mut digest = std::collections::hash_map::DefaultHasher::new();
++                    root.hash(&mut digest);
++                    format!("{}-chatbook-{:016x}", class_name, digest.finish())
++                }
++                None => class_name.to_string(),
++            };
+             let mutex_name = format!("Local\\wezterm-sock-mutex-{}", class_name);
+             let map_name = format!("Local\\wezterm-sock-{}", class_name);
+             (mutex_name, map_name)
+@@ -234,6 +253,40 @@
+ 
+                 Ok(path)
+             })
++        }
++    }
++
++    #[cfg(test)]
++    mod tests {
++        use super::*;
++
++        #[test]
++        fn portable_discovery_namespace_is_stable_and_per_root() {
++            let class = "org.wezfurlong.wezterm";
++            let first_root = Path::new(r"C:\bundle one ü\Data\wezterm\runtime");
++            let second_root = Path::new(r"C:\bundle two ü\Data\wezterm\runtime");
++            let baseline = NameHolder::compute_names_for(class, None);
++            assert_eq!(
++                baseline,
++                (
++                    format!("Local\\wezterm-sock-mutex-{}", class),
++                    format!("Local\\wezterm-sock-{}", class),
++                )
++            );
++            let first = NameHolder::compute_names_for(class, Some(first_root));
++            assert_eq!(
++                first,
++                NameHolder::compute_names_for(class, Some(first_root))
++            );
++            assert_ne!(
++                first,
++                NameHolder::compute_names_for(class, Some(second_root))
++            );
++            assert_ne!(
++                first,
++                NameHolder::compute_names_for("other-class", Some(first_root))
++            );
++            assert_ne!(first, baseline);
+         }
+     }
+ 
+@@ -333,7 +386,13 @@
+ /// If successful, there is NO guarantee that the returned path references
+ /// a running instance; it is just the last published path.
+ pub fn resolve_gui_sock_path(class_name: &str) -> anyhow::Result<PathBuf> {
+-    NameHolder::resolve(class_name)
++    let path = NameHolder::resolve(class_name)?;
++    #[cfg(windows)]
++    if std::env::var_os("CHATBOOK_WEZTERM_RUNTIME_DIR").is_some() {
++        // Windows publishes a leaf name; expose an absolute filesystem path.
++        return Ok(config::RUNTIME_DIR.join(path));
++    }
++    Ok(path)
+ }
+ 
+ /// This function returns a list of the gui-sock- paths in
+@@ -394,5 +453,14 @@
+ }
+ 
+ fn is_sock_dead(sock: &std::path::Path) -> bool {
++    #[cfg(windows)]
++    let sock = match config::portable_socket_address(sock) {
++        Ok(address) => address,
++        Err(error) => {
++            log::error!("Refusing portable socket address: {}", error);
++            // Address refusal does not establish that a live socket is dead.
++            return false;
++        }
++    };
+     UnixStream::connect(sock).is_err()
+ }
+--- a/wezterm-gui/src/main.rs
++++ b/wezterm-gui/src/main.rs
+@@ -403,6 +403,10 @@
+     ))?;
+ 
+     if let Err(err) = spawn_mux_server(unix_socket_path, should_publish) {
++        #[cfg(windows)]
++        if std::env::var_os("CHATBOOK_WEZTERM_RUNTIME_DIR").is_some() {
++            return Err(err);
++        }
+         log::warn!("{:#}", err);
+     }
+ 
+@@ -485,6 +489,11 @@
+         if mux.default_domain().domain_name() != config.default_domain.as_deref().unwrap_or("local")
+         {
+             return Self::NoConnectNoPublish;
++        }
++
++        #[cfg(windows)]
++        if std::env::var_os("CHATBOOK_WEZTERM_RUNTIME_DIR").is_some() {
++            return Self::NoConnectButPublish;
+         }
+ 
+         if always_new_process {
+--- /dev/null
++++ b/config/src/portable.rs
+@@ -0,0 +1,122 @@
++//! Process-local roots and socket addresses for the Windows Chatbook prototype.
++use std::io::{Error, ErrorKind};
++use std::path::{Component, Path, PathBuf};
++
++pub(crate) fn path_override(name: &str) -> std::io::Result<Option<PathBuf>> {
++    let Some(value) = std::env::var_os(name) else {
++        return Ok(None);
++    };
++    let path = PathBuf::from(value);
++    if !path.is_absolute() {
++        return Err(invalid(format!("{name} must be a nonempty absolute path")));
++    }
++    Ok(Some(path))
++}
++
++fn invalid(message: impl Into<String>) -> Error {
++    Error::new(ErrorKind::InvalidInput, message.into())
++}
++
++/// Shorten only the syscall address; filesystem and published paths stay absolute.
++pub fn socket_address(path: &Path) -> std::io::Result<PathBuf> {
++    let root = path_override("CHATBOOK_WEZTERM_RUNTIME_DIR")?;
++    if root.is_none() {
++        return Ok(path.to_path_buf());
++    }
++    socket_address_for(path, root.as_deref(), &std::env::current_dir()?)
++}
++
++fn socket_address_for(path: &Path, root: Option<&Path>, cwd: &Path) -> std::io::Result<PathBuf> {
++    let Some(root) = root else {
++        return Ok(path.to_path_buf());
++    };
++    if !root.is_absolute()
++        || !path.is_absolute()
++        || !cwd.is_absolute()
++        || !path.starts_with(root)
++        || [path, root, cwd]
++            .iter()
++            .any(|path| path.components().any(|part| part == Component::ParentDir))
++    {
++        return Err(invalid(
++            "portable socket must be inside its absolute runtime root",
++        ));
++    }
++    let relative = path.strip_prefix(cwd).map_err(|_| {
++        invalid("portable socket requires a working directory above its runtime root")
++    })?;
++    let bytes = relative
++        .to_str()
++        .ok_or_else(|| invalid("socket path must be UTF-8"))?;
++    // The pinned uds_windows uses sockaddr_un.sun_path[108], including the NUL.
++    if bytes.is_empty() || bytes.len() >= 108 {
++        return Err(invalid(
++            "portable socket address must contain 1 to 107 UTF-8 bytes",
++        ));
++    }
++    Ok(relative.to_path_buf())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn portable_path_override_accepts_only_absolute_nonempty_roots() {
++        const NAME: &str = "CHATBOOK_WEZTERM_TEST_ROOT";
++        std::env::remove_var(NAME);
++        assert_eq!(path_override(NAME).unwrap(), None);
++        for invalid in ["", "relative", "C:relative", r"\rooted"] {
++            std::env::set_var(NAME, invalid);
++            let error = path_override(NAME).unwrap_err();
++            assert_eq!(error.kind(), ErrorKind::InvalidInput);
++            assert!(error.to_string().contains(NAME));
++        }
++        for valid in [r"C:\portable space ü\Data\wezterm", r"\\server\share\Data"] {
++            std::env::set_var(NAME, valid);
++            assert_eq!(path_override(NAME).unwrap(), Some(PathBuf::from(valid)));
++        }
++        std::env::remove_var(NAME);
++    }
++
++    #[test]
++    fn deep_unicode_socket_uses_a_short_data_relative_address() {
++        let data = PathBuf::from(format!(r"C:\{}\Data", "deep space ü\\".repeat(30)));
++        let root = data.join("wezterm/runtime");
++        let path = root.join("gui-sock-42");
++        assert!(path.to_str().unwrap().len() > 108);
++        assert_eq!(
++            socket_address_for(&path, Some(&root), &data).unwrap(),
++            PathBuf::from("wezterm/runtime/gui-sock-42")
++        );
++        assert_eq!(socket_address_for(&path, None, &data).unwrap(), path);
++    }
++
++    #[test]
++    fn portable_socket_rejects_outside_root_wrong_cwd_and_parent_traversal() {
++        let data = Path::new(r"C:\Data");
++        let root = data.join("runtime");
++        for path in [data.join("outside/sock"), root.join("../outside/sock")] {
++            assert_eq!(
++                socket_address_for(&path, Some(&root), data)
++                    .unwrap_err()
++                    .kind(),
++                ErrorKind::InvalidInput
++            );
++        }
++        assert!(
++            socket_address_for(&root.join("sock"), Some(&root), Path::new(r"C:\Other")).is_err()
++        );
++    }
++
++    #[test]
++    fn portable_socket_enforces_the_exact_utf8_byte_limit() {
++        let data = Path::new(r"C:\Data");
++        let root = data.join("r");
++        let at_limit = root.join(format!("{}x", "é".repeat(52)));
++        let address = socket_address_for(&at_limit, Some(&root), data).unwrap();
++        assert_eq!(address.to_str().unwrap().len(), 107);
++        let too_long = root.join(format!("{}xx", "é".repeat(52)));
++        assert!(socket_address_for(&too_long, Some(&root), data).is_err());
++    }
++}

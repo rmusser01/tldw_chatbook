@@ -22,6 +22,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
+from Tests.Backup_Recovery.path_aliases import create_directory_alias
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
@@ -224,7 +225,8 @@ def test_windows_ordinary_and_sqlite_files_keep_exact_byte_hashes(
 
 
 @pytest.mark.parametrize(
-    "change", ("identity", "type", "hardlink", "symlink", "mode", "mtime", "ancestor")
+    "change",
+    ("identity", "type", "hardlink", "directory_alias", "mode", "mtime", "ancestor"),
 )
 def test_windows_instance_lock_keeps_native_drift_refusal(
     tmp_path, monkeypatch, reviewed_instance_lock, change
@@ -243,15 +245,20 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
         destinations={"root": tmp_path / "new"},
         target=case.target,
     )
-    if change in {"identity", "type", "symlink"}:
+    if change in {"identity", "type"}:
         saved = case.lock.with_name("saved")
         case.lock.rename(saved)
         if change == "identity":
             case.lock.write_bytes(saved.read_bytes())
-        elif change == "type":
-            case.lock.mkdir()
         else:
-            case.lock.symlink_to(saved)
+            case.lock.mkdir()
+    elif change == "directory_alias":
+        alias_target = case.lock.with_name("alias-target")
+        alias_target.mkdir()
+        saved = alias_target / "saved"
+        case.lock.rename(saved)
+        original = saved.read_bytes()
+        create_directory_alias(case.lock, alias_target)
     elif change == "hardlink":
         os.link(case.lock, case.lock.with_name("alias"))
     elif change == "mode":
@@ -298,8 +305,13 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
         monkeypatch.setattr(case.facade, "stat", changed_ancestor)
     if change == "mode":
         assert _fingerprint(_paths(plan), plan.target) != plan.target_fingerprint
+    elif change == "directory_alias":
+        with pytest.raises(ValueError, match="^destination_alias$"):
+            _fingerprint(_paths(plan), plan.target)
     with pytest.raises(ValueError, match="^target_changed$"):
         recheck_targets(plan)
+    if change == "directory_alias":
+        assert saved.read_bytes() == original
 
 
 @pytest.mark.parametrize("change", ("named-identity", "after-metadata"))
@@ -389,24 +401,28 @@ def test_isolated_maps_explicit_new_root_without_loading_current_config(
     assert broken.read_text() == "not = [valid"
 
 
-@pytest.mark.parametrize("kind", ["relative", "existing", "symlink", "archive"])
+@pytest.mark.parametrize("kind", ["relative", "existing", "directory_alias", "archive"])
 def test_isolated_rejects_unsafe_destinations(tmp_path, kind):
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 
     archive = sealed(tmp_path)
+    original = archive.path.read_bytes()
     destination = tmp_path / "new"
     if kind == "relative":
         destination = Path("relative")
     elif kind == "existing":
         destination.mkdir()
-    elif kind == "symlink":
-        destination.symlink_to(archive.path.parent, target_is_directory=True)
+    elif kind == "directory_alias":
+        create_directory_alias(destination, archive.path.parent)
     else:
         destination = archive.path.parent
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match="^destination_alias$" if kind == "directory_alias" else None
+    ):
         plan_restore(
             archive, mode="isolated", destinations={"root": destination}, target=None
         )
+    assert archive.path.read_bytes() == original
 
 
 def test_rejects_unknown_installed_owner(tmp_path):
@@ -772,15 +788,17 @@ def test_real_older_sqlite_migrates_only_private_candidate(tmp_path):
 
 
 @pytest.mark.parametrize("dictionary", [False, True])
-def test_shipped76_archive_stages_v77_without_changing_source(tmp_path, dictionary):
+def test_shipped76_archive_stages_installed_schema_without_changing_source(
+    tmp_path, dictionary
+):
     import sqlite3
     from contextlib import closing
 
     from Tests.Backup_Recovery.test_chachanotes_native76_compatibility import (
+        _assert_legacy_queue_quarantine,
         _checkpoint_state,
         _owner,
         _shipped76,
-        _assert_legacy_queue_quarantine,
     )
     from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
@@ -816,7 +834,9 @@ def test_shipped76_archive_stages_v77_without_changing_source(tmp_path, dictiona
     candidate = stage_restore(archive, plan, tmp_path / "work", Event())
     rows = json.loads((candidate / "candidate.json").read_bytes())["artifacts"]
     path = Path(next(row for row in rows if row["kind"] == "file")["candidate"])
-    assert validation.validated_schema_version(owner, path, Event()) == 77
+    assert validation.validated_schema_version(owner, path, Event()) == max(
+        owner.schema_policy().versions
+    )
     after, restored_messages, restored_indexes = _checkpoint_state(path)
     for row in after:
         assert row.pop("agent_chat_start_attempt_id") is None
@@ -1575,7 +1595,9 @@ def test_work_directory_cannot_be_a_preserved_live_target(tmp_path):
 def test_real_persona_core_bundle_never_discovers_unpublished_target(
     tmp_path, mode, monkeypatch, forged_synthetic
 ):
-    from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
+    from Tests.Backup_Recovery.test_created_persona_subtree_rollback import (
+        _seed_persona,
+    )
     from tldw_chatbook.Backup_Recovery.models import (
         DISCOVERY_CONTEXT_KEY,
         DiscoveryContext,
@@ -1583,9 +1605,7 @@ def test_real_persona_core_bundle_never_discovers_unpublished_target(
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
     from tldw_chatbook.Backup_Recovery.staging import stage_restore
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
     from tldw_chatbook.Persona_Visual.recovery import _Assets, recovery_adapters
-    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
     data = tmp_path / "data" / "Ada"
     data.mkdir(parents=True)
@@ -1594,13 +1614,7 @@ def test_real_persona_core_bundle_never_discovers_unpublished_target(
     database = tmp_path / "core.db"
     db = CharactersRAGDB(database, "recovery")
     try:
-        publish_persona_visual(
-            PersonaVisualRepository(db),
-            _snapshot(source),
-            source_root=source,
-            profile_root=data,
-            authority_guard=lambda: True,
-        )
+        _seed_persona(db, source, data)
         asset_path = (
             data
             / db.get_connection()

@@ -90,12 +90,13 @@ def test_sealed_copy_survives_original_replacement_and_rejects_staged_mutation(
     tmp_path,
 ):
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
+    from tldw_chatbook.Utils.platform_files import os as native_os
 
     source = archive(tmp_path)
     sealed = acquire(source, tmp_path / "work", ArchiveLimits(), None, Event())
     source.write_bytes(b"replaced")
     assert verify_sealed(sealed).format_version == 1
-    assert sealed.path.stat().st_mode & 0o077 == 0
+    assert native_os.stat(sealed.path, follow_symlinks=False).st_mode & 0o077 == 0
     sealed.path.write_bytes(b"changed")
     with pytest.raises(ValueError, match="sealed_changed"):
         verify_sealed(sealed)
