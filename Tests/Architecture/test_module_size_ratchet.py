@@ -578,9 +578,17 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
+    #: Raised 7024 -> 7039 on 2026-10-27 by TASK-33620.2, owner rule (a fix
+    #: over a size ratchet raises the row with a dated comment; never move or
+    #: reflow code to make it fit): the vision block gets its own typed
+    #: `attachment_block` slot in `sync_action_state` (signature, docstring,
+    #: replay, Send tooltip, disabled reason) instead of riding the setup slot
+    #: into "choose a model" and the first-run wizard link. The row and its
+    #: actions live in Console_Modules/composer_run_controls.py. Dev
+    #: f9baac8706 measures 7024; with the fix, 7039, the exact measurement.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
