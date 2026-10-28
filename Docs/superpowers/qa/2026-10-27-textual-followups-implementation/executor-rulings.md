@@ -158,3 +158,8 @@ Ruling: Keep a new paused CPU/readiness upper budget outside TASK-37144; require
 Ruling: Use the controlled native clock to establish phase attribution, not natural pause frequency or scheduler accuracy — cost if wrong: real-time scheduling behavior outside this regression may differ. Native Timer ownership and callbacks are retained and ordinary hosted guards still run.
 
 Ruling: Leave the five inherited formatter regions unchanged, with exact baseline comparison and focused style checks — cost if wrong: existing format debt persists. No whole-file formatting pass is claimed; unrelated churn is avoided.
+
+
+Ruling: Integrate devd89 (TASK-37000) after860 passed every PR workflow and became conflicting during the run. Preserve its three Console production files and all three new UI gates; retain every owned code/test/Perf workflow blob and only rebalance the existing113-entry tail around dev970 — cost if wrong: deferred Inspector publication can interact with native phase accounting, or an incoming gate can be lost. Exact incoming/owned blob checks, checker AST preservation, fresh real400-message control,175 CI contracts and successor-head hosted CI qualify the integration. No allowance increase or merge is authorized.
+
+860completedall25Derivedjobs+Perf, all17UI/all95selectors97cases/all24newUI/all19Settings/threeEvalscontrols; maximum1139s. Newdevd89integration native actualchild1PASS91.164s with25typing/3pausebuilds and zerohistory/snapshots;175contractsPASS32.09s; freshinventory699owners/16sinksGREEN; baseline14lint/3formatfiles retained. NewheadCIpending.

@@ -35,7 +35,7 @@
     },
     {
       "file": "executor-rulings.md",
-      "sha256": "d482d02c216a727bad62816b9554d7bb3a6cbce4b3d2a69983749a1d845af7a6"
+      "sha256": "d557ff0ccffead4d4342511d9899ffa5f53e7fd210c839cc10e87f0ab1fe5912"
     },
     {
       "file": "final-census-capacity-proof.json",
@@ -82,6 +82,10 @@
       "sha256": "964d9aeace64cb44e634491af5b2a0b7443ac8b6c4ff5d0ce44fb44db0663a10"
     },
     {
+      "file": "hosted-860-ci-proof.json",
+      "sha256": "df2fb731a0b141f953b960127a514800f2fe05ab046ea3d21dd54a6e6e9fc71a"
+    },
+    {
       "file": "hosted-functional-ci-proof.json",
       "sha256": "8b0a153fea3dd1e507c4ff6be7d4df9ec16ede89daa7582a7aad14b028b95cb2"
     },
@@ -92,6 +96,34 @@
     {
       "file": "readiness-callers-observation.json",
       "sha256": "9328e4b51e88e69a91f7d80d687c22c4ab65b52427ac295989337f2118be4be8"
+    },
+    {
+      "file": "rebase-dev-d89-census-capacity-proof.json",
+      "sha256": "07fe5ba1c1fe35665381338de95e6ec7607485b813f500ff435f53e6a2b869d7"
+    },
+    {
+      "file": "rebase-dev-d89-ci-contract-proof.json",
+      "sha256": "c4b767858d2b4dababec05cb386f1621023e68aa41cce2e40d6f686db6502d6a"
+    },
+    {
+      "file": "rebase-dev-d89-incoming-ui-cost-proof.json",
+      "sha256": "3cbcda5193db7ae4ba02a13fc9660780be68b27a96af38bdbe554b7ccb9152b9"
+    },
+    {
+      "file": "rebase-dev-d89-native-proof.json",
+      "sha256": "cc505b59a9954580d6820033ed0826309396aeb82b0b540d1c53d6f2efabd122"
+    },
+    {
+      "file": "rebase-dev-d89-proof.json",
+      "sha256": "54b1bee3b65d271d4175f0eca586bd426132078c0d5308c1177a4c04705e6db6"
+    },
+    {
+      "file": "rebase-dev-d89-static-baseline-proof.json",
+      "sha256": "964d9aeace64cb44e634491af5b2a0b7443ac8b6c4ff5d0ce44fb44db0663a10"
+    },
+    {
+      "file": "rebase-dev-d89-static-summary.json",
+      "sha256": "085c2f2c4ea9286b2008a7a2421dacfd07b913e536bc3ad3f656732066b31aa6"
     },
     {
       "file": "rebase-dev-f9-census-capacity-proof.json",
