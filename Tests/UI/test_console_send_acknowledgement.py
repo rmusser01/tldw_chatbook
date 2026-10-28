@@ -11,7 +11,7 @@ sync tick.
 
 These tests drive the real ChatScreen send path (driver-delivered Enter, the
 app's eager task factory, a real in-memory ChaChaNotes store and runtime) and
-read what the compositor actually wrote to the terminal. The ordering test
+record active-screen compositor commits (headless, without terminal writes). The ordering test
 holds nothing before admission: the send runs its real awaited steps, and the
 frame on screen is read at the instant the synchronous admission starts --
 the frame the user looks at for the whole block. Provider validation, which
@@ -72,7 +72,7 @@ def _painted_lines(host) -> list[str]:
 
 
 def paint_state(host) -> Paint:
-    """Classify the frame the compositor would put on the terminal now."""
+    """Classify the current compositor state."""
     lines = _painted_lines(host)
     composer = [line for line in lines if "Composer" in line and "Menu" in line]
     others = [line for line in lines if line not in composer]
@@ -97,6 +97,7 @@ class Timeline:
     def __init__(self, host) -> None:
         self.host = host
         self.entries: list[tuple[str, object]] = []
+        self.gap_context: dict[int, dict] = {}
         self._display = None
 
     def install(self) -> None:
@@ -104,8 +105,28 @@ class Timeline:
 
         def display(screen, renderable) -> None:
             original(screen, renderable)
-            if renderable is not None:
-                self.entries.append(("paint", paint_state(self.host)))
+            if screen is self.host.screen and renderable is not None:
+                paint = paint_state(self.host)
+                self.entries.append(("paint", paint))
+                if not paint.user_row:
+                    transcript = screen.query_one("#console-native-transcript")
+                    ack = getattr(screen, "_console_send_ack", None)
+                    self.gap_context[len(self.entries) - 1] = {
+                        "time": asyncio.get_running_loop().time(),
+                        "screen": type(screen).__name__,
+                        "update": type(renderable).__name__,
+                        "ack_active": bool(
+                            ack and ack.active_for(transcript._session_identity)
+                        ),
+                        "supplied_ids": [
+                            message.id for message in transcript._messages
+                        ],
+                        "refresh_locked": transcript._refresh_lock.locked(),
+                        "rows": [
+                            (row.id, row.is_attached, tuple(row.region))
+                            for row in transcript.query(".console-transcript-message")
+                        ],
+                    }
 
         self._display = original
         self.host._display = display
@@ -196,8 +217,8 @@ class HeldAdmission:
 def mark_admission(console, timeline: Timeline) -> list[Paint | None]:
     """Record when the synchronous admission starts, and what is on screen.
 
-    Returns a list that receives, at that instant, the last frame written to
-    the terminal (``None`` when nothing was written since ``install``).
+    Returns a list that receives the last compositor commit at that instant
+    (``None`` when nothing was committed since ``install``).
     """
     shown: list[Paint | None] = []
     real = console._session._build_console_turn_execution_context
@@ -213,7 +234,7 @@ def mark_admission(console, timeline: Timeline) -> list[Paint | None]:
 
 
 def mark_send_start(console, timeline: Timeline) -> list[Paint | None]:
-    """Record the last frame written to the terminal when the send starts.
+    """Record the last compositor commit when the send starts.
 
     The send's own steps before admission are not a promise to yield: live,
     with the hand-off right after the paint, the frame on screen through the
@@ -365,14 +386,14 @@ async def check_sending_row_before_admission(size: tuple[int, int]) -> None:
     ]
     assert not [i for i, paint in pending if paint.empty_draft_reason]
     assert not [i for i, paint in pending if i > acknowledged and paint.empty_state]
-    # Once acknowledged, the message stays in the transcript until the
-    # store's echo takes its place. The swap itself is a remove-then-mount in
-    # the transcript's row reconcile, which can show one frame with neither
-    # row (2 of 26 harness runs); anything longer is the row released early
-    # (red with admission not marked on the acknowledgement).
+    # Once acknowledged, the message stays until the store echo replaces it.
+    # TASK-37145 batches the native remove/mount repaint; the old observation
+    # of at most one missing commit was never a native teardown guarantee.
+    # Keep the original allowance as an end-to-end gate, independent of the
+    # controlled held-Unmount regression's stricter continuity assertion.
     after = [paint for i, paint in pending if i > acknowledged]
     gaps = [i for i, paint in enumerate(after) if not paint.user_row]
-    assert len(gaps) <= 1, gaps
+    assert len(gaps) <= 1, {"gaps": gaps, "context": timeline.gap_context}
 
 
 # -- the acknowledgement's own rules (no app) ---------------------------------

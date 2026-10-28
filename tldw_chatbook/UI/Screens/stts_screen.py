@@ -165,7 +165,27 @@ class STTSScreen(LabScreen):
         double-mounting the rail rows and crashing the app with
         ``DuplicateIds`` on every visit to Lab > Speech (TASK-2610).
         """
-        return ("stts", self.STTS_SHORTCUTS + self.LAB_FOOTER_SHORTCUTS)
+        shortcuts = self.STTS_SHORTCUTS if self._playground() is not None else ()
+        return ("stts", shortcuts + self.LAB_FOOTER_SHORTCUTS)
+
+    async def recompose(self) -> None:
+        """Retire cached target hints before the frame rebuilds its deferred body."""
+        previous_window = self.stts_window
+        self.stts_window = None
+        source, shortcuts = self._lab_footer_registration()
+        self.register_footer_shortcuts(source=source, shortcuts=shortcuts)
+        self.refresh_bindings()
+        try:
+            await super().recompose()
+        finally:
+            # A refused native swap leaves the previous owner live.
+            if (
+                self.stts_window is None
+                and previous_window is not None
+                and previous_window.is_attached
+            ):
+                self.stts_window = previous_window
+                self._sync_rail_active(previous_window.current_view)
 
     def _playground(self):
         """Return the mounted playground pane, if any.
@@ -177,10 +197,29 @@ class STTSScreen(LabScreen):
         """
         from ..Speech.speech_playground_pane import SpeechPlaygroundPane
 
+        if (
+            self.stts_window is None
+            or not self.stts_window.is_attached
+            or self.stts_window.current_view != "playground"
+        ):
+            return None
         try:
-            return self.query_one(SpeechPlaygroundPane)
+            return self.stts_window.query_one(SpeechPlaygroundPane)
         except Exception:  # noqa: BLE001 - playground not mounted
             return None
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Disable Playground mirrors without a current target; never start work."""
+        if any(binding.action == action for binding in self.BINDINGS):
+            return self._playground() is not None
+        return super().check_action(action, parameters)
+
+    @on(STTSWindow.ContentChanged)
+    def _speech_content_changed(self, event: STTSWindow.ContentChanged) -> None:
+        """Recompute availability only for this screen's live window owner."""
+        event.stop()
+        if event.window is self.stts_window and event.window.is_attached:
+            self._sync_rail_active(event.window.current_view)
 
     def action_generate_tts(self) -> None:
         if widget := self._playground():
@@ -390,7 +429,7 @@ class STTSScreen(LabScreen):
         )
 
     def _sync_rail_active(self, current_view: str) -> None:
-        """Move the rail highlight to the row matching the active view.
+        """Sync the active rail and target-backed footer/binding availability.
 
         Args:
             current_view: The window's current view key.
@@ -399,6 +438,10 @@ class STTSScreen(LabScreen):
             row.set_class(
                 getattr(row, "lab_view_key", None) == current_view, "is-active"
             )
+
+        source, shortcuts = self._lab_footer_registration()
+        self.register_footer_shortcuts(source=source, shortcuts=shortcuts)
+        self.refresh_bindings()
 
     def on_key(self, _event: Key) -> None:
         """Do not let deferred profile restoration override keyboard intent."""

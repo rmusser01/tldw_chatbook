@@ -3,6 +3,7 @@ from textual.app import App
 from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Lab_Modules.lab_speech_status import speech_capability_detail
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
@@ -19,6 +20,10 @@ from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 # asserting it here rather than deleting the coverage with the sidebar.
 # Fresh module-presence probes are patched on lab_speech_status, which owns
 # the visible capability snapshot.
+
+
+# Source-bound mounted tests keep their selected profile for this lifetime.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _SpeechHarness(App):
@@ -161,6 +166,11 @@ async def test_speech_surfaces_share_fresh_local_dependency_snapshot(monkeypatch
     app = _SpeechHarness(_build_test_app())
 
     async with app.run_test(size=(120, 40)) as pilot:
+        await _wait_until(pilot, lambda: app.screen.stts_window is not None)
+        await wait_for_signal(
+            app.screen.stts_window._mounted_event, what="Speech window native mount"
+        )
+        await app.workers.wait_for_complete()
         await _wait_until(
             pilot,
             lambda: bool(app.screen.query("#speech-status-stt-dependency")),
@@ -169,7 +179,7 @@ async def test_speech_surfaces_share_fresh_local_dependency_snapshot(monkeypatch
         # Rail, inspector, and deferred Playground must project one coherent
         # fresh snapshot instead of mixing fresh probes with stale globals.
         summary = app.screen.query_one("#speech-capability-summary", Static)
-        assert str(summary.render()) == "Remote TTS | Local 4/4"
+        assert str(summary.render()) == "Remote TTS | Local 4/5"
 
         detail = app.screen.query_one("#speech-capability-status", Static)
         rendered_detail = str(detail.render())
@@ -177,6 +187,7 @@ async def test_speech_surfaces_share_fresh_local_dependency_snapshot(monkeypatch
         assert "Local Kokoro: ready" in rendered_detail
         assert "Local Chatterbox: ready" in rendered_detail
         assert "Local Higgs: ready" in rendered_detail
+        assert "Local OmniVoice: missing" in rendered_detail
 
         for row_id in (
             "stt-dependency",
@@ -228,6 +239,13 @@ async def test_speech_screen_mounts_rail_rows_exactly_once():
             lambda: bool(screen.query("#lab-speech-row-playground")),
         )
 
+        # Hints become truthful only after the deferred target has mounted.
+        await _wait_until(pilot, lambda: screen.stts_window is not None)
+        await wait_for_signal(
+            screen.stts_window._mounted_event, what="Speech window native mount"
+        )
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         assert len(screen.query("#lab-speech-row-playground")) == 1
 
         # The Speech screen's combined footer hints must win over the Lab

@@ -1,0 +1,50 @@
+{
+  "reports": [
+    {
+      "label": "capacity37236-red01",
+      "actual_xml_sha256": "6587b5c85efd0d21846eeb51966b7709b98ed87119d8895e552b3bbedb93b879",
+      "cases": 8,
+      "failures": 8,
+      "errors": 0,
+      "skips": 0,
+      "actual_xml_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\capacity37236-red01\\result.xml"
+    },
+    {
+      "label": "capacity37236-format-red01",
+      "actual_xml_sha256": "0ab74354e4b6bdf69c1d0e682465648199d2ee85df2341e32a61f54c70050188",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "actual_xml_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\capacity37236-format-red01\\result.xml"
+    },
+    {
+      "label": "capacity37236-green01",
+      "actual_xml_sha256": "f8a972689ca86f857ec6c6661a2357ac1b87793ffbffe49fecade1c400826330",
+      "cases": 198,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0,
+      "actual_xml_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\capacity37236-green01\\result.xml"
+    },
+    {
+      "label": "capacity37236-green02",
+      "actual_xml_sha256": "2c9ea075ecb487bbd2322dd14b998f7ed1595131e9b1b4085f108ef91840aff4",
+      "cases": 204,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "actual_xml_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\capacity37236-green02\\result.xml"
+    },
+    {
+      "label": "capacity37236-final-pins01",
+      "actual_xml_sha256": "a4ff0e57e5617d0f5b327c44093b9a5700a550f133a4f315074c85b9b46a449a",
+      "cases": 21,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "actual_xml_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\capacity37236-final-pins01\\result.xml"
+    }
+  ],
+  "qualification": "RED/prototype failures retained, not called passes. Full204GREEN and21finalpins executed; later style is executable-AST equivalent and final reorder changes no selected target."
+}

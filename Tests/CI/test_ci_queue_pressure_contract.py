@@ -685,6 +685,41 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
     )
 
 
+def _assert_ui_capacity(workflow: dict) -> None:
+    strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
+    assert strategy["matrix"] == {"shard": list(range(1, 29))}
+    assert strategy.get("max-parallel") == 17
+
+
+def test_ui_capacity_preserves_peak_runner_budget() -> None:
+    _assert_ui_capacity(_workflow("derived-artifacts.yml"))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing-parallel",
+        "raised-parallel",
+        "missing-shard",
+        "duplicate-shard",
+    ],
+)
+def test_ui_capacity_rejects_unbounded_or_incomplete_matrix(mutation: str) -> None:
+    workflow = _workflow("derived-artifacts.yml")
+    _assert_ui_capacity(workflow)
+    strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
+    if mutation == "missing-parallel":
+        del strategy["max-parallel"]
+    elif mutation == "raised-parallel":
+        strategy["max-parallel"] += 1
+    elif mutation == "missing-shard":
+        strategy["matrix"]["shard"].pop()
+    else:
+        strategy["matrix"]["shard"].append(28)
+    with pytest.raises(AssertionError):
+        _assert_ui_capacity(workflow)
+
+
 def _assert_required_aggregation(workflow: dict) -> None:
     fast = workflow["jobs"]["pr-fast-lane"]
     required = workflow["jobs"]["derived-artifacts"]
@@ -765,6 +800,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert not p0.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in p0["steps"])
 
+    _assert_ui_capacity(workflow)
     ui = workflow["jobs"]["ui-fast-lane"]
     assert ui["runs-on"] == "ubuntu-latest"
     assert list(ui["strategy"]["matrix"]) == ["shard"]

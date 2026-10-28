@@ -625,8 +625,9 @@ jobs:
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
     # TASK-35834 (2026-10-20) introduced thirteen shards: its measured replay
     # plus 110s setup and 15% variance projected <=1000s below the 1020s target.
-    # Current UI lane: 17 shards (TASK-36454..36458 capacity qualification).
-    # Keep that setup/variance target; preserve all tests and existing caps.
+    # Current UI lane: 28 shards (TASK-37236 all-phase/checkout qualification).
+    # At most 17 UI jobs run at once; smaller serial slices preserve the
+    # setup/variance target without increasing peak runners or any timeout.
     # Complete duration rows let replay charge function selectors by node.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
@@ -635,8 +636,9 @@ jobs:
     strategy:
       # Report every shard, so one red shard does not hide another.
       fail-fast: false
+      max-parallel: 17
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
 
     steps:
       - uses: actions/checkout@v4

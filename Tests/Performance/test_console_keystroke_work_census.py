@@ -491,6 +491,7 @@ async def _census(
     *,
     storage_units: bool = False,
     known_evidence: bool = False,
+    draft_pause: bool = False,
 ) -> dict[str, int]:
     """Boot Console, seed a transcript, type, and return a call census.
 
@@ -501,11 +502,15 @@ async def _census(
         storage_units: Also count the burst in storage units (``IO_UNITS``
             keys) and then census the typing pause, the idle ticks and one
             warm Console visit (``<phase>:<unit>`` keys; see
-            ``_census_idle_and_visit``). Holds the wall-clock loops still for
-            the burst; off, the derivation census runs exactly as before.
+            ``_census_idle_and_visit``). All variants hold credential and
+            draft-pause timers still during typing; storage mode separately
+            bills their real callbacks to the idle and pause phases.
         known_evidence: First settle a test result for the active connection
             into the app's shared evidence owner, so every readiness build
             looks it up and finds it (TASK-33005.2 AC#6).
+        draft_pause: Separately count one real paused draft refresh after the
+            typing burst (``pause:<counter>``), including in-memory history
+            work that the storage-unit ratchet cannot see.
 
     Returns:
         Mapping of counter name to calls observed during the typing burst
@@ -746,12 +751,10 @@ async def _census(
         if storage_units:
             credential_interval = screen._console_credential_poll_timer._interval
         screen._stop_console_credential_poll_timer()
-        if storage_units:
-            # The 0.2 s trailing draft-spend refresh, which a loaded machine
-            # that leaves a >0.2 s gap between two presses fires mid-burst
-            # (measured: 49 config admissions, not 27); the ``pause`` phase
-            # fires it exactly once.
-            screen._console_draft_spend_refresh.delay_seconds = 3600.0
+        # TASK-37144: the 0.2 s trailing refresh also builds readiness three
+        # times. Any elapsed pause between keys belongs to the pause phase,
+        # which restores the cadence and bills the actual callback once.
+        screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
         await _settle_publications(pilot, screen)
         _TYPING_BURST_CALLERS.clear()
@@ -761,6 +764,24 @@ async def _census(
             await pilot.press("a")
         counting["on"] = False
         counting["burst"] = False
+
+        if draft_pause:
+            typing = dict(counts)
+            for key in counts:
+                counts[key] = 0
+            counting["on"] = True
+            try:
+                spend_refresh = screen._console_draft_spend_refresh
+                spend_refresh.delay_seconds = 0.2
+                spend_refresh.stop()
+                spend_refresh.refresh()
+                await _settle_publications(pilot, screen)
+            finally:
+                counting["on"] = False
+            pause = {f"pause:{key}": value for key, value in counts.items()}
+            counts.clear()
+            counts.update(typing)
+            counts.update(pause)
 
         if storage_units:
             await _census_idle_and_visit(
@@ -1227,6 +1248,102 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
 #: stale snapshot is the task-177 regression).
 MAX_SETTINGS_READINESS_BUILDS_PER_KEY = 3
 MAX_TEMPLATE_DEFAULT_BUILDS_PER_KEY = 0
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+@private_profile_test
+async def test_typing_census_excludes_elapsed_draft_pause_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Elapsed pauses between real keys must not inflate the typing census."""
+    from textual.pilot import Pilot
+    from textual.timer import Timer
+
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleDraftSpendRefresh,
+    )
+
+    elapsed = 0.0
+    presses = 0
+    delivered = 0
+    scheduled: list[tuple[ConsoleDraftSpendRefresh, Timer, float]] = []
+    timer_tasks: list[asyncio.Task[Any]] = []
+    real_schedule = ConsoleDraftSpendRefresh.schedule
+    real_press = Pilot.press
+
+    def schedule(owner: ConsoleDraftSpendRefresh) -> None:
+        # Keep native replacement/coalescing and callbacks; control only when
+        # the real timer's elapsed interval is delivered to its owner.
+        real_schedule(owner)
+        timer = owner.timer
+        assert isinstance(timer, Timer)
+        timer.pause()
+        scheduled.append((owner, timer, elapsed + owner.delay_seconds))
+        if timer._task is not None:
+            timer_tasks.append(timer._task)
+
+    async def press(pilot: Pilot[Any], *keys: str) -> None:
+        nonlocal elapsed, presses, delivered
+        await real_press(pilot, *keys)
+        presses += len(keys)
+        assert pilot.app.focused.draft_text() == "a" * presses
+        elapsed += 0.21
+        for owner, timer, due in tuple(scheduled):
+            if owner.timer is timer and due <= elapsed:
+                timer.stop()
+                owner.refresh()
+                delivered += 1
+        await pilot.pause()
+
+    monkeypatch.setattr(ConsoleDraftSpendRefresh, "schedule", schedule)
+    monkeypatch.setattr(Pilot, "press", press)
+    try:
+        counts = await _census(
+            monkeypatch, tmp_path, seeded_messages=400, draft_pause=True
+        )
+    finally:
+        for owner, timer, _ in scheduled:
+            timer.stop()
+            if owner.timer is timer:
+                owner.stop()
+        await asyncio.gather(*timer_tasks, return_exceptions=True)
+
+    sources = {
+        name: str(Path(sys.modules[name].__file__).resolve())
+        for name in (
+            "tldw_chatbook.app",
+            "tldw_chatbook.UI.Screens.chat_screen",
+            "tldw_chatbook.UI.Console_Modules.console_spend_projection",
+        )
+    }
+    assert all(Path(path).is_relative_to(REPO_ROOT) for path in sources.values())
+    request.node.user_properties.extend(
+        [
+            ("controlled_pause_census", json.dumps(counts, sort_keys=True)),
+            ("native_timer_count", str(len(scheduled))),
+            ("delivered_pause_count", str(delivered)),
+            ("runtime_sources", json.dumps(sources, sort_keys=True)),
+        ]
+    )
+    assert presses == KEYSTROKES
+    assert len(scheduled) >= KEYSTROKES, "native draft timers were never armed"
+    builds = counts["settings_readiness_builds"] / KEYSTROKES
+    assert 0 < builds <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY, counts
+    assert counts["pause:settings_readiness_builds"] > 0, counts
+    for phase in ("", "pause:"):
+        for key in (
+            "messages_for_session",
+            "snapshots",
+            "snapshot_rows",
+            "spend_history_rows",
+            "cost_rows",
+            "cost_snapshot_rows",
+            "cost_projection_estimate_rows",
+            "context_rows",
+        ):
+            assert counts[f"{phase}{key}"] == 0, (phase, key, counts)
+        assert counts[f"{phase}context_estimate_max_rows"] <= 1, counts
 
 
 @pytest.mark.ui

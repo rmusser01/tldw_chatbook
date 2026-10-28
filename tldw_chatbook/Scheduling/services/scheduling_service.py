@@ -730,7 +730,14 @@ class SchedulingService:
                 task_id,
                 _REMINDER_PRIMITIVE,
                 owner_id,
-                {"action": "update", "fields": dict(payload)},
+                {
+                    "action": "update",
+                    "fields": {
+                        key: value.isoformat() if isinstance(value, datetime) else value
+                        for key, value in payload.items()
+                        if key in _REMINDER_SERVER_CREATE_FIELDS
+                    },
+                },
             )
         self._notify_queue_changed()
 

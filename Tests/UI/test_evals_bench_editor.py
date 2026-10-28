@@ -56,6 +56,11 @@ from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook.UI.Evals.inspector import EvalsInspector
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen, EvalsSelection
 
+# TASK-37031: mounted Lab rails read the collection-bound config source.
+# Per-test profile redirects refused startup with raw_source_selection_changed.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
 )
@@ -953,9 +958,9 @@ async def test_preflight_is_resolved_once_per_bench_selection_not_twice(
         evals_app.screen.select(kind="bench", id=task_id)
         await pilot.pause()
 
-    assert call_count == 1, (
-        f"expected exactly one preflight resolution, got {call_count}"
-    )
+    assert (
+        call_count == 1
+    ), f"expected exactly one preflight resolution, got {call_count}"
 
 
 @pytest.mark.asyncio
@@ -1424,9 +1429,9 @@ async def test_bench_with_duplicate_target_id_composes_without_raising(
 
         inspector_pane = screen.query_one("#evals-inspector-pane")
         readiness_rows = inspector_pane.query(".evals-status-unchecked")
-        assert len(readiness_rows) == 2, (
-            "both duplicate-id readiness rows should compose"
-        )
+        assert (
+            len(readiness_rows) == 2
+        ), "both duplicate-id readiness rows should compose"
         for row in readiness_rows:
             assert row.region.width > 0
             assert row.region.height > 0
@@ -2065,9 +2070,9 @@ async def test_create_target_with_no_llama_cpp_server_configured_notifies_and_cr
             "No llama.cpp server is configured; set one in Settings first."
         )
 
-        assert evals_db.list_models(provider="llama_cpp") == [], (
-            "the zero-config click must not create an eval_models row"
-        )
+        assert (
+            evals_db.list_models(provider="llama_cpp") == []
+        ), "the zero-config click must not create an eval_models row"
         assert not screen.query("#evals-bench-target-0"), "nothing was staged"
 
 
@@ -2464,9 +2469,9 @@ async def test_create_target_duplicate_name_notifies_and_stages_nothing(
         await pilot.click("#evals-bench-create-target")
         await pilot.pause()
 
-        assert len(evals_db.list_models(provider="llama_cpp")) == 1, (
-            "the conflicting create must not have minted a second row"
-        )
+        assert (
+            len(evals_db.list_models(provider="llama_cpp")) == 1
+        ), "the conflicting create must not have minted a second row"
         assert not screen.query("#evals-bench-target-0"), "nothing was staged"
         assert evals_app_configured.app_instance.notifications
         message, severity = evals_app_configured.app_instance.notifications[-1]

@@ -8,6 +8,10 @@ from textual.widgets import Button, TextArea
 from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.background_signals import wait_for_signal
+
+# These tests retain the same source-bound config for their whole lifetime.
+pytestmark = pytest.mark.bootstrap_profile
 
 #: Pane-local chords that do not conflict with ADR-031's global/terminal keys.
 SUPPORTED_PANE_SHORTCUTS = {
@@ -39,9 +43,9 @@ def test_each_supported_pane_shortcut_is_bound(key, action):
 @pytest.mark.parametrize("action", sorted(set(SUPPORTED_PANE_SHORTCUTS.values())))
 def test_every_bound_action_exists(action):
     """A binding naming a missing method fails only when the key is pressed."""
-    assert callable(getattr(SpeechPlaygroundPane, f"action_{action}", None)), (
-        f"action_{action} does not exist, so its binding is dead"
-    )
+    assert callable(
+        getattr(SpeechPlaygroundPane, f"action_{action}", None)
+    ), f"action_{action} does not exist, so its binding is dead"
 
 
 def test_pane_does_not_shadow_reserved_or_terminal_shortcuts() -> None:
@@ -95,8 +99,11 @@ async def test_screen_level_random_text_mirror_reaches_the_mounted_pane():
     async with app.run_test(size=(120, 40)) as pilot:
         screen = app.screen
         assert isinstance(screen, STTSScreen)
-        await _wait_until(pilot, lambda: bool(screen.query(SpeechPlaygroundPane)))
-        # Let the pane's own post-mount catalog-loading workers (and any
+        await _wait_until(pilot, lambda: screen.stts_window is not None)
+        await wait_for_signal(
+            screen.stts_window._mounted_event, what="Speech window native mount"
+        )
+        # Settle the Studio load and the pane's post-mount workers (and any
         # recomposes they trigger) settle before touching focus -- racing
         # them made this flaky: a mid-flight recompose could still be
         # rebuilding the tree when the key was pressed.
@@ -135,7 +142,10 @@ async def test_screen_level_clear_text_mirror_reaches_the_mounted_pane():
     async with app.run_test(size=(120, 40)) as pilot:
         screen = app.screen
         assert isinstance(screen, STTSScreen)
-        await _wait_until(pilot, lambda: bool(screen.query(SpeechPlaygroundPane)))
+        await _wait_until(pilot, lambda: screen.stts_window is not None)
+        await wait_for_signal(
+            screen.stts_window._mounted_event, what="Speech window native mount"
+        )
         await app.workers.wait_for_complete()
         await pilot.pause()
 

@@ -1,0 +1,12 @@
+{
+  "label": "e3d-integration01",
+  "cases": 12,
+  "passed": 11,
+  "failures": 0,
+  "errors": 0,
+  "skips": 1,
+  "skip_reason": "Default Unix driver on native Windows host",
+  "actual_xml_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\e3d-integration01\\result.xml",
+  "actual_xml_sha256": "ff4289c4369c4f479faaf5c9d3db24e746f8750f34ff4d2d7cab004c1580a37e",
+  "source_code_qualification": "Incoming guard/tests exactdeve3d; reviewed35code blobs/census/workflow exact across rebase. No broad/localfullsuite."
+}

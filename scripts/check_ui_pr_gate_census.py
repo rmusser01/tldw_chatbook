@@ -508,7 +508,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36512 lists four heavy whole-file entries by function (the MCP
 # permissions handoff by parametrize case), so no shard takes one whole:
 # every test still runs once, and the floor follows the entry count.
-# Current UI lane: 17 shards.
+# Current UI lane: 28 shards.
 # TASK-36454..36458 append all 58 exact mounted regressions after dev's
 # measured split-file tail (TASK-36512), preserving its slots and coverage.
 # 2026-10-24, TASK-36479 appends two static node ids at the tail -- the
@@ -581,7 +581,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # before the Console composer's first focus land in the draft, in order (one
 # private-profile case), so no existing entry changes shard: dev's 964 + 1
 # = 965.
-MINIMUM_FILES = 973
+# Textual audit controls retain every dev entry plus 167 tail entries.
+MINIMUM_FILES = 1140
 
 
 def read_census(path: Path) -> list[str]:

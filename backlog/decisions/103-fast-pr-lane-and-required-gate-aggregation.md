@@ -1,6 +1,6 @@
 # ADR-103: Fast PR lane and required gate aggregation
 
-Status: Accepted (amended 2026-08-30 for admin/current-base enforcement); amended 2026-09-27 (nightly disabled, guards removed, GGUF evidence narrowed)
+Status: Accepted (amended 2026-08-30 for admin/current-base enforcement); amended 2026-09-27 (nightly disabled, guards removed, GGUF evidence narrowed); amended 2026-10-28 for bounded UI capacity
 Date: 2026-08-29
 Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
@@ -108,7 +108,7 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane currently runs 17 shards (TASK-34353 and the
+  grown since: the UI lane currently runs 28 shards, with at most 17 UI jobs running at once (TASK-37236 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
   tracking tests and the Dreams and Guardian boundary contracts are jobs of
@@ -290,7 +290,7 @@ post-change PR attempts, is recorded in the TASK-35834 QA report.
 
 2026-10-23 (TASK-36454..36458 CI qualification): repeated 20-minute UI job
 cancellations require the existing replay/reorder/add-capacity policy. Current
-UI lane: 17 shards. The current total is 23 eligible test jobs per PR;
+UI lane at that checkpoint: 17 shards, with 23 eligible test jobs per PR;
 Perf Guard can add one more. This is a scheduling count, not a concurrency or
 queue-latency guarantee. Every selected test, the serial minimal-dependency
 checker, 20-minute job cap, 180-second test timeout and fail-closed aggregate
@@ -308,3 +308,53 @@ The same follow-up later appends two completion-safety regressions after the
 original 720 positions (722 selectors total). The seventeen-shard matrix,
 existing caps and aggregation policy stay unchanged; the QA report separates
 the earlier passing component timings from final-head qualification.
+
+
+## Amendment (2026-10-28, TASK-37236): smaller slices with bounded concurrency
+
+Current UI lane: 28 shards. The current total is 34 eligible test jobs per PR.
+The UI matrix sets `max-parallel: 17`; the six other required application lanes
+therefore retain the existing peak of 23 test runners, or 24 with Perf Guard.
+Eligible job count and peak concurrency are distinct. The existing required
+aggregate waits for all 28 shards; every shard stays serial with the same
+minimal dependencies, 20-minute job cap and 180-second test timeout. No selected
+target, gate or failure condition is removed. The 1,140 census entries are
+conserved exactly once, including complete parameter selections.
+
+Three observed 17-shard layouts failed through timeouts despite limited-prefix
+reordering; separate assertion failures remain failures to repair, not timing
+passes. The last observed checkout consumed 289 seconds in shard 1 and 131 in
+shard 13 before pytest could use the remaining job budget. Call-only tail models
+also omitted roughly 50–145 seconds of per-case teardown in many jobs. Keeping
+most positions fixed and treating checkout variance as a fixed per-shard cost
+did not provide reliable capacity.
+
+Use the existing `scripts/ui_lane_shard_replay.py` progress and all-phase costs
+at their worst observation across the retained runs, then deterministic
+longest-processing-time placement over the complete census. The measured
+workload is 16,850.38 seconds including a 120-second allowance for TASK-37235's two
+new native controls (116.644 seconds in actual loaded local Windows XML).
+That local measurement is an allowance input, not hosted capacity proof. Comparing
+17, 18, 20, 22, 24, 26, 28 and 30 shards makes 28 the smallest tested layout
+meeting the existing 1,020-second target with a 310-second setup/checkout reserve
+and 15 percent work variance: `602.73 * 1.15 + 310 = 1003.14` seconds. This remains
+a forecast requiring actual final-head hosted CI. Update the projection if the
+new control measurement exceeds its allowance; no hosted pass is inferred.
+
+The additional eligible jobs can run in a later wave. This adds checkout/setup
+work and can lengthen the tail of a workflow, but it preserves instantaneous
+runner demand and avoids repeated whole-matrix retries or timeout increases.
+Keeping 17 shards with the measured LPT ordering forecasts 1,450.75
+seconds under the same reserve/variance basis; increasing the job timeout would
+hide the capacity problem. Raising simultaneous UI runners would increase
+account-wide queue pressure, so the concurrency ceiling stays 17.
+
+GitHub's native [matrix concurrency control](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations#defining-the-maximum-number-of-concurrent-jobs)
+bounds simultaneous matrix jobs independently of the number of variations.
+CI contracts pin the ceiling, matrix membership, eligible-versus-parallel
+counts, unchanged limits and the fail-closed aggregation. Task and QA records
+retain the failed runs, exact selected-target conservation, measured replay
+inputs and scoped Superpowers review. This amendment implements the existing
+replay/reorder/add-capacity policy rather than creating a second required gate.
+
+Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds under the same assumptions, above the target; 28 is therefore the smallest feasible count in this model, not merely the first sampled success.

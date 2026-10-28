@@ -16,10 +16,13 @@ import inspect
 import json
 import os
 import stat
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual.app import App
 
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -50,6 +53,20 @@ class _FakeApp:
 
     def notify(self, message, severity="information", **_kwargs):
         self.notices.append((str(message), severity))
+
+
+@asynccontextmanager
+async def _prompt_worker_screen(app: _FakeApp):
+    """Use Textual's native worker owner with this module's confirmation recorder."""
+    host = App()
+    async with host.run_test():
+        screen = SimpleNamespace(
+            app=app, run_worker=host.run_worker, workers=host.workers
+        )
+        try:
+            yield screen
+        finally:
+            await host.workers.wait_for_complete()
 
 
 async def _answer(app: _FakeApp, answer):
@@ -323,33 +340,35 @@ async def test_prompt_export_wrapper_asks_when_a_file_appears_mid_write(
 
     monkeypatch.setattr(seam, "write_export_text", _racing_write)
     app = _FakeApp()
-    notices: list[tuple[str, str]] = []
-    screen = SimpleNamespace(app=app)
-    detail = {
-        "name": "Late prompt",
-        "author": "",
-        "details": "",
-        "system_prompt": "",
-        "user_prompt": "body",
-        "keywords": [],
-    }
+    async with _prompt_worker_screen(app) as screen:
+        notices: list[tuple[str, str]] = []
+        detail = {
+            "name": "Late prompt",
+            "author": "",
+            "details": "",
+            "system_prompt": "",
+            "user_prompt": "body",
+            "keywords": [],
+        }
 
-    seam.export_library_prompt_file(
-        screen,
-        destination,
-        detail,
-        7,
-        lambda message, severity="information": notices.append((message, severity)),
-    )
+        seam.export_library_prompt_file(
+            screen,
+            destination,
+            detail,
+            7,
+            lambda message, severity="information": notices.append((message, severity)),
+        )
+        await screen.workers.wait_for_complete()
 
-    assert attempts == [False]
-    assert destination.read_bytes() == PRECIOUS
-    assert not [m for m, _ in notices if "Error exporting" in m], notices
-    assert len(app.pushed) == 1, "the race must fall into the replace prompt"
-    await _answer(app, True)
-    assert attempts == [False, True]
-    assert "Late prompt" in destination.read_text(encoding="utf-8")
-    assert any("exported successfully" in m for m, _ in notices), notices
+        assert attempts == [False]
+        assert destination.read_bytes() == PRECIOUS
+        assert not [m for m, _ in notices if "Error exporting" in m], notices
+        assert len(app.pushed) == 1, "the race must fall into the replace prompt"
+        await _answer(app, True)
+        await screen.workers.wait_for_complete()
+        assert attempts == [False, True]
+        assert "Late prompt" in destination.read_text(encoding="utf-8")
+        assert any("exported successfully" in m for m, _ in notices), notices
 
 
 def test_no_clobber_write_refuses_an_existing_file_and_leaves_it(tmp_path):
@@ -417,15 +436,15 @@ def test_the_next_picker_opens_in_the_last_export_folder_and_falls_back(
     assert library_export_picker_location(app) == str(exported.parent)
 
     other = _FakeApp()
-    assert library_export_picker_location(other) == str(tmp_path / "home"), (
-        "the remembered folder is per app session"
-    )
+    assert library_export_picker_location(other) == str(
+        tmp_path / "home"
+    ), "the remembered folder is per app session"
 
     exported.unlink()
     exported.parent.rmdir()
-    assert library_export_picker_location(app) == str(tmp_path / "home"), (
-        "a folder that no longer exists must not be offered"
-    )
+    assert library_export_picker_location(app) == str(
+        tmp_path / "home"
+    ), "a folder that no longer exists must not be offered"
 
 
 # --- PR #3021 review: a destination folder that cannot hard-link -----------
@@ -501,9 +520,9 @@ def test_no_clobber_write_lands_a_new_file_where_hard_links_are_unsupported(
 
     assert attempts == [destination], "the link publish is still tried first"
     assert destination.read_bytes() == b"fresh\n"
-    assert _names(destination.parent) == ["fresh.md"], (
-        "temp file or placeholder left behind"
-    )
+    assert _names(destination.parent) == [
+        "fresh.md"
+    ], "temp file or placeholder left behind"
 
 
 @pytest.mark.parametrize("refusal", LINK_REFUSALS)
@@ -544,8 +563,9 @@ def test_a_failed_no_clobber_write_leaves_no_placeholder_where_hard_links_are_un
     assert _names(destination.parent) == []
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("refusal", LINK_REFUSALS)
-def test_prompt_export_to_a_new_file_succeeds_where_hard_links_are_unsupported(
+async def test_prompt_export_to_a_new_file_succeeds_where_hard_links_are_unsupported(
     tmp_path, monkeypatch, refusal
 ):
     from tldw_chatbook.UI.Library_Modules import library_file_export as seam
@@ -554,25 +574,27 @@ def test_prompt_export_to_a_new_file_succeeds_where_hard_links_are_unsupported(
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     destination = _export_folder(tmp_path) / "Weekly review coach.md"
     app = _FakeApp()
-    notices: list[tuple[str, str]] = []
+    async with _prompt_worker_screen(app) as screen:
+        notices: list[tuple[str, str]] = []
 
-    seam.export_library_prompt_file(
-        SimpleNamespace(app=app),
-        destination,
-        _PROMPT_DETAIL,
-        7,
-        lambda message, severity="information": notices.append((message, severity)),
-    )
-
-    assert notices == [
-        (
-            "Prompt exported successfully to ~/exp/Weekly review coach.md",
-            "information",
+        seam.export_library_prompt_file(
+            screen,
+            destination,
+            _PROMPT_DETAIL,
+            7,
+            lambda message, severity="information": notices.append((message, severity)),
         )
-    ], notices
-    assert "Review my week." in destination.read_text(encoding="utf-8")
-    assert app.pushed == [], "nothing was there: no replace prompt"
-    assert _names(destination.parent) == ["Weekly review coach.md"]
+        await screen.workers.wait_for_complete()
+
+        assert notices == [
+            (
+                "Prompt exported successfully to ~/exp/Weekly review coach.md",
+                "information",
+            )
+        ], notices
+        assert "Review my week." in destination.read_text(encoding="utf-8")
+        assert app.pushed == [], "nothing was there: no replace prompt"
+        assert _names(destination.parent) == ["Weekly review coach.md"]
 
 
 @pytest.mark.parametrize("refusal", LINK_REFUSALS)
@@ -648,26 +670,29 @@ async def test_a_file_appearing_mid_export_still_asks_where_hard_links_are_unsup
     )
     destination = _export_folder(tmp_path) / "late.md"
     app = _FakeApp()
-    notices: list[tuple[str, str]] = []
+    async with _prompt_worker_screen(app) as screen:
+        notices: list[tuple[str, str]] = []
 
-    seam.export_library_prompt_file(
-        SimpleNamespace(app=app),
-        destination,
-        _PROMPT_DETAIL,
-        7,
-        lambda message, severity="information": notices.append((message, severity)),
-    )
+        seam.export_library_prompt_file(
+            screen,
+            destination,
+            _PROMPT_DETAIL,
+            7,
+            lambda message, severity="information": notices.append((message, severity)),
+        )
+        await screen.workers.wait_for_complete()
 
-    assert attempts == [destination]
-    assert destination.read_bytes() == PRECIOUS, "replaced a file without asking"
-    assert notices == [], notices
-    assert len(app.pushed) == 1, "the collision must fall into the replace prompt"
-    assert _names(destination.parent) == ["late.md"], "temp file left behind"
+        assert attempts == [destination]
+        assert destination.read_bytes() == PRECIOUS, "replaced a file without asking"
+        assert notices == [], notices
+        assert len(app.pushed) == 1, "the collision must fall into the replace prompt"
+        assert _names(destination.parent) == ["late.md"], "temp file left behind"
 
-    await _answer(app, True)
-    assert "Review my week." in destination.read_text(encoding="utf-8")
-    assert any("exported successfully" in m for m, _ in notices), notices
-    assert _names(destination.parent) == ["late.md"]
+        await _answer(app, True)
+        await screen.workers.wait_for_complete()
+        assert "Review my week." in destination.read_text(encoding="utf-8")
+        assert any("exported successfully" in m for m, _ in notices), notices
+        assert _names(destination.parent) == ["late.md"]
 
 
 # --- AC#3: the Report artifact export --------------------------------------
@@ -710,9 +735,9 @@ async def test_report_export_asks_before_replacing_and_cancel_keeps_the_file(
 
     await controller._write_export(destination, _REPORT, controller.profile())
 
-    assert _md5(destination) == before, (
-        f"the report export replaced {destination} before asking"
-    )
+    assert (
+        _md5(destination) == before
+    ), f"the report export replaced {destination} before asking"
     assert len(app.pushed) == 1
     dialog, _ = app.pushed[0]
     assert isinstance(dialog, ConfirmationDialog)
@@ -792,9 +817,9 @@ async def test_legacy_recovery_export_asks_before_replacing_and_cancel_keeps_the
 
     await controller._export_library_collection_legacy_recovery(destination)
 
-    assert _md5(destination) == before, (
-        f"the legacy export replaced {destination} before asking"
-    )
+    assert (
+        _md5(destination) == before
+    ), f"the legacy export replaced {destination} before asking"
     assert recovery.calls == []
     assert len(app.pushed) == 1
     dialog, _ = app.pushed[0]
@@ -822,9 +847,9 @@ async def test_legacy_recovery_export_replace_writes_through_the_service(tmp_pat
     await controller._export_library_collection_legacy_recovery(destination)
     await _answer(app, True)
 
-    assert recovery.calls == [(destination, (identity.st_dev, identity.st_ino))], (
-        "the service must still receive the pre-confirmation identity race guard"
-    )
+    assert recovery.calls == [
+        (destination, (identity.st_dev, identity.st_ino))
+    ], "the service must still receive the pre-confirmation identity race guard"
     assert json.loads(destination.read_text(encoding="utf-8")) == {
         "collections": [],
         "memberships": [],
@@ -907,13 +932,13 @@ async def test_legacy_recovery_export_never_replaces_a_file_that_appeared_unaske
     try:
         await controller._export_library_collection_legacy_recovery(destination)
 
-        assert destination.read_bytes() == PRECIOUS, (
-            "the export replaced a file that appeared after the check, without asking"
-        )
+        assert (
+            destination.read_bytes() == PRECIOUS
+        ), "the export replaced a file that appeared after the check, without asking"
         assert "complete" not in state.action_status.lower(), state.action_status
-        assert "failed" not in state.action_status.lower(), (
-            f"a late collision was reported as a failure: {state.action_status!r}"
-        )
+        assert (
+            "failed" not in state.action_status.lower()
+        ), f"a late collision was reported as a failure: {state.action_status!r}"
         assert app.notices == [], app.notices
         assert len(app.pushed) == 1, "the late collision must open the Replace prompt"
         dialog, _ = app.pushed[0]
@@ -958,9 +983,9 @@ async def test_legacy_recovery_export_asks_when_a_file_appears_during_the_export
     assert destination.read_bytes() == PRECIOUS
     assert app.notices == [], app.notices
     assert len(app.pushed) == 1, "the late collision must open the Replace prompt"
-    assert _names(destination.parent) == ["legacy-collections-recovery.json"], (
-        "the service's temporary file was left behind"
-    )
+    assert _names(destination.parent) == [
+        "legacy-collections-recovery.json"
+    ], "the service's temporary file was left behind"
 
     await _answer(app, False)
     assert destination.read_bytes() == PRECIOUS
@@ -1090,3 +1115,114 @@ async def test_legacy_recovery_export_refused_after_replace_is_a_failure_not_a_s
     ), state.action_status
     assert app.pushed == [], "no second prompt"
     assert destination.read_bytes() == PRECIOUS
+
+
+@pytest.mark.asyncio
+async def test_prompt_render_failure_reports_error_and_allows_retry(tmp_path):
+    """A failed captured structured payload must not escape the picker callback."""
+    from tldw_chatbook.UI.Library_Modules import library_file_export as seam
+
+    destination = tmp_path / "retry.md"
+    app = _FakeApp()
+    notices = []
+    detail = {
+        **_PROMPT_DETAIL,
+        "prompt_format": "structured",
+        "prompt_definition": {"invalid": object()},
+    }
+    async with _prompt_worker_screen(app) as screen:
+
+        def notify(message, severity="information"):
+            notices.append((message, severity))
+
+        seam.export_library_prompt_file(screen, destination, detail, 7, notify)
+        await screen.workers.wait_for_complete()
+        assert notices == [("Error exporting prompt: TypeError", "error")]
+        assert not destination.exists()
+        assert app.pushed == []
+
+        seam.export_library_prompt_file(screen, destination, _PROMPT_DETAIL, 7, notify)
+        await screen.workers.wait_for_complete()
+        assert "Review my week." in destination.read_text(encoding="utf-8")
+        assert len(notices) == 2
+        assert "exported successfully" in notices[-1][0]
+        assert notices[-1][1] == "information"
+
+
+@pytest.mark.asyncio
+async def test_prompt_collision_recheck_failure_reports_error_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    """A refused late metadata probe must preserve the App, file and retry."""
+    from tldw_chatbook.UI.Library_Modules import library_file_export as seam
+
+    destination = _export_folder(tmp_path) / "recheck.md"
+    metadata_unavailable = threading.Event()
+    real_write = seam.write_export_text
+    real_lstat = Path.lstat
+    attempts = []
+    refused_probes = []
+    notices = []
+
+    def racing_write(path, content, *, overwrite=True):
+        attempts.append(overwrite)
+        if not overwrite:
+            path.write_bytes(PRECIOUS)
+        try:
+            return real_write(path, content, overwrite=overwrite)
+        except FileExistsError:
+            # Only the probe AFTER the real atomic no-clobber refusal fails.
+            metadata_unavailable.set()
+            raise
+
+    def unavailable_lstat(path, *args, **kwargs):
+        if path == destination and metadata_unavailable.is_set():
+            refused_probes.append(path)
+            raise PermissionError(errno.EACCES, "private metadata failure detail")
+        return real_lstat(path, *args, **kwargs)
+
+    def notify(message, severity="information"):
+        notices.append((message, severity))
+
+    monkeypatch.setattr(seam, "write_export_text", racing_write)
+    monkeypatch.setattr(Path, "lstat", unavailable_lstat)
+    app = _FakeApp()
+    host = App()
+    async with host.run_test():
+        screen = SimpleNamespace(app=app, run_worker=host.run_worker)
+        try:
+            seam.export_library_prompt_file(
+                screen, destination, _PROMPT_DETAIL, 7, notify
+            )
+            await host.workers.wait_for_complete()
+        finally:
+            metadata_unavailable.clear()
+        assert host.is_running
+        assert refused_probes == [destination]
+        assert attempts == [False]
+        assert notices == [("Error exporting prompt: PermissionError", "error")]
+        assert app.pushed == []
+        assert destination.read_bytes() == PRECIOUS
+        assert _names(destination.parent) == ["recheck.md"]
+
+        detail = dict(_PROMPT_DETAIL)
+        seam.export_library_prompt_file(screen, destination, detail, 7, notify)
+        # The existing-file answer keeps the payload captured before this edit.
+        detail["user_prompt"] = "Later working copy must not be exported."
+        await _answer(app, True)
+        await host.workers.wait_for_complete()
+        assert host.is_running
+        assert attempts == [False, True]
+        written = destination.read_text(encoding="utf-8")
+        assert "Review my week." in written
+        assert "Later working copy" not in written
+        assert notices == [
+            ("Error exporting prompt: PermissionError", "error"),
+            (
+                "Prompt exported successfully to "
+                + seam.describe_export_destination(destination),
+                "information",
+            ),
+        ]
+        assert app.pushed == []
+        assert _names(destination.parent) == ["recheck.md"]

@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+
 from textual import on
 from textual.widgets import Button, DataTable, Static
 
@@ -52,6 +53,11 @@ from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     _cancel_toast_text,
 )
 from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail
+
+
+# TASK-37032: the UI fixture imports app against collection-bound config.
+# Retain the existing private bootstrap source and its per-test reset.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _reminder(**kwargs) -> ReminderTask:
@@ -377,7 +383,7 @@ async def test_transfer_confirm_dialog_renders_brackets_literally():
     pre-render string and would pass either way.
     """
     dialog = SchedulesWorkbench._transfer_confirm_dialog(
-        'Nightly [PR-6] digest',
+        "Nightly [PR-6] digest",
         "to_server",
         ["Field [bold] does not transfer"],
     )
@@ -419,12 +425,8 @@ def test_transfer_pending_toast_is_honest_about_still_running_locally():
     workbench.py::test_runs_on_dropdown_confirm_begins_to_server_
     transfer`) -- a direct call is the cheapest belt for the copy
     itself."""
-    to_server = SchedulesWorkbench._transfer_pending_toast_text(
-        "Standup", "to_server"
-    )
+    to_server = SchedulesWorkbench._transfer_pending_toast_text("Standup", "to_server")
     assert "still runs on this device" in to_server
 
-    to_local = SchedulesWorkbench._transfer_pending_toast_text(
-        "Standup", "to_local"
-    )
+    to_local = SchedulesWorkbench._transfer_pending_toast_text("Standup", "to_local")
     assert "dormant copy" in to_local

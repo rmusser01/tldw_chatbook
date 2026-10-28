@@ -174,7 +174,7 @@ def test_write_reorders_only_the_tail_of_the_census_it_is_given(tmp_path, capsys
 
 
 def test_the_census_tail_block_keeps_the_shape_write_relies_on():
-    """--write keeps the PR block's header in place only because one blank line ends it.
+    """--write keeps the full-census checkpoint header above its ordered entries.
 
     A blank line among the block's own entries would travel with the entry
     after it and drift towards the header over repeated writes, so the block
@@ -188,7 +188,7 @@ def test_the_census_tail_block_keeps_the_shape_write_relies_on():
         (
             i
             for i, line in enumerate(lines)
-            if line.startswith("# TASK-33007 (PR #3057")
+            if line.startswith("# TASK-37236 full-census replay checkpoint: the ")
         ),
         None,
     )

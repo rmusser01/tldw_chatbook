@@ -32,10 +32,9 @@ blank/control-char name; or ``Evals_DB.ConflictError`` from a name
 collision) the error renders in-place in ``#evals-bench-form-error`` and
 NOTHING recomposes -- every other field keeps exactly what the user
 typed. On success this widget posts ``Saved``; ``evals_screen.py`` handles
-that by calling its own ``select(kind="bench", ...)``, which recomposes
-from the freshly persisted row (picking up anything ``save_bench``'s own
-cleaning -- e.g. ``_clean_task_name``'s control-character strip -- changed
-from what was typed).
+that by refreshing Catalog/Inspector and reloading only an unchanged
+originating form from the freshly persisted row (including DB cleaning,
+e.g. ``_clean_task_name``'s control-character strip).
 
 Task 6 (task-1482): targets become editable too, but through a SEPARATE
 mechanism from every field above -- a staged ``self._staged_target_ids``
@@ -66,23 +65,11 @@ bench worker completing while this editor holds unsaved edits degrades to
 a toast instead of calling ``select()``, which would otherwise recompose
 this whole widget and silently discard everything not yet Saved.
 
-Task-1611 whole-branch review fix round (documented, not fixed -- judged
-not to stay cleanly contained): a SUCCESSFUL Save is the one place this
-protection does not reach. ``Saved`` triggers ``evals_screen.py``'s own
-``select()``, which builds a genuinely NEW ``BenchEditor`` instance from
-storage -- the mini-form's own ``self._pending_target_*`` has no path
-from the old instance to the new one, so any typed-but-never-created
-Name/steering text is silently gone the moment Save succeeds, even
-though ``is_dirty()`` itself would have called that exact text worth
-protecting one line earlier. Threading it through ``Saved`` -> the
-screen -> the next ``BenchEditor``'s constructor was considered and
-rejected: ``select()`` is this screen's GENERIC recompose entry point,
-shared by every selection-kind change, not a Save-specific hook, and
-correctly scoping carried state to only the bench just saved (never
-leaking into a later, unrelated selection) is real surface area for a
-strange, hard-to-notice bug in exchange for a minor convenience. This is
-a deliberate boundary: Revert discarding unsaved state IS what "revert"
-means; this is the one place a genuine SUCCESS does the same thing.
+A successful Save still discards uncreated mini-form text already present
+at submission when the form is unchanged. TASK-37031 protects input accepted
+later: Saved carries its originating raw form snapshot, so queued publication
+refreshes persisted metadata without replacing a newer draft or selection.
+Revert remains an explicit discard.
 
 Task-1611 T2: a target's STEERING (``storage.model_steering`` -- a raw-
 mode ``prefix`` or a chat-mode ``system_prompt``, read out of the target's
@@ -342,20 +329,17 @@ class BenchEditor(Vertical):
     stays read-only permanently -- see the module docstring."""
 
     class Saved(Message, namespace="bench_editor"):
-        """Posted after ``save_bench`` succeeds. Carries the bench's own
-        ``eval_tasks`` id (unchanged across a save -- this is always an
-        edit, never a create) so the handler can re-select it without
-        this widget reaching into ``self.screen`` itself; see
-        ``evals_screen.py``'s own handler, which recomposes via its public
-        ``select()`` so the reopened form reads back whatever
-        ``save_bench``'s own write path actually persisted (e.g.
-        ``_clean_task_name``'s control-character strip), not merely what
-        was typed.
+        """Successful write and its originating form, for conditional reload.
+
+        The raw snapshot distinguishes later accepted edits from persisted
+        cleanup. It is ephemeral UI state, never stored or logged.
         """
 
-        def __init__(self, bench_id: str) -> None:
+        def __init__(self, editor: BenchEditor) -> None:
             super().__init__()
-            self.bench_id = bench_id
+            self.bench_id = editor._bench_id
+            self.editor = editor
+            self.form_state = editor.save_publication_state()
 
     class CreateTargetRequested(Message, namespace="bench_editor"):
         """Posted when the "+ New target" ``#evals-bench-create-target``
@@ -490,7 +474,8 @@ class BenchEditor(Vertical):
         Computed on demand by re-reading the same widgets
         ``_on_save_pressed`` reads (task-1710: now six, the five fields
         plus the per-cell continuation checkbox) and comparing each to
-        what ``compose()`` loaded -- no field here posts a live
+        what ``compose()`` loaded or the last successful Save submitted -- no
+        field here posts a live
         ``Changed`` message (see the module docstring's "display-only
         until Save" paragraph), so there is no watcher to drive this
         reactively instead. Probes go through ``_parse_probes_text``, the
@@ -607,6 +592,19 @@ class BenchEditor(Vertical):
             return True
 
         return False
+
+    def save_publication_state(self) -> tuple[Any, ...]:
+        """Capture raw local form values to detect edits after a successful Save."""
+        return (
+            tuple(
+                (field.id, field.text if isinstance(field, TextArea) else field.value)
+                for field in self.query("Input, Select, TextArea, Checkbox")
+            ),
+            tuple(self._staged_target_ids),
+            self._pending_target_name,
+            self._pending_target_prefix,
+            self._pending_target_system_prompt,
+        )
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -1480,34 +1478,10 @@ class BenchEditor(Vertical):
             self._show_form_error(str(exc))
             return
 
-        # Whole-branch review, Minor (judged, documented, not fixed): a
-        # successful Save discards the "+ New target" mini-form's own
-        # typed-but-not-yet-created Name/steering text -- `Saved` triggers
-        # `evals_screen.py`'s `select()`, a full recompose that builds a
-        # BRAND NEW `BenchEditor` (see `Saved`'s own docstring: "always an
-        # edit, never a create" refers to the BENCH, not this widget
-        # instance), and `self._pending_target_*` resets to blank in that
-        # fresh instance's `__init__` -- there is no path from here to it.
-        # This contradicts `is_dirty()`'s own premise one specific way:
-        # that state IS worth protecting from an involuntary recompose
-        # (a completing background worker), yet a VOLUNTARY one the user
-        # just triggered themselves (pressing Save) silently drops it
-        # anyway. Considered threading the mini-form's pending state
-        # through `Saved` -> `evals_screen.py` -> the next `BenchEditor`'s
-        # constructor (mirroring how `save_bench`'s own cleaned name/
-        # description already round-trip through this exact recompose);
-        # rejected as not staying cleanly contained: `select()` is this
-        # screen's GENERIC recompose entry point, shared by every
-        # selection-kind change, not a Save-specific hook -- carrying
-        # state through it correctly requires it be scoped to the EXACT
-        # bench just saved and unconditionally cleared after one use, or
-        # a stray value could leak into an unrelated LATER selection's
-        # freshly-composed editor, a worse and stranger bug than today's
-        # simple, well-understood loss. Documented here, and in the module
-        # docstring's Task-1610 paragraph, as a deliberate boundary:
-        # Revert discarding unsaved state is what "revert" MEANS: this is
-        # the one place Save (a success, not a discard) does too.
-        self.post_message(self.Saved(self._bench_id))
+        # Advance the dirty baseline even if later input prevents a reload.
+        # Reloading an unchanged form still projects the DB's cleaned values.
+        self._loaded_config = config
+        self.post_message(self.Saved(self))
 
     @on(Button.Pressed, "#evals-bench-revert")
     def _on_revert_pressed(self, event: Button.Pressed) -> None:

@@ -550,7 +550,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
     "tldw_chatbook/Agents/local_tool_provider.py": 5749,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
-    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5536,
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5186,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
@@ -564,7 +564,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
     "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
-    "tldw_chatbook/UI/Screens/evals_screen.py": 4236,
+    "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4232,
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
@@ -637,8 +637,7 @@ def test_every_module_of_the_guard_size_has_a_row() -> None:
         rel
         for path in package.rglob("*.py")
         if (rel := path.relative_to(_REPO_ROOT).as_posix()) not in rowed
-        and len(path.read_text(encoding="utf-8").splitlines())
-        >= _ROW_REQUIRED_AT_LINES
+        and len(path.read_text(encoding="utf-8").splitlines()) >= _ROW_REQUIRED_AT_LINES
     )
     assert not unbudgeted, (
         f"Module(s) of {_ROW_REQUIRED_AT_LINES}+ lines with no size ratchet "

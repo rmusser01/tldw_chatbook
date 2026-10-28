@@ -409,6 +409,28 @@ runs that predated TASK-35710's fix, the TASK-35443 trap below.)
 
 **What to do.** When a read changes its config seam, grep every test file that patches the OLD seam for the same call path, not just the files whose tests went red: a stale patch keeps asserting whatever the real config says, which is a pass by coincidence, not evidence. Patch the seam the code reads (`load_cli_config_and_ensure_existence` since .7), so the test is hermetic.
 
+## An observed one-frame teardown gap is not a repaint guarantee (TASK-37145, 2026-10-28)
+
+**Incident.** PR #3283's unchanged acknowledgement gate recorded four missing-USER
+compositor samples on `cc907deb18`. TASK-33620.5 already documented the native
+remove/mount residue, but its observed one-frame maximum was empirical. A real
+Transcript with production CSS, a real acknowledgement and its exact admitted
+store echo reproduced eight missing compositor commits while the old row's real
+Unmount was held. The replacement projection already contained the echo; early
+acknowledgement release was not the cause. Keeping reconciliation inside Textual's
+native repaint batch retained the last committed acknowledgement frame until the
+echo replacement settled. Stopping the interval mid-removal also allowed another
+control to repaint before the held removal was released.
+
+**What to do.** Observe only the last committed frame during a repaint batch;
+calling `render_strips()` against the suspended intermediate DOM invents a frame
+the app has not published. Record strips at active-screen non-None `_display`
+boundaries, and keep phase, update identity, supplied IDs and row attachment/region
+context for failures. Headless compositor commits are not terminal writes, and
+sample indexes do not establish elapsed blank time. Hold native Unmount, use the
+production interval callback, and always release/drain in `finally`; retain the
+original end-to-end allowance and cancellation-safe `finish_removal` contract.
+
 ## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
 
 **Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. Both versions drove the paint with `app.set_timer(...)`, and in Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. In the first, the removal was not even the timer's: `set_messages` had already queued its own refresh on the transcript's pump, which removed the row first. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.
@@ -14583,6 +14605,9 @@ wrong, not evidence the test needs help.
 
 When extracting a screen helper, check whether it belongs on screen preloading or only on the action path, and run the existing preimport guard along with the owner size check. ADR-097 governs this cost even when behavior and total code size barely change.
 
+**Repeat incident, TASK-33910.35 / PR #3251, 2026-10-27.** A cohesive pure window-state extraction and stateless completion helper kept the screen under its size ratchet, but their eager imports took the registry walk to 560/558 modules. The guard was missed before pushing and found the regression in hosted Perf Guard 40535679039. The existing test reproduced the exact RED locally. Ordinary first-use completion imports plus deferring the adjacent style-picker modal restored 558/558 modules and 424,407/425,347 LOC; first-send remained 93/94. The screen stayed 16,859 lines by deleting its genuine single-use forwarding method. Both boot guards and 17 runtime controls/two private children passed, and hosted Perf Guard 40540997830 confirmed the same counts. No threshold, snapshot or guard allowance changed. Check the preimport budget before pushing an extraction even when the code is pure and the total line count does not grow.
+
+
 ## Two ratchets can measure the same cost, so paying one breaches the other
 
 **What happened.** 2026-08-29, task-24458. Deferring modules off the boot import path made
@@ -22124,3 +22149,29 @@ Evidence: [post-merge audit](../../Docs/superpowers/qa/2026-10-25-textual-book-a
 **Incident.** TASK-33620.15.24 moved the scheduler's storage admission (`execution_scope`, a lease that makes another process's native maintenance wait) off the UI loop by entering and releasing it in two separate worker hops around the awaited body. Six new tests pinned that admission resolves off the loop, that nothing dispatches before it resolves, that a refusal refuses, and that every lease is released rather than garbage-collected. The independent review then mutated the seam to enter, release, and only then run the body. All six new tests and all 53 existing loop tests still passed: the job ran with 0 open scopes and 0 live leases. Ordering ("entered before the body") and cleanup ("closed eventually") were both pinned; the contract that matters, "held while the body runs", was not. One assertion recorded from inside the dispatched handler (open scopes and live leases at that instant) went red under the mutation and green on the head.
 
 **What to do.** When a `with` block becomes separate enter/exit steps (offloaded hops, callbacks, `asynccontextmanager` plumbing), add an observation taken *inside* the body that the resource is live at that moment, and run the release-before-body mutation against it. "Resolved before" and "released after" together do not imply "held during".
+
+## Replay the full offline form payload through the real client method (TASK-37032)
+
+**2026-10-27 incident.** Title-only reminder offline controls passed, but a real
+ReminderForm Save updated SQLite and then failed `json.dumps`: schedule recomputation
+had added a `datetime` `next_run_at` to the queued fields. ISO conversion alone
+would still replay that local-only field to `ServerNotificationsService.update_reminder`,
+whose strict signature rejects it. The bounded fix projects the existing server
+write fields and ISO-encodes datetimes while preserving partial updates and nulls.
+Mounted recurring and one-time controls now persist the queue and replay it through
+the real sync/client/API-method chain before asserting queue removal. The one-time
+control also verifies stable stored top-level idempotency metadata and its absence
+from the API request. Test the actual full form and replay seam; JSON encodability
+and a title-only update do not establish a replayable schedule mutation.
+
+
+## A captured render-error boundary also needs the diagnostic inventory refresh (PR #3283, 2026-10-28)
+
+PR #3283 passed all 23 application test jobs, all 17 UI shards and Perf Guard, then its required artifact job failed: moving Prompt rendering before worker admission added a second sanitized failure warning, and the inventory still recorded three calls instead of four in `library_file_export.py`. The missing refresh cost a full hosted CI attempt despite clean behavior tests and code review. `--statements ... --since 773cc9729cfbc9c13c14b56724fcb02efd3a54a3` identified exactly one added warning carrying only Prompt ID and exception category. The repair changes that owner's count/digest; all 698 other owners, 116 privacy candidates and 16 sinks stay identical. Run `scripts/check_persistent_diagnostic_inventory.py` before publication whenever an error boundary adds a logger call, inspect its statement-level delta, and regenerate only the intended snapshot. Passing behavior tests does not establish this artifact is current.
+
+
+## Native batched recomposition can expose an empty DOM before replacement rows publish (TASK-37235, 2026-10-28)
+
+PR3283's Media journey saw no highlighted rows after Edit Save even though the Reader had the edited title. A held native Canvas mount reproduced that exact boundary: loading was false and scopes matched, but DOM rows were empty inside Textual's batch; canonical selection/action identity stayed on item3 and the last render-eligible frame retained its cue. Releasing mount published the edited row and cue. The uninstrumented CI interval is inferred from this matching witness, not directly captured.
+
+Wait for the accepted replacement row objects and edited title before the separate semantic cue assertion. Do not treat settled service/controller flags as a DOM publication receipt, wait on the cue itself, or add an arbitrary pause. A cue-removed negative control must still fail after publication. Actual RED03/GREEN source/XML receipts and native hold evidence are retained in the Textual follow-up QA records.

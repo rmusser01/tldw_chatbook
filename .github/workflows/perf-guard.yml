@@ -135,6 +135,7 @@ jobs:
         run: |
           pytest "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript" \
             "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work" \
             -v --timeout=300
 
       # The Console storage-unit ratchet joined with TASK-33260 after review

@@ -2963,18 +2963,9 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
-        # Routing only (task-5): which owner the reminder is written under,
-        # not a ReminderTask field. Defaults to the service's current owner
-        # so a form built before this selector existed (or a caller that
-        # omits it) behaves exactly as before.
+        # Capture routing and payload before admitting this dismissed form.
+        form_data = dict(form_data)
         target_owner = form_data.pop("owner_id", None) or service.owner_id
-        # Name the owner it was created for (label, not raw id: same
-        # vocabulary as the "Runs on" selector the owner was picked from).
-        # The old copy also told the user to "switch to that owner to see
-        # it" -- true when this list was owner-scoped, wrong since Task 1
-        # made it span owners (final review F7, spec §4: the cross-owner
-        # list "dissolves" that wart). The row appears here immediately
-        # whatever owner it was created under.
         owner_label = {value: label for label, value in self._runs_on_options()[0]}.get(
             target_owner, target_owner
         )
@@ -2984,20 +2975,27 @@ class SchedulesWorkbench(BaseAppScreen):
             else f"Scheduled task created for {owner_label}."
         )
 
+        group = f"schedules-save-reminder:{(target_owner, task_id)!r}"
+        predecessors = tuple(
+            worker
+            for worker in self.workers
+            if task_id is not None and worker.node is self and worker.group == group
+        )
+
         async def _save_and_refresh() -> None:
-            # The owner is threaded through the call rather than flipped onto
-            # the service around it: `service.owner_id` is shared mutable
-            # state that the sync/refresh/run-now workers also read, and a
-            # flip held across an awaited network round-trip is visible to
-            # every one of them.
             try:
+                # Settle earlier same-reminder writes before any later request.
+                for worker in predecessors:
+                    await worker.wait()
                 if task_id is None:
                     await service.create_reminder(form_data, owner_id=target_owner)
                     self.app_instance.notify(created_message, severity="information")
                 else:
-                    await service.update_reminder(
+                    saved = await service.update_reminder(
                         task_id, form_data, owner_id=target_owner
                     )
+                    if saved is None:
+                        raise ValueError("Reminder was deleted or locked by a transfer")
                     self.app_instance.notify(
                         "Scheduled task updated.", severity="information"
                     )
@@ -3011,8 +3009,8 @@ class SchedulesWorkbench(BaseAppScreen):
 
         self.run_worker(
             _save_and_refresh,
-            exclusive=True,
-            group="schedules-save-reminder",
+            exclusive=False,  # Admitted responses must settle, not be cancelled.
+            group=group,
         )  # type: ignore[arg-type]
 
     @on(AcknowledgeIncidentRequested)
@@ -3832,6 +3830,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
+
         async def _mark() -> None:
             # task-34931: the unread read (count + list) runs off the loop.
             unread_ids = await asyncio.to_thread(
@@ -4533,15 +4532,12 @@ class SchedulesWorkbench(BaseAppScreen):
                 "Scheduling service is unavailable.", severity="warning"
             )
             return
+
         async def _mark_all() -> None:
             # task-34931: the unread read (count + list) runs off the loop.
-            unread_ids = await asyncio.to_thread(
-                self._unread_result_ids, service
-            )
+            unread_ids = await asyncio.to_thread(self._unread_result_ids, service)
             if not unread_ids:
-                self.app_instance.notify(
-                    "Nothing unread.", severity="information"
-                )
+                self.app_instance.notify("Nothing unread.", severity="information")
                 return
             await self._dispatch_mark_all_results_read(service, unread_ids)
 
@@ -5152,9 +5148,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     # it, so the toast never claims a delete that the
                     # facade declined. `owner_id` is the ROW's own (final
                     # review F4), same as the single-row delete.
-                    if not await service.delete_reminder(
-                        task_id, owner_id=owner_id
-                    ):
+                    if not await service.delete_reminder(task_id, owner_id=owner_id):
                         errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to delete reminder {}", task_id)

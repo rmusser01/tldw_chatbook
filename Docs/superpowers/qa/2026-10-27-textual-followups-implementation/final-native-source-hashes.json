@@ -1,0 +1,94 @@
+{
+  "Tests/Architecture/test_module_size_ratchet.py": {
+    "native_sha256": "364c3cb3ad4db8e8da0bdd1a0e81ccbb07e60dc820611d07430c3c3c7ce8dfe6",
+    "lines": 647
+  },
+  "Tests/Library/test_library_file_export.py": {
+    "native_sha256": "9edafd42d1f35aac41a3938d2f9fb764449ee079e62c573676ce6803c86df42d",
+    "lines": 1228
+  },
+  "Tests/UI/test_evals_bench_editor.py": {
+    "native_sha256": "066892381d3061fa12b55cdc8310f12b9896be1252cf35d41c387f578fba4ba6",
+    "lines": 3417
+  },
+  "Tests/UI/test_evals_bench_save_publication.py": {
+    "native_sha256": "72255c96078c80ff5cee099ff80f5f31d2ae701e830672774cb1689ef1044bae",
+    "lines": 191
+  },
+  "Tests/UI/test_evals_screen.py": {
+    "native_sha256": "34d690c01476e992ad212d1c1527ae56bc7cb5513b04fc02220ab8e603a46085",
+    "lines": 4030
+  },
+  "Tests/UI/test_library_prompt_export_journeys.py": {
+    "native_sha256": "8ef4dc8879d2bcc9b56cd3804b4ec1709a3744b35ad8d4fa79d2ddf238fd7b96",
+    "lines": 315
+  },
+  "Tests/UI/test_library_prompt_export_responsiveness.py": {
+    "native_sha256": "9b05c25c15bcb8906afee55e27d2ae5927a401d73e3b07e5241cd49781c292ea",
+    "lines": 219
+  },
+  "Tests/UI/test_reminder_form.py": {
+    "native_sha256": "008564286db9791aec641893f543b8a89e2fdfa0bc99d7c59d187546978fea76",
+    "lines": 830
+  },
+  "Tests/UI/test_schedules_reminder_form_saves.py": {
+    "native_sha256": "560d995176516eda4230e461fb9db7f7aaa0538494015f9a9ba4058037b61425",
+    "lines": 428
+  },
+  "Tests/UI/test_schedules_transfer_actions.py": {
+    "native_sha256": "9c560cc6759a605b1e2684795135ce9e5267020d2b3cdef078add986ccc4c3ae",
+    "lines": 432
+  },
+  "Tests/UI/test_speech_effects_placeholder.py": {
+    "native_sha256": "3c7e6bcd493a9e3a6df0d0fc7c33f0f630842aad3c3fbc5ac842ff5b565fdb80",
+    "lines": 78
+  },
+  "Tests/UI/test_speech_footer_scope.py": {
+    "native_sha256": "fabe82be9991b6bf4d420a0d0f3d40f76eb7a961fac018372b9e88f1d054c625",
+    "lines": 277
+  },
+  "Tests/UI/test_speech_rail_navigation.py": {
+    "native_sha256": "deaa332f24e767230cffabe49c2b7e6f940d2e1d950a745212be879e08b5058b",
+    "lines": 184
+  },
+  "Tests/UI/test_speech_shortcuts.py": {
+    "native_sha256": "d0a22f6be9c51e66535bca56e4713f7fb23ea0c1709d5af376495af00ddd1132",
+    "lines": 167
+  },
+  "Tests/UI/test_stts_capability_state.py": {
+    "native_sha256": "0837434a1d1b6df6b3c83040a663bf583b8e73a5b1b74b2ed18d31b4e5bd85d0",
+    "lines": 256
+  },
+  "scripts/check_ui_pr_gate_census.py": {
+    "native_sha256": "adb65d05c5bfd49ae9cba152f9819f731cb268a0dd3d07cad876e78a5faf53be",
+    "lines": 1121
+  },
+  "tldw_chatbook/Scheduling/services/scheduling_service.py": {
+    "native_sha256": "390214ee673d2087f48c5194d697cfcdcc3f68eb6ce3e79ad6bafdd096235ee3",
+    "lines": 3164
+  },
+  "tldw_chatbook/UI/Evals/bench_editor.py": {
+    "native_sha256": "c9241a4972a508d522f4aee7e1438233ffd962b1165bd495ffe4c6550c2364da",
+    "lines": 1557
+  },
+  "tldw_chatbook/UI/Library_Modules/library_file_export.py": {
+    "native_sha256": "dfe6f86946ff717678cd3009c60cd4cb3b8ba1f433e2dbded485295eb65e4608",
+    "lines": 738
+  },
+  "tldw_chatbook/UI/STTS_Window.py": {
+    "native_sha256": "47a5aa9bc4cedf3c17633e386cf1cd309e203bafc4412f2cb85fa358ec571268",
+    "lines": 2581
+  },
+  "tldw_chatbook/UI/Screens/evals_screen.py": {
+    "native_sha256": "71f910ebe96bbbeec8baa0b8ab57661afdde0400188d7f424b05083d168f4cb0",
+    "lines": 4211
+  },
+  "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
+    "native_sha256": "3fde4e3c8b6e6c3ecf04604f039ee41e60955d1cee691cab736aa54c10877caa",
+    "lines": 5530
+  },
+  "tldw_chatbook/UI/Screens/stts_screen.py": {
+    "native_sha256": "37013085399f0e4acb614ddac2476b4b4295585924433f642856af0400b68cb9",
+    "lines": 493
+  }
+}

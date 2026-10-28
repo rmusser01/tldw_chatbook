@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="5.799" timestamp="2026-10-27T10:37:37.325616-07:00" hostname="DESKTOP-BISU2HE"><testcase classname=".test-tmp.textual-after3251.audit-merged.evals-media.test_book3251_evals_media" name="test_speech_footer_tracks_mounted_view" time="5.453"><failure message="AssertionError: Speech still advertises playground actions with no playground mounted&#10;assert not True&#10; +  where True = any(&lt;generator object test_speech_footer_tracks_mounted_view.&lt;locals&gt;.&lt;genexpr&gt; at 0x00000178C09CD080&gt;)">request = &lt;FixtureRequest for &lt;Coroutine test_speech_footer_tracks_mounted_view&gt;&gt;
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_speech_footer_tracks_mounted_view(request):
+        from textual.widgets import Button, TextArea
+        from Tests.UI.test_speech_rail_navigation import _RailHost
+        from tldw_chatbook.UI.Screens.stts_screen import STTSScreen
+        from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+        identity('speech', [STTSScreen, SpeechPlaygroundPane])
+        from Tests.UI.consolidated_css import ConsolidatedCSSApp, APP_STYLESHEETS
+        class SpeechHost(ConsolidatedCSSApp):
+            CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+            async def on_mount(self):
+                self.screen_under_test = STTSScreen(self)
+                await self.push_screen(self.screen_under_test)
+        app = SpeechHost()
+        async with app.run_test(size=(200, 60)) as pilot:
+            screen = app.screen_under_test
+            await until(lambda: bool(screen.query(SpeechPlaygroundPane)))
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            field = screen.query_one('#tts-text-input', TextArea)
+            field.text = 'ordinary control'
+            rail = screen.query_one('#lab-speech-row-playground', Button)
+            rail.focus()
+            await pilot.pause()
+            await pilot.press('x')
+            assert field.text == ''
+            normal = screen._footer_shortcut_registration
+            effects = screen.query_one('#lab-speech-row-effects', Button)
+            effects.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await until(lambda: screen.stts_window.current_view == 'effects' and not screen.query(SpeechPlaygroundPane))
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            effects.focus()
+            await pilot.pause()
+            footer = screen.query_one("#screen-footer-status")
+            before = footer.shortcut_text
+            painted = str(footer.query_one("#footer-key-quit").content)
+            registration = screen._footer_shortcut_registration
+            await pilot.press('r', 'x', 'p', 's', 'g')
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            observation = {'ordinary_registration': normal, 'effects_registration': registration, 'active_view': screen.stts_window.current_view, 'playground_present': bool(screen.query(SpeechPlaygroundPane)), 'footer_render': before, 'painted_footer_child': painted, 'active_bindings': {key: binding.binding.action for key, binding in screen.active_bindings.items() if key in ['g','r','x','p','s']}}
+            (OUT / 'speech-observation.json').write_text(json.dumps(observation, indent=2), encoding='utf8')
+&gt;           assert not any(key in {'g','r','x','p','s'} for key, *_ in registration[1]), 'Speech still advertises playground actions with no playground mounted'
+E           AssertionError: Speech still advertises playground actions with no playground mounted
+E           assert not True
+E            +  where True = any(&lt;generator object test_speech_footer_tracks_mounted_view.&lt;locals&gt;.&lt;genexpr&gt; at 0x00000178C09CD080&gt;)
+
+.test-tmp\textual-after3251\audit-merged\evals-media\test_book3251_evals_media.py:151: AssertionError</failure></testcase></testsuite></testsuites>
