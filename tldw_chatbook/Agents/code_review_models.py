@@ -419,7 +419,16 @@ def validate_record_chunk(kind: str, records: list[dict]) -> tuple[ReviewRecord,
     except (ValidationError, TypeError, ValueError, UnicodeError) as exc:
         if isinstance(exc, ReviewRefused):
             raise
-        raise ReviewRefused("invalid_record") from exc
+        refusal = ReviewRefused("invalid_record")
+        if isinstance(exc, ValidationError):
+            refusal.validation_errors = tuple(
+                {
+                    "field": ("records", len(parsed), *error["loc"]),
+                    "type": error["type"],
+                }
+                for error in exc.errors(include_input=False, include_url=False)
+            )
+        raise refusal from exc
     return tuple(parsed)
 
 

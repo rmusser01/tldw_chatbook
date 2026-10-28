@@ -109,6 +109,12 @@ record list). Replace REF and the example revision with actual captured values:
 ```
 Actual terminal success and valid coverage are still required. Empty findings with complete successful
 coverage are valid; failed/cancelled/malformed/exhausted roles are incomplete.
+Coverage inspected_refs contains source-ref strings, never objects; notes is not
+an allowed field. On invalid_record, use the returned field/type errors and
+correct the rejected submission under the SAME submission_id. A new ID leaves
+the original rejection unresolved. Completion refuses while other rejected IDs
+remain; repair them and retry the SAME completion submission_id. An accepted
+completion is seal intent; actual terminal/capture receipts still govern sealing.
 On submission_revision_conflict, reread the caller's revision and retry the same
 unchanged records/submission_id ONCE with that revision; report another conflict.
 Another participant's append or raw capture is not a conflict for this stream.

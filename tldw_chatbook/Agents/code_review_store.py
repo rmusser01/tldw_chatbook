@@ -922,6 +922,11 @@ class ReviewStore:
                 refusal = ReviewRefused("submission_revision_conflict")
                 refusal.submission_revision = stream.revision
                 raise refusal
+            if kind in {"reviewer_complete", "verifier_complete"} and (
+                stream.rejected.keys()
+                - {hashlib.sha256(submission_id.encode()).hexdigest()}
+            ):
+                raise ReviewRefused("unresolved_submission_rejections")
             self._validate_references(context, parsed)
             ledger = (
                 self.verification_ledger(context, binding)

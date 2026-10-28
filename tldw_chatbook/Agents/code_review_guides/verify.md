@@ -62,12 +62,22 @@ unknown fields refused. expected_revision uses the caller's submission_revision
 from its page/latest acknowledgment, NOT context-control revision. On
 submission_revision_conflict, reread and retry unchanged records and submission_id
 once with the latest caller revision. Another participant append is independent.
+Correct a rejected record under the SAME submission_id, using returned field/type
+errors. New IDs do not retire earlier rejections. Repair rejected IDs before
+completion, then retry the SAME completion submission_id.
 
 Accepted submissions checkpoint dispositions/evidence/cursor outside history
 before host request-history reduction. Let the host reduce only recoverable
 completed rounds; retain task, guidance, pending units and protocol state. Do not
 reset history or gain a new child/model budget. Continue the returned batch
-cursor. Submit kind:"verifier_complete", records:[] only when all units have
+cursor. After history reduction, cached replay or uncertainty about an accepted
+submission, read code_review_read({"review_id":"RID","view":"checkpoint"}).
+This live page supplies current submission_revision and a record with batch_cursor,
+pending_unit_ids and all_units_disposed. Cached batch pages intentionally replay
+byte-identically with their original revision. Never resubmit accepted decisions.
+If pending_unit_ids is empty and all_units_disposed is true, finish at the current
+checkpoint revision; otherwise handle pending units or follow batch_cursor.
+Submit kind:"verifier_complete", records:[] only when all units have
 independent dispositions; actual terminal receipts still govern completion.
 Unfinished units remain explicitly unresolved rather than disappearing.
 

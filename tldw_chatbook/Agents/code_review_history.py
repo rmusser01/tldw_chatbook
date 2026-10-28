@@ -114,7 +114,10 @@ def project_verifier_history(
             },
             separators=(",", ":"),
         )
-        + ". Accepted decisions are stored. Read the next batch; do not replay tools.",
+        + '. Accepted decisions are stored. Read code_review_read(view="checkpoint") '
+        "for current submission_revision, batch_cursor and pending_unit_ids. Cached batch pages "
+        "retain historical revisions. Do not resubmit accepted decisions; when all units are "
+        "disposed submit verifier_complete at the current revision.",
     }
     insertion = next(
         (i for i, row in enumerate(retained) if row.get("role") == "assistant"),

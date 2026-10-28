@@ -485,7 +485,11 @@ def test_child_request_advertises_only_its_host_role(dispatch_case, native, veri
     c = dispatch_case.run(native=native, verify=verify)
     children = [request for actor, request in c.calls if actor.kind == "subagent"]
     assert children, c.outcome
-    views = ["source", "batch", "verification_batch"] if verify else ["source"]
+    views = (
+        ["source", "batch", "verification_batch", "checkpoint"]
+        if verify
+        else ["source"]
+    )
     kinds = (
         ["dispositions", "check_proposals", "verifier_complete"]
         if verify
