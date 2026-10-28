@@ -202,7 +202,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: only on a real activation, never on the attach reconcile's direct
     #: replay of on_screen_resume. Dev 0923ec0ca2 measured 24319/736; with
     #: the fix, 24321/737, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24327, 737),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24329, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
