@@ -13,7 +13,7 @@ references:
 - Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
 documentation:
 - backlog/decisions/252-bug-report-evidence-and-sharing.md
-updated_date: 2026-10-28 20:10
+updated_date: 2026-10-28 21:31
 ---
 
 ## Description
@@ -38,16 +38,17 @@ Give users a readable report containing their description and retained diagnosti
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
 ADR path: backlog/decisions/252-bug-report-evidence-and-sharing.md
-Reason: Introduces a user-controlled diagnostic export contract across logs, governed Console evidence, and clipboard output; existing ADR-029, ADR-080, and ADR-097 remain binding.
+Reason: User-controlled diagnostic export contract; existing ADR-029, ADR-080 and ADR-097 remain binding. The shared-check follow-up implements existing modal, CSS and profile contracts and requires no new ADR.
 
-1. Implement and verify the pure report data, privacy projection, Markdown budgets, and exact-copy validation.
-2. Add bounded read-only log/Console/agent metadata adapters and governed tool-field reads with source deadlines and frozen references.
-3. Build the shared describe/review modal with opt-in controls, guarded dismissal, draft preservation, and truthful client clipboard delivery.
-4. Wire the command palette, Logs, and Settings About; update user/architecture guidance; run focused checks and live paste verification.
+1. Implement and verify the pure report privacy projection, Markdown budgets and exact-copy validation.
+2. Add bounded read-only diagnostic adapters with source deadlines and frozen references.
+3. Build the editable describe/review modal, opt-in controls and guarded dismissal/copy flow.
+4. Wire palette, Logs and Settings About; document and verify the feature and native pasted bytes.
+5. Resolve shared checks requested on 2026-10-28: normalize governance paths/encoding and pin-script imports, align focus/provider tests with canonical token/Settings contracts, give uncovered guarded modals real quit hooks, and repair type-only annotation imports.
+6. Rerun the named affected checks, self-review changes, update verification notes, and check AC #7/mark Done only after those pass. Keep full-suite execution outside this targeted verification scope.
 
 Detailed plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md
 Approved spec: Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
-Execution: native implementation and independent whole-branch review completed. Shared verification limitations keep AC #7 and the repository Definition of Done open; see Implementation Notes.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 

@@ -25,6 +25,86 @@ def setup_view():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["configure", "launch", "error"])
+async def test_goal_completion_under_quit_prompt_survives_wait(stage):
+    """A covering quit prompt cannot lose a completed launch or lock its editor."""
+    import asyncio
+
+    from textual.binding import Binding
+    from textual.widgets import Button, Static
+
+    from Tests.Agents.test_goal_models import request as make_request
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    request = make_request()
+    delivered, quit_answers = [], []
+    completed = []
+
+    async def configure(values, *args):
+        entered.set()
+        await release.wait()
+        return type(request).model_validate(values)
+
+    async def start(request, launch_id):
+        entered.set()
+        await release.wait()
+        if stage == "error":
+            raise ValueError("Launch failed; retry retained")
+        # The view passes the owner's opaque result through unchanged. Gate
+        # that callback; storage provisioning is covered by the service tests.
+        result = object()
+        completed.append(result)
+        return result
+
+    class QuitProbe(App):
+        BINDINGS = [Binding("ctrl+q", "guarded_quit", priority=True)]
+
+        def action_guarded_quit(self):
+            self.run_worker(self.ask_quit(), exclusive=True)
+
+        async def ask_quit(self):
+            quit_answers.append(await self.screen.confirm_quit())
+
+    app = QuitProbe(css_path=str(BUNDLED_STYLESHEET))
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = setup_view()(
+            request,
+            start=start,
+            bindings=(request.binding,),
+            tool_ids=request.tool_scope.catalog_tools,
+            configure=configure if stage == "configure" else None,
+        )
+        await app.push_screen(modal, delivered.append)
+        modal.start_pressed()
+        await asyncio.wait_for(entered.wait(), 5)
+        await pilot.press("ctrl+q")
+        await wait_until(pilot, lambda: quit_answers == [False])
+        await pilot.press("ctrl+q")
+        await wait_until(pilot, lambda: isinstance(app.screen, ConfirmationDialog))
+        prompt = app.screen
+        release.set()
+        await wait_until(pilot, lambda: not modal._busy)
+        assert app.screen is prompt
+        assert delivered == []
+        await pilot.press("escape")  # Wait, through the actual quit prompt.
+        if stage == "launch":
+            await wait_until(pilot, lambda: bool(delivered))
+            assert delivered == completed
+            assert modal not in app.screen_stack
+        else:
+            await wait_until(pilot, lambda: app.screen is modal)
+            assert not modal.query_one("#goal-start", Button).disabled
+            if stage == "configure":
+                assert modal._submitted is not None
+                assert str(modal.query_one("#goal-start", Button).label) == "Start"
+            else:
+                assert "Launch failed; retry retained" in str(
+                    modal.query_one("#goal-setup-error", Static).render()
+                )
+
+
+@pytest.mark.asyncio
 async def test_double_start_retains_launch_identity_and_provisions_one_conversation(
     stores,
 ):
@@ -68,9 +148,9 @@ async def test_verifier_factory_uses_trust_owner_and_rejects_editable_verifier(
     from Tests.Chat.test_goal_cli_verification import trusted_skill
 
     scope, path, trust = trusted_skill(tmp_path, "print('verified')\n")
-    assert hasattr(scope, "goal_verifier_reference"), (
-        "trusted verifier reference factory missing"
-    )
+    assert hasattr(
+        scope, "goal_verifier_reference"
+    ), "trusted verifier reference factory missing"
     spec = await scope.goal_verifier_reference(
         "verifier",
         "scripts/check.py",

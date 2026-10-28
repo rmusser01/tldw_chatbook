@@ -185,9 +185,9 @@ def test_canonical_owning_sheets_are_bundled(request) -> None:
     """
     owners = sorted(set(_canonical().values()))
     missing = [sheet for sheet in owners if sheet not in CSS_MODULES]
-    assert not missing, (
-        f"Owning sheets missing from CSS_MODULES (build_css.py): {missing}"
-    )
+    assert (
+        not missing
+    ), f"Owning sheets missing from CSS_MODULES (build_css.py): {missing}"
 
 
 @private_profile_test

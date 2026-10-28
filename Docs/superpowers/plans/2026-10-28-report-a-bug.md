@@ -187,6 +187,27 @@ In `Utils/bug_report_capture.py`:
 
 ## Planning self-review
 
+### Shared-check completion amendment (2026-10-28)
+
+The user requested fixing the remaining shared failures and finishing TASK-37173.
+This supersedes the earlier decision to leave those failures outside the task.
+ADR required: no new ADR. These repairs enforce existing ADR-150/161 token,
+ADR-240 Settings, profile-ownership and modal-quit contracts; ADR-252 still
+governs the report feature.
+
+1. Use the recorded failing checks as reproductions; trace paths, encoding,
+   subprocess imports, current selectors/provider commands and close guards.
+2. Normalize governance keys to POSIX paths, read UTF-8 explicitly and make the
+   pin script bind its sibling helper under safe-path Python execution.
+3. Align stale tests with canonical tokens and Settings Tools & MCP, preserving
+   concrete contrast, hit-target and command-routing assertions.
+4. Add real quit hooks for in-flight/dirty modal state; document legitimate
+   read-only or unconditional-cancel census exemptions and test decisions.
+5. Repair undefined type annotations without eager imports. Rerun affected
+   feature/shared checks and static guards; self-review and update evidence.
+6. Check AC #7 and mark the task Done through Backlog CLI only after targeted
+   verification passes. No full-suite claim is part of this amendment.
+
 - Spec coverage: Tasks 1-2 cover contents, limits, privacy, source selection, governance, and ownership; Task 3 covers the complete describe/review/copy/dismiss flow; Task 4 covers discoverability, deferred imports, documentation, and live evidence.
 - Interfaces: Shared names/signatures above are reused consistently; no task depends on an undefined later component. Source-reader results stay internal and never become raw report fields.
 - Review Focus: Each of the five input/failure classes has explicit tests in its owning task. Deterministic gates and query instrumentation replace timing guesses.
