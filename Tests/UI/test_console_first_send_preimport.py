@@ -285,6 +285,7 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     heap again (ADR-198), since the routes' freeze ran before it.
     """
     from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.MCP import server as mcp_server
 
     app = _PassApp()
     clock = iter(float(n) * 0.1 for n in range(10_000))
@@ -294,8 +295,13 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
         "import_module",
         lambda name: app.events.append(("import", name)),
     )
+    # Patched by object, not by dotted path: `warm.importlib` is the global
+    # importlib, and pytest 9 resolves a dotted path through
+    # importlib.import_module, which the fake above has just replaced
+    # (TASK-33620.15.15: the PR lanes install pytest 9).
     monkeypatch.setattr(
-        "tldw_chatbook.MCP.server.prime_local_manifest_source",
+        mcp_server,
+        "prime_local_manifest_source",
         lambda: app.events.append(("prime", None)),
     )
     monkeypatch.setattr(
