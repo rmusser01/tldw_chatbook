@@ -243,7 +243,16 @@ class ConsoleTerminalController:
         admitted = getattr(created, "admitted", False) is True
         if not admitted:
             self._status("Terminal session was refused.")
-        return admitted
+            return False
+        # TASK-33622.5: the manager selects a new session only when nothing
+        # is selected, so Terminal 2 left Terminal 1 taking the keys, and no
+        # create ever focused the viewport -- typed shell commands went to the
+        # chat composer. Select the new session and hand it the keyboard.
+        projection = getattr(created, "projection", None)
+        session_id = getattr(projection, "session_id", None)
+        if isinstance(session_id, str):
+            self.request_focus(session_id)
+        return True
 
     async def request_rename(self, session_id: str) -> bool:
         """Validate a user-visible rename before manager revalidation."""
@@ -297,6 +306,56 @@ class ConsoleTerminalController:
             self._status("Terminal session could not be closed.")
             return False
         return receipt is not None
+
+    def owns_widget(self, widget: object | None) -> bool:
+        """Return whether ``widget`` is a visible part of the mounted workspace.
+
+        TASK-33622.5: the screen's pane/focus bookkeeping asks this so the
+        Terminal center counts as the Console's center pane while it is open.
+
+        Args:
+            widget: Focused (or candidate) widget, or ``None``.
+
+        Returns:
+            ``True`` only for the attached workspace or a descendant of it
+            whose whole ancestor chain is displayed.
+        """
+        workspace = self._workspace_accessor()
+        if workspace is None or not getattr(workspace, "is_attached", False):
+            return False
+        if widget is not workspace and workspace not in getattr(
+            widget, "ancestors", ()
+        ):
+            return False
+        current: Any = widget
+        while current is not None:
+            if current.display is False or current.styles.display == "none":
+                return False
+            current = getattr(current, "parent", None)
+        return True
+
+    def focus_target_ids(self) -> tuple[str, ...]:
+        """Return the workspace's focus candidates, most useful first.
+
+        TASK-33622.5: the live session's viewport when one is selected and
+        armed; otherwise the one control that moves the user forward.
+
+        Returns:
+            Widget ids for the screen's displayed-first focus walk.
+        """
+        runtime = self._terminal_runtime()
+        if (
+            getattr(runtime, "armed", False) is True
+            and getattr(runtime, "selected_session_id", None) is not None
+        ):
+            return ("console-terminal-viewport", "console-terminal-return")
+        return (
+            "console-terminal-retry",
+            "console-terminal-new",
+            "console-terminal-arm",
+            "console-terminal-open-settings",
+            "console-terminal-return",
+        )
 
     def request_focus(self, session_id: str) -> bool:
         """Select a retained session through the current view generation."""
@@ -545,6 +604,36 @@ class ConsoleTerminalController:
         setter = getattr(workspace, "set_status", None)
         if callable(setter):
             setter(message)
+
+
+def sync_terminal_center_chrome(screen: Any) -> None:
+    """Collapse the chat composer while the Terminal owns the Console center.
+
+    TASK-33622.5 (owner decision 2026-10-27): typing into a visible composer
+    under a host terminal was a mode error -- shell commands became chat
+    drafts and Enter sent them to the model. The composer is hidden AND
+    unfocusable here (``focus()`` still lands on a ``display: none`` widget),
+    the footer names Terminal keys, and chat comes back with "Return to
+    transcript". The user's own composer collapse is left untouched.
+
+    Args:
+        screen: The Console ``ChatScreen`` whose center was just swapped.
+    """
+    terminal_open = screen._console_terminal_open is True
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        if terminal_open:
+            screen._console_unknown_send_armed = None
+            popup = screen._console_command_popup_or_none()
+            if popup is not None:
+                popup.hide()
+        composer.display = not terminal_open
+        composer.can_focus = (
+            not terminal_open
+            and not screen._console_composer_collapsed
+            and not screen._console_setup_modal_blocking()
+        )
+    screen._register_console_footer_shortcuts()
 
 
 def _projection_fingerprint(
