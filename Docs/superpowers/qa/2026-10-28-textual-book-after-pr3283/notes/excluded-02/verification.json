@@ -1,0 +1,30 @@
+{
+  "exit_code": 1,
+  "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-aea770d6b27d4a33818fc352c00c7ec2",
+  "reports": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\book3283-notes-02\\result.xml",
+      "sha256": "ebcf506090bdf6ae446c2136058038a1128e87425c9be98dc0090cb05f26e4cd",
+      "cases": 2,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-aea770d6b27d4a33818fc352c00c7ec2\\pytest\\test_note_export_keeps_app_dis0\\private-profile-process\\pytest.xml",
+      "sha256": "7712db2adf8f67f524d74fd912dcaa22dd0dd87f6aa6aed4433a210432176b09",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-aea770d6b27d4a33818fc352c00c7ec2\\pytest\\test_note_export_keeps_app_dis1\\private-profile-process\\pytest.xml",
+      "sha256": "32610dc555a258674936cba57e16f79c172c7f0e5337172e29cc2d2ae5e578eb",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skips": 0
+    }
+  ]
+}

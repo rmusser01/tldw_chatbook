@@ -1,0 +1,18 @@
+from pathlib import Path
+import hashlib,json,os,subprocess,sys,uuid,xml.etree.ElementTree as ET
+root=Path.cwd();sys.path.insert(0,str(root))
+from tldw_chatbook.Utils import platform_files
+parent=root/'.test-tmp/textual-37031-37034';run=parent/sys.argv[1];platform_files.os.mkdir(run,0o700)
+private=Path('C:/Users/GDesktop-1/AppData/Local')/('codex-textual-test-'+uuid.uuid4().hex);platform_files.os.mkdir(private,0o700)
+for name in ('tmp','bootstrap'):platform_files.os.mkdir(private/name,0o700)
+env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHONIOENCODING='utf-8',PYTHONUTF8='1',TEMP=str(private/'tmp'),TMP=str(private/'tmp'),TLDW_TEST_CONFIG_ROOT=str(private/'bootstrap'),PYTEST_DISABLE_PLUGIN_AUTOLOAD='1')
+args=[sys.executable,'-X','utf8','-m','pytest',*sys.argv[2:],'-p','pytest_asyncio.plugin','-p','pytest_timeout','-q','--tb=short','--timeout=180','-o','cache_dir='+str(run/'cache'),'--basetemp='+str(private/'pytest'),'--junitxml='+str(run/'result.xml')]
+(run/'command.json').write_text(json.dumps(dict(args=args,private_profile_root=str(private),source_root=str(root)),indent=2),encoding='utf-8')
+with (run/'run.log').open('w',encoding='utf-8') as stream:p=subprocess.run(args,cwd=root,env=env,stdout=stream,stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace')
+reports=[];paths=[run/'result.xml']+list((private/'pytest').rglob('*.xml')) if (private/'pytest').exists() else [run/'result.xml']
+for report in paths:
+ if not report.exists():continue
+ try:cases=list(ET.parse(report).iter('testcase'))
+ except ET.ParseError:continue
+ reports.append(dict(path=str(report),sha256=hashlib.sha256(report.read_bytes()).hexdigest(),cases=len(cases),failures=sum(c.find('failure') is not None for c in cases),errors=sum(c.find('error') is not None for c in cases),skips=sum(c.find('skipped') is not None for c in cases)))
+receipt=dict(exit_code=p.returncode,private_profile_root=str(private),reports=reports);(run/'verification.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8');print(json.dumps(receipt,indent=2));print((run/'run.log').read_text(encoding='utf-8',errors='replace')[-4500:]);sys.exit(p.returncode)
