@@ -34,7 +34,6 @@ from tldw_chatbook.Chat import console_chat_controller as controller_mod
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
-    ConsoleRunStatus,
     ProjectInstructionBindingRecovery,
     build_project_instruction_dispatch_notice,
     capture_run_admitted_workspace_roots,
@@ -1053,6 +1052,9 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
     session = store.create_session(workspace_id="w1")
     notices = []
     owning_loop_calls = []
+    confirmation_loop_calls = []
+    confirmation_decisions = []
+    persisted_runs = []
     provider_transmissions = []
     main_thread = threading.get_ident()
 
@@ -1069,6 +1071,9 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
         return "proceed"
 
     class Bridge:
+        def record_run_assistant_message(self, run_id, message_id):
+            persisted_runs.append((run_id, message_id))
+
         def run_reply(self, **kwargs):
             candidate = kwargs["startup_instruction_candidate"]
             delivery = InstructionChainDelivery(
@@ -1085,7 +1090,10 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
                 primary_delivery=delivery,
                 warning_codes=(),
             )
+            before_confirmation = len(owning_loop_calls)
             decision = kwargs["confirm_project_instruction_dispatch"](snapshot)
+            confirmation_loop_calls.extend(owning_loop_calls[before_confirmation:])
+            confirmation_decisions.append(decision)
             if decision == "proceed":
                 provider_transmissions.append(True)
             return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
@@ -1123,7 +1131,15 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 
     assert result.accepted is True
     assert provider_transmissions == []
-    assert len(owning_loop_calls) == 2
+    # Other authority checks also marshal callbacks; pin the two confirmation
+    # commits themselves, and require clean cancellation rather than a stub error.
+    assert len(confirmation_loop_calls) == 2
+    assert confirmation_decisions == ["cancel"]
+    assert len(notices) == 1
+    assert len(persisted_runs) == 1 and persisted_runs[0][0] == "run-1"
+    state = controller.run_state_for(session.id)
+    assert state.status is ConsoleRunStatus.FAILED
+    assert state.visible_copy == "Response stopped/cancelled."
     assert notices[0].session_id == session.id
     assert notices[0].destination_label == "OpenAI (https://api.example)"
     assert SENTINEL not in repr(notices[0])
