@@ -1,10 +1,11 @@
 # Report a bug — design
 
 Date: 2026-10-28
-Status: Approved in principle; refined by the requested pre-implementation design review. Product implementation has not started.
+Status: Approved following the requested pre-implementation design review. Implementation plan prepared; product implementation has not started.
 Baseline: freshly fetched `origin/dev`, `798f8fca75a7acba56da5f523329efa52c4a78f0`.
 Builder check: completed; no important unanswered planning questions found.
 Design review: checked against the same freshly fetched dev head on 2026-10-28; privacy, transport-size, source-scope, and read-bound corrections incorporated below.
+Implementation task: [TASK-37173](../../../backlog/tasks/task-37173%20-%20Prepare-copyable-bug-reports-from-retained-diagnostics.md). Plan: [2026-10-28-report-a-bug.md](../plans/2026-10-28-report-a-bug.md).
 
 ## Intent and agreed requirements
 
@@ -122,11 +123,11 @@ Use the design language and ADR-161 component catalog: a scrollable modal body w
 
 ADR required: **yes**.
 
-ADR path: a new `backlog/decisions/NNN-bug-report-evidence-and-sharing.md`, with the ID allocated from current repository history before implementation planning.
+ADR path: [backlog/decisions/252-bug-report-evidence-and-sharing.md](../../../backlog/decisions/252-bug-report-evidence-and-sharing.md), allocated after checking current dev, recent local Git history, and open-PR reservations.
 
 Reason: this introduces a user-controlled export contract spanning logs, trace sources, privacy policy, and clipboard output. Existing ADR-029, ADR-080, and ADR-097 (`097-console-reference-backed-semantic-trace-ledger.md`) constrain it but do not define this narrower report format, evidence-selection rule, or tool-only opt-in. The new ADR records those choices without changing their underlying capture/retention contracts. ADR-031, ADR-150, and ADR-161 govern the UI.
 
-After design approval, create the atomic Backlog implementation task with these outcomes and link this design and the new ADR. Its Implementation Plan is added after moving it to In Progress. The next workflow is `superpowers:writing-plans`; no product code, scaffolding, or dependencies are added during this design step.
+TASK-37173 is the atomic implementation task and is In Progress for planning. Its Implementation Plan was added after that status transition and links this design, ADR-252, and the detailed plan. The `superpowers:writing-plans` workflow prepares the execution handoff; no product code, scaffolding, or dependencies are added during planning.
 
 ## Acceptance and verification expectations
 

@@ -233,6 +233,8 @@ Do not reuse numbers.
 | [ADR-243: Source-bound portrait compositing](243-source-bound-portrait-compositing.md) | Accepted for planning | Reusable manual expression regions, three component edits, exact local six-pose assembly and profile-local provenance; amends ADR-242 generation/authoring. |
 | [ADR-250: Application services bundle](250-application-services-bundle.md) | Accepted | A frozen, typed, per-feature `ApplicationServices` bundle published once from `app_service_wiring`, with today's app attributes as shrink-only aliases and one shared `open_profile_storage` factory for the MCP server, mobile service and CLI tools; amends ADR-036's deferral clause. |
 
+| [ADR-252: Bug report evidence and sharing](252-bug-report-evidence-and-sharing.md) | Accepted for implementation planning | Copy one bounded, user-reviewed Markdown report from retained logs and governed Console evidence, with diagnostic facts by default and redacted tool content only by opt-in. |
+
 | [ADR-253](253-compact-discovery-before-plain-chat.md) | Accepted | Try budgeted compact discovery before plain chat and retain its ceiling during schema loading. |
 
 | [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
