@@ -51,7 +51,10 @@ from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
-from ...Chat.console_display_state import build_console_disabled_reason
+from ...Chat.console_display_state import (
+    ConsoleAttachmentBlock,
+    build_console_disabled_reason,
+)
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
 
 # TASK-22504: the dictation STATE_* constants are loaded on first voice
@@ -2164,6 +2167,7 @@ class ConsoleComposerBar(Horizontal):
             dispatch_recovery_blocked=self._dispatch_recovery_blocked,
             setup_blocked_reason=self._setup_blocked_reason,
             queue_blocked_reason=self._queue_blocked_reason,
+            attachment_block=self._attachment_block,
             ephemeral=self._ephemeral,
             send_label=self._send_label,
             wake_turn_active=self._wake_turn_active,
@@ -2438,6 +2442,7 @@ class ConsoleComposerBar(Horizontal):
         dispatch_recovery_blocked: bool = False,
         queue_blocked_reason: str = "",
         stop_available: bool | None = None,
+        attachment_block: ConsoleAttachmentBlock | None = None,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
@@ -2452,6 +2457,8 @@ class ConsoleComposerBar(Horizontal):
                 ("Preparing...", "Queue full"). Kept apart from setup copy
                 (TASK-33625.1 review) so a queue state never masks a real
                 setup/attachment blocker, nor links to the setup wizard.
+            attachment_block: A staged attachment the model can't take
+                (TASK-33620.2). Its own slot: never setup copy or its link.
             dispatch_recovery_blocked: An unresolved response needs explicit recovery.
             ephemeral: Whether the active session is temporary, which blocks
                 Save Chatbook (a second door onto the same write the
@@ -2471,6 +2478,7 @@ class ConsoleComposerBar(Horizontal):
         setup_reason_changed = (
             self._setup_blocked_reason != setup_blocked_reason
             or self._queue_blocked_reason != queue_blocked_reason
+            or self._attachment_block != attachment_block
         )
         self._run_active = run_active
         self._stop_available = (
@@ -2481,6 +2489,7 @@ class ConsoleComposerBar(Horizontal):
         self._setup_blocked_reason = setup_blocked_reason
         # Replayed by `_sync_current_action_state` (keystrokes, resize).
         self._queue_blocked_reason = queue_blocked_reason
+        self._attachment_block = attachment_block
         self._wake_turn_active = bool(wake_turn_active)
         self._can_save_chatbook = can_save_chatbook
         self._ephemeral = ephemeral
@@ -2555,8 +2564,12 @@ class ConsoleComposerBar(Horizontal):
                 "A background sub-agent result is being delivered. "
                 "Wait for it to finish."
             )
-        elif effective_send_blocked and (setup_blocked_reason or queue_blocked_reason):
-            send_button.tooltip = setup_blocked_reason or queue_blocked_reason
+        elif effective_send_blocked and (
+            setup_blocked_reason or attachment_block or queue_blocked_reason
+        ):
+            send_button.tooltip = setup_blocked_reason or (
+                attachment_block.reason if attachment_block else queue_blocked_reason
+            )
         elif effective_send_blocked:
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
@@ -2600,6 +2613,7 @@ class ConsoleComposerBar(Horizontal):
             send_blocked=effective_send_blocked,
             setup_blocked_reason=setup_blocked_reason,
             queue_blocked_reason=queue_blocked_reason,
+            attachment_block=attachment_block,
             wake_turn_active=wake_turn_active,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
             send_label=normalized_send_label,
@@ -6500,6 +6514,7 @@ class ConsoleComposerBar(Horizontal):
     #: keystroke and resize). CLASS attributes for the same reason.
     _queue_blocked_reason: str = ""
     _wake_turn_active: bool = False
+    _attachment_block: ConsoleAttachmentBlock | None = None  # TASK-33620.2
 
     #: TASK-24620: last `set_voice_status` inputs, replayed from
     #: `on_resize` so the chip's row-width budget is re-derived on resize. A

@@ -274,7 +274,18 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-31: re-measured after rebasing onto dev 94a8a85f03 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24397/737.
     #: 2026-10-31: re-measured after rebasing onto dev 14de6845b3 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24289/737 -> 24350/737.
     #: PR3300 on dev63b764c858: explicit user size waiver; exact24598/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24598, 741),
+    #: Raised 24319 -> 24323 (methods unchanged) 2026-10-27 by TASK-33620.2,
+    #: comment; never move or reflow code to make it fit): the composer sync
+    #: passes the vision block in its own slot (one kwarg line), compose
+    #: yields its row (one line), and the row joins the composer's Tab region
+    #: and F6 pane map (two lines) so both actions are keyboard-reachable.
+    #: The row, its sync and both actions live in
+    #: Console_Modules/composer_run_controls.py, and Remove image shares the
+    #: clear-attachment handler's selector. Dev f9baac8706 measures
+    #: 24319/736; with the fix, 24323/736, the exact measurement.
+    #: Rebased 2026-10-29 onto dev 3efe8476ce, which measures 24329/737;
+    #: with the same +4, 24333/737, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24504, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

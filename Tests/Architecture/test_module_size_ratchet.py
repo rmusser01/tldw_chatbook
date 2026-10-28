@@ -650,10 +650,19 @@ _BUDGETS: dict[str, int] = {
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
     # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7139,
+
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
+    #: Raised 7024 -> 7039 on 2026-10-27 by TASK-33620.2, owner rule (a fix
+    #: over a size ratchet raises the row with a dated comment; never move or
+    #: reflow code to make it fit): the vision block gets its own typed
+    #: `attachment_block` slot in `sync_action_state` (signature, docstring,
+    #: replay, Send tooltip, disabled reason) instead of riding the setup slot
+    #: into "choose a model" and the first-run wizard link. The row and its
+    #: actions live in Console_Modules/composer_run_controls.py. Dev
+    #: f9baac8706 measures 7024; with the fix, 7039, the exact measurement.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7047,
     "tldw_chatbook/UI/Console_Modules/session.py": 7065,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
