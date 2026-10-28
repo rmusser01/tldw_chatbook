@@ -9979,37 +9979,12 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 
 
 def get_chat_defaults_user_display_name(default: str = "User") -> str:
-    """Return the validated global human-facing Console chat name.
-
-    Args:
-        default: Fallback used when ``chat_defaults.user_display_name`` is
-            absent.
-
-    Returns:
-        The configured validated name, or the neutral ``"User"`` fallback
-        when the configured/default value is invalid.
-    """
-    # Import lazily because ``tldw_chatbook.Chat.__init__`` reaches runtime
-    # policy modules that import this configuration module during startup.
+    """Return the validated global human-facing Console chat name."""
     from tldw_chatbook.Chat.console_roleplay_identity import (
-        ChatDisplayNameError,
-        normalize_chat_display_name,
+        configured_chat_display_name,
     )
 
-    config = load_cli_config_and_ensure_existence()
-    chat_defaults = config.get("chat_defaults")
-    raw_value = (
-        chat_defaults.get("user_display_name", default)
-        if isinstance(chat_defaults, dict)
-        else default
-    )
-    try:
-        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
-    except ChatDisplayNameError:
-        logger.warning(
-            "Invalid chat display name in [chat_defaults]; using the neutral default."
-        )
-        return "User"
+    return configured_chat_display_name(load_cli_config_and_ensure_existence(), default)
 
 
 def get_rag_citation_canonical_writes_enabled() -> bool:

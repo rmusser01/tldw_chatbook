@@ -132,6 +132,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     provider_continuation_owner_groups,
 )
 from tldw_chatbook.Chat.provider_continuation import (
+    project_provider_continuation,
     ContinuationConflictError,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
@@ -3651,10 +3652,6 @@ class ConsoleProviderGateway:
         checkpoint: ProviderContinuationCheckpoint,
     ) -> list[dict[str, Any]]:
         """Project validated recovery state after the host's explicit Resume gate."""
-        from tldw_chatbook.Chat.provider_continuation import (
-            project_provider_continuation,
-        )
-
         return project_provider_continuation(checkpoint)
 
     def prepare_chat_request(
@@ -4323,34 +4320,9 @@ class ConsoleProviderGateway:
         return read_cached(project_target(settings, _display_config=config))
 
     async def resolve_context_window(self, settings: Any) -> ContextWindowResolution:
-        """Refresh optional serving metadata without running a generation."""
-        if isinstance(settings, ConsoleProviderResolution):
-            from .console_context_window import ContextWindowTarget
+        from .console_context_window import resolve_gateway_context_window
 
-            if (
-                not settings.ready
-                or settings.resolved_destination is None
-                or settings.resolved_destination
-                != resolve_console_destination(settings)
-                or (
-                    settings.selected_provider
-                    and settings.selected_provider
-                    != settings.resolved_destination.provider
-                )
-            ):
-                raise ValueError("review_metadata_target_changed")
-            target = ContextWindowTarget(
-                settings.selected_provider or settings.provider,
-                settings.readiness_key or settings.provider,
-                settings.base_url,
-                settings.model or "",
-                settings.api_key,
-            )
-        else:
-            target = self._context_window_target(settings)
-        return await self._get_context_windows().resolve(
-            target, self._active_http_client()
-        )
+        return await resolve_gateway_context_window(self, settings)
 
     async def _resolve_reasoning_history(
         self, resolution: ConsoleProviderResolution, app_config: Mapping[str, object]

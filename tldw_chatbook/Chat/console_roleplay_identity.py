@@ -331,3 +331,22 @@ def resolve_console_message_presentation(
         transcript_style=transcript_style,
         revision_token=revision_token,
     )
+
+
+def configured_chat_display_name(config: dict, default: str = "User") -> str:
+    """Resolve the typed Console default, retaining the neutral invalid-name fallback."""
+    from tldw_chatbook.config import logger
+
+    chat_defaults = config.get("chat_defaults")
+    raw_value = (
+        chat_defaults.get("user_display_name", default)
+        if isinstance(chat_defaults, dict)
+        else default
+    )
+    try:
+        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
+    except ChatDisplayNameError:
+        logger.warning(
+            "Invalid chat display name in [chat_defaults]; using the neutral default."
+        )
+        return "User"
