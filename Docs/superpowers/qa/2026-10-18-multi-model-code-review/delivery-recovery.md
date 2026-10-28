@@ -1,11 +1,10 @@
 # Bounded delivery recovery — 2026-10-28
 
 PR: https://github.com/rmusser01/tldw_chatbook/pull/3286 (draft, targets dev).
-AC24 remains unchecked and TASK-35582 remains In Progress. No new provider
-requests or product children were used in this recovery. Historical receipts
-account for 255 generation requests and 18 accepted children, with no allowance
-remaining. One consolidated allowance question is pending; this document grants
-no spending or retry authority.
+This preparation checkpoint preceded the later approved live run. The
+[final outcome](bounded-final/report.md) supersedes its pending-approval status:
+AC24 remains unchecked, with59 new requests/3 children consumed and no further
+live invocation authorized. Earlier receipts accounted for255 requests/18 children.
 
 ## Demonstrated integration corrections
 
@@ -63,7 +62,8 @@ preflight (one three-call attempt, at most one manual retry after a narrow causa
 fix), plus a separate fixed maximum of 60 for one final Console journey, with
 three fresh product children under native [2,1]. Unused preflight allowance cannot
 enlarge the final cap. No automatic full-run retry or historical allowance reuse.
-If authorized, the aggregate ceiling would be 321; it is not authorized yet.
+That exact scope was later approved, raising the aggregate ceiling to321. The
+final report records314 consumed and why unused requests do not permit a replay.
 
 ## Remaining acceptance boundary
 

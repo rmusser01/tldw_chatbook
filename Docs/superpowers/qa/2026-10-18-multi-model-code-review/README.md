@@ -2,18 +2,25 @@
 
 AC24 remains open. The delivery candidate carries the implemented review recipe
 onto dev `e3d07afa65927b9d477fe9f13af619550da9e005`; it does not claim that prior
-live qualification passed. The next live work requires a new, bounded allowance.
+live qualification passed. The single bounded live run is now recorded below; it did not complete AC24.
 
 ## Current boundary
 
-The latest historical run used43 requests and3 children, reaching a fresh Haiku
-verifier under native [2,1]. All43 HTTP responses succeeded, but the verifier
-ended incomplete with submission_conflict and no complete original-finding
-mapping or readable unified report. Its accepted submission body was not retained.
-See the [independent outcome review](ac24/fresh43-after-haiku-outcome/outcome-review.md).
-Total historical spending is255requests and18accepted children; no allowance remains.
-The local usage fix did launch the verifier. The Haiku capability correction is
-retained; request acceptance alone does not prove a tool-result round trip.
+The [single final qualification](bounded-final/report.md) ran on delivery commit
+47093a3175 after the real Haiku tool-result/accounting preflight passed. It exited
+2: R2 and V1 are incomplete, despite accepted useful findings/dispositions,
+complete two-original mapping and readable unified pages. Native [2,1], one chain
+and cleanup were preserved. AC24 is unchecked; PR3286 stays draft.
+
+The approved grant used59 new generation requests and3 children, for cumulative
+314 requests/21 children. Seven financial requests are unused, but the permitted
+retry/final invocation and child scope are consumed; no live replay is authorized.
+The exact failure boundaries were reproduced offline. Eight module-size CI
+failures also reproduce; one composer-state CI failure passes locally. See the
+linked report and [independent assessment](bounded-final/outcome-review.md).
+
+The prior fresh43 run and earlier failures remain historical evidence in the
+retained reviews/archive. Their HTTP200 responses never established completion.
 
 ## Existing evidence reused
 
@@ -27,9 +34,9 @@ admission failures, descriptor/static warnings, a Minor precedence-fixture gap,
 and bounded recovery limits are not relabeled green. Current delivery integration passed97 focused tests and2 current-dev Stop/stall
 controls. The [integration report](integration-report.md) and
 [scoped integration review](integration-review.md) record exact boundaries; the
-review found no integration findings. Live qualification remains pending. The [bounded delivery recovery](delivery-recovery.md)
-records the subsequent narrow CI corrections and offline preparation; it adds no
-live success or spending authorization.
+review found no integration findings. The [bounded delivery recovery](delivery-recovery.md)
+records the subsequent narrow CI corrections and preparation. The final failed
+acceptance and newer CI blockers are recorded above.
 
 ## Preservation and review footprint
 
