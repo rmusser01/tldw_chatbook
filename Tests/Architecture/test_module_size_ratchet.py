@@ -558,6 +558,11 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
+    # 2026-10-27 (TASK-33620.10, owner decision: a fix over a size ratchet
+    # raises the row): 12258 -> 12298 (+40) -- the shipped
+    # `[chat_defaults] streaming = true` with its comment, and the one merge
+    # helper every published config view now uses so that key cannot shadow
+    # a file's legacy `enable_streaming`.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/config.py": 12251,
     "tldw_chatbook/Chat/console_agent_bridge.py": 12088,

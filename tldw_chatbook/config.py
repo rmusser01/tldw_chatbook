@@ -5504,6 +5504,14 @@ top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
+# TASK-33620.10 (owner decision 2026-10-27): Console replies stream for every
+# provider. This key outranks each [api_settings.*] `streaming` value. Older
+# config files get it too (these defaults are merged under every load), unless
+# they set `streaming` here or only the legacy `enable_streaming`. For a server
+# that refuses streamed requests, turn Streaming off for that model (Console's
+# "Save as model default") or provider ([console.provider_defaults.<provider>]
+# streaming = false); both outrank this key.
+streaming = true
 
 # Console transcript view pruning: when the transcript's virtual height (in
 # terminal rows) exceeds prune_high_watermark, the oldest message rows are
@@ -6680,6 +6688,38 @@ except tomllib.TOMLDecodeError as e:
     DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
 
 
+def _merge_user_config_over_shipped_defaults(
+    user_config: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Deep-merge one raw user config over the shipped template.
+
+    Every published view of the config (bootstrap load, post-write install,
+    atomic snapshot) is built here, so they agree. TASK-33620.10: the
+    template's ``[chat_defaults] streaming = true`` must not shadow a user's
+    legacy ``enable_streaming``, which is read only when the user's file has no
+    ``streaming``. When the file holds the legacy key alone, the template's
+    ``streaming`` is left out of the merged view and readers bridge the legacy
+    value as before.
+
+    Args:
+        user_config: The user's raw (parsed, migrated) config file.
+
+    Returns:
+        A new merged mapping; neither input is modified.
+    """
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(user_config))
+    user_chat_defaults = user_config.get("chat_defaults")
+    if (
+        isinstance(user_chat_defaults, Mapping)
+        and "enable_streaming" in user_chat_defaults
+        and "streaming" not in user_chat_defaults
+    ):
+        merged_chat_defaults = merged.get("chat_defaults")
+        if isinstance(merged_chat_defaults, dict):
+            merged_chat_defaults.pop("streaming", None)
+    return merged
+
+
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
@@ -7098,7 +7138,7 @@ def _load_cli_config_bootstrap_unlocked(
         _CONFIG_SCHEMA_CONFLICT = _schema_conflict
         if _schema_conflict is not None:
             logger.warning(_schema_conflict)
-        loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
+        loaded_config = _merge_user_config_over_shipped_defaults(user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
         decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
         if decryption.succeeded:
@@ -7796,7 +7836,7 @@ def _install_bootstrap_cache_from_raw(
 
     if config_path is None:
         config_path = _get_effective_config_path()
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
+    merged = _merge_user_config_over_shipped_defaults(raw_config)
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         return None
@@ -8013,7 +8053,7 @@ def _atomic_config_values_from_raw(
 ) -> Dict[str, Any]:
     """Merge and decrypt the exact raw mapping already read under the write lock."""
 
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(config_data))
+    merged = _merge_user_config_over_shipped_defaults(config_data)
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         raise ValueError("Authoritative configuration could not be decrypted")
