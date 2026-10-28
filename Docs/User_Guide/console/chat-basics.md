@@ -23,8 +23,9 @@ task...".
 ![Transcript with a selected assistant message and its action row](../images/console/action-row.svg)
 
 - **Transcript** — the scrolling center pane. Each message shows a role label
-  (User / Assistant / System / Tool) and the message body; replies still in
-  flight carry a status suffix such as "[streaming]".
+  (User / Assistant / System / Tool) and the message body. A reply still in
+  flight says so after its role label: "Generating…" until its first text
+  arrives, then "Streaming…".
 - **Selected message + action row** — clicking a message (or moving to it
   with j/k) selects it and shows a row of action buttons directly beneath
   it, plus a one-line guide that names the row's icon buttons in words —
@@ -450,21 +451,52 @@ statistics tools.
   the sent text leaves that tab's draft; anything you typed after it stays.
   Switching away and straight back while it is being sent does not bring it
   back either.
-- The reply row then appears with a dim "Generating…" placeholder and streams
-  in with a "[streaming]" suffix until it completes.
+- The reply row then appears. Until its first text arrives, the label after
+  "Assistant" reads "Generating…" with the time waited, for example
+  "Generating… · 4s". After 15 seconds with no text it reads "Waiting for a
+  reply · 15s"; a local model adds "model may be loading". Replies stream by
+  default for every provider, cloud and local: the text appears as it
+  arrives, the label reads "Streaming…", and the label goes away when the
+  reply completes.
+- **Turning streaming off.** Streaming is on unless you turn it off. The
+  shipped `[chat_defaults] streaming = true` applies to every provider and
+  overrides any `streaming` value under `[api_settings.<provider>]`. A
+  `config.toml` written by an older version streams too, unless its
+  `[chat_defaults]` sets `streaming` or only the older `enable_streaming`
+  key. Turn it off for:
+  - **one chat**: in Chat settings set **Streaming** to **Off** and press
+    **Apply to this chat**;
+  - **one model**: set **Streaming** to **Off** and press **Save as model
+    default**, in Chat settings or in Switch model (**Alt+M**), or set it
+    in **Settings ▸ Providers & Models ▸ Model defaults**;
+  - **one provider**: add `streaming = false` under
+    `[console.provider_defaults.<provider>]` in `config.toml` (for example
+    `[console.provider_defaults.custom]`);
+  - **every chat**: set **Streaming** to **Off** in **Settings ▸ Console
+    Behavior** and save.
+
+  The model and provider settings take priority over the setting for every
+  chat. A server that refuses streamed requests fails the reply, and the
+  System row quotes the server's own error message; turn streaming off for
+  that model or provider and send again. A llama.cpp
+  server that refuses a streamed request, or answers one with no text, is
+  retried once without streaming on its own. With streaming off, the reply
+  appears all at once when the provider finishes, and the label shows the
+  time waited until then.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
   run.") appears at the right end of the composer row, after Dictate and
   Redirect; the collapsed composer strip gets its own Stop. The keyboard
   routes stop the same run: **Ctrl+G** (advertised in the footer only while a
   run is active), **Tab** to Stop then **Enter** or **Space**, `/stop`, or
-  **Ctrl+P → Console: Stop this tab's run**. Stopping keeps the partial
-  reply, tagged "[stopped]", and adds a System row: "Response stopped by
-  user."
+  **Ctrl+P → Console: Stop this tab's run**. Stopping keeps the text that
+  has already streamed in, marks the reply "Stopped", and adds a System row:
+  "Response stopped by user." A reply that is not streaming has no text
+  until it completes, so stopping it keeps none.
 - **Redirect** shows beside Stop only where the row has room for it whole;
   at narrower widths use `/redirect <correction>` or **Ctrl+P → Console:
   Redirect this tab's run** (both take the correction from the composer the
   same way the button does).
-- A reply that errors out is tagged "[failed]", and its action row is a
+- A reply that errors out is marked "Failed", and its action row is a
   single **Try** button that retries it.
 - If you scroll up during or after a run, a pill docks at the bottom of the
   transcript so you can jump back: "▼ streaming below — jump to latest",
@@ -663,14 +695,14 @@ view, including after resizing.
 
 ### Send your first message
 1. Open Console (Ctrl+2) and type into "Ask, command, or paste task...".
-2. Press **Enter**. The reply streams in with "[streaming]"; when it
-   finishes, the suffix disappears. The session title and tab label take
+2. Press **Enter**. The reply streams in under a "Streaming…" label; when
+   it finishes, the label disappears. The session title and tab label take
    the text of your first message.
 
 ### Stop a reply mid-stream
-1. While the reply shows "[streaming]", click **Stop** (the right end of the
+1. While the reply shows "Streaming…", click **Stop** (the right end of the
    composer row) or press **Ctrl+G**.
-2. The partial reply stays, tagged "[stopped]", and a System row reads
+2. The partial reply stays, marked "Stopped", and a System row reads
    "Response stopped by user." Send again to keep the conversation going.
    If you stopped it before any text arrived, select your message and use
    **Resend** to ask again.
@@ -688,7 +720,7 @@ selection without the prompt quote limit. See [text selection & feedback](text-s
 for the scopes, note actions, and terminal clipboard limits.
 
 ### Retry a failed reply
-1. Select the reply tagged "[failed]".
+1. Select the reply marked "Failed".
 2. Click **Retry** or press **r** — the reply is retried in place.
 
 ### Resend a broken turn
@@ -905,7 +937,7 @@ prior exports, or backups. See [Context, RAG, and exchange capture](context-and-
 - **Regenerate goes deeper than this page** — ♻ never overwrites the old
   answer; it creates a variant you can step back to with < >. Details and
   known limitations live in [branching & rewind](branching-and-rewind.md).
-- **A "[failed]" reply's message reports one status, the real one.** The
+- **A "Failed" reply's message reports one status, the real one.** The
   detail text names the HTTP status the provider actually returned — it no
   longer pairs that with a mismatched generic status elsewhere in the same
   message.
