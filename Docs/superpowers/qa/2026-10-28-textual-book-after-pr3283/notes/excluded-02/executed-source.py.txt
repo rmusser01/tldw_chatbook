@@ -1,0 +1,101 @@
+"""Read-only book-audit witnesses; no repair is implemented here."""
+import asyncio
+import json
+from pathlib import Path
+import threading
+import time
+
+import pytest
+from textual import events
+
+from Tests.private_profile import private_profile_test
+from Tests.UI.test_library_export_replace_confirm import _open_note_export, _note_status
+from Tests.UI.test_library_prompt_export_journeys import _save_to
+from Tests.UI.test_library_shell import (
+    LibraryHarness, _active_library_screen, _build_test_app, _open_note_editor,
+    _seed_conversations, _two_conversations, _two_notes, _wait_for_condition,
+    _wait_for_library_shell,
+)
+from tldw_chatbook.UI.Library_Modules import library_file_export
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
+
+
+@pytest.mark.parametrize('held', [False, True], ids=['ordinary', 'held-writer'])
+@private_profile_test
+async def test_note_export_keeps_app_dispatch_available(tmp_path, monkeypatch, request, held):
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_two_notes())
+    # These optional counts are unrelated to the seeded Notes export route.
+    # The app factory leaves unavailable real backends behind them; their
+    # exception formatting exhausted the shared source-snapshot deadline in
+    # diagnostic run01 before either export could be reached.
+    app.study_scope_service = None
+    app.study_quiz_scope_service = None
+    app.prompt_scope_service = None
+    app.skills_scope_service = None
+    host = LibraryHarness(app)
+    app.notify = host.notify
+    destination = tmp_path / 'note.md'
+    entered, release = threading.Event(), threading.Event()
+    dispatch = []
+    timeline = []
+    original_write = library_file_export.write_export_text
+    original_on_event = host.on_event
+    loop = None
+    main_thread = threading.get_ident()
+
+    def mark(event, **detail):
+        timeline.append({'event': event, 'time': time.monotonic(), **detail})
+
+    async def on_event(event):
+        result = await original_on_event(event)
+        if isinstance(event, events.Key) and event.key == 'f12' and not dispatch:
+            before = entered.is_set() and not release.is_set()
+            dispatch.append(before)
+            mark('app-key-dispatched', before_release=before)
+            release.set()
+        return result
+
+    def write(*args, **kwargs):
+        mark('writer-entered', thread=threading.get_ident(), main_thread=main_thread)
+        entered.set()
+        if held:
+            loop.call_soon_threadsafe(host.post_message, events.Key('f12', None))
+            mark('key-posted')
+            if not release.wait(3):
+                mark('watchdog-released-writer')
+                release.set()
+        result = original_write(*args, **kwargs)
+        mark('writer-completed')
+        return result
+
+    monkeypatch.setattr(host, 'on_event', on_event)
+    monkeypatch.setattr(library_file_export, 'write_export_text', write)
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            try:
+                screen = _active_library_screen(host)
+                await _wait_for_library_shell(screen, pilot)
+                await _open_note_editor(screen, pilot)
+                dialog, filename = await _open_note_export(host, screen, pilot)
+                loop = asyncio.get_running_loop()
+                await _save_to(host, dialog, filename, pilot, destination)
+                await _wait_for_condition(pilot, lambda: destination.exists() and host.screen is screen and _note_status(screen) == 'Export complete.', message='Note export did not settle')
+                await host.workers.wait_for_complete()
+                await pilot.pause()
+                text = destination.read_text(encoding='utf-8')
+                assert 'title: Q3 retro' in text
+                assert text.endswith('alpha budget line')
+                assert len([x for x in timeline if x['event'] == 'writer-entered']) == 1
+                assert not list(destination.parent.glob('.*.tmp'))
+                if held:
+                    await _wait_for_condition(pilot, lambda: bool(dispatch), message='App key never dispatched after release')
+            finally:
+                release.set()
+    finally:
+        release.set()
+        receipt = {'held': held, 'timeline': timeline, 'dispatched_before_release': dispatch}
+        (tmp_path / 'note-export-observation.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')
+    if held:
+        assert dispatch == [True], 'Note destination write retained the UI loop: ' + json.dumps(timeline)
