@@ -4922,10 +4922,10 @@ class ConsoleTranscript(VerticalScroll):
             if not self._can_mutate_widget(self):
                 return
             if not self.is_mounted:
-                # The screen may already have cached this projection key.
                 self._refresh_after_mount = True
                 return
-            await self._reconcile_rows(self._transcript_rows())
+            with self.app.batch_update():
+                await self._reconcile_rows(self._transcript_rows())
             if not self._can_mutate_widget(self):
                 return
         if menus:

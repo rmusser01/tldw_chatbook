@@ -46,6 +46,20 @@ Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech control
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
 
+`ConsoleTranscript.refresh_messages()` keeps its awaited row reconciliation inside
+the existing refresh lock and Textual's `App.batch_update()` (TASK-37145). Native
+remove-before-mount teardown can span several repaint opportunities; the batch
+retains the last committed compositor frame until the replacement can commit.
+This closes TASK-33620.5's documented acknowledgement-to-echo residue without
+changing the synthetic acknowledgement or exact store echo identities. The batch
+unwinds on caller cancellation; TASK-34982's `finish_removal` still lets started
+native removal finish independently. Row reuse, ordering and attachment checks
+retain their existing owners. The held-Unmount regression in
+`Tests/UI/test_console_transcript_ack_repaint.py` observes committed headless
+compositor frames and repaint resumption after interval cancellation; it makes
+no terminal-write or natural elapsed-blank-time claim. Runtime/store authority
+remains under ADR-094 and accepted ADR-230; general polling is unchanged.
+
 Project-instruction authority callbacks run directly when already on Textual's owning thread; worker callbacks use `call_from_thread` synchronously. A dispatch confirmation that never becomes answerable is cancelled after its finite notice deadline, preserving the chat's project-instruction preference. Once-mounted decisions retain the existing detached-view pause contract. Unsent-turn Restore/Discard releases only the exact refused turn's paused preparation -- a Library (retrieval) pause, or the destination/persistence pause a card Retry or Send once re-paused into (`SHELF_RELEASABLE_PAUSES`, TASK-33621.20) -- keeping the composer's current draft; newer preparations and authored input remain owned by their own flows. While the turn's transcript card is acting on it, the shelf does not offer it; teardown discards without releasing, because close and shutdown abandon every live preparation. Refusal and unexpected settlement diagnostics record status/error categories without draft, instruction, provider-error or endpoint bodies.
 
 Workspace project guidance (ADR-241) uses the owning run's admitted roots and

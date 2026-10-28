@@ -409,6 +409,28 @@ runs that predated TASK-35710's fix, the TASK-35443 trap below.)
 
 **What to do.** When a read changes its config seam, grep every test file that patches the OLD seam for the same call path, not just the files whose tests went red: a stale patch keeps asserting whatever the real config says, which is a pass by coincidence, not evidence. Patch the seam the code reads (`load_cli_config_and_ensure_existence` since .7), so the test is hermetic.
 
+## An observed one-frame teardown gap is not a repaint guarantee (TASK-37145, 2026-10-28)
+
+**Incident.** PR #3283's unchanged acknowledgement gate recorded four missing-USER
+compositor samples on `cc907deb18`. TASK-33620.5 already documented the native
+remove/mount residue, but its observed one-frame maximum was empirical. A real
+Transcript with production CSS, a real acknowledgement and its exact admitted
+store echo reproduced eight missing compositor commits while the old row's real
+Unmount was held. The replacement projection already contained the echo; early
+acknowledgement release was not the cause. Keeping reconciliation inside Textual's
+native repaint batch retained the last committed acknowledgement frame until the
+echo replacement settled. Stopping the interval mid-removal also allowed another
+control to repaint before the held removal was released.
+
+**What to do.** Observe only the last committed frame during a repaint batch;
+calling `render_strips()` against the suspended intermediate DOM invents a frame
+the app has not published. Record strips at active-screen non-None `_display`
+boundaries, and keep phase, update identity, supplied IDs and row attachment/region
+context for failures. Headless compositor commits are not terminal writes, and
+sample indexes do not establish elapsed blank time. Hold native Unmount, use the
+production interval callback, and always release/drain in `finally`; retain the
+original end-to-end allowance and cancellation-safe `finish_removal` contract.
+
 ## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
 
 **Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. Both versions drove the paint with `app.set_timer(...)`, and in Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. In the first, the removal was not even the timer's: `set_messages` had already queued its own refresh on the transcript's pump, which removed the row first. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.
