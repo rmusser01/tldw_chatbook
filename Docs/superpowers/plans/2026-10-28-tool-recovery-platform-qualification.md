@@ -19,3 +19,9 @@ GREEN: 72 passed, 20 explicit POSIX skips, one existing Pydantic warning, no err
 (141.21s). The extra skip corrects an invalid-output negative control that was
 otherwise falsely passing on unsupported_platform. Independent review found no
 actionable issue. Linux execution remains pending on the committed PR head.
+
+The first Linux job (40741825139) installed the targeted dependencies but exited
+4 during argument parsing: --no-cov requires pytest-cov, which this minimal job
+does not install. No test ran and no JUnit artifact existed. Removed the
+unnecessary coverage-plugin flag instead of adding a dependency; coverage is not
+requested and addopts is explicitly empty. Actual Linux execution remains pending.

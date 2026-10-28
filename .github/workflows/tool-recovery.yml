@@ -49,7 +49,7 @@ jobs:
           Tests/Agents/test_skill_tool_spawn.py::test_skill_tool_executes_after_find_load_discloses_it
           Tests/Agents/test_skill_tool_spawn.py::test_native_spawn_child_cannot_call_a_skill_tool
           Tests/Agents/test_agent_service.py::test_replacement_updates_permission_set_in_lockstep
-          -q --no-cov -o addopts= --timeout=120 --junitxml=tool-recovery-results.xml
+          -q -o addopts= --timeout=120 --junitxml=tool-recovery-results.xml
       - name: Retain targeted test results
         if: always()
         uses: actions/upload-artifact@v4

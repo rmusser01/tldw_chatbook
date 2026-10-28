@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-28 17:57'
-updated_date: '2026-10-28 18:05'
+updated_date: '2026-10-28 18:09'
 labels: []
 dependencies: []
 documentation:
@@ -36,4 +36,6 @@ ADR required: no. ADR path: backlog/decisions/163-expanded-console-hook-runtime.
 
 <!-- SECTION:NOTES:BEGIN -->
 Corrected precise POSIX command-execution expectations under ADR-163 and strengthened repeated native Windows refusal without root/environment/launch/custody access. Native Windows RED: 20 failures and one teardown error, comprising the original 19 plus an incorrect host-restoration assertion in the refusal control. GREEN: 72 passed, 20 explicit POSIX skips, one existing Pydantic warning, no failures or errors in 141.21s. The extra invalid-replacement skip corrects a false positive. Platform-neutral recovery and predispatch controls remain active. Added bounded Linux/Python 3.12 CI for the actual execution, pipeline, native/fenced recovery, skill and replacement controls, with JUnit retention; Linux execution pending. E9/F lint, formatting, workflow parsing and whitespace checks pass. Independent review found no actionable issue. No new ADR or production runtime change: existing ADR-163 and ADR-252 apply.
+
+First Linux job 40741825139 exited 4 during pytest argument parsing because the minimal dependency set has no pytest-cov but the command included --no-cov. No tests executed; no JUnit artifact was produced. Removed the unnecessary plugin flag while retaining empty addopts. Linux product behavior is not yet qualified.
 <!-- SECTION:NOTES:END -->
