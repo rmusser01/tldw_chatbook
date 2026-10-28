@@ -302,15 +302,43 @@ async def test_blocking_quit_persistence_does_not_stall_the_app_loop():
     assert app.events[-1][0] == "exit"
 
 
+class _OneTabStore:
+    """One open Console tab with no draft, attachment or unsaved message."""
+
+    def sessions(self) -> list[SimpleNamespace]:
+        return [SimpleNamespace(id="tab-1", title="Chat 1", pending_attachments=[])]
+
+    def all_messages_for_session(self, _session_id: str) -> list[object]:
+        return []
+
+    def session_draft(self, _session_id: str) -> str:
+        return ""
+
+
 class _ImpactSequenceController:
+    """The quit inventory over one tab whose only loss is lifecycle work.
+
+    Each fleet read (no ``session_id``) takes the next impact; the per-tab read
+    the inventory makes right after it sees that same impact (TASK-33628.1).
+    """
+
     def __init__(self, impacts: list[ConsoleLifecycleImpact]) -> None:
         self.impacts = impacts
         self.calls = 0
+        self.current: ConsoleLifecycleImpact | None = None
+        self.store = _OneTabStore()
 
-    def lifecycle_impact(self) -> ConsoleLifecycleImpact:
-        impact = self.impacts[min(self.calls, len(self.impacts) - 1)]
+    def lifecycle_impact(
+        self, *, session_id: str | None = None
+    ) -> ConsoleLifecycleImpact:
+        if session_id is not None and self.current is not None:
+            return self.current
+        self.current = self.impacts[min(self.calls, len(self.impacts) - 1)]
         self.calls += 1
-        return impact
+        return self.current
+
+    def pending_round_kinds(self, _session_id: str) -> frozenset[str]:
+        return frozenset()
 
 
 class _QuitRuntime:
@@ -327,6 +355,9 @@ class _QuitRuntime:
         self.fail_fence = fail_fence
         self.voice_promotion_owner = _QuitOwner()
         self._voice_promotion_owner = self.voice_promotion_owner
+
+    def recoveries_for_session(self, _session_id: str) -> tuple[object, ...]:
+        return ()
 
     def begin_dispose(
         self,
@@ -425,8 +456,15 @@ async def test_non_console_quit_confirms_console_once_then_fences_before_cleanup
 
     assert screen.calls == ["confirm", "prepare"]
     assert len(app.dialogs) == 1
-    assert "Live agent runs: 1" in app.dialogs[0].message
-    assert "Delegated agents: 2" in app.dialogs[0].message
+    rows = app.dialogs[0].message.splitlines()
+    assert "Live agent runs: 1" in rows
+    assert "Delegated agents: 2" in rows
+    assert 'Affected tabs: "Chat 1"' in rows
+    assert (
+        "Open tabs are not reopened next time. Saved chats stay in the Chats rail."
+        in rows
+    )
+    assert not any(row.endswith(": 0") for row in rows), rows
     assert app.events == ["fence", "cleanup"]
     assert app._shutting_down is True
     assert app.notifications == []
@@ -559,7 +597,8 @@ async def test_app_quit_reconfirms_when_revision_changes_at_the_fence():
     await app._confirm_and_quit()
 
     assert len(app.dialogs) == 2
-    assert "Delegated agents: 0" in app.dialogs[0].message
+    # TASK-33628.1 AC#2: a zero-count row is left out.
+    assert "Delegated agents" not in app.dialogs[0].message
     assert "Delegated agents: 1" in app.dialogs[1].message
     assert app.events == ["fence", "cleanup"]
     assert app.notifications == [
