@@ -337,6 +337,88 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert all(measured_data not in event for event in progress_events)
 
 
+def test_pathlib_collapsed_url_scheme_is_restored_for_video_processor(
+    monkeypatch,
+) -> None:
+    """(task-35080) A URL transported as ``Path(url)`` keeps its meaning.
+
+    The local-STT lane hands URL jobs to the worker as
+    ``FileAudioSource(Path(job.source_path))``; ``str(Path(...))`` collapses
+    ``https://`` to ``https:/``. That mangled string misclassifies as an
+    article (``urlparse`` sees no hostname) and the article arm's egress
+    guard rejects it ("Egress blocked (scheme) for <invalid-url>") -- which
+    the STT lane reports as ``inference_failed``. The pipeline must restore
+    the scheme separator before classifying the source.
+    """
+    original_url = "https://www.youtube.com/watch?v=wtTd8PJPMVg"
+    collapsed_source = Path(original_url)
+    assert str(collapsed_source) == "https:/www.youtube.com/watch?v=wtTd8PJPMVg"
+
+    video_calls: list[Dict[str, Any]] = []
+    article_calls: list[str] = []
+
+    class _StubVideoProcessor:
+        def __init__(self, media_db=None, transcription_runner=None):
+            self.media_db = media_db
+
+        def process_videos(self, **kwargs):
+            video_calls.append(kwargs)
+            return {
+                "results": [
+                    {
+                        "status": "Success",
+                        "content": "Video transcript",
+                        "metadata": {"title": "Video", "author": "Unknown"},
+                        "chunks": [],
+                        "analysis": "",
+                    }
+                ]
+            }
+
+    def _stub_extract_article(raw_source, options, url_provenance=None):
+        article_calls.append(raw_source)
+        return {
+            "url": raw_source,
+            "error": None,
+            "content": "Article text",
+            "title": "Article",
+        }
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.local_file_ingestion.LocalVideoProcessor",
+        _StubVideoProcessor,
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.Local_Ingestion.web_article_ingestion.extract_article_for_ingest",
+        _stub_extract_article,
+    )
+    # Config-default loading is incidental to the behavior under test and
+    # drags in the config bootstrap (deferred import from ..config); keep
+    # this test hermetic by patching at the source module.
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_media_ingestion_defaults",
+        lambda media_type: {},
+    )
+
+    parse_local_file_for_ingest(
+        collapsed_source,
+        {
+            "transcription_provider": "faster-whisper",
+            "transcription_model": "base",
+            "language": "en",
+            "transcription_precision": "int8",
+            "transcription_local_files_only": True,
+            "transcription_batch_route_resolved": True,
+            "timestamps": True,
+            "diarization": False,
+        },
+    )
+
+    assert article_calls == []
+    assert len(video_calls) == 1
+    assert video_calls[0]["inputs"] == [original_url]
+
+
 @pytest.mark.parametrize(
     ("metadata", "expected"),
     (
