@@ -308,6 +308,14 @@ class TerminalViewport(Static):
             return
         _consume(event)
 
+    def on_focus(self) -> None:
+        """Re-state who owns the keyboard once the viewport really has focus."""
+        self._notify_workspace()
+
+    def on_blur(self) -> None:
+        """TASK-33622.5: never claim terminal input while keys go elsewhere."""
+        self._notify_workspace()
+
     def on_mouse_scroll_up(self, event: Any) -> None:
         self.release_input()
         self.scroll_up()
@@ -628,6 +636,14 @@ class ConsoleTerminalWorkspace(Static):
             status = self._controller_status
         elif viewport.status_text:
             status = viewport.status_text
+        elif self._selected_session_id is None:
+            # TASK-33622.5: with no session there is no input to release.
+            status = ""
+        elif not viewport.has_focus:
+            # TASK-33622.5: `input_focused` is the viewport's own mode, not
+            # Textual focus; the status claimed the shell had the keyboard
+            # while keys were going to the chat composer.
+            status = "Focus or click the terminal to type in it"
         elif viewport.input_focused:
             status = "Ctrl+] Release input"
         else:

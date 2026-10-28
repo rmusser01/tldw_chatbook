@@ -1911,6 +1911,15 @@ release input into local keyboard scrollback; line/page/oldest navigation and
 **Jump live** stay local and are not forwarded. Mouse reporting is not
 supported in this version.
 
+While the Terminal fills the Console center, the chat composer is collapsed
+out of view and takes no keys, and the footer lists the Terminal's keys
+(**Ctrl+]** release input, **F6**/**Shift+F6** panes, **F1** help, **Ctrl+P**
+palette) instead of the chat send. Confirming **Arm Terminal** puts focus on
+**New**, and a session you create is selected and gets your typing straight
+away, even when other sessions exist. **F6** moves between the Terminal and the
+rails. The line under the terminal says so when the terminal does not have the
+keyboard. **Return to transcript** brings the chat and its composer back.
+
 Close, Disarm, and shutdown perform bounded best-effort process cleanup and
 show when cleanup cannot be proven; deliberately detached processes may
 survive. macOS/Linux use an admitted controlling PTY. Windows Terminal support

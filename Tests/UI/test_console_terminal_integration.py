@@ -571,3 +571,170 @@ async def test_unarmed_terminal_replaces_only_center_and_return_restores_transcr
         assert backends == []
 
     manager.finalize_shutdown()
+
+
+def _drain_terminal_input(manager: TerminalSessionManager, session_id: str) -> bytes:
+    """Return every input byte the session's actor has queued, in order."""
+    received = b""
+    while (event := manager.take_input(session_id)) is not None:
+        received += event.data
+    return received
+
+
+def _composer_draft(console: ChatScreen) -> str:
+    return console.query_one("#console-native-composer").draft_text()
+
+
+def _focused_in_terminal_workspace(console: ChatScreen) -> bool:
+    focused = console.app.focused
+    workspace = console.query_one("#console-main-column")
+    return (
+        isinstance(workspace, ConsoleTerminalWorkspace)
+        and focused is not None
+        and (focused is workspace or workspace in focused.ancestors)
+        and focused.display
+    )
+
+
+async def _create_session_through_new_modal(console: ChatScreen, pilot) -> None:
+    """Press New and Create exactly as the user does, through the real modal."""
+    assert await pilot.click("#console-terminal-new")
+    await _wait_for_selector(pilot.app.screen, pilot, "#console-terminal-session-save")
+    assert await pilot.click("#console-terminal-session-save")
+
+
+@pytest.mark.asyncio
+async def test_arm_and_create_hand_the_keyboard_to_the_new_terminal_session(
+    tmp_path: Path,
+) -> None:
+    """TASK-33622.5 AC#1/#3/#4/#5: after Arm and New, typing reaches the shell.
+
+    On dev the Arm dialog and the New modal both returned focus to the chat
+    composer, so typed shell commands became a chat draft (and Enter sent
+    them to the model) while the footer still offered "Enter send / queue".
+    """
+    app, manager, backends = _terminal_app(permitted=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-terminal-open")
+        draft_before = _composer_draft(console)
+
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(console, pilot, "#console-terminal-arm")
+        assert await pilot.click("#console-terminal-arm")
+        await _wait_for_selector(pilot.app.screen, pilot, "#confirm-button")
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, lambda: manager.armed is True)
+
+        # AC#3: confirming Arm keeps focus in the Terminal center.
+        await _wait_until(
+            pilot,
+            lambda: _focused_in_terminal_workspace(console)
+            and pilot.app.focused.id == "console-terminal-new",
+            detail=lambda: pilot.app.focused,
+        )
+
+        await _create_session_through_new_modal(console, pilot)
+        await _wait_until(pilot, lambda: len(manager.projections()) == 1)
+        session_id = manager.projections()[0].session_id
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        # AC#1: the new session is selected and its viewport owns the keys.
+        await _wait_until(
+            pilot,
+            lambda: manager.selected_session_id == session_id
+            and pilot.app.focused is viewport,
+            detail=lambda: (manager.selected_session_id, pilot.app.focused),
+        )
+        assert backends[0].started[0][0].name
+
+        await pilot.press("e", "c", "h", "o", "space", "h", "i", "enter")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, session_id) == b"echo hi\r"
+        assert _composer_draft(console) == draft_before
+        assert pilot.app.focused is viewport
+
+        # AC#4: the composer is collapsed out of view and takes no keys, and
+        # the footer names Terminal keys instead of the chat send.
+        composer = console.query_one("#console-native-composer")
+        assert composer.display is False
+        assert composer.focusable is False
+        source, shortcuts = console._footer_shortcut_registration
+        keys = [shortcut[0] for shortcut in shortcuts]
+        assert source == "console"
+        assert "Ctrl+]" in keys
+        assert "Enter" not in keys
+        assert "Y" not in keys
+
+        # The release chord parks the viewport; printable keys must not
+        # tunnel into the hidden composer from there either.
+        await pilot.press("ctrl+right_square_bracket")
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert _composer_draft(console) == draft_before
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_creating_another_terminal_session_selects_and_focuses_it(
+    tmp_path: Path,
+) -> None:
+    """TASK-33622.5 AC#2: Terminal 2 takes the keys, not the older Terminal 1."""
+    app, manager, _backends = _terminal_app(permitted=True)
+    first_id = _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-terminal-open")
+        composer = console.query_one("#console-native-composer")
+        # Let the Console's activation focus restore (refresh + 0.2 s timer)
+        # land first, so this test measures the create path, not that race.
+        await _wait_until(pilot, lambda: pilot.app.focused is composer)
+        await pilot.pause(0.3)
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is viewport,
+            detail=lambda: pilot.app.focused,
+        )
+        assert manager.selected_session_id == first_id
+        draft_before = _composer_draft(console)
+
+        await _create_session_through_new_modal(console, pilot)
+        await _wait_until(pilot, lambda: len(manager.projections()) == 2)
+        second_id = next(
+            projection.session_id
+            for projection in manager.projections()
+            if projection.session_id != first_id
+        )
+        await _wait_until(
+            pilot,
+            lambda: manager.selected_session_id == second_id
+            and pilot.app.focused is viewport,
+            detail=lambda: (manager.selected_session_id, pilot.app.focused),
+        )
+        await pilot.press("l", "s")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, second_id) == b"ls"
+        assert _drain_terminal_input(manager, first_id) == b""
+        assert _composer_draft(console) == draft_before
+
+        # F6 leaves the Terminal and Shift+F6 comes back to it: the center
+        # pane is the Terminal while it owns the center.
+        await pilot.press("f6")
+        await pilot.pause()
+        assert pilot.app.focused is not viewport
+        await pilot.press("shift+f6")
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is viewport,
+            detail=lambda: pilot.app.focused,
+        )
+
+    manager.finalize_shutdown()

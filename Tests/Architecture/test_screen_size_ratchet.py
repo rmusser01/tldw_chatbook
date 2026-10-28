@@ -216,7 +216,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24329 -> 24386 (methods unchanged) 2026-10-27 by TASK-33622.5,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the Terminal center
+    #: becomes a focus owner -- branches in the existing focus restore, pane
+    #: and target lookups, footer, input capture and composer-focus paths,
+    #: plus the Terminal footer constant. The logic lives in
+    #: Console_Modules/terminal.py (owns_widget, focus_target_ids,
+    #: sync_terminal_center_chrome). Rebased 2026-10-29 onto dev 3efe8476ce,
+    #: which measures 24329/737; with the fix, 24386/737, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24386, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
