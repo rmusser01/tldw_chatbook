@@ -1,7 +1,7 @@
 ---
 id: TASK-37268
 title: Keep Library note export writes off the UI loop
-status: To Do
+status: In Progress
 created_date: 2026-10-28 22:10
 labels:
 - textual-patterns
@@ -12,6 +12,9 @@ references:
 - tldw_chatbook/UI/Library_Modules/library_file_export.py
 - tldw_chatbook/UI/Library_Modules/library_notes_controller.py
 - tldw_chatbook/UI/Screens/library_screen.py
+assignee:
+- '@codex'
+updated_date: 2026-10-28 23:03
 ---
 
 ## Description
@@ -35,6 +38,20 @@ The book's Chapters 7/17 motivate background synchronous I/O; it is reference da
 - [ ] #3 Existing-file Replace confirmation, cancellation, no-clobber protection, write-failure feedback, export-format fidelity and operation-scoped result/focus behavior retain their established outcomes.
 - [ ] #4 Mounted private-profile controls exercise the actual Notes export picker and atomic writer with ordinary and held-writer cases, verifying dispatch and output after all holds and work drain.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no.
+ADR path: N/A (existing ADR-033/036/031).
+Reason: bounded Notes write scheduling preserves existing file/format, operation, service and screen ownership.
+1. Read TASK-37268, Notes/Prompt export seams, existing operation/collision guards, audit controls and related UI/testing docs.
+2. Promote real Notes picker/Replace dispatch tests with ordinary and held atomic writes; prove intended RED after real source readiness, source preservation and exact output.
+3. Admit captured Notes writes through native workers, offload synchronous destination work, and keep errors/collisions/results under existing UI operation custody.
+4. Verify GREEN, precious-file Replace/Cancel/late-collision, failure/retry and scoped result tests, neighboring exports and applicable static/diagnostic/governance checks; update Library architecture evidence.
+5. Root commits exact owned changes, obtains independent spec/quality review, enrolls gates, and closes ACs/notes/status only after verified completion.
+Full plan: Docs/superpowers/plans/2026-10-28-textual-37266-37268.md.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 

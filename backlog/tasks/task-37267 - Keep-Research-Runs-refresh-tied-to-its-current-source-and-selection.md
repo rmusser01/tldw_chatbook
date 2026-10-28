@@ -1,7 +1,7 @@
 ---
 id: TASK-37267
 title: Keep Research Runs refresh tied to its current source and selection
-status: To Do
+status: In Progress
 created_date: 2026-10-28 22:10
 labels:
 - textual-patterns
@@ -11,6 +11,9 @@ priority: medium
 references:
 - tldw_chatbook/UI/Research_Window.py
 - tldw_chatbook/UI/Research_Modules/research_controller.py
+assignee:
+- '@codex'
+updated_date: 2026-10-28 23:02
 ---
 
 ## Description
@@ -35,6 +38,20 @@ Book asynchronous-publication patterns, actual native-timer observations, real l
 - [ ] #4 Normal nonterminal Local refresh continues to update current progress and preserve payload state; terminal and Server selections retain their existing skip behavior.
 - [ ] #5 Targeted mounted controls hold the actual scope/service return, prove selection/source changes occurred before release, and verify final state with every hold released inside the App lifetime.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no.
+ADR path: N/A (existing ADR-033/068/070/078).
+Reason: bounded Research Runs view-publication fix preserving independent Workspace, service executor, storage and runtime ownership.
+1. Read TASK-37267, native timer/source/selection consumers, audit controls and applicable architecture/testing docs.
+2. Promote actual service-return/native interval tests; prove intended RED for newer run selection, source changes and stale detail, plus source away-and-back applicability.
+3. Keep late timer results bound to the current window owner and explicitly clear source-departed detail; preserve controller cache contracts absent a concrete consumer need.
+4. Verify GREEN and targeted Research progress/payload/terminal/source/controller controls plus scoped static checks; update Research architecture evidence.
+5. Root commits exact owned changes, obtains independent spec/quality review, enrolls gates, and closes ACs/notes/status only after verified completion.
+Full plan: Docs/superpowers/plans/2026-10-28-textual-37266-37268.md.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
