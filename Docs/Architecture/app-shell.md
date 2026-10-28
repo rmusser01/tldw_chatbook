@@ -39,6 +39,22 @@ App-level state includes the DB handles (`media_db`, `prompts_db`, `subscription
 
 ## Navigation system
 
+### Bug report action
+
+`TldwCli.action_report_bug()` defers opening until palette dismissal and owns one
+`Widgets/bug_report_dialog.py::BugReportDialog`. Quick Actions search/discovery,
+`UI/Logs_Window.py`, and canonical Settings About call the same action without
+navigation. Duplicate requests focus the current report. The modal uses shared
+safe-dismiss/focus and quit-discard contracts; no draft is persisted.
+
+`Utils/bug_report_capture.py` freezes existing runtime/workspace/session owners,
+then collects bounded evidence off the loop without Console initialization.
+Timed-out thread tasks remain app-owned until retirement, including across
+close/reopen. `Utils/bug_report.py` renders and validates the exact edited
+clipboard candidate. Changed sanitization requires another review; client
+clipboard requests have no delivery acknowledgement. See
+[ADR-252](../../backlog/decisions/252-bug-report-evidence-and-sharing.md).
+
 Three layers resolve a route string to a screen:
 
 1. **Destinations** (`shell_destinations.py`) — 13 shell destinations in strip order (home, console, library, personas, watchlists_collections, schedules, workflows, acp, lab, logs, settings, research, meetings). Artifacts (ADR-172) and MCP (ADR-240) are retired from the strip: their routes alias Library and Settings respectively, and ctrl+6/ctrl+9 survive as compatibility deep-links. `_ROUTE_MAP` folds legacy route names at import time; unknown routes resolve to themselves.

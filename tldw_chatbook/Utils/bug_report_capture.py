@@ -60,6 +60,7 @@ def capture_bug_report_context(app: TldwCli) -> BugReportContext:
         identity.active_source == "local"
         and session is not None
         and getattr(session, "workspace_id", None) == workspace
+        and not getattr(getattr(app, "screen", None), "_shared_trace", False)
     )
     return BugReportContext(
         identity,

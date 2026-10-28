@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Iterable, NamedTuple
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, HorizontalScroll
 from textual.timer import Timer
 from textual.widgets import Button, Input, RichLog, Static
 from rich.text import Text
@@ -267,7 +267,7 @@ class LogsWindow(Container):
             max_lines=MAX_LOG_RECORDS,
         )
         yield Static("", id="logs-status-line")
-        with Horizontal(id="logs-action-bar"):
+        with HorizontalScroll(id="logs-action-bar"):
             yield Button(
                 "Copy visible logs",
                 id="copy-visible-logs-button",
@@ -279,6 +279,7 @@ class LogsWindow(Container):
                 id="copy-logs-button",
                 classes="logs-action-button",
             )
+            yield Button("Report a bug…", id="report-bug-button", classes="logs-action-button")
 
     # ------------------------------------------------------------------
     # Data intake
@@ -709,6 +710,11 @@ class LogsWindow(Container):
             self._render_view()
         else:
             self._update_status_line()
+
+    @on(Button.Pressed, "#report-bug-button")
+    def _report_bug(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app_instance.action_report_bug()
 
     @on(Button.Pressed, "#copy-visible-logs-button")
     def _on_copy_visible(self) -> None:

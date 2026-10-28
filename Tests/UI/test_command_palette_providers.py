@@ -713,7 +713,7 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.discover():
             hits.append(hit)
 
-        assert len(hits) == 5  # Popular actions defined in discover method
+        assert len(hits) == 6  # Includes Report a bug.
         action_names = [hit.text for hit in hits]
         assert any("New Chat" in name for name in action_names)
         assert any("New Note" in name for name in action_names)
@@ -727,7 +727,7 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
 
-        assert len(hits) == 6  # All actions defined in search method
+        assert len(hits) == 7  # Includes Report a bug.
         action_texts = [hit.text for hit in hits]
         assert any("New Chat Conversation" in text for text in action_texts)
         assert any("Import Media" in text for text in action_texts)

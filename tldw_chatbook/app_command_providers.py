@@ -495,6 +495,12 @@ FOCUS_TOGGLE_PALETTE_ENTRY = (
     "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
 )
 
+BUG_REPORT_PALETTE_ENTRY = (
+    "Quick Actions: Report a bug…",
+    "report_bug",
+    "Describe an issue, review retained diagnostics and copy a report",
+)
+
 
 class QuickActionsProvider(Provider):
     """Provider for quick action commands."""
@@ -529,6 +535,7 @@ class QuickActionsProvider(Provider):
                 "Search across all content",
             ),
             FOCUS_TOGGLE_PALETTE_ENTRY,
+            BUG_REPORT_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in quick_actions:
@@ -560,6 +567,7 @@ class QuickActionsProvider(Provider):
                 "Import a new media file for processing",
             ),
             FOCUS_TOGGLE_PALETTE_ENTRY,
+            BUG_REPORT_PALETTE_ENTRY,
         ]
 
         for command_text, action_id, help_text in popular_actions:
@@ -598,6 +606,8 @@ class QuickActionsProvider(Provider):
                 )
             elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
                 self.app.action_toggle_focus_mode()
+            elif action_id == BUG_REPORT_PALETTE_ENTRY[1]:
+                self.app.action_report_bug()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 

@@ -4,6 +4,24 @@ This document describes the Console (`chat` destination): the screen layout, the
 
 ## Authoritative files
 
+Bug reports ([ADR-252](../../backlog/decisions/252-bug-report-evidence-and-sharing.md))
+consume retained Console evidence through `Utils/bug_report_capture.py`, without
+initializing a Console or loading a whole Trace snapshot. The bounded repository
+`read_report_event_tail()` respects attached lineage and inherited fences;
+`CharactersRAGDB.get_report_trajectory_tail()` and
+`AgentRunsDB.get_report_event_tail()` return metadata only. At most 1,500 source
+candidates become 500 exported facts, preserving each source's causal order and
+disclosing unknown cross-source chronology.
+
+Optional fields use `ConsoleTraceNativeReader.read_report_tool_fields()` and
+`project_semantic_revision_trace_tool_fields()` with immutable source ownership,
+policy and masks. Unsupported, purged, oversized or unverifiable tool bodies stay
+unavailable. No image/attachment/provider-exchange reconstruction is needed.
+Current local session/workspace selection is frozen; imported shared Trace views
+provide no automatic local Console evidence. App-wide logs remain a separate,
+explicitly labelled source. Report content receives diagnostic redaction again,
+including when source capture had PII redaction off.
+
 | Layer | File | Key symbols |
 | --- | --- | --- |
 | Screen (view) | `UI/Screens/chat_screen.py` | `ChatScreen`, `compose_content()`, `_build_console_center()`, the 0.2 s transcript sync timer |
