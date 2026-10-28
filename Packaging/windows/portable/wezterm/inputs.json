@@ -1,0 +1,40 @@
+{
+  "source": {
+    "version": "20240203-110809-5046fc22",
+    "filename": "wezterm-source.tar.gz",
+    "url": "https://github.com/wezterm/wezterm/releases/download/20240203-110809-5046fc22/wezterm-20240203-110809-5046fc22-src.tar.gz",
+    "sha256": "df60b1081d402b5a9239cc4cef16fc699eab68bbbeac9c669cb5d991a6010b2c",
+    "checksum_source": "https://github.com/wezterm/wezterm/releases/download/20240203-110809-5046fc22/wezterm-20240203-110809-5046fc22-src.tar.gz.sha256"
+  },
+  "rustc": {
+    "version": "1.75.0",
+    "filename": "rustc-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "url": "https://static.rust-lang.org/dist/rustc-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "sha256": "712afbde1c526937d3d7fe10f489cd1e5d74822bd0518669971e36dfd7c5c089"
+  },
+  "cargo": {
+    "version": "1.75.0",
+    "filename": "cargo-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "url": "https://static.rust-lang.org/dist/cargo-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "sha256": "0a19cf3b5d72287f4ae996c1329be03b929d72f795bc6f275dc22100cf3c096c"
+  },
+  "rust-std": {
+    "version": "1.75.0",
+    "filename": "rust-std-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "url": "https://static.rust-lang.org/dist/rust-std-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "sha256": "209d3dac44e91dc8070604f545010d477c95afd30c0e96c3f2eeb10c6fe85070"
+  },
+  "rustfmt": {
+    "version": "1.75.0",
+    "filename": "rustfmt-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "url": "https://static.rust-lang.org/dist/rustfmt-1.75.0-x86_64-pc-windows-msvc.tar.xz",
+    "sha256": "63db20d7ba7de48129b24618ad0b2825f429c766973a6d84665bb3b116a84d7d"
+  },
+  "perl": {
+    "version": "5.38.4.1",
+    "filename": "strawberry-perl-5.38.4.1-64bit-portable.zip",
+    "url": "https://github.com/StrawberryPerl/Perl-Dist-Strawberry/releases/download/SP_53841_64bit/strawberry-perl-5.38.4.1-64bit-portable.zip",
+    "sha256": "207e359c94c1431e618a4fb0ea54d810ef70b040abd71b9e31862146932b14b7",
+    "checksum_source": "https://api.github.com/repos/StrawberryPerl/Perl-Dist-Strawberry/releases/tags/SP_53841_64bit"
+  }
+}

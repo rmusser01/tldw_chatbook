@@ -1,5 +1,8 @@
 tldw_chatbook/Backup_Recovery/age_worker.py text eol=lf
 
+# Native build provenance hashes this patch's exact bytes on Windows too.
+Packaging/windows/portable/wezterm/portable-roots.patch text eol=lf whitespace=-blank-at-eol
+
 # Canvas manifests verify these exact packaged bytes across platforms.
 tldw_chatbook/Canvas/static/MERMAID_THIRD_PARTY_LICENSES.txt -text
 tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt -text
