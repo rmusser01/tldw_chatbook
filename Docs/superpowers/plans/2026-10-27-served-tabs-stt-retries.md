@@ -68,3 +68,11 @@ Files: STT/parakeet_onnx.py, executor.py, executor_worker.py and a small typed d
 - Added only aiohttp-jinja2 (already a textual-serve runtime dependency) to the seven matching lane install commands and their two exact pins. No test targets, timeouts, shard assignments, budgets or production requirements changed. This is routine CI provisioning; no new ADR required.
 - Built a scratch environment from the updated minimal install list (pytest 9.2.0). All 184 focused web/STT/retry/startup and CI-contract checks passed; four existing aiohttp warnings. Scoped Ruff, changed-range formatting and whitespace pass. Both feature commits remain range-diff equivalent after rebasing onto dev 323cf5d9e7.
 - Fresh independent review found no issues. Current-head Linux CI, including every UI shard under the shared dependency environment, must pass before merge.
+
+## CI readiness-test precondition follow-up
+
+- Linux UI shard 3 passed 175 cases and failed the stale-proof helper regression before fault injection because delayed mount work had already enabled its ready connection.
+- Reproduced that exact assertion by selecting the ready connection through the real helper before the old mount-block check. The corrected case explicitly establishes readiness before injecting expiry, retaining the helper-task deferred-then-rendered sync and enabled-Send checks.
+- Final targeted case passed in the minimal pytest 9 lane environment. An in-memory mutation that returns after a deferred sync failed at the intended assertion with syncs=[False]; no helper source was changed. Fresh independent review found no issues. Ruff, changed-range formatting and whitespace pass.
+- The broader Windows file run was 13 passed, 4 failed, including a passing modified case. The untouched lock case assumed a mount block; three untouched send cases were refused by trace capture. Those cases passed Linux CI. The always-ready gateway makes a missing-key fixture ineffective for the lock case, so that experiment was removed and its existing coverage retained. These local limitations are reported without changing unrelated behavior.
+- No production code, helper implementation, timeout, budget or shard change; no new ADR required. All required new-head Linux checks must pass before merge.

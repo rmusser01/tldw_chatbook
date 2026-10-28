@@ -423,12 +423,13 @@ async def test_select_llamacpp_console_renders_after_its_readiness_proof_goes_st
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # The delayed mount replay may already have made this selection ready.
+        # Establish that state before expiring its proof; the helper's own
+        # deferred-then-rendered syncs below prove recovery independently.
+        await _select_llamacpp_console(console)
         send = console.query_one("#console-send-message", Button)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        # The block itself, not ``send.disabled``: see the lock-hold test above.
-        assert composer._send_blocked, (
-            f"no mount-time block for the helper to lift: {send.tooltip!r}"
-        )
+        assert not composer._send_blocked
         warm = ConsoleReadinessConfigProjection.warm
         late: list[bool] = []
         # The helper runs in this task; the context snapshot warms from workers.

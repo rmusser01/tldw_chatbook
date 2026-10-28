@@ -1,5 +1,12 @@
 # Lessons: what counts as evidence a change works
 
+## A mount-time assertion can expire before the regression acts (TASK-37143, 2026-10-27)
+
+**Incident.** PR #3282's Linux UI shard passed 175 cases but stopped a stale-readiness-proof regression at its assumption that the composer was still mount-blocked. Delayed product work had already enabled its valid connection. Explicitly selecting that ready connection reproduced the old assertion. Establishing readiness before injecting expiry fixed the case while preserving its own helper-task sync checks. An in-memory early-return mutation still failed with syncs=[False], proving that an already-enabled Send button cannot make the test vacuous.
+
+**What to do.** Establish the state the regression actually needs, then assert its action's outcome. When removing a timing-dependent precondition, use a mutation to prove the remaining assertions still reject the original defect. Keep broader local failures visible instead of describing a passing target as a green file.
+
+
 ## Required regressions need their lane's dependency set (TASK-37143, 2026-10-27)
 
 **Incident.** The new served-tab regressions passed locally, but PR #3282's Fast Lane failed 17 cases in the real app factory with `ModuleNotFoundError: aiohttp_jinja2`; 3217 other cases passed. The developer environment had the web runtime helper, while the lane installed only the base package and test tools. Adding the existing web helper to the shared lane install and its exact pins, then building a fresh environment from that list (pytest 9.2.0), passed all 184 affected regression and CI-contract checks. No test was skipped to hide the missing setup.
