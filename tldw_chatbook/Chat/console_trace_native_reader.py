@@ -109,7 +109,7 @@ class ConsoleTraceNativeReader:
                 rows = cursor.execute("SELECT conversation_id FROM console_trace_owners WHERE root_segment_id = ?", (owned_segment,)).fetchall()
                 allowed_conversations.update(str(row[0]) for row in rows)
             for event in reversed(events[:max_fields]):
-                if event.event_type not in {"tool_call", "tool_result"}:
+                if event.event_type not in {"tool_call", "tool_result", "surface_append"}:
                     continue
                 unavailable = {"event_key": event.event_id, "unavailable": "governed_tool_field_unavailable"}
                 try:
@@ -120,15 +120,39 @@ class ConsoleTraceNativeReader:
                     current = self.repository._get_event(cursor, event.event_id)
                     if current != event:
                         raise ValueError("report tool reference changed")
-                    call = self.repository.get_call(cursor, event.call_id or "")
+                    kind = event.event_type
+                    revision_id, artifact_id = event.semantic_revision_id, event.artifact_id
+                    call_id = event.call_id
+                    if kind == "surface_append":
+                        node = self.repository.get_surface_node(cursor, event.surface_node_id or "")
+                        if node is None or node.segment_id != event.segment_id:
+                            raise ValueError("report tool surface unavailable")
+                        kind = node.component_kind
+                        if kind not in {"tool_call", "tool_result"}:
+                            continue
+                        # Live capture reserves the call before appending its
+                        # surface delta. Never borrow a later call's policy.
+                        boundary = cursor.execute(
+                            """SELECT call_id FROM console_trace_events
+                               WHERE segment_id = ? AND event_type = 'call_boundary'
+                                 AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
+                            (event.segment_id, event.sequence),
+                        ).fetchone()
+                        call_id = boundary[0] if boundary else None
+                        revision_id, artifact_id = node.semantic_revision_id, node.artifact_id
+                    call = self.repository.get_call(cursor, call_id or "")
                     if call is None or call.segment_id != event.segment_id:
                         raise ValueError("report tool policy unavailable")
+                    if event.event_type == "surface_append":
+                        head = self.repository.get_surface_node(cursor, call.surface_node_id or "")
+                        if head is None or head.segment_id != node.segment_id or head.sequence < node.sequence:
+                            raise ValueError("report tool call does not own the appended surface")
                     policy = self.repository.get_policy(cursor, call.policy_id)
                     if policy is None:
                         raise ValueError("report tool policy unavailable")
-                    if event.semantic_revision_id is not None:
-                        revision = self.repository.get_semantic_revision(cursor, event.semantic_revision_id)
-                        if revision is None or revision.source_conversation_id not in allowed_conversations or event.event_type != "tool_result":
+                    if revision_id is not None:
+                        revision = self.repository.get_semantic_revision(cursor, revision_id)
+                        if revision is None or revision.source_conversation_id not in allowed_conversations or kind != "tool_result":
                             raise ValueError("report tool revision unavailable")
                         value = project_semantic_revision_trace_tool_fields(
                             cursor, revision_id=revision.revision_id,
@@ -136,12 +160,12 @@ class ConsoleTraceNativeReader:
                             policy_id=call.policy_id, max_source_bytes=min(max_source_bytes, max_total_source_bytes - total),
                         )
                         total += max_source_bytes  # conservative bound for a revision read
-                    elif event.artifact_id is not None:
+                    elif artifact_id is not None:
                         row = cursor.execute(
                             """SELECT length(sanitized_bytes),
                                       CASE WHEN length(sanitized_bytes) <= ? THEN sanitized_bytes ELSE NULL END
                                  FROM console_trace_artifacts WHERE artifact_id = ?""",
-                            (min(max_source_bytes, max_total_source_bytes - total), event.artifact_id),
+                            (min(max_source_bytes, max_total_source_bytes - total), artifact_id),
                         ).fetchone()
                         if row is None or row[1] is None:
                             raise ValueError("report tool artifact budget")
@@ -153,7 +177,7 @@ class ConsoleTraceNativeReader:
                         if not checked.available or not isinstance(checked.value, Mapping):
                             raise ValueError("report tool sanitizer unavailable")
                         governed = checked.value
-                        if event.event_type == "tool_result":
+                        if kind == "tool_result":
                             value = {key: governed[key] for key in ("name", "tool_name", "result", "output", "content") if key in governed}
                         else:
                             value = {key: governed[key] for key in ("name", "tool_name", "args", "arguments", "tool_calls") if key in governed}

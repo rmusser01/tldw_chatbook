@@ -223,6 +223,8 @@ class BugReportCollector:
             "event_kind",
             "state",
             "status",
+            "run_status",
+            "tool_outcome",
             "tool_name",
             "provider",
             "model",
@@ -340,6 +342,9 @@ class BugReportCollector:
                         for row in rows
                     ]
                 )
+                notes.append(
+                    "Agent steps preserve per-run sequence; run groups follow insertion order. Cross-run chronology is unknown."
+                )
             except Exception:
                 notes.append("Agent metadata unavailable.")
         # Independent source streams have no trustworthy shared clock. Select
@@ -411,18 +416,19 @@ class BugReportCollector:
                 (),
             )
         )
+        aliased = await self._source("log-aliases", self._alias_logs, log_evidence)
+        log_evidence = aliased or replace(
+            log_evidence,
+            logs=(),
+            exceptions=(),
+            inventory=log_evidence.inventory
+            + ("Log alias projection unavailable or timed out.",),
+        )
         valid = self.is_current()
-        log_items = tuple(
-            replace(item, text=self._alias_log(item.text)) for item in log_evidence.logs
-        )
-        exceptions = tuple(
-            replace(item, text=self._alias_log(item.text))
-            for item in log_evidence.exceptions
-        )
         evidence = BugReportEvidence(
             environment=environment or (("Environment", "unavailable"),),
-            logs=log_items,
-            exceptions=exceptions,
+            logs=log_evidence.logs,
+            exceptions=log_evidence.exceptions,
             trace=trace_evidence.trace if valid else (),
             inventory=log_evidence.inventory
             + trace_evidence.inventory
@@ -441,15 +447,29 @@ class BugReportCollector:
         self._last_capture = capture
         return capture
 
-    def _alias_log(self, text: str) -> str:
-        for original, alias in self._aliases.copy().items():
-            if len(original) >= 16:
-                text = re.sub(
-                    r"(?<![\w-])" + re.escape(original) + r"(?![\w-])",
-                    lambda _match: alias,
-                    text,
-                )
-        return text
+    def _alias_logs(self, evidence: BugReportEvidence) -> BugReportEvidence:
+        """Replace known IDs in one off-loop scan per row using a frozen map."""
+        aliases = {
+            key: value for key, value in self._aliases.copy().items() if len(key) >= 16
+        }
+        if not aliases:
+            return evidence
+        pattern = re.compile(
+            r"(?<![\w-])(?:"
+            + "|".join(re.escape(key) for key in aliases)
+            + r")(?![\w-])"
+        )
+
+        def project(item: BugReportItem) -> BugReportItem:
+            return replace(
+                item, text=pattern.sub(lambda match: aliases[match[0]], item.text)
+            )
+
+        return replace(
+            evidence,
+            logs=tuple(map(project, evidence.logs)),
+            exceptions=tuple(map(project, evidence.exceptions)),
+        )
 
     async def collect_tools(self, capture: BugReportCapture) -> BugReportCapture:
         if not capture.valid or not self.is_current():

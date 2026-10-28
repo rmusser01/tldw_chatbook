@@ -333,3 +333,151 @@ def test_tool_reader_validates_revision_owner_in_selected_lineage(database, fore
         assert "unavailable" in str(fields)
     else:
         assert "CUSTOM_PRIVATE_CONTENT" in str(fields)
+
+
+def test_agent_report_preserves_failed_step_when_run_recovers():
+    from Tests.Utils.test_bug_report_capture import _app
+    from tldw_chatbook.Utils.bug_report_capture import (
+        BugReportCollector,
+        capture_bug_report_context,
+    )
+
+    runs = AgentRunsDB(":memory:", "report-step-status", reconcile_on_init=False)
+    try:
+        rid = runs.create_run(conversation_id="selected", agent_kind="primary")
+        runs.append_steps(
+            rid,
+            [
+                {
+                    "kind": "tool_result",
+                    "tool_name": "calculator",
+                    "tool_outcome": "failed",
+                    "status": "error",
+                    "result": "PRIVATE_BODY",
+                },
+                {"kind": "tool_result", "tool_outcome": "succeeded"},
+            ],
+        )
+        runs.set_status(rid, "done")
+        row = runs.get_report_event_tail("selected")[0]
+        assert row["run_status"] == "done"
+        assert row["status"] == "error" and row["tool_outcome"] == "failed"
+        app = _app()
+        collector = BugReportCollector(app, capture_bug_report_context(app))
+        fact = collector._fact("agent", "event-1", row).text
+        assert "tool_outcome=failed" in fact and "run_status=done" in fact
+        assert "PRIVATE_BODY" not in fact
+    finally:
+        runs.close()
+
+
+def test_agent_report_tail_uses_sequence_when_clock_moves_backwards():
+    runs = AgentRunsDB(":memory:", "report-step-order", reconcile_on_init=False)
+    try:
+        rid = runs.create_run(conversation_id="selected", agent_kind="primary")
+        runs.append_steps(rid, [{"kind": "tool_call"}, {"kind": "tool_result"}])
+        with runs.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_run_steps SET created_at = CASE seq WHEN 0 THEN '2026-10-28T10:00:02Z' ELSE '2026-10-28T10:00:01Z' END WHERE run_id = ?",
+                (rid,),
+            )
+        assert [
+            row["seq"] for row in runs.get_report_event_tail("selected", limit=2)
+        ] == [0, 1]
+        assert [
+            row["seq"] for row in runs.get_report_event_tail("selected", limit=1)
+        ] == [1]
+    finally:
+        runs.close()
+
+
+def test_tool_fields_follow_surface_events_emitted_by_real_capture_service(database):
+    from Tests.Chat.test_console_trace_service import (
+        _available_bundle,
+        _persist,
+        _provenance,
+    )
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ProviderArtifactTraceProvenance,
+        TraceProvenanceSource,
+    )
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+
+    repo = ConsoleTraceRepository()
+    service = ConsoleTraceService(repo)
+    cid = database.add_conversation({"title": "production surface"})
+    turn = database.add_message(
+        {"conversation_id": cid, "sender": "user", "content": "EXCLUDED_USER_BODY"}
+    )
+    policy = FrozenTracePolicy(new_opaque_id(), CREDENTIAL_FILTER_VERSION, False, None)
+    provenance = _provenance(
+        (
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_CALL, policy),
+            ProviderArtifactTraceProvenance(TraceProvenanceSource.TOOL_RESULT, policy),
+        )
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "content": "EXCLUDED_ASSISTANT_BODY",
+            "tool_calls": [
+                {
+                    "id": "call-probe",
+                    "type": "function",
+                    "function": {
+                        "name": "calculator",
+                        "arguments": '{"expression":"2+2"}',
+                    },
+                }
+            ],
+        },
+        {"role": "tool", "name": "calculator", "content": "calculator-result-4"},
+    ]
+    with database.transaction() as cursor:
+        repo.ensure_policy(cursor, policy)
+        segment = repo.create_segment(cursor)
+        owner = repo.attach_owner(
+            cursor, conversation_id=cid, root_segment_id=segment.segment_id
+        )
+        call = repo.reserve_call(
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            turn_id=turn,
+            run_id="service-report",
+            call_sequence=0,
+            idempotency_key="service-report",
+            policy_id=policy.policy_id,
+        )
+        repo.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            event_type="call_boundary",
+            call_id=call.call_id,
+        )
+        persisted = _persist(
+            service,
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            provenance=provenance,
+            bundle=_available_bundle(provenance, messages=messages),
+            reserved_call=call,
+        )
+        repo.bind_call(
+            cursor,
+            call_id=call.call_id,
+            surface_node_id=persisted.surface_head_id,
+            request_header_id=persisted.header.header_id,
+            provider_name=persisted.header.provider_name,
+            model_name=persisted.header.model_name,
+            route_identity=persisted.header.route_identity,
+        )
+        events = repo.read_report_event_tail(cursor, cid).events
+    assert any(event.event_type == "surface_append" for event in events)
+    projected = ConsoleTraceNativeReader(database).read_report_tool_fields(cid, events)
+    assert "calculator-result-4" in str(projected) and "expression" in str(projected)
+    assert "EXCLUDED_USER_BODY" not in str(
+        projected
+    ) and "EXCLUDED_ASSISTANT_BODY" not in str(projected)

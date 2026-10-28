@@ -2893,7 +2893,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 conn.set_progress_handler(stop_read, 1000)
                 conn.execute("PRAGMA busy_timeout = 200")
                 rows = conn.execute(
-                    """SELECT runs.id AS run_id, runs.parent_run_id, runs.status,
+                    """SELECT runs.id AS run_id, runs.parent_run_id, runs.status AS run_status,
                           runs.agent_kind, runs.resolved_provider AS provider,
                           runs.resolved_model AS model, steps.seq, steps.created_at,
                           CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
@@ -2903,11 +2903,19 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                           CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
                                     AND json_valid(steps.payload)
                                THEN substr(json_extract(steps.payload, '$.tool_name'), 1, 128)
-                               ELSE NULL END AS tool_name
+                               ELSE NULL END AS tool_name,
+                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
+                                    AND json_valid(steps.payload)
+                               THEN COALESCE(substr(json_extract(steps.payload, '$.status'), 1, 128), 'unavailable')
+                               ELSE 'unavailable' END AS status,
+                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
+                                    AND json_valid(steps.payload)
+                               THEN COALESCE(substr(json_extract(steps.payload, '$.tool_outcome'), 1, 128), 'unavailable')
+                               ELSE 'unavailable' END AS tool_outcome
                      FROM agent_run_steps AS steps
                      JOIN agent_runs AS runs ON runs.id = steps.run_id
                     WHERE runs.conversation_id = ?
-                    ORDER BY steps.created_at DESC, runs.id DESC, steps.seq DESC LIMIT ?""",
+                    ORDER BY runs.rowid DESC, steps.seq DESC LIMIT ?""",
                     (conversation_id, limit),
                 ).fetchall()
             finally:

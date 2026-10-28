@@ -285,3 +285,44 @@ async def test_default_capture_reads_existing_file_database_metadata_only(
         await collector.wait_retired()
     finally:
         database.close_connection()
+
+
+async def test_populated_log_alias_projection_does_not_run_on_ui_loop(monkeypatch):
+    import tldw_chatbook.Utils.bug_report_capture as capture_module
+
+    app = _app()
+    collector = BugReportCollector(app, capture_bug_report_context(app))
+    identifiers = tuple(f"00000000-0000-4000-8000-{index:012d}" for index in range(750))
+    evidence = BugReportEvidence(
+        logs=tuple(
+            BugReportItem(
+                "logs", f"failure {identifiers[index]} " + "diagnostic " * 100
+            )
+            for index in range(500)
+        )
+    )
+    monkeypatch.setattr(collector, "_read_logs", lambda: evidence)
+
+    def trace():
+        for identifier in identifiers:
+            collector._alias(identifier)
+        return BugReportEvidence(), ()
+
+    monkeypatch.setattr(collector, "_read_trace", trace)
+    loop_thread = threading.get_ident()
+    observed = set()
+    original_replace = capture_module.replace
+
+    def checked_replace(value, **changes):
+        if isinstance(value, BugReportItem) and "text" in changes:
+            observed.add(threading.get_ident())
+            assert (
+                threading.get_ident() != loop_thread
+            ), "log projection blocks the UI loop"
+        return original_replace(value, **changes)
+
+    monkeypatch.setattr(capture_module, "replace", checked_replace)
+    captured = await collector.collect()
+    assert len(captured.evidence.logs) == 500 and observed
+    assert "event-0001" in captured.evidence.logs[0].text
+    assert identifiers[0] not in captured.evidence.logs[0].text
