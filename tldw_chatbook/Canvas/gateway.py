@@ -1351,6 +1351,11 @@ class CanvasGateway:
                 for binding in self._shell_bindings.values()
             )
 
+    def revoke_browser_session(self, browser_session_id: str) -> None:
+        """Retire a closed terminal's shell, capabilities and bounded capacity."""
+
+        self._revoke_session_id(browser_session_id)
+
     def mark_browser_session_unavailable(self, browser_session_id: str) -> None:
         """Revoke one shell's content authority while retaining its event lane."""
 

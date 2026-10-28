@@ -14,9 +14,9 @@
     .phone-view-link { display: none; }
     @media (max-width: 720px) { .phone-view-link { display: inline; } }
   </style>
-  <script src="/static/js/chatbook-auth.js"></script>
+  <script src="/static/js/chatbook-auth.js?v=__AUTH_JS_VERSION__"></script>
   <script src="/static/js/textual.js?v=__TEXTUAL_JS_VERSION__"></script>
-  <script src="/static/chatbook/served-shell.js" defer></script>
+  <script src="/static/chatbook/served-shell.js?v=__SHELL_JS_VERSION__" defer></script>
 </head>
 <body>
   <main id="served-workbench" class="served-workbench terminal-only">
@@ -47,6 +47,7 @@
       </div>
       <div
         id="terminal"
+        data-terminal-id="__TERMINAL_PAGE_ID__"
         class="textual-terminal"
         data-session-websocket-url="__APP_WEBSOCKET_URL__"
         data-font-size="__FONT_SIZE__"

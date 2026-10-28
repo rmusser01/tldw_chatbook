@@ -15,7 +15,10 @@ admit_startup()
 
 
 import asyncio
+import hashlib
 import html
+import re
+import secrets
 import signal
 import ssl
 import sys
@@ -118,6 +121,15 @@ _CHATBOOK_AUTH_BOOTSTRAP_JS = """(() => {
       (target.protocol === "ws:" || target.protocol === "wss:") &&
       target.host === window.location.host &&
       target.pathname === "/ws";
+    if (isChatbookSocket) {
+      // textual-serve appends its own size query to the base socket URL.
+      // Add page identity here so that query remains intact (ADR-251).
+      const terminalId = document.getElementById("terminal")?.dataset.terminalId;
+      if (terminalId) {
+        target.searchParams.set("terminal_id", terminalId);
+        url = target.href;
+      }
+    }
     if (isChatbookSocket && protocols === undefined && csrf) {
       return new NativeWebSocket(url, ["chatbook-v1", `csrf.${csrf}`]);
     }
@@ -142,6 +154,7 @@ _SERVED_STATIC_ROOT = files("tldw_chatbook.Web_Server").joinpath("static")
 #: so a single named policy is the one place to change if that ever stops
 #: being true.
 _STATIC_ASSET_CACHE_CONTROL = "public, max-age=3600"
+_MAX_SERVED_TERMINALS = 512
 _SERVED_SHELL_HTML = _SERVED_STATIC_ROOT.joinpath("served_shell.html").read_text(
     encoding="utf-8"
 )
@@ -1115,7 +1128,23 @@ class ChatbookWebServerMixin:
 
             raise web.HTTPNotFound(text="Canvas unavailable")
         session = request.get("chatbook_browser_session")
-        browser_session_id = "" if session is None else session.session_id
+        # A login cookie is shared by tabs; the gateway URL identifies one
+        # exact terminal beneath that login, including the legacy single scope.
+        browser_session_id = next(
+            (
+                scope_id
+                for scope_id in self._served_browser_children
+                if session is not None
+                and (
+                    scope_id == session.session_id
+                    or scope_id.startswith(session.session_id + ":")
+                )
+                and self._served_canvas_gateway.mounted_request_is_owned_by(
+                    request, scope_id
+                )
+            ),
+            "",
+        )
         return await self._served_canvas_gateway.handle_mounted_request(
             request,
             browser_session_id=browser_session_id,
@@ -1687,7 +1716,6 @@ class ChatbookWebServerMixin:
             self, "_canvas_control_broker", None
         ) is None:
             self._served_canvas_launches.clear()
-            self._served_browser_children.clear()
             return
         self._canvas_disabled_latched = True
         broker = getattr(self, "_canvas_control_broker", None)
@@ -1696,7 +1724,8 @@ class ChatbookWebServerMixin:
             await broker.aclose()
         await self._served_canvas_gateway.aclose()
         self._served_canvas_launches.clear()
-        self._served_browser_children.clear()
+        # Terminal ownership survives Canvas revocation: those children remain
+        # connected, and still consume their exact binding/capacity (ADR-251).
 
     async def _expire_websocket_session(self, session) -> None:
         """Revoke a connected channel at its moving idle/absolute deadline."""
@@ -1734,8 +1763,27 @@ class ChatbookWebServerMixin:
             elif type_ == "focus":
                 await app_service.focus()
 
+    @staticmethod
+    def _served_terminal_scope(request) -> str | None:
+        """Scope a validated page label beneath its authenticated login."""
+
+        from aiohttp import web
+
+        page_ids = request.query.getall("terminal_id", [])
+        if page_ids and (
+            len(page_ids) != 1 or re.fullmatch(r"[a-f0-9]{32}", page_ids[0]) is None
+        ):
+            raise web.HTTPBadRequest(text="Invalid terminal page ID")
+        session = request.get("chatbook_browser_session")
+        if session is None:
+            return None
+        # Older clients and direct fixtures retain their single-login scope.
+        return (
+            f"{session.session_id}:{page_ids[0]}" if page_ids else session.session_id
+        )
+
     def bind_served_browser(self, browser_session_id: str, child_id: str) -> None:
-        """Bind one authenticated browser to exactly one AppService child."""
+        """Bind one authenticated terminal scope to exactly one AppService child."""
 
         if not isinstance(browser_session_id, str) or not browser_session_id:
             raise ValueError("browser session ID is required")
@@ -1744,6 +1792,11 @@ class ChatbookWebServerMixin:
         current = self._served_browser_children.get(browser_session_id)
         if current is not None and current != child_id:
             raise ServedCanvasUnavailable("browser_session_already_bound")
+        if (
+            current is None
+            and len(self._served_browser_children) >= _MAX_SERVED_TERMINALS
+        ):
+            raise ServedCanvasUnavailable("terminal_session_capacity")
         if any(
             owner != browser_session_id and owned_child == child_id
             for owner, owned_child in self._served_browser_children.items()
@@ -1757,9 +1810,7 @@ class ChatbookWebServerMixin:
         if self._served_browser_children.get(browser_session_id) == child_id:
             self._served_browser_children.pop(browser_session_id, None)
             self._served_canvas_launches.pop(browser_session_id, None)
-            self._served_canvas_gateway.mark_browser_session_unavailable(
-                browser_session_id
-            )
+            self._served_canvas_gateway.revoke_browser_session(browser_session_id)
 
     async def served_canvas_state(
         self,
@@ -1826,9 +1877,16 @@ class ChatbookWebServerMixin:
 
         if not isinstance(state, dict):
             raise ServedCanvasUnavailable("canvas_session_unavailable")
+        # Every poll can resume after its terminal or Canvas broker retired.
+        # Do not recreate an unreachable shell for a departed page.
+        if (
+            self._served_browser_children.get(browser_session_id) != child_id
+            or self._canvas_control_broker is not broker
+            or not self._canvas_enabled()
+        ):
+            raise ServedCanvasUnavailable("canvas_session_unavailable")
         if expected_scope is not None and (
             self._served_browser_children.get(browser_session_id) != expected_child_id
-            or self._canvas_control_broker is not broker
             or self._served_canvas_launches.get(browser_session_id)
             is not captured_launch
             or not self._served_canvas_gateway.has_shell_binding(browser_session_id)
@@ -1881,19 +1939,19 @@ class ChatbookWebServerMixin:
 
         from aiohttp import web
 
-        session = request.get("chatbook_browser_session")
-        if session is None:
+        browser_session_id = self._served_terminal_scope(request)
+        if browser_session_id is None:
             raise web.HTTPNotFound(text="Canvas unavailable")
         if not self._canvas_enabled():
             await self._disable_canvas_runtime()
             raise web.HTTPNotFound(text="Canvas unavailable")
         try:
-            state = await self.served_canvas_state(session.session_id)
+            state = await self.served_canvas_state(browser_session_id)
         except ServedCanvasUnavailable:
             state = {
                 "status": (
                     "reconnecting"
-                    if session.session_id in self._served_browser_children
+                    if browser_session_id in self._served_browser_children
                     else "terminal_only"
                 )
             }
@@ -1904,6 +1962,7 @@ class ChatbookWebServerMixin:
 
         from aiohttp import web
 
+        browser_session_id = self._served_terminal_scope(request)
         websocket = web.WebSocketResponse(
             heartbeat=15,
             protocols=(WEBSOCKET_PROTOCOL,),
@@ -1941,8 +2000,8 @@ class ChatbookWebServerMixin:
                 canvas_control_broker=broker,
             )
             child_id = app_service.app_service_id
-            if session is not None:
-                self.bind_served_browser(session.session_id, child_id)
+            if browser_session_id is not None:
+                self.bind_served_browser(browser_session_id, child_id)
             await app_service.start(width, height)
             try:
                 await self._process_authenticated_messages(
@@ -1963,10 +2022,9 @@ class ChatbookWebServerMixin:
             if unregister is not None:
                 unregister()
             if app_service is not None:
-                session = locals().get("session")
                 child_id = getattr(app_service, "app_service_id", None)
-                if session is not None and isinstance(child_id, str):
-                    self.unbind_served_browser(session.session_id, child_id)
+                if browser_session_id is not None and isinstance(child_id, str):
+                    self.unbind_served_browser(browser_session_id, child_id)
                 await app_service.stop()
         return websocket
 
@@ -1996,6 +2054,19 @@ class ChatbookWebServerMixin:
                 html.escape(self._app_websocket_url, quote=True),
             )
             .replace("__FONT_SIZE__", str(font_size))
+            .replace("__TERMINAL_PAGE_ID__", secrets.token_hex(16))
+            .replace(
+                "__AUTH_JS_VERSION__",
+                hashlib.sha256(
+                    _CHATBOOK_AUTH_BOOTSTRAP_JS.encode("utf-8")
+                ).hexdigest()[:16],
+            )
+            .replace(
+                "__SHELL_JS_VERSION__",
+                hashlib.sha256(
+                    _SERVED_STATIC_ROOT.joinpath("served_shell.js").read_bytes()
+                ).hexdigest()[:16],
+            )
             .replace("__TEXTUAL_JS_VERSION__", self._textual_js_version())
         )
         return web.Response(

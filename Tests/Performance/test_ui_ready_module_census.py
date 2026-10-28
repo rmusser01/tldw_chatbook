@@ -189,6 +189,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Local transcription failure attribution is first-failure work.
+    "tldw_chatbook.STT.failure_diagnostics",
     # Empty Console has neither persisted markers nor assistant token rates.
     "tldw_chatbook.Chat.console_change_review_read",
     "tldw_chatbook.Chat.console_token_rate",

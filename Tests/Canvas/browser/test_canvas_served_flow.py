@@ -278,14 +278,15 @@ async def _load_owned_shell(page) -> None:
         .replace("__CHATBOOK_TITLE__", "Chatbook test")
         .replace("__APP_WEBSOCKET_URL__", "ws://127.0.0.1:8000/ws")
         .replace("__FONT_SIZE__", "12")
+        .replace("__TERMINAL_PAGE_ID__", "a" * 32)
     )
     # The outer server owns the first two scripts. Browser-flow tests install
     # only Chatbook's served-shell asset so no test double replaces its logic.
     source = source.replace(
-        '<script src="/static/js/chatbook-auth.js"></script>', ""
-    ).replace('<script src="/static/js/textual.js"></script>', "")
+        '<script src="/static/js/chatbook-auth.js?v=__AUTH_JS_VERSION__"></script>', ""
+    ).replace('<script src="/static/js/textual.js?v=__TEXTUAL_JS_VERSION__"></script>', "")
     source = source.replace(
-        '<script src="/static/chatbook/served-shell.js" defer></script>', ""
+        '<script src="/static/chatbook/served-shell.js?v=__SHELL_JS_VERSION__" defer></script>', ""
     )
     source = source.replace(
         '<link rel="stylesheet" href="/static/css/xterm.css">', ""
@@ -360,7 +361,7 @@ async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
         raise
 
 
-async def _live_browser_session_id(server, page, *, port: int) -> str:
+async def _live_terminal_scope_id(server, page, *, port: int) -> str:
     cookie = next(
         item["value"]
         for item in await page.context.cookies()
@@ -385,11 +386,12 @@ async def _live_browser_session_id(server, page, *, port: int) -> str:
             else None,
         )
     )
-    return session.session_id
+    page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+    return f"{session.session_id}:{page_id}"
 
 
 async def _live_child_for_page(server, page, *, port: int) -> str:
-    browser_session_id = await _live_browser_session_id(server, page, port=port)
+    browser_session_id = await _live_terminal_scope_id(server, page, port=port)
     return server._served_browser_children[browser_session_id]
 
 
@@ -1023,7 +1025,7 @@ async def test_actual_chatbook_console_finalizes_canvas_create_and_update(
             original_control_generation = stack.server._canvas_control_broker._children[
                 child_id
             ].generation
-            browser_id = await _live_browser_session_id(
+            browser_id = await _live_terminal_scope_id(
                 stack.server, page, port=stack.port
             )
             old_url = await page.locator("#served-canvas-frame").get_attribute("src")
@@ -1174,7 +1176,7 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
                     )
                 except AssertionError:
                     page = pages[profile_index]
-                    browser_id = await _live_browser_session_id(
+                    browser_id = await _live_terminal_scope_id(
                         stack.server, page, port=stack.port
                     )
                     child_id = stack.server._served_browser_children.get(browser_id)
@@ -1336,7 +1338,7 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
 
             # Close the old terminal transport before reopening the authenticated
             # page. Temporary history is destroyed, never revived with old auth.
-            browser_session_id = await _live_browser_session_id(
+            browser_session_id = await _live_terminal_scope_id(
                 stack.server, pages[0], port=stack.port
             )
             await pages[0].goto("about:blank")
@@ -1348,6 +1350,9 @@ async def test_production_tls_two_child_tool_and_reconnect_flow(
             await pages[0].goto(stack.origin)
             await expect(pages[0].locator("#terminal.-connected")).to_be_visible(
                 timeout=15_000
+            )
+            browser_session_id = await _live_terminal_scope_id(
+                stack.server, pages[0], port=stack.port
             )
             for _ in range(300):
                 replacement_id = stack.server._served_browser_children.get(
@@ -1605,7 +1610,7 @@ async def test_served_renderer_case_seven_keeps_exact_scope_and_execution_ack(
                     page, origin=stack.origin, access_token=access_token
                 )
                 await expect(page.locator("#terminal.-connected")).to_be_visible()
-                browser_session_id = await _live_browser_session_id(
+                browser_session_id = await _live_terminal_scope_id(
                     stack.server, page, port=stack.port
                 )
                 child_id = stack.server._served_browser_children[browser_session_id]
@@ -1942,6 +1947,7 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
             await stack.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
     tmp_path: Path, unused_tcp_port: int
 ) -> None:
@@ -2006,8 +2012,9 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
                     cookie_value=outer_cookie,
                 )
             )
+            page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
             server.bind_served_browser(
-                browser_session.session_id, "child-browser-mount"
+                f"{browser_session.session_id}:{page_id}", "child-browser-mount"
             )
             await expect(page.locator("#served-canvas-region")).to_be_visible(
                 timeout=5000
@@ -2393,7 +2400,8 @@ async def test_mounted_production_authority_renders_and_settles_submit(
                     cookie_value=outer_cookie,
                 )
             )
-            server.bind_served_browser(browser_session.session_id, child_id)
+            page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+            server.bind_served_browser(f"{browser_session.session_id}:{page_id}", child_id)
 
             canvas_shell = page.frame_locator("#served-canvas-frame")
             preview = canvas_shell.frame_locator("#canvas-preview")
@@ -2444,6 +2452,7 @@ async def test_mounted_production_authority_renders_and_settles_submit(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnects(
     tmp_path: Path, unused_tcp_port: int
 ) -> None:
@@ -2509,7 +2518,8 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
                         cookie_value=cookie,
                     )
                 )
-                server.bind_served_browser(session.session_id, child_id)
+                page_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+                server.bind_served_browser(f"{session.session_id}:{page_id}", child_id)
 
             for page in pages:
                 await expect(page.locator("#served-canvas-region")).to_be_visible(
@@ -2555,6 +2565,7 @@ async def test_two_real_browser_profiles_stay_isolated_when_one_child_disconnect
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_terminal_websocket_echo_survives_private_control_channel_loss(
     tmp_path: Path,
 ) -> None:
@@ -2912,6 +2923,7 @@ async def test_event_scope_mismatch_reconciles_only_same_live_child(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 async def test_two_browser_sessions_cannot_reuse_child_canvas_scope(
     tmp_path: Path,
 ) -> None:
