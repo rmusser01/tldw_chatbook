@@ -101,6 +101,8 @@ from .agent_models import (
     STEP_SPAWN,
     STEP_TOOL_CALL,
     FENCE_TOOL_RESULT_PREFIX,
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
@@ -3124,6 +3126,17 @@ class AgentService:
                 if effective_log_active or schema.name not in run_log_schema_names
             ]
             schemas = effective_runtime_schemas + list(active_schemas)
+            runtime_names = {schema.name for schema in effective_runtime_schemas}
+            logger.info(
+                "agent schema request active={} runtime={} find_tools={} "
+                "load_tools={} native={} run={}",
+                len(active_schemas),
+                len(effective_runtime_schemas),
+                int(FIND_TOOLS_NAME in runtime_names),
+                int(LOAD_TOOLS_NAME in runtime_names),
+                int(native),
+                run_id,
+            )
             system_content = config.system_prompt
             call_kwargs: dict = {}
             if native:
@@ -5522,13 +5535,15 @@ class AgentService:
             )
 
         def find_tools(query: str):
-            return [
+            entries = [
                 entry
                 for entry in self.registry.find(
                     query, allowed_names=config.allowed_tools
                 )
                 if entry.name not in MESSAGE_TOOL_NAMES
             ]
+            logger.info("agent tool discovery matches={} run={}", len(entries), run_id)
+            return entries
 
         def load_schemas(
             ids: list[str], current_messages: list[dict], call: ToolCall
@@ -5641,7 +5656,18 @@ class AgentService:
                 omitted.append((removed[0], removed[1]))
                 selection = selection_for(accepted)
             if not accepted and not selection_fits(selection, accepted):
-                return ToolLoadSelection(details_omitted_for_budget=True)
+                selection = ToolLoadSelection(details_omitted_for_budget=True)
+            logger.info(
+                "agent schema load requested={} accepted={} omitted={} invalid={} "
+                "details_omitted={} names={} run={}",
+                len(ids),
+                len(accepted),
+                len(omitted),
+                len(invalid),
+                int(selection.details_omitted_for_budget),
+                json.dumps([item[2].name[:64] for item in accepted[:8]]),
+                run_id,
+            )
             return selection
 
         def replace_disclosed_names(names: frozenset[str]) -> None:

@@ -34,3 +34,22 @@ exit when requested), cancels through the public execution, checks empty custody
 and budgets, and independently checks absence of the OS process group. A deliberate
 800 ms startup control exceeds the old allowance. Existing timeout-specific
 controls remain in the execution suite. No production cleanup rule is changed.
+
+Matching-family qualification is now green on source head 94f11ed026: run
+40748792976 retained 144 tests with zero failures/errors/skips on each of Python
+3.12.15 (45.478s XML) and Python 3.14.9 (49.296s XML). The reporter has become
+unavailable again; the saved tool sequence and tested git line remain pending.
+The original incident is open.
+
+Added ordinary-message diagnostics so the next normal app log can distinguish
+missing discovery, no load attempt, invalid IDs, budget omissions and replacement.
+Five message-only/privacy tests first failed solely for absent diagnostics. The
+initial diagnostic + recovery selection then passed 16 cases (160.50s); a private
+query/catalog variant passed five (101.68s), with final explicit privacy sentinels
+also selected in the two-version CI job. No execution or permission rule changed.
+Independent review found no source privacy/bounds/semantic issue. Its inventory
+check detected exactly the expected three added AgentService calls and changed
+bridge call; no unrelated owner or sink-topology drift. Regenerate the canonical
+inventory before publishing these source edits. TASK-37234 remains In Progress.
+
+Canonical inventory regeneration completed; the resulting diff matches exactly the two reviewed owners and aggregate call count, with no sink-topology changes.

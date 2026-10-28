@@ -36,8 +36,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 51,
-      "diagnostic_digest": "d8ebc053492ef089f4dd",
+      "call_count": 54,
+      "diagnostic_digest": "0ddf7e1e8a0c57848628",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/agent_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -387,7 +387,7 @@
     },
     {
       "call_count": 39,
-      "diagnostic_digest": "b0894a409fa3f9dc1dc6",
+      "diagnostic_digest": "4a71869cf393ec8cf088",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_agent_bridge.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

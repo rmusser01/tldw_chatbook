@@ -8515,7 +8515,11 @@ class ConsoleAgentBridge:
             )
         for step in outcome.steps:
             logger.info(
-                "agent run step",
+                "agent run step kind={} tool={:.128} outcome={} run={}",
+                step.kind,
+                json.dumps(step.tool_name),
+                step.tool_outcome,
+                run_id,
                 agent_kind=AGENT_KIND_PRIMARY,
                 step_kind=step.kind,
                 tool_name=step.tool_name,
