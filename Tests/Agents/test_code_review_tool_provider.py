@@ -762,7 +762,7 @@ def test_guide_role_metadata_fits_whole_runtime_and_multibyte_byte_limit(
         ("reviewer", ["source"], ["findings", "coverage", "reviewer_complete"]),
         (
             "verifier",
-            ["source", "batch", "verification_batch"],
+            ["source", "batch", "verification_batch", "checkpoint"],
             ["dispositions", "check_proposals", "verifier_complete"],
         ),
     ],

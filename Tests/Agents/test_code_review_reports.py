@@ -187,13 +187,20 @@ def test_rejected_record_is_gap_until_same_submission_corrected(review_case, cor
                 "repair",
             )
             revision += 1
-        service.submit(
-            prepared.review_id,
-            "reviewer_complete",
-            [coverage(c, prepared, empty=not corrected)],
-            revision,
-            "complete",
-        )
+        from contextlib import nullcontext
+
+        with (
+            nullcontext()
+            if corrected
+            else pytest.raises(ReviewRefused, match="unresolved_submission_rejections")
+        ):
+            service.submit(
+                prepared.review_id,
+                "reviewer_complete",
+                [coverage(c, prepared, empty=not corrected)],
+                revision,
+                "complete",
+            )
         service.capture_review_output(
             run_id, "Original inspection prose", terminal=True
         )
@@ -457,6 +464,8 @@ def test_accepted_preloop_failure_settles_report_without_originals(
 
 
 def test_malformed_public_submission_leaves_format_gap(review_case):
+    from tldw_chatbook.Agents.code_review_models import ReviewRefused
+
     c = review_case
     prepared = c.prepare()
     with c.participant(prepared) as provider:
@@ -473,13 +482,14 @@ def test_malformed_public_submission_leaves_format_gap(review_case):
         )
         assert not result.ok
         service, run_id = provider.service, provider.service.actor.run_id
-        service.submit(
-            prepared.review_id,
-            "reviewer_complete",
-            [coverage(c, prepared)],
-            0,
-            "complete",
-        )
+        with pytest.raises(ReviewRefused, match="unresolved_submission_rejections"):
+            service.submit(
+                prepared.review_id,
+                "reviewer_complete",
+                [coverage(c, prepared)],
+                0,
+                "complete",
+            )
         service.capture_review_output(run_id, "", terminal=True)
         service.settle_review_run(run_id, terminal_status="done", receipt_id="terminal")
     assert summary(c, prepared)["slots"][0]["report_status"] == "incomplete"

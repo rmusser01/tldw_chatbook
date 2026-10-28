@@ -3340,6 +3340,12 @@ def run_agent_loop(
                     )
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
+                if (
+                    call.name == "code_review_submit"
+                    and not result.ok
+                    and result.content
+                ):
+                    content = result.content
 
             if verdict == "proceed" and deps.install_tool_checkpoint is not None:
                 deps.install_tool_checkpoint(call, result)

@@ -633,7 +633,9 @@ class CodeReviewService:
                 "resolve(relative_path,side); direct reads use document_ref and source_range(start_line,end_line). "
                 "Read submission_revision from your source/batch page or last acknowledgment; "
                 "use it as expected_revision with a stable submission_id, never the context revision. "
-                "On submission_revision_conflict reread and retry the unchanged payload once. "
+                "Correct rejected records using the same submission_id; a new ID leaves the rejection unresolved. "
+                "Completion refuses while other rejected IDs remain; retry the same completion ID after repair. "
+                "On submission_revision_conflict reread current state and retry the unchanged payload once. "
                 "Chunks are at most eight records, each at most 8 KiB UTF-8 JSON.\n"
                 + (
                     "For each opaque unit submit kind=dispositions records with schema_version=1, "
@@ -649,13 +651,17 @@ class CodeReviewService:
                     "parent, repeat proposals or enable a fleet. Source-only decisions remain valid; "
                     "if indispensable execution is unavailable use unresolved with next_check. "
                     "Only executed host receipts fully read in this live attempt prove checks. "
+                    'Read view="checkpoint" after history reduction or cached batch replay for current '
+                    "submission_revision, batch_cursor and pending_unit_ids; cached pages retain their original revision. "
+                    "Never resubmit accepted dispositions. "
                     "Finish with kind=verifier_complete,records=[] after independent dispositions.\n"
                     if claim.slot.role == "verifier"
                     else "Submit kind=findings records with schema_version=1,local_key,title,locations "
                     "(source_ref,start_line,end_line),trigger,impact,evidence,severity "
                     "(critical/high/medium/low),uncertainty. Source evidence includes kind=source, "
                     "source_ref,start_line,end_line,digest. Submit one kind=coverage record with "
-                    "schema_version=1,inspected_refs,gaps(reason,optional source_ref),empty_findings. "
+                    "schema_version=1,inspected_refs (array of source-ref strings, not objects),"
+                    "gaps(reason,optional source_ref),empty_findings. No notes or other extra fields. "
                     "Then kind=reviewer_complete,records=[one coverage record]; actual settlement seals completion.\n"
                 )
                 + (
@@ -1112,6 +1118,32 @@ class CodeReviewService:
                 )
                 if refusal:
                     raise ReviewRefused(refusal)
+        if view == "checkpoint":
+            if document_ref is not None or cursor is not None:
+                raise ReviewRefused("invalid_arguments")
+            with self.store._tab.lock, self.store.lease(review_id) as context:
+                checkpoint = self.verifier_checkpoint(review_id)
+                binding = self._bound(context)
+                ledger = self.store.verification_ledger(context, binding)
+                return _base_page(
+                    context.source_state,
+                    context,
+                    binding,
+                    records=(
+                        {
+                            "batch_cursor": checkpoint.cursor,
+                            "pending_unit_ids": checkpoint.pending_unit_ids,
+                            "all_units_disposed": set(
+                                ledger.units.original_to_unit.values()
+                            )
+                            <= ledger.dispositions.keys(),
+                            "pending_check_refs": checkpoint.pending_check_refs,
+                        },
+                    ),
+                    gaps=tuple(
+                        CoverageGap(reason=reason) for reason in ledger.request_gaps
+                    ),
+                )
         if document_ref and view in {"batch", "verification_batch", "summary"}:
             with self.store._tab.lock, self.store.lease(review_id) as context:
                 is_check = document_ref in context.checks

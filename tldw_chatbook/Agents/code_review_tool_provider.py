@@ -36,12 +36,18 @@ _SOURCE_DISCOVERY_GUIDANCE = (
     "PR, commit-range and patch targets, or base/staged/worktree for working-tree targets. "
     "Use source_query search/resolve to find evidence and document_ref/source_range to read it. "
 )
+_SUBMISSION_RECOVERY_GUIDANCE = (
+    "Correct rejected records using the same submission_id; a new ID leaves the rejection unresolved. "
+    "Completion refuses until other rejected submissions are repaired; retry the same completion ID. "
+)
 _ROLE_GUIDANCE = {
     "primary": CODE_REVIEW_RUNTIME_GUIDANCE,
     "reviewer": (
         "Review captured source independently with code_review_read and submit your own "
         "findings, coverage and reviewer_complete using code_review_submit. "
         + _SOURCE_DISCOVERY_GUIDANCE
+        + "Coverage inspected_refs is an array of source-ref strings; notes is forbidden. "
+        + _SUBMISSION_RECOVERY_GUIDANCE
         + "Use submission_revision from your page or acknowledgment as expected_revision."
     ),
     "verifier": (
@@ -50,13 +56,16 @@ _ROLE_GUIDANCE = {
         "Submit check_proposals for suggested checks and read verification_batch with "
         "document_ref=proposal_id for host results; finish with verifier_complete. "
         + _SOURCE_DISCOVERY_GUIDANCE
-        + "Use submission_revision from your page or acknowledgment as expected_revision."
+        + _SUBMISSION_RECOVERY_GUIDANCE
+        + "Use submission_revision from your page or acknowledgment as expected_revision. "
+        + 'Read view="checkpoint" for current submission_revision, batch_cursor and pending_unit_ids after history reduction or cached replay. '
+        + "Batch pages replay their original revision; do not resubmit accepted dispositions."
     ),
 }
 _ROLE_READ_VIEWS = {
     "primary": {"source", "report", "index", "summary"},
     "reviewer": {"source"},
-    "verifier": {"source", "batch", "verification_batch"},
+    "verifier": {"source", "batch", "verification_batch", "checkpoint"},
 }
 
 
@@ -72,7 +81,15 @@ class PrepareArguments(ReviewWireModel):
 
 class ReadArguments(ReviewWireModel):
     review_id: str = Field(min_length=1)
-    view: Literal["source", "report", "index", "summary", "batch", "verification_batch"]
+    view: Literal[
+        "source",
+        "report",
+        "index",
+        "summary",
+        "batch",
+        "verification_batch",
+        "checkpoint",
+    ]
     document_ref: str | None = Field(default=None, min_length=1)
     cursor: str | None = Field(default=None, min_length=1)
     source_query: SourceQuery | None = None
@@ -208,7 +225,27 @@ class CodeReviewToolProvider:
             return ToolResult(ok=False, error="invalid_arguments")
         except ReviewRefused as exc:
             self.service.diagnostic = exc.reason
-            return ToolResult(ok=False, error=exc.reason)
+            content = ""
+            if name == "code_review_submit" and exc.reason in {
+                "invalid_record",
+                "unresolved_submission_rejections",
+            }:
+                try:
+                    content = self.service.encode(
+                        {
+                            "submission_id": args.get("submission_id"),
+                            "reason": exc.reason,
+                            "recovery": (
+                                "correct_same_submission_id"
+                                if exc.reason == "invalid_record"
+                                else "repair_rejected_submissions_then_retry_same_completion_id"
+                            ),
+                            "validation_errors": getattr(exc, "validation_errors", ()),
+                        }
+                    )
+                except ReviewRefused:
+                    pass
+            return ToolResult(ok=False, content=content, error=exc.reason)
 
     def execution_policy_for(self, name):
         from .tool_catalog import ToolExecutionPolicy
