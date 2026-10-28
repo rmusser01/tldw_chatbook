@@ -38,6 +38,9 @@ from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
     TerminalViewport,
 )
 
+# These tests mount the real ChatScreen, which reads app config at build time.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class RecordingTerminalBackend:
     """Complete inert backend whose counters expose accidental lifecycle work."""
