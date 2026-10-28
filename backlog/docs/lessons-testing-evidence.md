@@ -1,5 +1,12 @@
 # Lessons: what counts as evidence a change works
 
+## Required regressions need their lane's dependency set (TASK-37143, 2026-10-27)
+
+**Incident.** The new served-tab regressions passed locally, but PR #3282's Fast Lane failed 17 cases in the real app factory with `ModuleNotFoundError: aiohttp_jinja2`; 3217 other cases passed. The developer environment had the web runtime helper, while the lane installed only the base package and test tools. Adding the existing web helper to the shared lane install and its exact pins, then building a fresh environment from that list (pytest 9.2.0), passed all 184 affected regression and CI-contract checks. No test was skipped to hide the missing setup.
+
+**What to do.** Before adding a runtime regression to a required lane, run it under that lane's actual install list. Provision the narrow runtime dependency it exercises and keep the lane contract in sync; the ordinary developer environment cannot establish that CI's setup is complete. A change to the shared lane environment also needs the UI shards to pass in CI.
+
+
 ## The PR lanes run pytest 9; the repo venv runs pytest 8 (TASK-33620.15.15, 2026-10-27)
 
 **Incident.** `Tests/UI/test_console_first_send_preimport.py` had passed every local run since TASK-33620.15.5 and was about to join the UI PR gate census. Run once with the lanes' own install line (`-e . pytest pytest-asyncio pytest-timeout packaging`, unpinned), one test failed before its assertions with `AttributeError: 'NoneType' object at tldw_chatbook.MCP has no attribute 'MCP'`. The test had replaced the global `importlib.import_module` with a recorder and then called `monkeypatch.setattr("tldw_chatbook.MCP.server.prime_local_manifest_source", ...)`. pytest 9.1.1, which every lane installs today (the shard logs say so), resolves a dotted target through `importlib.import_module`, so the resolve got the recorder's `None`. The repo `.venv` has pytest 8.4.2, which resolves with `__import__`, so the test passed there. Patching the module object instead of the dotted path fixed it under both versions.

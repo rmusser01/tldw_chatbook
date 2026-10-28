@@ -939,6 +939,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
         "pytest-asyncio",
         "pytest-timeout",
         "packaging",
+        "aiohttp-jinja2",
     ]
     assert "requirements-test.txt" not in install
     assert ".[" not in install
@@ -986,6 +987,7 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         "pytest-asyncio",
         "pytest-timeout",
         "packaging",
+        "aiohttp-jinja2",
     ]
     commands = "\n".join(str(step.get("run", "")) for step in p0["steps"])
     assert commands.count("pip install") == 1

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-27 23:04'
-updated_date: '2026-10-28 01:15'
+updated_date: '2026-10-28 04:13'
 labels: []
 dependencies: []
 priority: high
@@ -38,6 +38,8 @@ Reason: correct per-page terminal ownership under shared device authentication w
 4. Verify focused web/Canvas, STT executor/runtime/provenance, ingestion options/retry and diagnostic tests; run Ruff, format, census and diagnostic inventory checks. Ensure regression files are in required CI targets. Review all edits, finalize task notes and ACs. No full suite, push, PR or merge is included in this follow-up.
 
 CI follow-up: reproduce the UI-ready census breach and assert STT diagnostics stay off the app-import and first-paint paths; defer diagnostic-only imports at executor validation, parse failure construction and parent failure handling; re-run focused import/census and diagnostic regressions, obtain fresh review, then publish and re-arm. ADR required: no; existing ADR-097 governs deferral, with no budget or boundary changes.
+
+CI dependency follow-up: current-head PR Fast Lane reports 17 served-tab setup failures because aiohttp_jinja2 is absent from its minimal install. Pin the existing web templating helper in the common lane dependency contract, observe RED, add that one helper to the shared install commands, and validate the web regressions with the actual lane install in a scratch environment plus focused CI contract tests. Preserve all targets, budgets and timeouts; no new production dependency or ADR (routine CI provisioning correction). Obtain a fresh independent review, commit/push with lease while auto-merge is disabled, and wait for new-head CI before re-arming.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -60,4 +62,6 @@ Architecture docs, plan and the observed capacity/late-response lesson are updat
 Publication follow-up authorized by the user: commit these fixes and regression tests, open a PR against dev, rebase, perform a fresh Superpowers code review, and merge once CI is green. Fresh pre-commit regression verification passed all 86 affected checks. Current origin/dev remains 773cc9729cfbc9c13c14b56724fcb02efd3a54a3, the implementation base; merge queue mode is on. Full local suite remains outside the requested verification scope.
 
 PR #3282 CI follow-up: reproduced the app-import regression, then deferred STT diagnostics at the three startup import edges. Legacy envelopes and parse errors keep diagnostics unloaded; typed failure validation, pickling and parent attribution remain covered. Added an explicit first-paint absence guard without changing any budget or snapshot. Focused verification: 38 passed plus the Windows census at 1032/1031; an isolated origin/dev f9baac8706 archive measured the same 1032 with windows_files resident and diagnostics absent, establishing inherited platform behavior. Eight additional protocol/parse/retry cases passed; independent Superpowers review passed 35 diagnostic/import cases with no findings. Scoped Ruff, changed-range formatting and whitespace pass; diagnostic inventory has no drift (699 owners, 16 sinks). Rebased onto dev with exact original patch equivalence. ADR required: no; existing ADR-097 deferral policy applies. Linux PR CI must confirm the original 1032-to-1031 regression is resolved before merge.
+
+CI dependency follow-up: current-head PR Fast Lane failed 17 served-tab setups because the base-only lane lacked aiohttp_jinja2 (3217 other tests passed). Added only the existing web runtime helper to all seven matching shared lane install commands and both dependency pins; their updated pin first failed three cases. A fresh environment from the updated exact package list, with pytest 9.2.0, passed all 184 focused web/STT/retry/startup and CI contract checks (four existing aiohttp warnings). Scoped Ruff, changed-range formatting and whitespace pass. No targets, budgets, timeouts, shard assignments or production requirements changed; no new ADR required. Rebased onto dev 323cf5d9e7 with both feature commits range-diff equivalent. Fresh independent review found no issues. Updated plan and testing-evidence lesson with the incident. New-head CI, including all UI shards under the shared install, must pass before merge.
 <!-- SECTION:NOTES:END -->

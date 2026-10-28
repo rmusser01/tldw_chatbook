@@ -105,7 +105,7 @@ jobs:
           cache: pip
 
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       # Every target after Tests/CI and Tests/test_smoke.py is a rider: a pin
       # that ran in no other PR lane, appended by the task that needed it
@@ -377,7 +377,7 @@ jobs:
 
       # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       # TASK-32873: the admission-sensitive suites enroll the process
       # against the collection-time profile (keep_bootstrap_profile in
@@ -475,7 +475,7 @@ jobs:
 
       # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       # bootstrap_profile suites, kept out of a sandboxed invocation for the
       # reason pr-fast-lane-admission's note gives (TASK-32873). Phase 9's
@@ -650,7 +650,7 @@ jobs:
       # this dependency set. Adding a package here can only be done by
       # re-verifying the census under it.
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       - name: Run the gated Tests/UI slice
         run: |
@@ -718,7 +718,7 @@ jobs:
 
       # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       - name: Run the sandboxed Console P0 regression tests
         run: |
@@ -843,7 +843,7 @@ jobs:
 
       # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       # PR2921: bounded privacy, native recovery and actual dispatch contracts.
       - name: Run Dreams and Guardian boundary contracts
@@ -918,7 +918,7 @@ jobs:
 
       # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
 
       - name: Run the Dreams tracking tests
         run: |

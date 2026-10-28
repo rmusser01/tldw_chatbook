@@ -17,7 +17,7 @@ Reason: page terminal identity must remain subordinate to device authentication 
 - Page rendering allocates no pending server state; malformed IDs fail closed. Refresh and delayed old-child teardown must preserve other tabs.
 - Preserve complete valid retry provenance; a missing predecessor STT attempt must never be fabricated from an unrelated job ID.
 - No raw exception messages, paths, transcript/source bytes, credentials, tracebacks or dynamic class names enter diagnostics; cancelled/stale attempts remain quiet.
-- No new dependencies, real STT model downloads or full local suite. The user's later publication request authorizes committing, opening a PR against dev, rebasing, obtaining a fresh Superpowers review and merging once required CI passes.
+- No new production dependencies, real STT model downloads or full local suite. The user's later publication request authorizes committing, opening a PR against dev, rebasing, obtaining a fresh Superpowers review and merging once required CI passes.
 
 ## Task 1: independent served tabs
 
@@ -61,3 +61,10 @@ Files: STT/parakeet_onnx.py, executor.py, executor_worker.py and a small typed d
 - Reproduced eager STT diagnostic loading in a fresh app-import subprocess, then deferred its three startup edges until failure handling. The same regression verifies diagnostic-free legacy envelopes stay lazy and typed failures survive pickling.
 - Added the diagnostic module to the existing first-paint absence guard; no budget or pinned snapshot changed (existing ADR-097, no new ADR required).
 - Focused checks: 38 passed; the Windows census measured 1032/1031 on both the patched branch and an isolated dev f9baac8706 archive, with windows_files resident and failure_diagnostics absent. Eight additional worker/parse/retry checks passed. Fresh independent review passed 35 checks with no findings. Linux CI remains the absolute-budget merge gate.
+
+## CI served-web dependency follow-up
+
+- PR Fast Lane run 40614007063 reported 17 served-tab setup failures: the minimal lane omitted aiohttp_jinja2, required by the real server app factory. Its other 3217 tests passed. Pinning that helper in the shared dependency contract failed three cases before the workflow correction.
+- Added only aiohttp-jinja2 (already a textual-serve runtime dependency) to the seven matching lane install commands and their two exact pins. No test targets, timeouts, shard assignments, budgets or production requirements changed. This is routine CI provisioning; no new ADR required.
+- Built a scratch environment from the updated minimal install list (pytest 9.2.0). All 184 focused web/STT/retry/startup and CI-contract checks passed; four existing aiohttp warnings. Scoped Ruff, changed-range formatting and whitespace pass. Both feature commits remain range-diff equivalent after rebasing onto dev 323cf5d9e7.
+- Fresh independent review found no issues. Current-head Linux CI, including every UI shard under the shared dependency environment, must pass before merge.
