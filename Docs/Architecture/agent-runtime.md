@@ -180,6 +180,15 @@ it changes neither the primary eviction gate nor the stored transcript. Settleme
 fills missing decisions with `verification_incomplete`; scratch failures still close
 the native stream and expansion retains an explicit unresolved fallback.
 
+`code_review_read(view="checkpoint")` exposes current verifier protocol state
+through that same owner after history reduction. Cached batch pages retain their
+original bytes/revisions; the live view supplies current revision, next cursor,
+pending delivered IDs and whether every unit has a disposition. Empty pending IDs
+alone do not imply completion. Rejected submissions require correction under the
+same ID; completion refuses outstanding rejections. The runtime preserves bounded
+`code_review_submit` error details for the model while ordinary error rendering and
+body-free logs remain unchanged.
+
 Final review admission is host-only. `AgentService.review_input_capacity` reuses the
 existing message/schema estimator and response reservation for direct requests.
 `_StreamingModelAdapter.review_request_admission` captures a thread-scoped reject-only

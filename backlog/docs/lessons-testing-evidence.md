@@ -22553,3 +22553,19 @@ boundary, runs Stop while the reader is awaiting its UI guard, and verifies both
 successful fencing and the reader's subsequent refusal. Pin the data with a lease,
 call UI authority outside publication locks (including outer callers), then check
 exact live identities again; correct thread dispatch alone does not prove this.
+
+## Error feedback must reach the model, and replayed pages are not current state (TASK-35582, 2026-10-28)
+
+The bounded multi-model review accepted a reviewer's replacement coverage under a
+new submission ID but retained its original rejection, so the report could not
+seal. Adding structured correction feedback only at the provider was insufficient:
+native/fenced runtime regressions showed that failed ToolResult.content was dropped
+before the model request. Test the actual recipient payload, including error paths.
+
+The same run retained accepted verifier decisions while history reduction removed
+their acknowledgment. Replaying the immutable initial batch correctly returned its
+old revision, which the model treated as current. Offline controls now keep that
+replay byte-identical and recover current revision/cursor/completion through the
+existing checkpoint owner. Test history reduction, replay and current-state recovery
+together; an empty pending-delivered list also needs a control with undelivered units.
+These controls establish protocol recovery, not later live-model compliance or AC24.

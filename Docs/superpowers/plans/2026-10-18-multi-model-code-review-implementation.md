@@ -1682,3 +1682,39 @@ Cumulative314requests/21children;7financialrequests unused but no permitted
 retry/final invocation/fresh child remains. AC24 stays unchecked, task InProgress,
 PR3286 draft. See bounded-final/report.md and outcome-review.md in the QA directory.
 No merge or further live execution is authorized by this outcome.
+
+## Bounded offline repair continuation (2026-10-28)
+
+User authorized fixing the observed R2/V1 completion failures and the eight
+module-size CI failures. Keep PR #3286 draft and AC24 unchecked. No live
+qualification, provider probe, new product child launch, or budget request is
+part of this continuation.
+
+ADR required: yes (existing decision; no new ADR).
+ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md
+Reason: restore the existing strict submission, replay, checkpoint and completion
+contracts and move task-owned integration code out of oversized modules without
+changing ownership or policy.
+
+1. Add narrow offline regression tests for rejected reviewer coverage recovery
+   and accepted verifier dispositions followed by history reduction and page
+   replay. Fix actionable correction/completion feedback and current-state
+   recovery while preserving same-ID correction, immutable page replay, native
+   permissions, request admission, accounting and the two-child limits.
+2. Extract this task's additions from the eight failing modules into cohesive
+   existing owners or narrow helpers. Preserve callers and lazy import behavior;
+   do not raise size limits or perform unrelated cleanup. Re-run the eight exact
+   ratchet cases and tests of the moved boundaries.
+3. Review the changed boundaries, run relevant static/startup checks where imports
+   changed, and record the offline result separately from failed live evidence.
+   Update the existing draft PR only; do not infer AC24 completion from these
+   tests or restart qualification.
+
+
+Offline continuation outcome: completion repair3e5054c5ad and size extraction
+32f40af781 are verified and independently reviewed with no actionable findings.
+All17 size/no-slack/helper guards and3 startup guards pass;25 observed test failures
+or errors and existing lint findings reproduce on the original candidate and are
+not claimed repaired. See the [offline evidence](../qa/2026-10-18-multi-model-code-review/offline-repairs/report.md).
+AC24 remains unchecked, PR3286 draft, no new live requests/product children or
+budget request; no merge. This closes only the authorized offline repair scope.

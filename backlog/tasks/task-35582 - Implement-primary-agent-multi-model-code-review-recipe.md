@@ -15,7 +15,7 @@ documentation:
 - Docs/superpowers/specs/2026-10-18-multi-model-code-review-design.md
 - backlog/decisions/281-primary-agent-multi-model-code-review.md
 - Docs/superpowers/plans/2026-10-18-multi-model-code-review-implementation.md
-updated_date: 2026-10-28 21:48
+updated_date: 2026-10-28 22:45
 ---
 
 ## Description
@@ -67,6 +67,7 @@ permission, accounting, role and default-two-child contracts. For delivery:
 ADR required: yes (existing decision, renumbered for integration).
 ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md.
 Reason: existing review ownership/runtime contracts; dev already uses the old ADR240 number for another decision. No new architecture is introduced.
+Offline follow-up authorized 2026-10-28: repair only the demonstrated R2/V1 completion boundaries and eight module-size CI failures using narrow offline tests. Preserve native permissions/accounting/two-child limits and immutable replay. Keep PR3286 draft and AC24 unchecked; no live qualification or budget request. Existing ADR281 applies. Follow the bounded offline continuation in the detailed plan and record results separately from live evidence.
 <!-- SECTION:PLAN:END -->
 
 ## Definition of Done
@@ -78,40 +79,45 @@ Reason: existing review ownership/runtime contracts; dev already uses the old AD
 
 ## Implementation Notes
 
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented a primary-agent review recipe with saved provider/model teams,
 read-only captured source, isolated reviewer capabilities, structured original
 reports, blinded checkpointed verification, and host-expanded unified reports.
 Existing fleet boundaries admit the fresh verifier on the same causal chain
 without raising the two-child default. Native session retention, storage quotas,
 privacy and executable-check restrictions remain enforced. AgentRuns uses the
-normal version24→25 additive boundary-link migration.
+normal version24→25 additive boundary-link migration. ADR281 governs the feature;
+it was renumbered during integration because dev already owned ADR240.
 
-Delivery preserves current dev bridge Stop/stall tracking, native-thread callback
-handling and workspace/index authority. Feature ADR240 becomes ADR281 to resolve
-a real numbering collision; contracts are unchanged. The original worktree,
-71-commit history and raw QA archives remain preserved in a verified Git bundle.
-Required fixtures and concise independent reviews remain in the PR.
+AC24 remains open after the single approved final qualification on47093a3175:
+the Haiku preflight passed, but the final run exited2 with incomplete R2/V1 seals.
+Both originals mapped once and unified pages were readable; those facts did not
+establish completion. The immutable failed outcome and raw preservation references
+remain in Docs/superpowers/qa/2026-10-18-multi-model-code-review/bounded-final/.
 
-AC23 retains its recorded targeted evidence. AC24 remains open after the single
-approved final qualification on47093a3175: the real Haiku preflight passed, then
-the final run used54 requests/3 children and exited2 (`live_report_incomplete_R2`).
-R2's new-ID correction left its earlier invalid-record rejection unresolved; V1
-accepted both correct decisions but reread a cached revision-0 batch after a
-revision-1 checkpoint and never completed its protocol. Both originals map once
-and the unified report is readable; incomplete participant seals still fail AC24.
-The two boundaries were reproduced offline without changing product behavior.
+The authorized offline follow-up fixes R2 same-ID correction/completion feedback
+and V1 current-checkpoint recovery after history reduction without altering cached
+page replay or weakening validation/sealing (3e5054c5ad). Connected request,
+permission, metadata and continuation helpers move out of eight oversized modules
+while retaining explicit callers and lazy imports (32f40af781). Seven size limits
+are lowered; none are raised. No workflow redesign or unrelated baseline repair.
 
-The approved scope consumed59 new requests/3 children; cumulative314/21. Seven
-financial requests remain unused, but retry/final-invocation/child scope is spent;
-no additional live execution or budget request follows. Eight module-size CI
-failures reproduce; a composer-state CI failure passes the exact local test and
-is not claimed fixed. No broad refactor, raised budget or full rerun was started.
-See Docs/superpowers/qa/2026-10-18-multi-model-code-review/bounded-final/report.md
-and its independent review, result hashes and durable archive references.
+Verification:307 affected completion tests passed; the later recovery run covers9
+cases including multiple batches, and17 post-format checks passed (overlapping
+runs). Extraction passes102 agent and247 Chat/provider/config cases plus20
+routing/authority and10 workspace-binding cases. All17 exact size/no-slack/helper
+checks and3 startup-import guards pass. Fifteen extracted bodies are mechanically
+equivalent and original owner lookups remain present. No new lint findings;
+existing baseline lint remains. Twenty-five failing/error test nodes reproduce
+identically on the original pre-turn candidate and are not claimed fixed.
+See Docs/superpowers/qa/2026-10-18-multi-model-code-review/offline-repairs/report.md
+for exact counts, baseline classifications, reviews and limits. No full-suite run.
 
-PR https://github.com/rmusser01/tldw_chatbook/pull/3286 remains draft against dev.
-The original worktree and history are preserved. ADR281 remains the governing
-decision; no architecture change was introduced during bounded closeout.
-
-No merge is authorized. Keep the PR draft and this task In Progress until the
-remaining live qualification and Definition of Done are actually met.
+This offline follow-up consumed zero provider requests and zero product children;
+cumulative actual spend remains314 requests/21 children. The prior allowance's
+unused financial capacity does not authorize another live invocation. No live
+qualification or budget request was made. AC24 and DoD stay unchecked; the task
+remains In Progress and PR https://github.com/rmusser01/tldw_chatbook/pull/3286
+remains draft against dev. The original worktree/history and evidence are preserved.
+No merge is authorized.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
