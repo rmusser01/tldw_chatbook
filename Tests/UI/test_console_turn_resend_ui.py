@@ -23,6 +23,7 @@ from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
     FailThenRecoverGateway,
     _build_console_send_test_app,
+    _apply_mounted_console_provider_config,
     _ReadyResolutionGateway,
     _select_llamacpp_console,
     _visible_text,
@@ -373,12 +374,20 @@ async def test_select_llamacpp_console_enables_send_while_another_thread_holds_t
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        # Delayed mount replay may already have enabled Send. Establish a real
+        # blocked selection whose settings revision the helper must replace.
+        await _apply_mounted_console_provider_config(
+            console,
+            provider="openai",
+            model="gpt-4.1",
+            provider_settings={"api_key": ""},
+        )
         send = console.query_one("#console-send-message", Button)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         # Not ``send.disabled``: with an empty draft Send is disabled whether or
         # not a block exists, and without the block this test passes vacuously.
         assert composer._send_blocked, (
-            f"no mount-time block for the helper to lift: {send.tooltip!r}"
+            f"missing-key selection did not block Send: {send.tooltip!r}"
         )
         for _ in range(3):
             holder, hold_ended, release = await _hold_config_locks()
