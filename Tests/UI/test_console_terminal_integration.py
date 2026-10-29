@@ -1034,6 +1034,20 @@ def _visible_terminal_buttons(workspace: ConsoleTerminalWorkspace) -> list[Butto
     ]
 
 
+def _assert_labels_painted_whole(
+    console: ChatScreen, workspace: ConsoleTerminalWorkspace, context: object
+) -> list[str]:
+    """Every visible Terminal label is painted whole: never a word cut short."""
+    buttons = _visible_terminal_buttons(workspace)
+    strips = list(console._compositor.render_strips())
+    for button in buttons:
+        label = str(button.label)
+        region = button.content_region
+        painted = strips[region.y].crop(region.x, region.right).text.strip()
+        assert painted == label, (context, button.id, label, painted, region)
+    return [str(button.label) for button in buttons]
+
+
 @pytest.mark.parametrize(
     ("terminal_size", "explicit_inspector", "rails_yield"),
     [
@@ -1102,15 +1116,8 @@ async def test_narrow_terminal_gets_the_center_and_unclipped_labels(
         assert (state.preferred_left_open, state.preferred_right_open) == preferred
 
         # Every visible label is painted whole: never a word cut short.
-        buttons = _visible_terminal_buttons(workspace)
-        labels = [str(button.label) for button in buttons]
+        labels = _assert_labels_painted_whole(console, workspace, terminal_size)
         assert "Terminal 1" in labels and "Terminal 2" in labels, labels
-        strips = list(console._compositor.render_strips())
-        for button in buttons:
-            label = str(button.label)
-            region = button.content_region
-            painted = strips[region.y].crop(region.x, region.right).text.strip()
-            assert painted == label, (terminal_size, button.id, label, painted, region)
 
         assert await pilot.click("#console-terminal-return")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
@@ -1149,6 +1156,12 @@ async def test_rail_toggles_still_open_a_rail_over_a_narrow_terminal(
             lambda: right.display is True,
             detail=lambda: (left.display, right.display),
         )
+        # The Terminal beside a reclaimed Inspector is about 46 columns: its
+        # labels still never read "Renam" (live, 80x24, Alt+I after Ctrl+]).
+        workspace = console.query_one("#console-main-column", ConsoleTerminalWorkspace)
+        await _wait_until(pilot, lambda: workspace.region.width < 60)
+        await pilot.pause()
+        _assert_labels_painted_whole(console, workspace, "inspector reclaimed")
         await console.action_toggle_console_inspector_rail()
         await _wait_until(pilot, lambda: right.display is False)
 
