@@ -16,11 +16,15 @@ and this project adheres to Some kind of Versioning
   A self-hosted or Custom OpenAI-compatible server that cannot stream (it
   refuses a streamed request with a client error such as HTTP 400, or sends
   no text) is asked once more without streaming, as llama.cpp already was,
-  and the reply arrives whole. To skip that extra request, turn Streaming
-  off for that model ("Save as model default" in Chat settings) or provider
+  and the reply arrives whole; a Custom endpoint pointed at a paid service
+  is asked again too. To skip that extra request, turn Streaming off for
+  that model ("Save as model default" in Chat settings) or provider
   (`[console.provider_defaults.<provider>] streaming = false`). A cloud
   provider is never retried this way; when one refuses a streamed request
-  before any text, the failure now says how to turn Streaming off.
+  before any text, the failure now says how to turn Streaming off. OpenAI
+  is the exception for now: its refused streamed request is still sent up
+  to three times and fails as a general provider error (HTTP 502) without
+  OpenAI's message or that advice.
 
 ## [0.2.3] - 2026-10-02
 

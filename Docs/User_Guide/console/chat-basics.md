@@ -485,9 +485,16 @@ statistics tools.
   400, or answers one with no text, is asked once more without streaming on
   its own, and the reply appears all at once. Each such reply costs one
   refused request first, so turn streaming off for that model or provider to
-  skip it. A cloud provider is not asked again: when it refuses a streamed
+  skip it. Every Custom slot and endpoint counts as self-hosted here, even
+  one pointed at a paid hosted service: that service gets the second
+  request too, and after a stream that arrived empty both requests may be
+  billed. A cloud provider is not asked again: when it refuses a streamed
   request before any text, the System row quotes the provider's own error
-  message where it sent one and adds how to turn streaming off. With
+  message where it sent one and adds how to turn streaming off. OpenAI does
+  not do this yet: a streamed request it refuses is sent up to three times
+  and fails with a general provider error ("provider returned HTTP 502")
+  that does not quote OpenAI's message. If that happens, turn streaming off
+  for that chat or model and send again to see OpenAI's own error. With
   streaming off, the reply appears all at once when the provider finishes,
   and the label shows the time waited until then.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
