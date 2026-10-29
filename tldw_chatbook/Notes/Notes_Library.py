@@ -2003,6 +2003,31 @@ class NotesInteropService:
             )
             raise
 
+    def hard_delete_note(
+        self, user_id: str, note_id: str, expected_version: Optional[int] = None
+    ) -> bool:
+        """Delete one soft-deleted note for good (TASK-34000.29 N-29, 8b).
+
+        Args:
+            user_id: User identity used to select the unified DB client.
+            note_id: The deleted note to purge.
+            expected_version: The tombstone version the user confirmed.
+
+        Returns:
+            ``True`` when the note was purged; ``False`` when it was already
+            gone.
+
+        Raises:
+            NoteNotInTrashError: If the note is live.
+            ConflictError: If the tombstone changed since it was shown.
+            CharactersRAGDBError: If the database operation fails.
+        """
+        return bool(
+            self._get_db(user_id).hard_delete_note(
+                note_id, expected_version=expected_version
+            )
+        )
+
     def search_notes(
         self,
         user_id: str,

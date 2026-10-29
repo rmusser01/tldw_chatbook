@@ -85,6 +85,35 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
     ),
 }
 
+#: TASK-34000.29 (N-29, 8b): Delete forever's refusals, said where the user
+#: pressed it. A note a sync folder still holds is refused, not warned about
+#: (ruling T8b-c): its file stays on disk, and purging the note under a live
+#: binding would leave lasting sync planning against a note that is gone.
+PURGE_REFUSED_SYNC_BOUND = (
+    "This note is kept in sync with a folder — remove it from the folder's "
+    "sync first."
+)
+PURGE_REFUSED_SYNC_UNKNOWN = (
+    "Couldn't check whether a sync folder holds this note — nothing was deleted."
+)
+PURGE_REFUSED_NOT_DELETED = (
+    "This note is no longer in Recently deleted — nothing was deleted."
+)
+
+
+class NotePurgeRefusedError(RuntimeError):
+    """Delete forever was refused; nothing was written.
+
+    Args:
+        reason_code: ``sync_bound``, ``sync_unknown`` or ``not_deleted``.
+        user_message: The sentence the Library shows for it.
+    """
+
+    def __init__(self, *, reason_code: str, user_message: str) -> None:
+        super().__init__(user_message)
+        self.reason_code = reason_code
+        self.user_message = user_message
+
 
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
@@ -1803,6 +1832,94 @@ class NotesScopeService:
             entity_version=entity_version,
         )
         return record
+
+    async def purge_note(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        version: int | None,
+        user_id: Optional[str] = None,
+        sync_runtime: Any = None,
+    ) -> bool:
+        """Delete one note in Recently deleted for good (TASK-34000.29 8b).
+
+        The owner ruled "yes with confimration" (2026-10-29); the Library's
+        confirm comes first. Local only, under the same policy authority as
+        a delete. Lasting sync is asked HERE, at purge time, whether a sync
+        folder still holds the note -- never from the row the Trash painted
+        (ruling T8b-c) -- and a check it cannot answer refuses (fail closed).
+        The purge itself is ``CharactersRAGDB.hard_delete_note``, off the
+        event loop; the note's semantic-index projection is then queued for
+        removal through the indexer's own seam.
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            note_id: The deleted note to purge.
+            version: The tombstone version the user confirmed (``None``
+                skips the check).
+            user_id: Local Notes user identity.
+            sync_runtime: The lasting-sync runtime (``None``: no lasting sync
+                in this app, so no folder can hold the note).
+
+        Returns:
+            ``True`` when the note was purged; ``False`` when it was already
+            gone.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+            NotePurgeRefusedError: If a sync folder holds the note, lasting
+                sync cannot say, or the note is live.
+            ConflictError: If the tombstone changed since it was shown.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Delete forever is supported for local notes only.")
+        self._enforce_policy(self._note_action_id(normalized_scope, "delete"))
+        local_user_id = self._require_user_id(user_id)
+        key = str(note_id)
+        if sync_runtime is not None:
+            try:
+                bound = await sync_runtime.note_sync_bound(key)
+            except Exception as error:
+                raise NotePurgeRefusedError(
+                    reason_code="sync_unknown",
+                    user_message=PURGE_REFUSED_SYNC_UNKNOWN,
+                ) from error
+            if bound:
+                raise NotePurgeRefusedError(
+                    reason_code="sync_bound", user_message=PURGE_REFUSED_SYNC_BOUND
+                )
+        from tldw_chatbook.DB.ChaChaNotes_DB import NoteNotInTrashError
+
+        try:
+            purged = bool(
+                await self._run_folder_repository(
+                    self.local_notes_service.hard_delete_note,
+                    local_user_id,
+                    key,
+                    version,
+                )
+            )
+        except NoteNotInTrashError as error:
+            raise NotePurgeRefusedError(
+                reason_code="not_deleted", user_message=PURGE_REFUSED_NOT_DELETED
+            ) from error
+        if purged:
+            # Imported here (ADR-097): RAG is never loaded for a Library visit.
+            from tldw_chatbook.RAG_Search import ingestion_indexing
+
+            ingestion_indexing.submit_note_index_removal(
+                key, source_path=self._local_notes_db_path(local_user_id)
+            )
+        return purged
+
+    def _local_notes_db_path(self, user_id: str) -> Any:
+        """The local Notes database file, or ``None`` when it cannot be named."""
+        try:
+            return getattr(self.local_notes_service._get_db(user_id), "db_path", None)
+        except Exception:  # noqa: BLE001 - a label for the index removal only
+            return None
 
     def _enqueue_local_note_upsert(
         self,

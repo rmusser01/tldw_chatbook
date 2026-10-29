@@ -16,8 +16,8 @@ Three discoveries, one count:
   ``entity_id='<id>_<keyword>'`` and inside the JSON payload).
 - **The FTS index over notes** (an external-content FTS5 table whose
   ``content`` is ``notes``): its ``_docsize`` row for the note's rowid, the
-  index's own instances for that rowid (``fts5vocab``), FTS5's integrity
-  check against the content table, and ``MATCH`` on tokens only the note had.
+  index's own instances for that rowid (``fts5vocab``), FTS5's structural
+  integrity check, and ``MATCH`` on tokens only the note had.
 
 Used by the DB-level test (``test_note_hard_delete.py``) and by the Pilot
 that purges through the real Library (``Tests/UI/test_library_notes_trash_
@@ -152,11 +152,12 @@ def note_traces(
             if count:
                 traces[f"{fts}:instances"] = int(count)
         try:
-            # rank=1 checks the index against the content table too: an FTS
-            # 'delete' issued for a row the index never held fails it.
+            # The index's own structure. Not ``rank = 1`` (index against the
+            # content table): the notes index deliberately holds no
+            # tombstones, so that comparison fails whenever any note is in
+            # Recently deleted.
             connection.execute(
-                f"INSERT INTO {_quoted(fts)}({_quoted(fts)}, rank) "
-                "VALUES('integrity-check', 1)"
+                f"INSERT INTO {_quoted(fts)}({_quoted(fts)}) VALUES('integrity-check')"
             )
         except sqlite3.DatabaseError:
             traces[f"{fts}:integrity-check"] = 1
