@@ -832,16 +832,21 @@ The exact terminal block retains its concrete source_format and provider/model/p
 
 The contract uses the existing immutable request-header defaults JSON; no schema/storage expansion or new retained raw bodies. Rejected alternatives are widening v1, rewriting old artifact links, relabeling actual parser provenance, weakening equality/completed-tool checks, or disabling capture/thinking. Design: Docs/superpowers/specs/2026-10-18-versioned-thinking-response-profile-design.md; recovery task TASK-33164 and its existing correction plan link this amendment.
 
-### Amendment recorded 2026-10-27: rewritten surface tail after Edit & resend
+### Amendment recorded 2026-10-27: rewritten surface tail after Compact now or Edit & resend
 
-TASK-33621.7 (Console UX review, 2026-09-29) reproduced an ordinary action that
-blocked capture for the rest of a chat. Edit & resend dispatches its own call with
-Capture Off, because it has no turn preparation, so the edited sibling branch never
-reaches the surface. The next captured FRESH or AGENT_FIRST send carried a
-replacement of the recorded surface's tail plus the new turn. The planner admits
-only an append or a one-item replacement, so it refused the send with
-`count_or_span`, and every later send stopped at "Trace capture blocked". Measured
-live on dev `f9baac8706`: prefix 2, 1 recorded entry changed, 3 incoming.
+TASK-33621.29 and TASK-33621.7 (Console UX review, 2026-09-29) reproduced two
+ordinary actions that blocked capture for the rest of a chat. Compact now commits a
+conversation memory. The next request drops the compacted turns from
+`messages_payload` and carries the memory as a system message outside the history
+rows. Edit &
+resend dispatches its own call with Capture Off, because it has no turn
+preparation, so the edited sibling branch never reaches the surface. In both cases
+the next captured FRESH or AGENT_FIRST send carried a replacement of the recorded
+surface's tail plus the new turn. The planner admits only an append or a one-item
+replacement, so it refused the send with `count_or_span`, and every later send
+stopped at "Trace capture blocked". Measured live on dev `f9baac8706`: after Compact
+now, prefix 0, 13 recorded entries changed, 3 incoming; after Edit & resend, prefix
+2, 1 recorded entry changed, 3 incoming.
 
 Permit one more typed replacement-plus-append, the rewritten tail, for FRESH and
 AGENT_FIRST sends only, when no completed tool-turn transition applies. The replaced
@@ -853,21 +858,25 @@ transform. Each row's live message must be an undeleted message of the attached
 conversation and the direct parent of the next row's message, and the last row must
 be the call's own turn. The oldest row's parent must be one proven anchor:
 
-- the message of the last retained saved row (an edited or switched branch); or
+- the message of the last retained saved row (an edited or switched branch);
+- the boundary of an active conversation memory (compaction). The memory reaches the
+  provider as a system message outside the history rows, so the active memory's
+  boundary is the durable proof of the dropped rows; or
 - no parent, when no saved row is retained (a branch from the conversation root).
 
-Recheck the chain and the anchor in the dispatch-binding transaction; any change
-fails capture closed. Removed rows contribute no disclosure policy or structural
-metadata to the composed request.
+Recheck the chain, the anchor and the memory's active state in the dispatch-binding
+transaction; any change fails capture closed. Removed rows contribute no disclosure
+policy or structural metadata to the composed request.
 
 This is not a general history-replacement permission. Retained suffixes, tool or
 project artifacts in the replacement, provider continuations, unsaved or foreign
-rows, gaps, deleted rows and unmatched anchors stay refused. Historical calls and
-heads stay immutable. No schema, retention change or durable registry is added; the
-proof is a bounded transient witness, like the completed tool-turn witness. Edit &
-resend and Regenerate themselves remain uncaptured: the edited branch enters the
-trace at the next captured send, not at the edit.
+rows, gaps, deleted rows, inactive memories and unmatched anchors stay refused.
+Historical calls and heads stay immutable. No schema, retention change or durable
+registry is added; the proof is a bounded transient witness, like the completed
+tool-turn witness. Edit & resend and Regenerate themselves remain uncaptured: the
+edited branch enters the trace at the next captured send, not at the edit.
 
 The owner ruled on 2026-10-27 that TASK-33621.7 fixes the edited-branch trace
-defect only, with no remembered per-chat capture bypass. This amendment is recorded
-with the implementing change and is subject to the owner's review of that change.
+defect only, with no remembered per-chat capture bypass. This amendment records
+the mechanism that fix and TASK-33621.29 share. It is recorded with the
+implementing change and is subject to the owner's review of that change.

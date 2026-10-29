@@ -1,19 +1,20 @@
-"""TASK-33621.7: captured sends after a rewritten history.
+"""TASK-33621.29 / TASK-33621.7: captured sends after a rewritten history.
 
-Edit & resend changes the provider-visible history without a captured call
-that records the change: its own call is dispatched with capture off. The next
-captured send therefore carried a rewrite of the recorded surface's tail
-together with the new turn. The trace planner admits only an append or a
-one-item replacement, so it refused that send with
-``unsupported_surface_change``. Every later send in the chat then stopped at
-the "Trace capture blocked" card.
+Compact now and Edit & resend both change the provider-visible history
+without a captured call that records the change. Compact now drops the
+compacted turns (the memory travels as a system message). Edit &
+resend's own call is dispatched with capture off. The next captured send
+therefore carried a rewrite of the recorded surface's tail together with the
+new turn. The trace planner admits only an append or a one-item replacement,
+so it refused that send with ``unsupported_surface_change``. Every later send
+in the chat then stopped at the "Trace capture blocked" card.
 
 These tests drive the real ``ConsoleChatController``, ``ConsoleChatStore``,
-SQLite database, ``ConsoleProviderGateway`` request preparation and
-``ConsoleTraceBoundaryFactory``. Only the provider adapter at the bottom of the
-gateway is a recorder. The agent path is the Console default; the
-plain-provider path is what character chats and ``[console] agent_runtime =
-false`` take.
+SQLite database, ``ConsoleProviderGateway`` request preparation,
+``ConsoleCompactionService`` and ``ConsoleTraceBoundaryFactory``. Only the
+provider adapter at the bottom of the gateway is a recorder. The agent path
+is the Console default; the plain-provider path is what character chats and
+``[console] agent_runtime = false`` take.
 """
 
 from __future__ import annotations
@@ -29,6 +30,13 @@ from Tests.Chat.test_console_trace_current_turn_transforms import (  # noqa: F40
 from tldw_chatbook.Chat import console_trace_rewritten_tail
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_context_compaction import ConsoleCompactionService
+from tldw_chatbook.Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    ContextBudgetMode,
+    ContextCompactionMode,
+)
+from tldw_chatbook.Chat.console_prepared_request import MEMORY_OPEN_TAG
 from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
 from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -43,8 +51,11 @@ _LONG = "detail " * 200
 def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
     """``trace_harness`` on the agent path (default) or the plain path.
 
-    ``rechecks`` records each time dispatch binding rechecks a rewritten-tail
-    proof.
+    The shared factory builds the controller around a checkpoint-observing
+    gateway double and swaps the real gateway in afterwards. Production
+    builds the compaction service from the real gateway, so rebuild it here
+    from the gateway the controller now uses. ``rechecks`` records each time
+    dispatch binding rechecks a rewritten-tail proof.
     """
 
     rechecks = []
@@ -69,6 +80,9 @@ def harness(trace_harness, tmp_path, request, monkeypatch):  # noqa: F811
                 provider_gateway=trace_harness.gateway,
             ),
         )
+    controller._compaction_service = ConsoleCompactionService(
+        controller._context_repository, trace_harness.gateway
+    )
     trace_harness.path = request.param
     return trace_harness
 
@@ -115,6 +129,48 @@ async def _three_long_turns(harness) -> list:
 
 
 @pytest.mark.asyncio
+# The plain Capture-On path dispatches the request frozen at admission, so the
+# memory never reaches it and nothing is rewritten there (TASK-37417).
+@pytest.mark.parametrize("harness", ["agent"], indirect=True)
+@pytest.mark.parametrize("restart", [False, True], ids=["warm", "restarted"])
+async def test_captured_sends_after_compact_now_keep_trace_capture(harness, restart):
+    """AC#1/#2 of TASK-33621.29 through the real store and trace planner."""
+    harness.store.set_session_context_policy_overrides(
+        SESSION,
+        ConsoleContextPolicyOverrides(
+            budget_mode=ContextBudgetMode.CUSTOM,
+            custom_budget_tokens=1_800,
+            compaction_mode=ContextCompactionMode.OFF,
+            summary_max_tokens=100,
+        ),
+    )
+    await _three_long_turns(harness)
+
+    succeeded, copy = await harness.controller.compact_context_now(SESSION)
+    assert succeeded is True, copy
+    if restart:
+        _restart_trace_runtime(harness)
+
+    result, sent, reserved = await _send(harness, "after compaction")
+    _assert_captured(harness, result, sent, reserved)
+    # Dispatch binding rechecked the memory-anchored proof once.
+    assert [witness.memory_anchor for witness in harness.rechecks] == [True]
+    # The memory replaced the compacted turns in what the provider received.
+    contents = [row["content"] for row in sent[0]]
+    assert not any(str(content).startswith("q0:") for content in contents)
+    assert contents[-1] == "after compaction"
+    user = harness.store.get_message(result.user_message_id)
+    (call,) = ConsoleTraceNativeReader(harness.db).read_calls(user.persisted_message_id)
+    # The trace keeps the memory the provider received in their place.
+    assert str(call.capture.request["system_message"]).startswith(MEMORY_OPEN_TAG)
+
+    following, sent, reserved = await _send(harness, "and again")
+    _assert_captured(harness, following, sent, reserved)
+    assert [row["content"] for row in sent[0]][-1] == "and again"
+    assert len(harness.rechecks) == 1, "a plain append needs no rewrite proof"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("anchor", "restart"),
     [("last", False), ("middle", False), ("last", True)],
@@ -139,7 +195,7 @@ async def test_captured_sends_after_edit_and_resend_keep_trace_capture(
     result, sent, reserved = await _send(harness, "after the edit")
     _assert_captured(harness, result, sent, reserved)
     # Dispatch binding rechecked the branch-anchored proof once.
-    assert len(harness.rechecks) == 1
+    assert [witness.memory_anchor for witness in harness.rechecks] == [False]
     assert sent[0][-3:] == [
         {"role": "user", "content": "edited question"},
         {"role": "assistant", "content": "answer"},

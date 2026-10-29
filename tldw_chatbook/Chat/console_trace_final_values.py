@@ -425,28 +425,32 @@ def rewritten_history_revision_id(descriptor: TraceProvenance) -> str | None:
 class RewrittenTailWitness:
     """Saved-branch evidence for replacing a rewritten surface tail.
 
-    ADR-097 amendment 2026-10-27 (TASK-33621.7). Edit & resend changes the
-    provider-visible history without a captured call that records the change.
-    The next FRESH or AGENT_FIRST send may replace the recorded surface's whole
-    tail with the current branch's saved rows, ending at the current user.
-    Every row is rechecked against durable messages.
+    ADR-097 amendment 2026-10-27 (TASK-33621.29, TASK-33621.7). Compact now and
+    Edit & resend change the provider-visible history without a captured call
+    that records the change. The next FRESH or AGENT_FIRST send may replace the
+    recorded surface's whole tail with the current branch's saved rows, ending
+    at the current user. Every row is rechecked against durable messages.
 
     Args:
         history: Oldest-to-newest saved history descriptors before the current
             user. Each row's message is the direct parent of the next one.
         user_revision_id: Exact saved revision of the current user turn.
         anchor_message_id: Saved message that parents the oldest replacement
-            row: the last retained saved row, or None when the oldest row
-            starts the conversation.
+            row: the last retained saved row, the active conversation memory's
+            boundary, or None when the oldest row starts the conversation.
+        memory_anchor: True when ``anchor_message_id`` is the boundary of an
+            active conversation memory, which replaced every older row.
 
     Raises:
         ValueError: If an identity is not a canonical UUIDv4 string, a history
-            row has no saved owner, or the range reaches the replacement bound.
+            row has no saved owner, the range reaches the replacement bound, or
+            a memory anchor names no message.
     """
 
     history: tuple[TraceProvenance, ...]
     user_revision_id: str
     anchor_message_id: str | None = None
+    memory_anchor: bool = False
 
     def __post_init__(self) -> None:
         SemanticRevisionRef(self.user_revision_id)
@@ -456,6 +460,8 @@ class RewrittenTailWitness:
             type(self.history) is not tuple
             or len(self.history) + 1 > MAX_SURFACE_REPLACEMENT_SPAN
             or any(rewritten_history_revision_id(row) is None for row in self.history)
+            or type(self.memory_anchor) is not bool
+            or (self.memory_anchor and self.anchor_message_id is None)
         ):
             raise ValueError("rewritten_tail_shape")
 

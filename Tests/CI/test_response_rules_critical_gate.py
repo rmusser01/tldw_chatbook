@@ -69,6 +69,7 @@ INHERITED = {
         "Tests/Chat/test_console_capture_send_triggers.py",
         "Tests/Chat/test_console_trace_rewritten_history.py::test_captured_sends_after_edit_and_resend_keep_trace_capture[agent-last]",
         "Tests/Chat/test_console_trace_rewritten_history.py::test_captured_sends_after_edit_and_resend_keep_trace_capture[plain-last]",
+        "Tests/Chat/test_console_trace_rewritten_history.py::test_captured_sends_after_compact_now_keep_trace_capture[warm-agent]",
         "Tests/UI/test_console_blocked_send_recovery.py::test_each_trigger_chat_sends_and_renders_the_reply[system-prompt-before-first-send]",
         "Tests/UI/test_console_blocked_send_recovery.py::test_provenance_failure_recovery_actions_work[retry]",
         "Tests/Chat/test_console_compaction_failure.py",
