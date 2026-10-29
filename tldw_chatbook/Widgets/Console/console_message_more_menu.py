@@ -45,9 +45,7 @@ def dismiss_message_more_menus(
 ) -> None:
     """Dismiss overflow menus and restore focus to each captured opener."""
     for menu in menus:
-        if not getattr(menu, "_pruning", False):
-            menu.owner._restore_message_action_focus(menu.opener_button_id)
-            menu.remove()
+        menu.dismiss_menu()
 
 
 class ConsoleMessageMoreMenu(Vertical):
@@ -185,6 +183,23 @@ class ConsoleMessageMoreMenu(Vertical):
     def owner(self) -> Widget:
         """Return the transcript that owns lifecycle and focus restoration."""
         return self._owner
+
+    def dismiss_menu(self, *, restore_focus: bool = True) -> None:
+        """Close the menu without dispatching an action; single-shot.
+
+        Same keyword as the row menus' ``dismiss_menu``, so a caller can fold
+        any focus-taking Console menu the same way.
+
+        Args:
+            restore_focus: Hand focus back to the captured opener. False when
+                focus has already moved on deliberately -- a typed letter took
+                it to the draft (TASK-33622.3).
+        """
+        if getattr(self, "_pruning", False):
+            return
+        if restore_focus:
+            self._owner._restore_message_action_focus(self._opener_button_id)
+        self.remove()
 
     def on_key(self, event: Key) -> None:
         if event.key == "escape":

@@ -290,6 +290,10 @@ def type_to_compose(screen: Any, composer: ConsoleComposerBar, event: Key) -> No
       just before) already decided, and it refuses on purpose (the setup
       card, even before its first sync, or a restore aimed elsewhere).
 
+    A key typed in an open popup menu folds the menu as it moves focus, so
+    no menu is left open without focus (Esc from the draft does not close
+    the message menus).
+
     Args:
         screen: The Console screen routing the key.
         composer: The mounted composer.
@@ -315,7 +319,28 @@ def type_to_compose(screen: Any, composer: ConsoleComposerBar, event: Key) -> No
     binding = screen.active_bindings.get(event.key)
     if binding is not None and binding.enabled:
         return
+    menu = _popup_menu_holding(focused)
     composer.focus_draft_from(focused)
+    if menu is not None and screen.focused is not focused:
+        # The letter moved focus on deliberately: fold the menu it left
+        # rather than leave it floating out of Esc's reach, and do not hand
+        # focus back to its opener.
+        menu.dismiss_menu(restore_focus=False)
+
+
+def _popup_menu_holding(focused: Any) -> Any:
+    """Return the focus-taking popup menu ``focused`` sits in, or None.
+
+    The Console's four (a message's More menu, the text-selection menu, and
+    the conversation- and workspace-row action menus) share
+    ``dismiss_menu(*, restore_focus)``; matching on it keeps their modules out
+    of this one's imports (ADR-097).
+    """
+
+    for node in focused.ancestors_with_self:
+        if callable(getattr(node, "dismiss_menu", None)):
+            return node
+    return None
 
 
 def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
