@@ -58,6 +58,9 @@ AGENT_RUNTIME_TOOLS_NOTE = (
     "chatbook's own agent tools (sub-agents, skills, to-dos, canvas, run log, "
     "calculator) are offered when the model's context window has room"
 )
+#: Review V3: the to-do tools live in the local tool provider, which the
+#: ``[console]`` master switch drops with the rest of the local group.
+AGENT_RUNTIME_TOOLS_NOTE_LOCAL_OFF = AGENT_RUNTIME_TOOLS_NOTE.replace("to-dos, ", "")
 
 
 @dataclass(frozen=True)
@@ -68,11 +71,13 @@ class ToolsPosture:
         switch_total: How many opt-in switches the step offers.
         switched_on: Titles of the opt-in switches that are on.
         also_available: Plain names of the enabled local-group gates.
+        local_tools_on: Whether the ``[console]`` master switch is on.
     """
 
     switch_total: int
     switched_on: tuple[str, ...]
     also_available: tuple[str, ...]
+    local_tools_on: bool = True
 
 
 def tools_posture(gates: Sequence[ToolGate]) -> ToolsPosture:
@@ -91,7 +96,8 @@ def tools_posture(gates: Sequence[ToolGate]) -> ToolsPosture:
     # Review F3: with the master off the Console composes no local tool
     # provider at all -- ask_user and the character tools go with web search
     # and Watchlists -- so the whole group is off whatever its own gates say.
-    if master is not None and not master.enabled:
+    local_tools_on = master is None or master.enabled
+    if not local_tools_on:
         local = {}
     for key, name in _LOCAL_GROUP_NAMES.items():
         gate = local.get(key)
@@ -105,6 +111,7 @@ def tools_posture(gates: Sequence[ToolGate]) -> ToolsPosture:
         switch_total=len(builtin),
         switched_on=tuple(gate.title for gate in builtin if gate.enabled),
         also_available=tuple(also),
+        local_tools_on=local_tools_on,
     )
 
 
@@ -163,12 +170,23 @@ def tools_summary_detail(posture: ToolsPosture) -> str:
             "also available, asks first, when the context window has room: "
             f"{_join(posture.also_available)}"
         )
-    parts.append(AGENT_RUNTIME_TOOLS_NOTE)
+    parts.append(
+        AGENT_RUNTIME_TOOLS_NOTE
+        if posture.local_tools_on
+        else AGENT_RUNTIME_TOOLS_NOTE_LOCAL_OFF
+    )
     return " · ".join(parts) + f". Change them under {TOOL_GATES_PANE_PATH}"
 
 
-def quick_defaults_note(posture: ToolsPosture, *, auto_retrieve: bool) -> str:
-    """The Quick track's "left at defaults" note, derived instead of a literal."""
+def quick_defaults_note(
+    posture: ToolsPosture, *, auto_retrieve: bool, default_theme: bool = True
+) -> str:
+    """The Quick track's "left at defaults" note, derived instead of a literal.
+
+    Review R6: it names the theme only while it is the default one, and says
+    nothing about notes folder sync, whose roots live in the Library's
+    database where config cannot see them (the Summary has its own row).
+    """
     tools = "file, note and document switches off"
     if posture.switched_on:
         tools = f"{len(posture.switched_on)} file, note and document switches on"
@@ -182,9 +200,10 @@ def quick_defaults_note(posture: ToolsPosture, *, auto_retrieve: bool) -> str:
         if auto_retrieve
         else "Library searched only when you ask"
     )
+    theme = "; default theme" if default_theme else ""
     return (
-        f"Left at recommended defaults: {tools}; {search}; default theme; no notes "
-        "folder sync. Each one can be changed later."
+        f"Left at recommended defaults: {tools}; {search}{theme}. Each one can be "
+        "changed later."
     )
 
 

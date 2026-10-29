@@ -264,10 +264,11 @@ the terminal before the app opens.
 - **Quick setup (recommended)** — connect one provider, pick a default model,
   optionally try a voice and protect your keys, done. Everything else stays at
   its default; the Summary lists what that means (light tools only — date and
-  time, calculator and ask-you-a-question — your Library searched only when
-  you ask, and the default theme). The step count never changes mid-run — the
-  key-protection step is always shown, and simply says so when there is
-  nothing to protect (the progress tracker then marks it – instead of ✓).
+  time, calculator and ask-you-a-question — whether your Library is searched
+  only when you ask, and the default theme while it is still the default). The
+  step count never changes mid-run — the key-protection step is always shown,
+  and simply says so when there is nothing to protect (the progress tracker
+  then marks it – instead of ✓).
 - **Full setup** — adds search, dictation, tools and appearance (ten steps).
   Every added step starts on "leave as is": pressing Next without changing
   anything writes nothing. The one exception is Appearance on a terminal that

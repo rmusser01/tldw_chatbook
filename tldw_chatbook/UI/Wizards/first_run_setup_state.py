@@ -2082,6 +2082,11 @@ def read_provider_secret_presence(
     )
 
 
+def theme_is_custom(theme: str) -> bool:
+    """Whether a saved theme is a choice rather than the template default (or unset)."""
+    return bool(theme and theme != _TEMPLATE_DEFAULT_THEME)
+
+
 def full_config_sections(
     app_config: Mapping[str, object], *names: str
 ) -> dict[str, dict[str, object]]:
@@ -2311,9 +2316,7 @@ def build_summary_rows(
         # merged template default, not a choice (task-2724).
         model_row = SummaryRow("Default model", ROW_DEFAULT, "not selected")
 
-    theme_is_custom = bool(
-        prefill.default_theme and prefill.default_theme != _TEMPLATE_DEFAULT_THEME
-    )
+    custom_theme = theme_is_custom(prefill.default_theme)
     from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
 
     startup_changed, startup_detail = look.startup_summary(
@@ -2466,7 +2469,7 @@ def build_summary_rows(
         # the same label the Appearance step's theme rows carry.
         SummaryRow(
             "Theme",
-            ROW_CONFIGURED if theme_is_custom else ROW_DEFAULT,
+            ROW_CONFIGURED if custom_theme else ROW_DEFAULT,
             look.theme_display_label(
                 prefill.default_theme,
                 dark=look.theme_tone(prefill.default_theme, themes),
