@@ -1,7 +1,7 @@
 ---
 id: TASK-37267
 title: Keep Research Runs refresh tied to its current source and selection
-status: In Progress
+status: Done
 created_date: 2026-10-28 22:10
 labels:
 - textual-patterns
@@ -13,7 +13,7 @@ references:
 - tldw_chatbook/UI/Research_Modules/research_controller.py
 assignee:
 - '@codex'
-updated_date: 2026-10-29 03:00
+updated_date: 2026-10-29 03:58
 ---
 
 ## Description
@@ -32,11 +32,11 @@ Book asynchronous-publication patterns, actual native-timer observations, real l
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A real mounted selection of B remains selected, highlighted and rendered after an earlier refresh of A completes; current bundle/artifact/event payload state remains associated with the selected run.
-- [ ] #2 A Local refresh completing after a Server source switch cannot restore a Local selection/detail or change the current run-action target.
-- [ ] #3 Clearing selection for a source switch presents the empty-run detail state, including unavailable or empty catalog outcomes; selecting a later valid run populates its detail normally.
-- [ ] #4 Normal nonterminal Local refresh continues to update current progress and preserve payload state; terminal and Server selections retain their existing skip behavior.
-- [ ] #5 Targeted mounted controls hold the actual scope/service return, prove selection/source changes occurred before release, and verify final state with every hold released inside the App lifetime.
+- [x] #1 A real mounted selection of B remains selected, highlighted and rendered after an earlier refresh of A completes; current bundle/artifact/event payload state remains associated with the selected run.
+- [x] #2 A Local refresh completing after a Server source switch cannot restore a Local selection/detail or change the current run-action target.
+- [x] #3 Clearing selection for a source switch presents the empty-run detail state, including unavailable or empty catalog outcomes; selecting a later valid run populates its detail normally.
+- [x] #4 Normal nonterminal Local refresh continues to update current progress and preserve payload state; terminal and Server selections retain their existing skip behavior.
+- [x] #5 Targeted mounted controls hold the actual scope/service return, prove selection/source changes occurred before release, and verify final state with every hold released inside the App lifetime.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,14 +62,13 @@ Files: UI/Research_Window.py, new real-service/native-timer publication tests an
 
 ADR required:no; existing ADR-033/068/070/078 retained, with shared CI amendment ADR-103. Independent task review approved with no Critical/Important. Warnings and inherited static limitations remain disclosed.
 
-Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final whole-branch review and current-head hosted CI remain pending; status stays In Progress until closure.
+Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final Superpowers whole-branch review is approved. Hosted application, Perf Guard and required checks pass on 7c2b8f5aab066035ed9d06f9719a93d184f8e5c3; all44 added selections and the exact existing Notes Escape/Replace case have execution receipts. PR3290 is open against dev. Final delivery rechecks the metadata-only closure head; earlier local failures/qualifications remain historical, not relabeled passes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Implemented and independently reviewed; targeted native/contract/static evidence and final hosted qualification are linked in the implementation QA and PR3290. Existing ADR ownership retained; ADR103 extends only existing CI capacity policy.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
