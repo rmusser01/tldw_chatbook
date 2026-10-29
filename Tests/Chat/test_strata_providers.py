@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import tomllib
 
 import httpx
+from loguru import logger
 import pytest
 import requests
 
@@ -117,6 +118,19 @@ def test_reasoning_controls_use_strata_wire_fields(provider):
             console_generation_control_support(provider, "selected", control)
             == "supported"
         )
+
+
+def test_unsupported_reasoning_effort_is_dropped_without_logging_its_value(provider):
+    private_value = "private-effort-uat-nonce"
+    messages = []
+    sink = logger.add(messages.append, format="{message}", level="DEBUG")
+    try:
+        assert build_local_thinking_payload_fields(provider, private_value, 512) == {
+            "reasoning_budget_tokens": 512,
+        }
+    finally:
+        logger.remove(sink)
+    assert private_value not in "".join(messages)
 
 
 def test_server_default_reasoning_does_not_require_a_model_name_heuristic(provider):

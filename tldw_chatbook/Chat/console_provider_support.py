@@ -627,8 +627,6 @@ def build_local_thinking_payload_fields(
         # Strata parses these itself; no llama.cpp template kwargs are needed.
         if effort in _STRATA_EFFORTS:
             fields["reasoning_effort"] = effort
-        elif effort is not None:
-            logger.debug("reasoning effort '{}' is not supported by {}; dropped", effort, key)
         if budget is not None:
             fields["reasoning_budget_tokens"] = budget
     elif key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
