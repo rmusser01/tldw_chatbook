@@ -129,6 +129,30 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## A new key in the shipped config template lands in every new test file, not only in every load (TASK-33620.10, 2026-10-29)
+
+**Incident.** TASK-33620.10 added `[chat_defaults] streaming = true` to
+`CONFIG_TOML_CONTENT`. Its first three commits passed their two new test
+files and the config suites. They also guarded the merge seam, so the
+template key could not shadow a file's legacy `enable_streaming`. A by-id
+sweep of about 170 related files against origin/dev still found
+`test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]`
+and `[unset]` red. Both are ui-fast-lane census entries, so the PR gate would
+have failed. The test's private profile calls
+`load_cli_config_and_ensure_existence()`, which writes a missing file from the
+whole template. The "nothing saved" and "only `enable_streaming`" states it
+seeded no longer existed, because the file itself now said `streaming = true`.
+The merge-seam guard could not help: the key was in the user's file, not only
+in the merged view.
+
+**What to do.** A key added to the shipped template lands in two places: under
+every load (the merge) and inside every new file (`ensure_existence` writes the
+template). Before calling the change green, grep `Tests/` for the key next to
+`ensure_existence`, `private_profile_test` and its section name, and run those
+files. A test that needs "an older file" must delete the key after the file is
+created. Expect `load_settings()` to merge the shipped value back in anyway
+(see the `chat_defaults.model` entry below).
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
