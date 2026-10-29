@@ -2,12 +2,18 @@
 
 The Console has two voice features that work together:
 
-- **Speak replies** (switch in the status row): new assistant replies in
-  this conversation are spoken automatically. Per-conversation and
-  consent-gated — the first flip asks you to confirm the TTS provider and
-  destination, and changing that destination later asks again.
-- **Hands-free** (switch beside it, or **Ctrl+Shift+H**): the full voice
-  loop — speak, it sends, the reply is spoken, speak again.
+- **Speak replies** (in the status row, reads **Speak replies: Off**, **On**
+  or **Paused**): new assistant replies in this conversation are spoken
+  automatically. Per-conversation and consent-gated — turning it on asks
+  you to confirm the TTS provider and destination, and changing that
+  destination later asks again.
+- **Hands-free** (beside it, reads **Hands-free: Off**, **Starting…** or
+  **On**; or **Ctrl+Shift+H**): the full voice loop — speak, it sends, the
+  reply is spoken, speak again. Turning it on asks first (see below).
+
+Each control's word is its state. Tab to one and press **Enter** or
+**Space** to change it; a focused control shows its word as a solid bar, so
+the value stays readable while it has focus.
 
 While hands-free is running, it owns reply speech; the two features never
 double-speak. **Speak replies** persists per conversation for normal
@@ -69,6 +75,16 @@ reply and the spoken version must fit the existing 5,000-character speech limit.
 | Thinking | "hands-free · thinking…" | Your message was sent; the reply is being generated |
 | Speaking | "hands-free · speaking" | The reply streams out sentence by sentence |
 
+- **Turning it on asks first.** Hands-free opens your microphone and
+  speaks every reply through the same TTS provider as Speak replies, so it
+  shows the same dialog (provider, destination, whether charges may apply)
+  before anything starts. **Cancel** or **Esc** leaves it Off with nothing
+  running. With no TTS destination available, the dialog says replies will
+  not be spoken.
+- **Starting…** means the speech model is still loading (minutes on a
+  first run); the mic button reads **Cancel** meanwhile. Leaving Hands-free
+  then (**Esc**, the control, Ctrl+Shift+H or **Cancel**) stops the load
+  and the microphone never opens.
 - **Interrupt a spoken reply** by typing anywhere in the composer, or press
   **Esc** / **Ctrl+Shift+H** to exit the loop from any phase.
 - The mic closes while a reply is generated/spoken (no echo cancellation),
@@ -116,9 +132,10 @@ provider, endpoint, or voice profile destination, consent is asked again
 ("The speech destination changed. Confirm Speak replies again.") — that is
 the destination-fingerprint guard, not a glitch.
 
-If speaking fails, automatic speech pauses itself and two buttons appear:
-**Retry speech** (retry the reply that failed) and **Resume auto-speak**
-(keep speaking future replies). A hands-free reply in which *every*
+If speaking fails, automatic speech pauses itself — the control reads
+**Speak replies: Paused** — and two buttons appear: **Retry speech** (retry
+the reply that failed) and **Resume auto-speak** (keep speaking future
+replies). A hands-free reply in which *every*
 sentence fails produces one error notice with remedies.
 
 ## Setup by platform
@@ -155,7 +172,7 @@ each fully-silent reply says so.
 
 - **"Microphone support isn't installed…"** — install the
   `speech_recording` extra; hands-free refuses to start until then.
-- **Switch flips but nothing happens / replies are silent** — check the
+- **Control turns on but nothing happens / replies are silent** — check the
   toast: either a player is missing (install `mpv` or set Output format to
   WAV) or the TTS provider failed (Settings ▸ Speech & TTS).
 - **"No audio was captured from the microphone."** — check the OS

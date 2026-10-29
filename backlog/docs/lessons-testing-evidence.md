@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## A state pushed through a presentation edge is overwritten by the next real sync (TASK-33626.1, 2026-10-29)
+
+**Incident.** The header test for "Speak replies: Paused" pushed the state straight
+through the Hands-free controller's presentation callback
+(`_sync_console_auto_speak_controls(True, True, True)`) on a mounted ChatScreen. It
+passed once and failed three of four parametrizations with the row reading
+"Speak replies: Off": the auto-speak coordinator re-synced the active conversation's
+persisted preference (Off) after the test's push. The control was right and the
+test was racing the real owner of the state.
+
+**What to do.** Drive the state through its owner, not through the edge that paints
+it: here `store.set_auto_speak(...)` / `store.pause_auto_speak(...)` and then the
+coordinator's `sync_controls()`. A later re-sync then repaints the same state, so the
+assertion stops depending on when the owner's own sync lands. A presentation-only
+push is fine for a widget mounted alone (`Tests/UI/test_console_speech_controls.py`),
+never inside the real screen.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen

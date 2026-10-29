@@ -14,6 +14,7 @@ from Tests.Audio.fakes.fake_duplex_backend import FakeDuplexBackend, ManualClock
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_dictation import _mounted_console
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from tldw_chatbook.Audio import duplex_transport as transport_module
 from tldw_chatbook.Chat import console_voice_input as input_module
 from tldw_chatbook.Chat import console_speculative_voice_session as session_module
@@ -116,6 +117,7 @@ async def test_visible_control_capture_continuity_and_overflow_reporting(
                     await pilot.pause(0.01)
             console = await _mounted_console(app, pilot)
             await pilot.click("#console-hands-free-switch")
+            await accept_hands_free_consent(app, pilot)
             if blocked_callbacks:
                 async with asyncio.timeout(15):
                     while len(callback_gaps) < 20:

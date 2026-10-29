@@ -763,7 +763,9 @@ def _sync_auto_speak_presentation(
     )
 
 
-def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
+def _sync_hands_free_presentation(
+    screen: Any, active: bool, starting: bool = False
+) -> None:
     """Project the live Hands-free session state onto the mounted switch."""
     try:
         speech_controls = screen.query_one(
@@ -771,7 +773,14 @@ def _sync_hands_free_presentation(screen: Any, active: bool) -> None:
         )
     except QueryError:
         return
-    speech_controls.sync_hands_free_state(active)
+    speech_controls.sync_hands_free_state(active, starting=starting)
+
+
+def _sync_hands_free_after_dictation_change(screen: Any) -> None:
+    """Repaint the Hands-free control once its controller exists."""
+    hands_free = getattr(screen, "_hands_free", None)
+    if hands_free is not None:
+        hands_free.sync_console_hands_free_presentation()
 
 
 def _project_voice_preview(screen: Any, projection: "VoicePreviewProjection") -> None:
@@ -2294,8 +2303,12 @@ def build_console_controllers(
                 screen._hands_free, "_console_hands_free_vad_degraded", value
             )
         ),
+        # TASK-33626.1: a spoken "hands free" turns the mode on like the
+        # header control does, so it asks the same consent first.
         enter_hands_free_loop=(
-            lambda **kwargs: screen._hands_free._enter_console_hands_free_loop(**kwargs)
+            lambda **kwargs: screen._hands_free.request_console_hands_free_entry(
+                **kwargs
+            )
         ),
         hands_free_force_immediate_send=(
             lambda: screen._hands_free._console_hands_free_force_immediate_send()
@@ -2323,6 +2336,7 @@ def build_console_controllers(
         dictation_service_factory=lambda **kwargs: (
             screen.app_instance._create_console_dictation_service(**kwargs)
         ),
+        on_state_changed=lambda _state: _sync_hands_free_after_dictation_change(screen),
     )
     #: The V3 pipeline hands-free loop's state and lifecycle, plus the
     #: two-engine fork/action coordination it shares with the V4
@@ -2377,7 +2391,21 @@ def build_console_controllers(
             )
         ),
         sync_hands_free_state=(
-            lambda active: _sync_hands_free_presentation(screen, active)
+            lambda active, starting=False: _sync_hands_free_presentation(
+                screen, active, starting
+            )
+        ),
+        request_dictation_cancel=(
+            lambda: screen._dictation._request_console_dictation_cancel(
+                announce=False
+            )
+        ),
+        request_hands_free_consent=(
+            lambda on_accepted, on_declined, realtime_label=None: (
+                screen._console_auto_speak.request_hands_free_consent(
+                    on_accepted, on_declined, realtime_label=realtime_label
+                )
+            )
         ),
         runtime_accessor=lambda: screen._console_runtime(),
         project_voice_preview=(

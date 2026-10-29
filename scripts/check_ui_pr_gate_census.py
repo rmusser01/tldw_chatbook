@@ -616,7 +616,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Rebased 2026-10-29 onto dev's 1143: 1143 + 2 = 1145.
 # Rebased 2026-10-29 onto dev's 1145 entries (dev carried two
 # MINIMUM_FILES lines, 1145 and 1144; one kept): 1145 + 2 = 1147.
-MINIMUM_FILES = 1147
+# TASK-33626.1 (2026-10-29) appends 2 node entries at the tail: the
+# Hands-free consent gate and the Esc-during-model-preparation cancel (one
+# mounted ChatScreen case each, ~10 s locally), so no existing entry changes
+# shard: 1143 + 2 = 1145. Rebased 2026-10-29 onto dev's 1142: 1144 + 2 = 1146.
+# Rebased 2026-10-29 onto dev's 1143: 1145 + 2 = 1147.
+# Rebased 2026-10-29 onto dev's 1145 entries: 1147 + 2 = 1149.
+MINIMUM_FILES = 1149
 
 
 def read_census(path: Path) -> list[str]:

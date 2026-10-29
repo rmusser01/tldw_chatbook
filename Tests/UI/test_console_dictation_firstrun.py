@@ -374,9 +374,10 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
             assert len(details) == 1
             assert "recorded" in details[0]
 
-            # The button is pressable, so the download is escapable.
+            # The button is pressable, so the download is escapable, and
+            # TASK-33626.1 labels it with what a press does.
             mic = composer.query_one("#console-dictation", Button)
-            assert str(mic.label) == "Dictate…"
+            assert str(mic.label) == "Cancel"
             assert mic.disabled is False
             assert "cancel" in str(mic.tooltip).lower()
 

@@ -11,6 +11,7 @@ import pytest
 
 from Tests.UI.test_console_dictation import _mounted_console
 from Tests.UI.test_console_hands_free_wiring import _ready_host
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from tldw_chatbook.Chat.console_hands_free import HandsFreeController
 from tldw_chatbook.Chat.console_voice_controls import ControlKind
 from tldw_chatbook.UI.Console_Modules.hands_free import (
@@ -231,6 +232,7 @@ async def test_visible_hands_free_control_creates_speculative_session(
                 _ReadyResolutionGateway().resolve_for_send,
             )
             await pilot.click("#console-hands-free-switch")
+            await accept_hands_free_consent(host, pilot)
             await pilot.pause()
 
             selected: Any = console._console_hands_free

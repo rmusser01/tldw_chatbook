@@ -1273,6 +1273,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
                 "redo (Ctrl+Y also works where the terminal can't send Ctrl+Shift+Z)",
             ),
             ("Alt+V", "paste an image from the clipboard"),
+            ("Ctrl+Shift+H", "turn Hands-free on (asks first) or off; Esc exits"),
             (
                 "Attach file",
                 f"attach files — up to {MAX_PENDING_ATTACHMENTS} per message",
@@ -10443,14 +10444,9 @@ class ChatScreen(BaseAppScreen):
         self._hands_free.request_console_hands_free_state(event.enabled)
 
     def action_toggle_console_hands_free(self) -> None:
-        """`ctrl+shift+h`: enter the hands-free loop, or exit it if already
-        running.
-
-        One-line delegation (wave-2 console decomposition, task 1). See
-        `ConsoleHandsFreeController.action_toggle_console_hands_free` for
-        the real implementation.
-        """
-        self._hands_free.action_toggle_console_hands_free()
+        """`ctrl+shift+h`: exit hands-free, or ask the Speak replies consent
+        and enter it (TASK-33626.1). See `ConsoleHandsFreeController`."""
+        self._hands_free.request_console_hands_free_toggle()
 
     def _enter_console_hands_free_loop(self, *, capture_live: bool) -> None:
         """Pick the hands-free engine, then start that engine's loop.
@@ -22694,9 +22690,11 @@ class ChatScreen(BaseAppScreen):
         self._context_spend._stop_console_cost_ttl_timer()
         self._console_draft_spend_refresh.stop()
         self._hands_free.teardown()
+        # TASK-33626.1: a live capture survives Hands-free's own consent.
+        keep_capture = self._console_auto_speak.hands_free_consent_pending
         self._console_suspend_flush_tasks = [
             asyncio.ensure_future(self._realtime.teardown()),
-            asyncio.ensure_future(self._dictation.suspend()),
+            *([] if keep_capture else [asyncio.ensure_future(self._dictation.suspend())]),
         ]
         # Capture finding 7: the screen on top draws the app's notices, so a
         # dialog's rack and this one (docked elsewhere) drew each twice.

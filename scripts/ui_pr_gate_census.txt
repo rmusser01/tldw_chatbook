@@ -1613,3 +1613,7 @@ Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_pr
 # the real modals paint theme frames with readable copy on textual-light.
 Tests/UI/test_console_modal_theme_frames.py::test_console_widget_css_uses_theme_colours_only
 Tests/UI/test_console_modal_theme_frames.py::test_console_modals_paint_theme_frames_and_readable_copy[textual-light-80x24]
+# TASK-33626.1 (2026-10-29): turning Hands-free on asks the Speak replies
+# consent first, and leaving it during model preparation ends in idle.
+Tests/UI/test_console_speech_header_state.py::test_enter_on_hands_free_asks_consent_and_declining_starts_nothing
+Tests/UI/test_console_speech_header_state.py::test_exit_during_model_preparation_cancels_and_a_late_start_never_records[escape]

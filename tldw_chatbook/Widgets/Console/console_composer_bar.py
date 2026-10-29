@@ -2690,17 +2690,17 @@ class ConsoleComposerBar(Horizontal):
         except NoMatches:
             return
         labels = {
-            # CN-01 (TASK-2154.13): one verb family for the whole lifecycle --
-            # the feature is "Dictate" (idle), it is working ("Dictate…",
-            # starting or transcribing -- the tooltip and voice chip decode
-            # which phase), and it is capturing ("Dictating"). Supersedes the
-            # TX-07 (TASK-2154.12) "Text…" busy word, which had replaced the
-            # jargon "STT…" but still read as a third name for one feature.
-            # The recording label also drops its old "●" marker: the red
+            # CN-01 (TASK-2154.13): one verb family for the lifecycle -- the
+            # feature is "Dictate" (idle), working ("Dictate…", transcribing),
+            # capturing ("Dictating"). TASK-33626.1: "starting" (a speech-model
+            # load that can run for minutes) reads "Cancel", because a press
+            # cancels it and a tooltip-only "press to cancel" went unseen; the
+            # chip beside it says what is loading. TX-07's "Text…" busy word is
+            # gone. The recording label also drops its old "●" marker: the red
             # variant and the chip's ◉ timer carry liveness, and "●" means
             # agent-running (CN-05).
             "idle": "Dictate",
-            "starting": "Dictate…",
+            "starting": "Cancel",
             "recording": "Dictating",
             "transcribing": "Dictate…",
         }
