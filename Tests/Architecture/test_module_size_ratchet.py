@@ -576,6 +576,13 @@ _BUDGETS: dict[str, int] = {
     # asks storage for its count by title only (owner decision 2026-10-27),
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    # 2026-10-29 (TASK-37421, owner decision: every self-hosted and Custom
+    # OpenAI-compatible server gets llama.cpp's one-time non-streaming retry;
+    # a fix over a size ratchet raises the row): 8184 -> 8333 (+149) -- the
+    # generic path's retry in stream_chat, sharing the llama.cpp fallback's
+    # two trace steps (hoisted, not duplicated), the refused/empty-stream
+    # hand-back in _stream_generic_chat, and the retry's usage hand-over.
+    # Classification and copy live in Chat/refused_stream.py.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
