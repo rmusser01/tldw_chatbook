@@ -16,8 +16,9 @@ Three discoveries, one count:
   ``entity_id='<id>_<keyword>'`` and inside the JSON payload).
 - **The FTS index over notes** (an external-content FTS5 table whose
   ``content`` is ``notes``): its ``_docsize`` row for the note's rowid, the
-  index's own instances for that rowid (``fts5vocab``), FTS5's structural
-  integrity check, and ``MATCH`` on tokens only the note had.
+  index's own instances for that rowid (``fts5vocab``), FTS5's integrity
+  check, the index's row total against the live notes it should hold, and
+  ``MATCH`` on tokens only the note had.
 
 Used by the DB-level test (``test_note_hard_delete.py``) and by the Pilot
 that purges through the real Library (``Tests/UI/test_library_notes_trash_
@@ -90,6 +91,36 @@ def _swept_tables(connection: sqlite3.Connection) -> list[str]:
     ]
 
 
+def _sqlite_varints(blob: bytes) -> list[int]:
+    """Decode SQLite/FTS5 varints (big-endian 7-bit groups, 9th byte whole)."""
+    values: list[int] = []
+    position = 0
+    while position < len(blob):
+        value = 0
+        for index in range(9):
+            byte = blob[position]
+            position += 1
+            if index == 8:
+                value = (value << 8) | byte
+                break
+            value = (value << 7) | (byte & 0x7F)
+            if not byte & 0x80:
+                break
+        values.append(value)
+    return values
+
+
+def _fts_row_total(connection: sqlite3.Connection, fts: str) -> int | None:
+    """The FTS5 index's own row count: the first value of its averages record."""
+    row = connection.execute(
+        f"SELECT block FROM {_quoted(fts + '_data')} WHERE id = 1"
+    ).fetchone()
+    if row is None or not row[0]:
+        return 0
+    values = _sqlite_varints(bytes(row[0]))
+    return values[0] if values else None
+
+
 def note_traces(
     connection: sqlite3.Connection,
     note_id: str,
@@ -152,15 +183,33 @@ def note_traces(
             if count:
                 traces[f"{fts}:instances"] = int(count)
         try:
-            # The index's own structure. Not ``rank = 1`` (index against the
-            # content table): the notes index deliberately holds no
-            # tombstones, so that comparison fails whenever any note is in
-            # Recently deleted.
+            # The index's own structure. ``rank = 1`` (the index against the
+            # content table) only when the content table holds no tombstone:
+            # the notes index deliberately leaves them out, so that
+            # comparison fails whenever any note is in Recently deleted.
+            tombstones = connection.execute(
+                "SELECT COUNT(*) FROM notes WHERE deleted <> 0"
+            ).fetchone()[0]
             connection.execute(
-                f"INSERT INTO {_quoted(fts)}({_quoted(fts)}) VALUES('integrity-check')"
+                f"INSERT INTO {_quoted(fts)}({_quoted(fts)}, rank) "
+                "VALUES('integrity-check', ?)",
+                (0 if tombstones else 1,),
             )
         except sqlite3.DatabaseError:
             traces[f"{fts}:integrity-check"] = 1
+        # The index's row total against the rows it holds and the live notes
+        # it should hold. An FTS 'delete' issued for a row the index never
+        # held (a purged tombstone, unguarded) decrements this total without
+        # touching the rest -- measured: the structural check above passes.
+        totals = _fts_row_total(connection, fts)
+        indexed = connection.execute(
+            f"SELECT COUNT(*) FROM {_quoted(fts + '_docsize')}"
+        ).fetchone()[0]
+        live = connection.execute(
+            "SELECT COUNT(*) FROM notes WHERE deleted = 0"
+        ).fetchone()[0]
+        if not (totals == indexed == live):
+            traces[f"{fts}:totals"] = int(totals if totals is not None else -1)
         for token in tokens:
             try:
                 count = connection.execute(
