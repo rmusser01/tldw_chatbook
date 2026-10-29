@@ -1,16 +1,18 @@
 """Durable proof for a rewritten trace surface tail.
 
-ADR-097 amendment 2026-10-27 (TASK-33621.7). Edit & resend answers on a new
-sibling branch with capture off, so the edited branch is never recorded in the
-trace surface. The next captured send therefore carries a rewrite of the
-recorded surface's tail together with the new turn, a shape the planner
+ADR-097 amendment 2026-10-27 (TASK-33621.29, TASK-33621.7). Compact now drops
+the compacted turns from the provider-visible history, and Edit & resend
+answers on a new sibling branch with capture off. Neither records its change
+in the trace surface. The next captured send therefore carries a rewrite of
+the recorded surface's tail together with the new turn, a shape the planner
 otherwise refuses.
 
 This module admits that one shape only when the replacement rows are the
 current branch's exact saved history: each row's message is the direct parent
 of the next, the last row is the current user, and the oldest row hangs off a
-proven anchor (the last retained saved row, or the conversation root). It
-reads messages only; it writes nothing.
+proven anchor (the last retained saved row, the active conversation memory's
+boundary, or the conversation root). It reads messages and memory records
+only; it writes nothing.
 """
 
 from __future__ import annotations
@@ -53,6 +55,18 @@ def _message_rows(
     ).fetchall()
     parents = {str(row[0]): row[1] for row in rows}
     return parents if len(parents) == len(set(message_ids)) else None
+
+
+def _active_memory_boundary(
+    cursor: sqlite3.Cursor, conversation_id: str, message_id: str
+) -> bool:
+    row = cursor.execute(
+        "SELECT 1 FROM console_conversation_memories "
+        "WHERE conversation_id = ? AND active = 1 AND boundary_message_id = ? "
+        "LIMIT 1",
+        (conversation_id, message_id),
+    ).fetchone()
+    return row is not None
 
 
 def _chain_messages(
@@ -105,7 +119,7 @@ def build_rewritten_tail_witness(
         The witness when every row is proven, otherwise None.
 
     Raises:
-        sqlite3.Error: If a revision or message read fails.
+        sqlite3.Error: If a revision, message or memory read fails.
     """
     conversation_id = _conversation_id(cursor, repository, owner_id)
     if len(incoming) < 2 or current_turn_id is None or conversation_id is None:
@@ -144,13 +158,25 @@ def build_rewritten_tail_witness(
     if retained_id is not None:
         revision = repository.get_semantic_revision(cursor, retained_id)
         retained_message = None if revision is None else revision.source_message_id
-    if not (
-        (anchor is not None and anchor == retained_message)
-        or (anchor is None and last_retained is None)
+    if anchor is not None and anchor == retained_message:
+        memory_anchor = False
+    elif anchor is not None and _active_memory_boundary(
+        cursor, conversation_id, anchor
     ):
+        # The memory reaches the provider as a system message outside the
+        # history rows, so the active memory's boundary proves the drop.
+        memory_anchor = True
+    elif anchor is None and last_retained is None:
+        memory_anchor = False
+    else:
         return None
     try:
-        return RewrittenTailWitness(history, user_revision_id, anchor_message_id=anchor)
+        return RewrittenTailWitness(
+            history,
+            user_revision_id,
+            anchor_message_id=anchor,
+            memory_anchor=memory_anchor,
+        )
     except ValueError:
         return None
 
@@ -176,7 +202,7 @@ def validate_rewritten_tail(
 
     Raises:
         ValueError: ``rewritten_tail_unavailable`` if any proof no longer holds.
-        sqlite3.Error: If a revision or message read fails.
+        sqlite3.Error: If a revision, message or memory read fails.
     """
     conversation_id = _conversation_id(cursor, repository, owner_id)
     if (
@@ -198,5 +224,11 @@ def validate_rewritten_tail(
     if chain is None or chain[1][chain[0][0]] != witness.anchor_message_id:
         raise ValueError("rewritten_tail_unavailable")
     anchor = witness.anchor_message_id
-    if anchor is not None and _message_rows(cursor, conversation_id, (anchor,)) is None:
+    if anchor is not None and (
+        _message_rows(cursor, conversation_id, (anchor,)) is None
+        or (
+            witness.memory_anchor
+            and not _active_memory_boundary(cursor, conversation_id, anchor)
+        )
+    ):
         raise ValueError("rewritten_tail_unavailable")

@@ -176,6 +176,8 @@ transcript:
   has no trace call of its own. Your next send in the chat is captured as usual.
   It records the edited branch as one bounded replacement of the earlier trace
   history, and it does not ask you to choose an action.
+- After Compact now, the next captured send records the compacted history the
+  same way: the conversation memory replaces the older turns it summarized.
   Old trace events are never rewritten.
 - A fork shares the immutable trace prefix visible at its boundary and adds only
   its own suffix. The complete inherited history remains coherent in the fork
