@@ -244,7 +244,10 @@ class _Acquisition:
                     raise bootstrap.RecoveryRequired(
                         "recursive_authority_initialization"
                     )
-                _changed.wait(0.01)
+                # Leader retirement and local pause both notify this condition.
+                # Recheck fresh authority on wake, not every 10 ms under the
+                # shared lock while another initializer still owns the turn.
+                _changed.wait()
         try:
             yield
         finally:
