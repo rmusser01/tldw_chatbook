@@ -129,6 +129,28 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## One provider call's usage has three readers; a saved-row test sees one (TASK-37421, 2026-10-29)
+
+**Incident.** TASK-37421's non-streaming retry is a second provider call
+inside one `stream_chat`. A mounted ChatScreen test asserted the retried
+reply's usage in the store and in `messages.usage_json`, and stayed green
+under a mutation that closed the retry's usage on its own call view instead
+of handing it to the call it replaced. The controller saves the message row
+from the aggregate's `usage_payloads()`, which counts every call view, so
+the row was right either way. The same mutation turned two other readers
+red: the loopback `ConsoleAgentBridge` tests (the bridge reads only the call
+view it handed `stream_chat`, so the run's `total_tokens` fell from the
+server's 26 to the bridge's own estimate, 411) and the gateway trace test
+(the retry's trace call settled with no usage). The opposite mutation
+(publish on both views) doubled the saved row to (42, 10), which every kind
+of test caught.
+
+**What to do.** Console usage is read three ways: the aggregate (the saved
+row and the cost chip), the agent bridge's call view (the run's tokens and
+live usage) and the trace call's settlement. When a change moves usage
+between calls, pin each reader, at least one through the real
+`ConsoleAgentBridge`, and mutate the hand-over both ways.
+
 ## A new key in the shipped config template lands in every new test file, not only in every load (TASK-33620.10, 2026-10-29)
 
 **Incident.** TASK-33620.10 added `[chat_defaults] streaming = true` to

@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-27 18:50'
+updated_date: '2026-10-29 15:50'
 labels:
   - console
   - streaming
@@ -33,3 +34,9 @@ Evidence: TASK-33620.10's live run on 2026-10-27 (screen captures, the refusing 
 - [ ] #1 A llama.cpp reply delivered by the automatic non-streaming retry persists the usage the server reported for the retry, or the gap is shown to be by design and recorded where the cost chip explains unknown usage.
 - [ ] #2 A test drives the retry through the real gateway with a server response that carries usage and asserts what is persisted; it fails before the change if a change is made.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Measured 2026-10-29 (TASK-37421): the gap is not the retry alone. Through the direct llama.cpp path (`stream_chat`'s llama.cpp branch, a request with no native tools), a plain streamed reply, a non-streamed reply and a reply from the automatic retry all record no usage on the Console signals, aggregate or call view, even when every server response carries `usage`: `stream_llamacpp_chat` and `complete_llamacpp_chat` record usage only on `_automatic_signals`, which `stream_chat` passes for automatic work only. A llama.cpp request that goes through the generic path (native tools) now gets TASK-37421's retry, which records the retry's usage once.
+<!-- SECTION:NOTES:END -->
