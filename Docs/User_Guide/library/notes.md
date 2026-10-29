@@ -1559,8 +1559,12 @@ restored the bottom one. Restoring the only row left on the last page shows
 the page before it, with focus on its first row. If a page cannot be read, the
 view keeps what it shows, says "Couldn't load recently deleted notes." and
 offers **Retry**.
-Nothing here deletes anything for good: the Trash offers **Restore** and no
-permanent delete.
+
+**Delete forever** (x) removes a note for good after a confirm that names it;
+a note bound to a synced folder is refused. The confirm opens on **Cancel**,
+and **Escape** cancels it without changing anything. There is no Undo
+afterwards: the note, its keyword and folder links and its earlier versions
+are gone, and focus lands on the row now in its place.
 
 ## Keyboard & commands
 
@@ -1576,6 +1580,7 @@ permanent delete.
 | **Enter** (on **Sort**) | Opens the chooser with the current choice focused. **← / →** (or ↹ Tab) move between the choices without choosing, and Enter picks the focused one; Enter on a choice or Escape returns focus to **Sort**. |
 | **Escape** | Focus the rail (in **Recently deleted**, go back to the list). In the filter: leave the field, keeping what you typed; the applied filter is unchanged. |
 | **r** (in **Recently deleted**) | Restore the focused row |
+| **x** (in **Recently deleted**) | Delete the focused row forever, after a confirm that names it |
 | Enter (in "Filter notes… (Enter)") | Apply the filter; Enter again on the same filter opens the first result |
 | ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does, and focus lands on the first folder or note of the list — the same row ↓ reaches from an empty box with no filter applied. Any key or click while the result is still loading — including F6, Shift+F6 and Tab — or a dialog opening over Library cancels that move to the first row. A mouse-wheel scroll that moves a pane does not: the pane takes the wheel, and focus still lands on the first row when the result paints. |
 | **‹ \<note\>** (note heading) | After following a link or a backlink, returns to the note you came from (one hop) |

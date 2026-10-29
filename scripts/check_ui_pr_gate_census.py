@@ -590,7 +590,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # - task 10 (2026-10-29, TASK-34000.40 N-34, ruling T10-a): Tests/UI/test_library_
 #   notes_import_escape_keeps_running.py (two production-CSS Library boots over
 #   a real import, ~9 s alone at load ~6 and ~24 s at load ~28, no plugin): 929 -> 930.
-MINIMUM_FILES = 930
+# - task 8b (2026-10-29, TASK-34000.29 N-29, ruling T8b-f): Tests/UI/test_library_
+#   notes_trash_pages_and_purges_extended.py (Delete forever: two production-CSS
+#   Library boots over a real ChaChaNotes database and a real lasting-sync store,
+#   ~19 s alone at load ~11, no plugin; its sibling was already ~33 s): 930 -> 931.
+MINIMUM_FILES = 931
 
 
 def read_census(path: Path) -> list[str]:
