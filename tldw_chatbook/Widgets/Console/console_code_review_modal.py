@@ -9,6 +9,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static, TextArea
 
@@ -74,7 +75,7 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
                 self._service.native_report_slots, self._review_id
             )
             sources = await asyncio.to_thread(self._source_options)
-            if self.is_mounted:
+            if self.is_attached and not self._pruning:
                 self.query_one(Select).set_options(
                     [(f"{slot} · originals", slot) for slot in slots]
                     + [(f"{slot} · raw output", "raw:" + slot) for slot in slots]
@@ -129,11 +130,15 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
             if generation == self._generation:
                 self._error(exc)
             return
-        if self.is_mounted and generation == self._generation:
-            self._body, self._offset = page["body"], offset
-            self._next_offset = page["next_offset"]
-            self._show_page()
-            self.query_one(TextArea).focus()
+        if self.is_attached and not self._pruning and generation == self._generation:
+            try:
+                body = self.query_one(TextArea)
+                self._body, self._offset = page["body"], offset
+                self._next_offset = page["next_offset"]
+                self._show_page()
+                body.focus()
+            except NoMatches:
+                return
 
     def present_original(self, slot_id: str, page: dict) -> bool:
         """Receive an off-loop sanitized bounded page after an actual mount."""
@@ -153,12 +158,15 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
         return True
 
     def _error(self, exc: Exception) -> None:
-        if self.is_mounted:
-            self._body = ""
-            self.query_one(TextArea).load_text("")
-            self.query_one("#code-review-status", Static).update(
-                "Report unavailable: " + getattr(exc, "reason", type(exc).__name__)
-            )
+        if self.is_attached and not self._pruning:
+            try:
+                self._body = ""
+                self.query_one(TextArea).load_text("")
+                self.query_one("#code-review-status", Static).update(
+                    "Report unavailable: " + getattr(exc, "reason", type(exc).__name__)
+                )
+            except NoMatches:
+                return
 
     def _show_page(self) -> None:
         self.query_one(TextArea).load_text(self._body)
@@ -172,9 +180,7 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
     async def _action(self, event: Button.Pressed) -> None:
         key = event.button.id
         event.stop()
-        if key == "code-review-close":
-            await self.request_safe_cancel(source="button")
-        elif key in {"code-review-previous", "code-review-next"}:
+        if key in {"code-review-previous", "code-review-next"}:
             if key.endswith("next") and self._next_offset is not None:
                 self._history.append(self._offset)
                 offset = self._next_offset
@@ -207,6 +213,8 @@ class ConsoleCodeReviewModal(SafeModalDismissMixin, ModalScreen[None]):
                 )
                 return
             self.run_worker(self._release(), exclusive=True, group="review-release")
+        elif key == "code-review-close":
+            await self.request_safe_cancel(source="button")
 
     def _export(self, path: str | None) -> None:
         if path:

@@ -191,3 +191,65 @@ async def test_contextless_team_load_and_cancel_do_not_read_or_write_profile(
         await panel._load_review_team()
         await panel._save_review_team()
         assert panel._review_team.reviewers == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["load", "load_refused", "render", "save"])
+async def test_deferred_review_team_work_survives_panel_removal(
+    runs_db, isolated_config, monkeypatch, operation
+):
+    import asyncio
+    import threading
+
+    from tldw_chatbook.Agents.code_review_models import ReviewRefused
+    from tldw_chatbook.Widgets import settings_agents_panel as module
+
+    pid = preset(runs_db, "retained")
+    isolated_config.write_text(
+        f'[agents.code_review]\nreviewers = [{{preset_id="{pid}",focus="saved"}}]\n'
+    )
+    panel = panel_for(runs_db, isolated_config)
+    async with PanelHarness(panel).run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        status = panel.query_one("#agents-review-team-status", Static)
+        before_status = _static_text(status)
+        entered, release = threading.Event(), threading.Event()
+        name = (
+            "get_code_review_team"
+            if operation.startswith("load")
+            else "load_agents_routing_config"
+            if operation == "render"
+            else "save_settings_to_cli_config"
+        )
+        original = getattr(module, name)
+
+        def deferred(*args, **kwargs):
+            entered.set()
+            assert release.wait(5)
+            if operation == "load_refused":
+                raise ReviewRefused("invalid_review_team")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, deferred)
+        if operation == "save":
+            panel.query_one("#agents-review-verifier", Select).value = pid
+        task = asyncio.create_task(
+            panel._load_review_team()
+            if operation.startswith("load")
+            else panel._render_review_team()
+            if operation == "render"
+            else panel._save_review_team()
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            await panel.remove()
+            assert not status.is_attached
+        finally:
+            release.set()
+        await task
+        assert _static_text(status) == before_status
+        if operation == "save":
+            saved = tomllib.loads(isolated_config.read_text())["agents"]["code_review"]
+            assert saved["reviewers"][0]["preset_id"] == pid
+            assert saved["verifier_preset_id"] == pid
+            assert panel._review_team.verifier_preset_id == pid

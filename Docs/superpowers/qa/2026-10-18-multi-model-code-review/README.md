@@ -84,3 +84,22 @@ replace live AC24 evidence or the separately recorded baseline failures. Exact
 commands, logs and preservation proofs remain in
 `/private/tmp/task35582-dev-sync/runtime-conflict-report.md` and its adjacent
 receipts; no new raw archive was added to the PR.
+
+Normal PR CI on `ef56ce83f6` passed all 34 test jobs, including the eight
+module-size guards, both admission lanes, all 28 UI shards and Console P0.
+Perf Guard and Tool Recovery also passed. The final derived-artifact job failed
+only its worker/DOM contract: five new review UI methods had post-await lookup
+warnings. The [actual failed run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40787033395)
+is retained as failure evidence, not relabeled green.
+
+The follow-up addresses that boundary in the review modal and review-team
+settings. Five mounted removal-race regressions failed with `NoMatches` before
+the fix; the final two-file run passes 29 tests, including deferred read errors
+and preserving a completed configuration save after panel removal. UI publication
+now checks the lifetime of its original controls. The mutually exclusive Close
+branch moves last to remove its lexical false positive. The exact worker guard
+passes without any census edit, compilation/whitespace pass, and there are no
+new lint findings. No runtime, permission, accounting, workflow, visual or budget
+change was made. The scoped review found no actionable findings. Detailed red/green receipts remain in
+`/private/tmp/task35582-dev-sync/worker-dom-repair/`; the next PR head must receive
+its own normal CI result. AC24 remains open and PR3286 remains draft.
