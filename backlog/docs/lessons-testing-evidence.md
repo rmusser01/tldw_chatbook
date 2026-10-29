@@ -129,6 +129,16 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## Pre-decoded SSE fixtures hide charset corruption (TASK-37600, 2026-10-29)
+
+A user screenshot showed repeated accented characters in llama.cpp agent
+replies, also present in copied/exported text. Raw UTF-8 SSE bytes through the
+shared local adapter reproduced eight Unicode failures while 28 ASCII,
+escaped-JSON and explicit-UTF-8 controls passed. Requests inferred Latin-1 from
+charset-less `text/event-stream`; pre-decoded string fixtures bypass that step.
+Test encoding behavior with raw `ensure_ascii=False` JSON bytes and real HTTP
+response construction, including missing/misleading charsets and one-byte reads.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
