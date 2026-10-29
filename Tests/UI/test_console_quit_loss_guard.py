@@ -157,6 +157,50 @@ async def test_ctrl_q_with_only_a_composer_draft_asks_and_stay_keeps_it(monkeypa
         await _until(pilot, lambda: "quit" in events, "Quit to run the shutdown")
 
 
+async def test_ctrl_q_from_another_screen_still_asks_about_a_console_draft(
+    monkeypatch,
+):
+    """AC#1/#5: the guard is app-owned, so a draft left in Console still asks.
+
+    The Console view is detached once Home is on screen; the quit inventory
+    reads the draft the tab kept in the store, not a mounted composer.
+    """
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    events: list[str] = []
+    app = _app_with_quit_recorder(monkeypatch, events)
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(app, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        title = console._session._session_close_display_title(session_id)
+        await _type_into_composer(pilot, console, _DRAFT)
+
+        app.post_message(NavigateToScreen("home"))
+        await _until(
+            pilot,
+            lambda: type(app.screen).__name__ == "HomeScreen",
+            "the Home screen",
+        )
+        home = app.screen
+
+        dialog = await _ctrl_q_asks(pilot, app, events, "the draft left in Console")
+
+        rows = _message_rows(dialog)
+        assert "Unsent drafts: 1" in rows
+        assert f'Affected tabs: "{title}"' in rows
+        assert _DRAFT not in dialog.message
+        await pilot.press("escape")
+        await _until(pilot, lambda: app.screen is home, "Stay to return to Home")
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Stay",
+        )
+        assert events == []
+        assert store.session_draft(session_id) == _DRAFT
+
+
 async def test_ctrl_q_with_nothing_to_lose_quits_without_asking(monkeypatch):
     """AC#1: an untouched Console tab quits at once, as it did before."""
     events: list[str] = []
@@ -218,8 +262,9 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
 
         rows = _message_rows(dialog)
         assert "Unsent turns needing attention: 1" in rows
-        if unsaved:
-            assert f"Temporary or unsaved messages: {unsaved}" in rows
+        # The Temporary chat's own messages are never saved, so they count too.
+        assert unsaved >= 1
+        assert f"Temporary or unsaved messages: {unsaved}" in rows
         title = console._session._session_close_display_title(session_id)
         assert any(
             row.startswith("Affected tabs:") and f'"{title}"' in row for row in rows
