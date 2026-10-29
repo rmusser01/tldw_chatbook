@@ -105,8 +105,11 @@ aggregation remain unchanged. The official replay's algorithm is unchanged.
   regions; the remaining five checked CI scripts/tests are format-clean. All
   seven CI files and the renamed-ID regression pass scoped lint.
 - The exporter retains all four sanitized diagnostic calls; its Notes warning
-  moves from `_write` to `_fail`. Root must regenerate the latest-dev inventory,
-  prove every other owner/sink conserved, and capture a successful real check.
+  moves from `_write` to `_fail`. The latest-dev inventory was regenerated and
+  every other owner, privacy rule/candidate and sink was conserved. The
+  [actual command receipt](2026-10-28-textual-followups-implementation/diagnostic-inventory.json)
+  records drift/statements/write/postcheck exit codes `1/0/0/0`; the final check
+  passes. The earlier empty stdout-only file is not used as passing evidence.
 - [TASK-37330](<../../../backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md>)
   separately tracks the pre-existing positional/keyword Research artifact API
   mismatch. The [ownership proof](2026-10-28-textual-followups-implementation/artifact-followup-ownership.json)

@@ -1,6 +1,6 @@
 {
   "archive": "integration-local-receipts.tar.gz",
-  "archive_sha256": "c56a0840e5d1109b4519c7075e0e20c009c478ee470ae848864c238ca0f4e320",
+  "archive_sha256": "c63627368016f4aab5866dbf9353fb1396d6966e64a800ec1dd11084829b12d1",
   "members": {
     "integration-census-red/command.json": {
       "bytes": 1647,
@@ -103,8 +103,8 @@
       "sha256": "72bca632741ad5d297d1963cd324458410213b5b1379bddc27342eaeaf6e14ec"
     },
     "proofs/diagnostic-inventory.json": {
-      "bytes": 3694,
-      "sha256": "d7bb7aab198cbc6753e55686006c6ec1711b9a899ed2c534c248a3112d4c9282"
+      "bytes": 4102,
+      "sha256": "d8510e427e53bc24f72a7b3043b307e3fe94a4a61dfe1f85f01d01d81c148d0d"
     },
     "proofs/inherited-capacity.json": {
       "bytes": 262821,
