@@ -553,7 +553,7 @@ async def test_card_cancel_after_a_tab_switch_keeps_a_follow_up_typed_meanwhile(
 
 
 @pytest.mark.asyncio
-async def test_a_card_retry_whose_durable_commit_fails_keeps_the_turn_on_the_shelf():
+async def test_a_card_retry_whose_failed_commit_pauses_and_cancel_send_frees_the_chat():
     """Re-review MINOR 8: the shelf trusts the store, which says "not sent".
 
     A Retry whose durable commit then fails returns ``accepted=False`` and the

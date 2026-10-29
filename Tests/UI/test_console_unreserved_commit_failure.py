@@ -15,6 +15,8 @@ guards on the real controller and store.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from Tests.Chat.test_console_durable_commit_diagnostics import ReadyGateway
@@ -24,6 +26,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
+    _execution_context_with_attempt,
 )
 
 
@@ -99,4 +102,40 @@ async def test_a_commit_another_owner_holds_is_left_committing(
     assert result.accepted is False
     held = _held(store)
     assert held is not None
+    assert held.state is ConsoleTurnPreparationState.COMMITTING, held.state
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_newer_attempt_of_the_failed_send_is_left_alone(
+    request: pytest.FixtureRequest,
+) -> None:
+    """The pause is for the attempt that failed, never a newer one.
+
+    The transition matrix gives a COMMITTING send no path to a new attempt,
+    so this guard is defence in depth, as is the store's own attempt check
+    on its reservation. The newer attempt is installed directly.
+    """
+
+    def supersede(store, preparation_id):
+        with store.durable_preparation_lock:
+            current = store.preparation_by_id(preparation_id)
+            newer = dataclasses.replace(
+                current,
+                attempt_id="attempt-newer",
+                execution_context=_execution_context_with_attempt(
+                    current.execution_context, "attempt-newer"
+                ),
+            )
+            store._preparations_by_session[current.session_id] = newer
+            store._preparations_by_id[preparation_id] = newer
+
+    controller, store = _controller(supersede)
+
+    result = await controller.submit_draft("capital of Japan?")
+
+    assert result.accepted is False
+    held = _held(store)
+    assert held is not None
+    assert held.attempt_id == "attempt-newer"
     assert held.state is ConsoleTurnPreparationState.COMMITTING, held.state

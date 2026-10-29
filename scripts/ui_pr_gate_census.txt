@@ -1806,6 +1806,7 @@ Tests/UI/test_character_session_prompt_seed.py::test_character_picker_keeps_raw_
 Tests/UI/test_character_session_prompt_seed.py::test_character_picker_swap_uses_override_and_only_greets_empty_chat
 Tests/UI/test_character_session_prompt_seed.py::test_character_swap_surfaces_refused_durable_projection
 # TASK-33621.53: a durable commit that fails before its reservation pauses as PERSISTENCE unless another owner holds it (three unmounted cases on the real controller and store, about 8 s).
+# TASK-33621.53: a durable commit that fails before its reservation pauses as PERSISTENCE unless another owner or a newer attempt holds it (four unmounted cases on the real controller and store, about 11 s; 40 s at load average 30+).
 Tests/UI/test_console_unreserved_commit_failure.py
 # TASK-33621.53 AC#1: after that failure, the shelf's Discard frees the chat and the next send is answered (about 5-13 s).
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_send_whose_commit_fails_before_its_reservation_never_jams[Discard]
@@ -1813,3 +1814,5 @@ Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_send_whose_comm
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_failed_commit_says_not_saved_and_leaves_the_running_state
 # TASK-33620.3 AC#4: a saved chat with no Library-policy row sends, and its first commit writes the safe Never/Blocked row (about 6-15 s).
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_saved_chat_without_its_library_policy_row_sends_and_repairs_it
+# TASK-33620.3 AC#4 negative control: a missing-row chat whose session stages a broader policy still refuses, and no Automatic row is written (one mounted case, about 12 s at load average 30).
+Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_saved_chat_with_an_unsafe_staged_policy_still_refuses_the_repair
