@@ -2437,15 +2437,27 @@ class ConsoleComposerBar(Horizontal):
             stash: The capture, or ``None`` when the draft is the user's again.
         """
         revision = None if stash is None else (stash.generation, stash.edit_serial)
-        if revision != self._sending_draft_revision:
-            self._sending_draft_revision = revision
-            if revision is None:
-                self._sync_current_action_state()
+        if revision == self._sending_draft_revision:
+            return
+        held = revision is None and self._shows_draft_being_sent()
+        self._sending_draft_revision = revision
+        if held and self.is_mounted:
+            self.call_after_refresh(self._refresh_visible_draft)  # Its rows back.
 
     def _shows_draft_being_sent(self) -> bool:
-        """Whether the shown draft is, unedited, the one a visible send took."""
+        """Whether the shown draft is, unedited, the one a send in flight took.
+
+        In flight means Send refuses for the queue ("Preparing..."): a send
+        refused any other way (a command's hint, a dispatch gate, a turn
+        refused after admission) leaves the mark but not that state.
+        """
         revision = (self._draft_generation, self._user_edit_serial)
-        return self._sending_draft_revision == revision and bool(self.draft_text())
+        return (
+            self._sending_draft_revision == revision
+            and self._send_blocked
+            and bool(self._queue_blocked_reason)
+            and bool(self.draft_text())
+        )
 
     def sync_action_state(
         self,

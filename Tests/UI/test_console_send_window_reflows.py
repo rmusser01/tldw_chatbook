@@ -153,6 +153,30 @@ def _record_reflows(monkeypatch, window: _Window) -> None:
     monkeypatch.setattr(Compositor, "reflow", reflow)
 
 
+async def _strip_beside_the_sent_text(window: _Window) -> None:
+    """Wait until the Send reason strip has narrowed the sent text, re-wrapped.
+
+    Bounded: 5 s for the strip to be laid out beside the text, then until the
+    composer changes height (origin/dev's re-wrap) or 0.5 s pass.
+    """
+    console = window.console
+    strip = console.query_one("#console-send-disabled-reason", Static)
+    draft = console.query_one("#console-command-visible-text")
+    composer = console._console_composer_or_none()
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not (
+        strip.display
+        and strip.region.width > 0
+        and 0 < draft.region.width < window.draft_width_at_enter
+    ):
+        await asyncio.sleep(0.02)
+    height = composer.region.height
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and composer.region.height == height:
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)  # The new height's transcript move, laid out.
+
+
 async def _until(pilot, predicate, what: str, timeout: float = 15.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -256,7 +280,8 @@ async def _stock_later_send(monkeypatch):
     only the provider call is a double, durable trace capture is off (the
     harness has no normalized trace writer, so a later Capture-On send would
     stop at "Trace capture could not start"), and the measured send's archive
-    check waits 0.5 s (see ``slow_archive_check``).
+    check waits for the Send reason strip to narrow the sent text (see
+    ``slow_archive_check``).
 
     Yields:
         As :func:`_acknowledged_later_send`.
@@ -319,10 +344,12 @@ async def _stock_later_send(monkeypatch):
         # Live, the composer shows the sent text for about 0.9 s while the
         # send prepares; headless the preparation can end before the
         # composer's next refresh. This awaited check runs right after the
-        # composer turns to "Preparing...", so holding it 0.5 s on the
-        # measured send keeps that window open on every run.
+        # composer turns to "Preparing...", so on the measured send it waits
+        # until the strip is laid out beside the sent text and the composer
+        # has had time to re-wrap it (on origin/dev, to two rows): a fixed
+        # 0.5 s hold let the send take the text first in some runs.
         if window.recording:
-            await asyncio.sleep(0.5)
+            await _strip_beside_the_sent_text(window)
         return await archive_check(app_, conversation_id)
 
     monkeypatch.setattr(
@@ -537,6 +564,7 @@ async def test_the_composer_keeps_its_rows_while_a_send_takes_its_text(
         assert rows(50) == 2
         assert rows(80) == 1
         composer.note_draft_sending(composer.capture_draft_for_send())
+        _show_preparing(composer)
         assert rows(50) == 1, "the text being sent grew the composer"
         composer.insert_text(" Now.")
         assert rows(50) == 2, "an edited draft is the user's again"
@@ -551,3 +579,138 @@ async def test_the_composer_keeps_its_rows_while_a_send_takes_its_text(
         assert rows(50) == 1
         assert composer.commit_captured_draft(stash)
         assert rows(50) == 1 and composer.draft_text() == ""
+
+
+def _show_preparing(composer) -> None:
+    """Sync the composer as a send in flight leaves it: Send refuses, Preparing."""
+    from tldw_chatbook.Chat.console_display_state import (
+        QUEUE_REASON_PREPARING,
+        SEND_LABEL_PREPARING,
+    )
+
+    composer.sync_action_state(
+        has_draft=True,
+        run_active=False,
+        can_save_chatbook=False,
+        send_blocked=True,
+        queue_blocked_reason=QUEUE_REASON_PREPARING,
+        send_label=SEND_LABEL_PREPARING,
+    )
+
+
+async def test_a_refused_send_gives_its_draft_its_rows_back(monkeypatch) -> None:
+    """The kept rows last only while a send of the shown text is in flight.
+
+    Review of TASK-33620.15.26 (2026-10-29): the mark ``_schedule`` sets was
+    cleared only by the received-intent path's synchronous refusal. A send
+    refused any other way (an unknown ``/command``'s hint, a needs-review
+    skill, a dispatch gate, a stock turn refused after its admission) kept
+    the draft and the mark, and the composer then kept cutting the draft to
+    the rows it last showed, outside any send. The rows are kept only while
+    the composer refuses Send for a turn being prepared: once it no longer
+    does, the draft gets its rows back, mark or no mark.
+    """
+    from Tests.UI.test_console_run_tick_layout_requests import _Host
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+
+    composer = ConsoleComposerBar()
+    width = {"cells": 80}
+    async with _Host(composer).run_test(size=(160, 10)) as pilot:
+        monkeypatch.setattr(composer, "_draft_render_width", lambda: width["cells"])
+
+        def rows(cells: int) -> int:
+            width["cells"] = cells
+            composer._refresh_visible_draft()
+            return composer._draft_geometry_signature[0]
+
+        composer.load_draft(
+            "/nosuchcommand in one short sentence, share a fact about lanterns ok"
+        )
+        await pilot.pause()
+        assert rows(80) == 1
+        # A command dispatch marks the draft but never prepares a turn; its
+        # hint leaves the draft with the user.
+        composer.note_draft_sending(composer.capture_draft_for_send())
+        assert rows(50) == 2, "a draft no turn is preparing was cut to its row"
+        assert rows(80) == 1
+        # A send that reached "Preparing..." and was then refused: the screen
+        # syncs the composer back to an idle Send and never clears the mark.
+        composer.note_draft_sending(composer.capture_draft_for_send())
+        _show_preparing(composer)
+        assert rows(50) == 1, "positive control: the send in flight keeps its rows"
+        composer.sync_action_state(
+            has_draft=True, run_active=False, can_save_chatbook=False
+        )
+        assert rows(50) == 2, "a refused send's draft stayed cut to one row"
+        # A refusal that clears the mark while "Preparing..." still shows
+        # re-windows the draft itself: nothing else may refresh it soon.
+        assert rows(80) == 1
+        composer.note_draft_sending(composer.capture_draft_for_send())
+        _show_preparing(composer)
+        await pilot.pause()  # The strip's own re-window runs first.
+        assert rows(50) == 1
+        composer.note_draft_sending(None)
+        await pilot.pause()
+        assert composer._draft_geometry_signature[0] == 2, (
+            "clearing the mark left the draft cut to one row"
+        )
+
+
+@private_profile_test
+async def test_an_unknown_command_keeps_its_draft_and_its_rows(
+    monkeypatch, request, tmp_path
+) -> None:
+    """A refused send leaves a draft that re-wraps like any other.
+
+    Review of TASK-33620.15.26 (2026-10-29), reproduced on the mounted
+    Console: Enter on an unknown ``/command`` shows its hint and keeps the
+    draft, but the mark the send set stayed, so after a resize to 90 columns
+    the draft needed 3 rows and the composer still showed 1 until the user
+    typed.
+    """
+    from Tests.UI.test_console_composer_run_controls import _mounted
+    from Tests.UI.test_console_send_transition_layout_requests import _console_host
+    from tldw_chatbook.UI.Console_Modules.send_acknowledgement import (
+        FLIGHT_ATTRIBUTE,
+    )
+
+    draft = "/nosuchcommand in one short sentence, share a fact about lanterns ok"
+    _gateway, host = _console_host(tmp_path)
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        await pilot.pause(0.5)
+        composer.load_draft(draft)
+        composer.focus()
+        await _until(
+            pilot,
+            lambda: not console.query_one("#console-send-message").disabled,
+            "Send never took the draft",
+        )
+        _key(host, "enter", "\r")
+
+        def settled() -> bool:
+            flight = getattr(console, FLIGHT_ATTRIBUTE, None)
+            return (
+                console._console_unknown_send_armed == draft
+                and console._console_pending_send is None
+                and (flight is None or not flight.tasks)
+            )
+
+        await _until(pilot, settled, "the unknown command's hint never showed")
+        await pilot.pause(0.3)
+        assert composer.draft_text() == draft, "the hint did not keep the draft"
+        assert composer._draft_geometry_signature[0] == 1
+        await pilot.resize_terminal(90, 45)
+        await pilot.pause(0.5)
+        text = console.query_one("#console-command-visible-text")
+        needed = composer._visible_draft_row_count(
+            composer._display_draft_text(),
+            composer._draft_render_width(),
+            reserve_trailing_cell=composer.has_focus_within,
+        )
+        assert needed > 1, "positive control: the draft wraps at 90 columns"
+        shown = (composer._draft_geometry_signature[0], text.region.height)
+        assert shown == (needed, needed), (
+            f"the refused draft needs {needed} rows at 90 columns; the composer "
+            f"shows {shown[0]} (laid out {shown[1]})"
+        )
