@@ -137,6 +137,10 @@ class ListWindowState:
         intent: The cursor move owed to the user, if any.
         reload_on_return: A leave found the list's rows not landed; the
             return reloads it.
+        moves: How many cursor moves and selections the user made
+            (``user_moved``). An import compares it with the count when its
+            picker opened: a newer move keeps the cursor where the user put
+            it (frame slice B2b, spec 1.4.6).
     """
 
     def __init__(self) -> None:
@@ -146,6 +150,7 @@ class ListWindowState:
         self.requested = False
         self.intent: WindowIntent | None = None
         self.reload_on_return = False
+        self.moves = 0
         self._painting = False
 
     # ---- the rows ----
@@ -298,6 +303,7 @@ class ListWindowState:
     def user_moved(self) -> None:
         """A newer cursor move or selection: the owed move is no longer wanted."""
         self.intent = None
+        self.moves += 1
 
     def arrived(self, loaded: Collection[str]) -> str | None:
         """The owed row's option id once it is loaded (the move is then met)."""
