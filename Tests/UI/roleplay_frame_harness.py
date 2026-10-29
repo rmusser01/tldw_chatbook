@@ -527,6 +527,64 @@ async def click_mark_column(pilot: Pilot, node, item_id: str) -> None:
     await pilot.pause()
 
 
+CHOOSER_OPTIONS_ID = "roleplay-items-chooser-options"
+
+
+async def wait_for_chooser(pilot: Pilot):
+    """Wait until Roleplay's choice modal (New, "Import as:") is open and focused.
+
+    Found by its DOM id, not its class, so a test of dev's behaviour can run
+    on a tree without the modal module (frame slice B2b).
+
+    Returns:
+        The modal's ``OptionList``.
+    """
+
+    def ready() -> bool:
+        focused = pilot.app.focused
+        return focused is not None and focused.id == CHOOSER_OPTIONS_ID
+
+    await wait_until(pilot, ready, what="the choice modal")
+    return pilot.app.focused
+
+
+async def start_new(
+    pilot: Pilot, choice_id: str | None = None, *, via: str = "click"
+) -> None:
+    """Open the New chooser and pick a variant like a user (frame slice B2b).
+
+    On dev ``+ New`` and Ctrl+N created a blank item of the current kind at
+    once; since B2b they open the New chooser on that kind's Blank, and Enter
+    picks it.
+
+    Args:
+        pilot: The running pilot (Roleplay on screen).
+        choice_id: The variant (``"character:portrait"``, ``"lore"``, ...);
+            None picks the preselected Blank.
+        via: ``"click"`` (a real click on ``+ New``), ``"press"``
+            (``Button.press()``) or ``"ctrl+n"``.
+    """
+    if via == "click":
+        await pilot.click("#personas-library-new")
+    elif via == "press":
+        pilot.app.screen.query_one("#personas-library-new").press()
+    elif via == "ctrl+n":
+        await pilot.press("ctrl+n")
+    else:
+        raise ValueError(f"unknown via {via!r}")
+    options = await wait_for_chooser(pilot)
+    if choice_id is not None:
+        target = options.get_option_index(choice_id)
+        for _ in range(options.option_count):
+            if options.highlighted == target:
+                break
+            low = options.highlighted is None or options.highlighted < target
+            await pilot.press("down" if low else "up")
+        assert options.highlighted == target, f"{choice_id} cannot be highlighted"
+    await pilot.press("enter")
+    await pilot.pause()
+
+
 @asynccontextmanager
 async def roleplay_full_app(
     *,

@@ -27,7 +27,8 @@ PersonaEntityKind = Literal[
     "lore",
 ]
 PersonaAction = Literal[
-    "create",
+    "new",  # frame slice B2b: open the New chooser (+ New, Ctrl+N)
+    "create",  # a blank item of the current kind, at once
     "create_actor_pack",
     "import",
     "export",

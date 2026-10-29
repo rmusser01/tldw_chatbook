@@ -480,7 +480,7 @@ _CHARACTERS_EMPTY_GUIDANCE = (
 _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
 #: F-037: reason shown on local-only actions (card Edit, inspector
 #: export/delete) while browsing server-owned characters.
-_SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
+_SERVER_READ_ONLY_TOOLTIP = frame_state.SERVER_CHARACTERS_READ_ONLY
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Debounce for the inspector's conversations search (F14): the same 0.2 s
 #: window as the library search above, so a typing burst runs one Keyword
@@ -1332,6 +1332,8 @@ class PersonasScreen(BaseAppScreen):
         # set_result on a cancelled future (InvalidStateError on Textual
         # 8.2.7), so a second request is ignored instead.
         self._io_dialog_active: bool = False
+        # The New chooser is open (frame slice B2b).
+        self._new_chooser_open: bool = False
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
@@ -7840,7 +7842,9 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaActionRequested)
     async def _handle_action_requested(self, message: PersonaActionRequested) -> None:
         message.stop()
-        if message.action == "create":
+        if message.action == "new":
+            self._open_new_chooser()
+        elif message.action == "create":
             if self.state.active_mode == "characters":
                 if not self._local_character_actions_allowed():
                     return
@@ -7887,6 +7891,92 @@ class PersonasScreen(BaseAppScreen):
         # The open item's Delete is the Inspector's "#personas-delete"
         # (_begin_delete_selection / _delete_entity). The rest are wired in
         # follow-up tasks.
+
+    def _open_new_chooser(self) -> None:
+        """``+ New`` and Ctrl+N open the one New chooser (frame slice B2b, spec 1.4.6).
+
+        On dev both created a blank item of the current kind at once, and New
+        Actor Pack was a second toolbar button. Server Characters keeps dev's
+        rule: New is disabled there and Ctrl+N does nothing. The chooser has
+        its own reentrancy flag: a durable character import holds the file
+        dialog slot until it ends, and dev's Ctrl+N created during one.
+        """
+        if (
+            self.state.active_mode == "characters"
+            and not self._local_character_actions_allowed()
+        ) or self._new_chooser_open:
+            return
+        self._new_chooser_open = True
+        self.run_worker(
+            self._new_chooser_worker(), group="personas-io", exit_on_error=False
+        )
+
+    async def _new_chooser_worker(self) -> None:
+        """Ask which create variant, then start it (the guard asks after the pick)."""
+        # Lazy: the modal is not on the Roleplay route's pre-import path.
+        from ...Widgets.Persona_Widgets.roleplay_choice_modal import (
+            ChoiceOption,
+            RoleplayChoiceModal,
+        )
+
+        choices = frame_state.new_chooser_options(
+            self.state.active_mode,
+            local_characters=self._local_character_actions_allowed(),
+            local_runtime=self.persona_handler.current_mode() == "local",
+        )
+        try:
+            picked = await self.app.push_screen_wait(
+                RoleplayChoiceModal(
+                    "New",
+                    [
+                        ChoiceOption(c.choice_id, c.label, c.hint, c.enabled, c.reason)
+                        for c in choices
+                    ],
+                    preselect=next(c.choice_id for c in choices if c.preselected),
+                )
+            )
+        finally:
+            self._new_chooser_open = False
+        choice = next((c for c in choices if c.choice_id == picked), None)
+        if choice is not None and choice.enabled:
+            await self._run_new_choice(choice)
+
+    async def _run_new_choice(self, choice: frame_state.NewChoice) -> None:
+        """Start ``choice`` in its own kind, through one unsaved guard.
+
+        A variant of another kind switches kind first, inside the same guarded
+        continuation, so a dirty draft is asked about once for both.
+        """
+        begin = {
+            "character:blank": self._begin_create_character,
+            "character:concept": self._begin_create_character_from_concept,
+            "character:portrait": self._begin_create_actor_pack,
+            "persona:blank": self._begin_create_profile,
+            "persona:portrait": self._begin_create_actor_pack,
+            "lore": self._begin_create_lore,
+            "dictionary": self._begin_create_dictionary,
+        }[choice.choice_id]
+
+        async def continuation() -> None:
+            if self.state.active_mode != choice.mode:
+                await self._apply_mode(choice.mode)
+            await begin()
+
+        await self._run_guarded(continuation)
+
+    async def _begin_create_character_from_concept(self) -> None:
+        """New › Character · From a concept: a blank draft, concept row focused.
+
+        The same row the editor's "Generate whole character…" opens; focused
+        after ``_begin_create_character``'s own name focus (both run after
+        the next refresh, in order).
+        """
+        await self._begin_create_character()
+        if self._edit_mode != "create":
+            return
+        editor = await self._ensure_center_view("character-editor")
+        if isinstance(editor, PersonasCharacterEditorWidget):
+            self.call_after_refresh(editor.set_concept_row_visible, True)
 
     async def _begin_create_character(self, *, actor_pack: bool = False) -> None:
         if not self._local_character_actions_allowed():
@@ -16591,8 +16681,8 @@ class PersonasScreen(BaseAppScreen):
     # ===== Key bindings =====
 
     def action_personas_new(self) -> None:
-        """Ctrl+N: same code path as the library New button."""
-        self.post_message(PersonaActionRequested(action="create"))
+        """Ctrl+N: same code path as the library New button (the New chooser)."""
+        self.post_message(PersonaActionRequested(action="new"))
 
     def action_personas_search(self) -> None:
         """Ctrl+F: focus the library search input."""

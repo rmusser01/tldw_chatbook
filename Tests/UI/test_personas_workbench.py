@@ -33,6 +33,7 @@ from Tests.UI.roleplay_frame_harness import (
     item_at,
     list_state,
     select_roleplay_item,
+    start_new,
     visible_item_ids,
 )
 from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
@@ -922,7 +923,7 @@ class TestCharacterSelectionAndEdit:
             )
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
@@ -950,7 +951,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
             assert screen.query_one("#ccp-character-editor-view").display is True
@@ -984,7 +985,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1017,7 +1018,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1128,7 +1129,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1184,7 +1185,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1343,7 +1344,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             assert screen._edit_mode == "create"
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
@@ -1372,7 +1373,7 @@ class TestPersonasMode:
             stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
             )
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
@@ -1497,7 +1498,7 @@ class TestPersonasMode:
         )
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
@@ -1516,7 +1517,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(
                 PersonaProfileSaveRequested(
@@ -1547,7 +1548,7 @@ class TestPersonasMode:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(
                 PersonaProfileSaveRequested(
@@ -1626,7 +1627,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
@@ -2459,7 +2460,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             await screen._stage_character_avatar_from_path(str(avatar))
@@ -2488,7 +2489,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             await screen._stage_character_avatar_from_path(str(bad))
@@ -2513,7 +2514,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             await screen._stage_character_avatar_from_path(str(avatar))
@@ -2535,7 +2536,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             async def fake_to_thread(function: Any, path: str) -> bytes:
@@ -2582,7 +2583,7 @@ class TestImportExport:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         if mode == "create":
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
         else:
             await select_roleplay_item(
@@ -2652,7 +2653,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             def worker():
@@ -12746,7 +12747,7 @@ class TestKeyboardInteraction:
     async def _open_create_editor(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.press("ctrl+n")
+        await start_new(pilot, via="ctrl+n")
         await pilot.pause()
         assert screen._edit_mode == "create"
         return screen
@@ -12871,7 +12872,7 @@ class TestKeyboardInteraction:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.query_one("#personas-char-editor-name", Input).value = "Avatar Hero"
             await screen._stage_character_avatar_from_path(str(avatar))
@@ -12922,7 +12923,7 @@ class TestKeyboardInteraction:
                 return next(a for a in context.actions if a.label == "save")
 
             assert _save_action(screen._shortcut_context()).available is False
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
             assert _save_action(screen._shortcut_context()).available is True
@@ -13142,7 +13143,7 @@ class TestDirtyTracking:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
             # Same for a fresh create session (new_character population).
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             await pilot.pause()
             assert screen._edit_mode == "create"
@@ -13481,7 +13482,7 @@ class TestImportExportFilters:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             captured: dict = {}
 
@@ -13667,7 +13668,7 @@ async def test_debounced_validation_does_not_erase_a_blocked_save_message(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-new")
+        await start_new(pilot)
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         editor.show_validation(("name: required",))
