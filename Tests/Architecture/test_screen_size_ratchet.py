@@ -233,7 +233,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: narrow-width rail yield, and an explicit rail request exempts its side
     #: from it (logic in Console_Modules/terminal.py yield_rails/reclaim_rails
     #: and Chat/console_rail_state.py); 24387/737 measured.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24387, 737),
+    #: Lowered 24387 -> 24385 2026-10-29 on rebase onto dev b5150753eb, which
+    #: measures 24327/737 (2 under its own row); with the three Terminal
+    #: fixes 24385/737, the exact measurement (dev's slack not absorbed).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24385, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
