@@ -77,7 +77,8 @@ provider was contacted". On this callout:
 - **Send without capture** sends the turn once with capture off.
 - **Cancel send** always ends the send and puts your message back in the
   composer, even when the trace reservation's state is unknown. Any
-  reservation left behind is closed the next time Console starts.
+  reservation left behind is closed as not sent by Console's startup trace
+  maintenance, once it is a few minutes old.
 
 None of these opens the "Response delivery status is unknown" panel: that
 panel is only for a request that may have reached the provider without a
