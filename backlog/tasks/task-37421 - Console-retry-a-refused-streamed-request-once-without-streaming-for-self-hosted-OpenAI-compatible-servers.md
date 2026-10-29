@@ -3,9 +3,11 @@ id: TASK-37421
 title: >-
   Console: retry a refused streamed request once without streaming for
   self-hosted OpenAI-compatible servers
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-10-29 07:34'
+updated_date: '2026-10-29 15:58'
 labels:
   - console
   - streaming
@@ -23,7 +25,38 @@ Since TASK-33620.10 every Console provider streams by default, and [chat_default
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The owner decision (retry automatically for self-hosted OpenAI-compatible providers, or rely on the advice in TASK-37180) is recorded in this task
-- [ ] #2 If retry is chosen: a streamed request to a self-hosted OpenAI-compatible provider that is refused before any text arrives is retried once without streaming, the reply completes, and the retry gets its own trace capture and usage like the llama.cpp fallback
-- [ ] #3 If retry is chosen: cloud providers are never retried this way, and a test drives a refused stream for each case through the real gateway; the tests fail before the change
+- [x] #1 The owner decision (retry automatically for self-hosted OpenAI-compatible providers, or rely on the advice in TASK-37180) is recorded in this task
+- [x] #2 If retry is chosen: a streamed request to a self-hosted OpenAI-compatible provider that is refused before any text arrives is retried once without streaming, the reply completes, and the retry gets its own trace capture and usage like the llama.cpp fallback
+- [x] #3 If retry is chosen: cloud providers are never retried this way, and a test drives a refused stream for each case through the real gateway; the tests fail before the change
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure on the branch head (7e2167e0a7): drive Custom, a custom-ep entry and vLLM through the real ConsoleAgentBridge, gateway, chat_api_call and adapters against a loopback server that refuses "stream": true; also an empty stream, an auth/rate-limit refusal and cloud providers.
+2. RED tests: the loopback bridge tests (self-hosted retried once and usage recorded once; empty stream retried; 401/429 not retried; a failing retry shows the non-streamed failure; cloud not retried and names Streaming; a non-streamed refusal does not), a gateway trace/capture test, and a mounted ChatScreen send that persists one reply with usage.
+3. Fix in the gateway, reusing the llama.cpp fallback: hoist its two trace steps (settle the refused call, reserve the LLAMA_FALLBACK call) so both paths share them; the generic path hands a refused or empty first stream back to stream_chat, which retries once without streaming with its own capture and hands the retry usage to the call it replaced. Classification and copy in a lazily imported helper (refused_stream.py).
+4. Fold in TASK-37180: a refused stream that is not retried (cloud) names the Streaming setting.
+5. Docs: chat-basics, CHANGELOG Unreleased. Live: real llama-server behind a front that refuses stream=true, before/after; a cloud provider refused the same way.
+6. Rebase on origin/dev, re-run gates, preflight.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Decision (AC#1).** Owner decision 2026-10-29 (relayed by the coordinator for TASK-33620.10's PR): retry. Every self-hosted provider and every Custom OpenAI-compatible endpoint (`custom`, `custom_2`, a `custom-ep:<slug>` entry and the `custom-hosted` engine key it runs through; `is_self_hosted_provider`) that refuses a streamed request, or streams no text, is asked once more without streaming, and the copy points at the Streaming setting. Cloud providers are never retried; their refused stream names the Streaming setting instead (TASK-37180, closed in the same branch).
+
+**Measured first** (branch head 7e2167e0a7, real `ConsoleAgentBridge` + gateway + `chat_api_call` + adapters against a loopback server that answers `"stream": true` with HTTP 400): Custom, a custom-ep entry and vLLM each failed the reply with "Provider error from <name>: bad request. Status: 400 ... choose another model from the model picker"; a stream that opens and sends no text failed with "provider unavailable. Status: 502". Probing the cloud adapters the same way: Anthropic, OpenRouter, Groq, DeepSeek, Mistral AI, ZenMux and Vercel each surface the 400 once; OpenAI turns it into an SSE error, so the agent runtime sees a status-less 502 and sends it three times (filed as TASK-37700).
+
+**Approach, reusing the llama.cpp fallback.** Its two trace steps are hoisted in `stream_chat` and shared: `settle_failed_stream_call` (the refused/empty streamed call settles as an error with no usage) and `reserve_stream_fallback_call` (the retry reserves its own call on the `LLAMA_FALLBACK` route, provisional voice included); the llama.cpp branch now calls them instead of its own copies, and both use one `_STREAM_FALLBACK_OVERLAY`. In the generic path, `_stream_generic_chat(stream_fallback=True)` hands back a stream that delivered nothing (no text, thinking or tool call) and was refused with a refusal status, or ended empty, as `_StreamFallbackRequired`, with no synthetic "no content" copy. `stream_chat` then marks the model retry, closes the first capture as an error, settles the first trace call, and runs `_stream_generic_chat(fallback_retry=True)` once with `streaming=False`: its own verified trace call (LLAMA_FALLBACK provenance and overlay), its own exchange capture (`retry_of`), and its usage handed to the replaced call's view by `ConsoleProviderCallSignals.transfer_usage_to`, so the agent bridge (which reads only that view), the trace settlement and the saved row (the aggregate) each count it once. The classification (`is_refused_stream`: 400, 406, 415, 422 or 501, not model-unavailable or context-length; auth, payment, not-found, timeout, size and rate-limit failures excluded) and `retries_refused_stream` live in the new `Chat/refused_stream.py`, imported lazily (ADR-097).
+
+**Tests, red on the branch head for the right reason.** `Tests/Chat/test_console_refused_stream_retry.py` (10 cases, loopback, real adapters through the real bridge): Custom, custom-ep and vLLM refused streams are retried once (`[True, False]`), the reply completes, usage is recorded once (26 tokens, one payload); an empty stream is retried; a failing retry shows the non-streamed failure without Streaming advice; Anthropic and ZenMux are not retried and name the Streaming setting; 401 and 429 are not retried; a non-streamed refusal names no Streaming. Red on 7e2167e0a7: 7 of 10 (the 3 guards are green on both). `Tests/Chat/test_console_provider_gateway.py`: the retry is its own traced call on LLAMA_FALLBACK (routes, persisted streaming `[True, False]`, first call settled ERROR without usage, retry COMPLETE with usage, captures `[error, complete]` with `retry_of`, model-retry signal once, one usage payload), and a cloud refusal is one call with the advice; both red on 7e2167e0a7. `Tests/UI/test_console_refused_stream_retry_screen.py`: a real ChatScreen send to Custom against the loopback server, nothing replaced: one user row, one assistant reply, usage (21, 5) in the store and `messages.usage_json`; red on 7e2167e0a7 (status failed, one request). Mutation-checked: closing the retry's usage on its own view turns the bridge and trace tests red (the saved-row test stays green, see the lesson); publishing on both views doubles the saved row to (42, 10) and turns every one red; removing the status gate lets a 429 retry and turns the guard red. Both new files run in the PR Fast Lane admission-sensitive 2 job.
+
+**Live (2026-10-29).** No OpenAI-compatible server on this host refuses streaming, so the stand-in is a real llama-server (qwen2.5-0.5b-instruct q4_k_m, port 9419) behind a local front that answers `"stream": true` with HTTP 400 ("Streaming is not supported by this server.") and forwards every other request unchanged; Console used Custom at the front, every profile isolated with a null keyring. Branch: the front logged `stream=true -> 400 refused`, then `stream=false -> 200 forwarded`; the transcript showed the reply and no System row; the database held one user and one assistant message, `usage_json` uncached_input 538, output 15, which matches llama-server's own timing line (538 prompt, 15 eval tokens); `console_trace_calls` held the refused `agent_first` call (error, no usage) and the `llama_fallback` retry (complete, 538/15). Pre-fix (detached 7e2167e0a7), same front and prompt: one refused request and "Agent run failed: ... Status: 400 ... model picker". Anthropic pointed at a second front that refuses streams: one request, and the System row ended "If this server cannot stream replies, turn Streaming off and send again: in Chat settings for this chat or this model, or in config.toml for this provider." Screen captures, the front logs and the DB reads were kept with the session's working files, not in the repo.
+
+**Ratchet.** `console_provider_gateway.py` row 8184 -> 8333 with a dated owner-decision comment.
+
+**Not changed.** TASK-37181 (llama.cpp's direct path records no Console usage for any reply, retried or not; measured and noted there) stays open; the llama.cpp branch's own retry and its capture are unchanged apart from the shared trace steps.
+
+**Files.** tldw_chatbook/Chat/console_provider_gateway.py, tldw_chatbook/Chat/refused_stream.py (new); Tests/Chat/test_console_refused_stream_retry.py (new), Tests/UI/test_console_refused_stream_retry_screen.py (new), Tests/Chat/test_console_provider_gateway.py, Tests/Architecture/test_module_size_ratchet.py, Tests/CI/test_ci_queue_pressure_contract.py, .github/workflows/derived-artifacts.yml; Docs/User_Guide/console/chat-basics.md, CHANGELOG.md; backlog/docs/lessons-testing-evidence.md.
+<!-- SECTION:NOTES:END -->
