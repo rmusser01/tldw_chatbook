@@ -47,9 +47,16 @@ def _activity(message: ConsoleChatMessage) -> str:
     label = presentation.label if presentation is not None else "Activity"
     status = presentation.status if presentation is not None else message.status
     sections = [f"## Tool: {_label(label)}\n\nStatus: {_label(status)}\n"]
+    if message.raw_cli_presentation is not None:
+        from tldw_chatbook.Chat.console_raw_cli import format_raw_cli_metadata
+
+        sections.append(
+            "\n### Execution\n\n"
+            + _fenced(format_raw_cli_metadata(message.raw_cli_presentation))
+        )
     if presentation is not None and presentation.arguments:
         sections.append("\n### Arguments\n\n" + _fenced(presentation.arguments, "json"))
-    else:
+    elif message.raw_cli_presentation is None:
         sections.append("\nArguments unavailable.\n")
     result = message.tool_output_full
     if result is None:

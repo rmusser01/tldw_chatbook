@@ -9869,14 +9869,7 @@ class LibraryScreen(BaseAppScreen):
             # Mirrors the collections case above: a note_id deep-link applied
             # before mount cannot run_worker yet, so the detail fetch is
             # deferred to here once the canvas has actually been composed.
-            self.run_worker(
-                self._refresh_library_note_detail(
-                    self._notes_state.selected_note_id,
-                    entry_origin=True,
-                ),
-                exclusive=True,
-                group="library_note_detail",
-            )
+            self._notes_controller.defer_initial_note_load(self._notes_state.selected_note_id)
         if (
             self._media_state.view == "viewer"
             and self._media_state.selected_media_id

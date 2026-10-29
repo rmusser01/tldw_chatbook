@@ -84,6 +84,46 @@ def test_response_trace_preserves_all_sections():
     assert rendered.index('"two"') < rendered.index("## Final answer")
 
 
+@pytest.mark.parametrize("owned", [False, True])
+def test_raw_command_copy_preserves_execution_metadata_and_truncation(owned):
+    from tldw_chatbook.Chat.console_chat_models import RawCliPresentation
+    from tldw_chatbook.Chat.console_response_trace import render_chat_trace_markdown
+
+    command = tool("command", "stdout: full output\nstderr: retained error")
+    command.raw_cli_presentation = RawCliPresentation(
+        command="echo command",
+        cwd="/work",
+        shell="sh",
+        caller="model" if owned else "user",
+        invocation_id="invocation",
+        lifecycle_state="exited",
+        exit_code=0,
+        started_at_monotonic=None,
+        elapsed_seconds=1.5,
+        truncated=True,
+        cleanup_proven=True,
+    )
+    messages = (
+        [ConsoleChatMessage(ConsoleMessageRole.ASSISTANT, "answer"), command]
+        if owned
+        else [command]
+    )
+    rendered = render_chat_trace_markdown(messages, title="Commands")
+    for fact in (
+        "echo command",
+        "/work",
+        "sh",
+        "0",
+        "1.5",
+        "Truncated: Yes",
+        "Cleanup: Proven",
+        command.tool_output_full,
+    ):
+        assert fact in rendered
+    assert "preview" not in rendered
+    assert command.activity_presentation.arguments in rendered
+
+
 def test_chat_trace_contains_only_supplied_active_branch():
     from tldw_chatbook.Chat.console_response_trace import render_chat_trace_markdown
 

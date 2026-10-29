@@ -3036,6 +3036,15 @@ def build_console_controllers(
         ),
         present_trajectory=lambda launch: _present_console_trajectory(screen, launch),
         notify=lambda *args, **kwargs: screen.notify(*args, **kwargs),
+        copy_to_clipboard=lambda text: screen.app.copy_to_clipboard(text),
+        save_selection_note=lambda title,
+        content: screen._message.save_console_selection_note(title, content),
+        open_selection_note=lambda note_id: screen._message.open_console_selection_note(
+            note_id
+        ),
+        offer_selection_note_open=lambda note_id: screen._message._offer_captured_note_handoff(
+            note_id
+        ),
     )
     screen._send_price = ConsoleSendPriceController(
         settings_accessor=(

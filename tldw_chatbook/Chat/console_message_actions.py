@@ -909,6 +909,8 @@ class ConsoleMessageActionService:
                 media=(),
             )
         overflow = self._overflow_actions(actions)
+        if message.role == ConsoleMessageRole.ASSISTANT:
+            overflow = (ConsoleMessageAction("copy-all", "Copy all"), *overflow)
         primary_ids = self._PRIMARY_ACTION_IDS
         if generation_variant_count == 0:
             primary_ids = primary_ids | {

@@ -1593,10 +1593,14 @@ ConsoleSelectionMenu Button {
 }
 
 ConsoleSelectionMenu #console-selection-copy,
+ConsoleSelectionMenu #console-selection-copy-all,
+ConsoleSelectionMenu #console-selection-copy-all-messages,
+ConsoleSelectionMenu #console-selection-full-message,
 ConsoleSelectionMenu #console-selection-add-to-chat,
 ConsoleSelectionMenu #console-selection-more-details,
 ConsoleSelectionMenu #console-selection-ask-side-chat,
 ConsoleSelectionMenu #console-selection-create-note,
+ConsoleSelectionMenu #console-selection-create-note-go,
 ConsoleSelectionMenu #console-selection-request-changes,
 ConsoleSelectionMenu #console-selection-lgm,
 ConsoleSelectionMenu #console-selection-comment {
