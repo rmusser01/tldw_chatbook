@@ -645,6 +645,10 @@ ADMISSION_2_TARGETS = (
     # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,
     # about 95 s serial).
     "Tests/UI/test_roleplay_import_app.py",
+    # Frame slice B2b T8 (same decision): the items search's placeholder and
+    # typed text painted at AA on every measurable theme (bootstrap_profile;
+    # 89 themes in one app, about 45 s).
+    "Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

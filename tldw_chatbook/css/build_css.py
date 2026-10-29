@@ -571,6 +571,11 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
                 # Tests/UI/test_roleplay_stylesheet.py keeps each selector
                 # anchored by a Roleplay token (SHARED_CLAIMS).
                 "option-list--option-highlighted",
+                # Roleplay frame B2b (TASK-33910.4): Input's placeholder
+                # component class, claimed exactly for the same reason: the
+                # search placeholder's AA rules (`.roleplay-items-search >
+                # .input--placeholder`) leave boot.
+                "input--placeholder",
             )
         },
         pinned=frozenset({"personas-library-rows"}),
