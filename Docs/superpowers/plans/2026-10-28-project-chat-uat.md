@@ -35,34 +35,34 @@
 **Files:** create `Tests/uat_project_chat_support.py`; create `Tests/QA/test_project_chat_uat_support.py`.
 **Interfaces:** `ProjectChatModel(variant)` consumes only HTTP request payloads and produces OpenAI-compatible scripted messages; `project_chat_server(variant)` owns a numeric loopback listener; `assert_project_evidence(...)` checks expected fixture evidence against independent final message and trace inputs. Keep the functions small; no generic journey DSL.
 
-- [ ] Write support tests: reject final text without code even when a tool result has it; reject empty/error read and wrong-root provenance; require actual native schemas; reject unexpected protocol steps; metadata probes cannot consume a generation step.
-- [ ] Run the focused support tests and observe the intended missing-behavior failures.
-- [ ] Implement the smallest provider script, bounded HTTP lifecycle, and independent oracle. Keep fixture expected values out of the script.
-- [ ] Test the owned-port network boundary and clean shutdown; record attempt errors before raising.
-- [ ] Run the focused support file and scoped lint/format checks.
+- [x] Write support tests: reject final text without code even when a tool result has it; reject empty/error read and wrong-root provenance; require actual native schemas; reject unexpected protocol steps; metadata probes cannot consume a generation step.
+- [x] Run the focused support tests and observe the intended missing-behavior failures.
+- [x] Implement the smallest provider script, bounded HTTP lifecycle, and independent oracle. Keep fixture expected values out of the script.
+- [x] Test the owned-port network boundary and clean shutdown; record attempt errors before raising.
+- [x] Run the focused support file and scoped lint/format checks.
 
 ### Task 2: Real app/UI project-chat pilot
 
 **Files:** create `Tests/QA/test_project_chat_uat.py`; use `Tests/private_profile.py` without broadening its shared behavior.
 **Interfaces:** `test_project_chat_uat(variant, request, tmp_path, monkeypatch)` runs in a private-profile child; evidence artifacts are case-specific JSON plus viewport SVG/text in a caller-selected artifact directory.
 
-- [ ] Read the created Backlog task and existing authority/startup contracts. Save a preconfigured disposable profile before importing TldwCli; sanitize inherited environment in the parent before the child is launched.
-- [ ] Start the owned HTTP server, instantiate TldwCli, and await actual Console readiness. Use supported config for optional background work and all permission preconditions.
-- [ ] Drive visible workspace create/name/folder add/confirm controls, disable the optional interview visibly, create a scoped chat, type the question, click Send, and accept the first-use AGENTS.md disclosure through its visible Proceed button.
-- [ ] Observe each variant's actual provider schema/result sequence, final owning assistant message, real binding and saved run. Assert the actual rendered assistant answer separately from tool cards; export failure receipts even when a wait fails.
-- [ ] Run fenced first under the CI dependency venv; repair setup mistakes without replacing production boundaries. Add native, compact recovery, and wrong-family variants after the first path works.
-- [ ] Run a full negative control with deliberately missing README evidence; require the pilot to fail at the evidence stage, then run unmodified variants green.
-- [ ] Verify shutdown and artifact retention. Record non-app test substitutions and phase timings.
+- [x] Read the created Backlog task and existing authority/startup contracts. Save a preconfigured disposable profile before importing TldwCli; sanitize inherited environment in the parent before the child is launched.
+- [x] Start the owned HTTP server, instantiate TldwCli, and await actual Console readiness. Use supported config for optional background work and all permission preconditions.
+- [x] Drive visible workspace create/name/folder add/confirm controls, disable the optional interview visibly, create a scoped chat, type the question, click Send, and accept the first-use AGENTS.md disclosure through its visible Proceed button.
+- [x] Observe each variant's actual provider schema/result sequence, final owning assistant message, real binding and saved run. Assert the actual rendered assistant answer separately from tool cards; export failure receipts even when a wait fails.
+- [x] Run fenced first under the CI dependency venv; repair setup mistakes without replacing production boundaries. Add native, compact recovery, and wrong-family variants after the first path works.
+- [x] Run a full negative control with deliberately missing README evidence; require the pilot to fail at the evidence stage, then run unmodified variants green.
+- [x] Verify shutdown and artifact retention. Record non-app test substitutions and phase timings.
 
 ### Task 3: Gate enrollment, diagnostics, and handoff
 
 **Files:** modify the suitable existing job in `.github/workflows/derived-artifacts.yml`; create a small report verifier only if no existing verifier handles exact variants/receipts; update corresponding `Tests/CI` contract tests and the catalog with commands/evidence.
 
-- [ ] Write failing checks for missing/skipped variant and missing receipt if introducing report validation; implement only the exact pilot report contract.
-- [ ] Measure pilot duration with the lane's dependency set; enroll it without increasing timeouts or disturbing existing shard ordering. Prefer a bounded step in an existing job with measured headroom.
-- [ ] Ensure `if: always()` uploads synthetic receipts and JUnit even when tests fail; empty or partial reports fail validation.
-- [ ] Run targeted CI-contract checks, pilot/support tests, changed-file lint/format, and diff hygiene. Run Linux qualification through available existing CI only; state any unperformed environment explicitly.
-- [ ] Independently review the final branch, repair concrete defects with targeted evidence, and update catalog/task notes with exact node IDs, commands, durations, and limitations. Do not mark the task Done until ACs are actually satisfied.
+- [x] Write failing checks for missing/skipped variant and missing receipt if introducing report validation; implement only the exact pilot report contract.
+- [x] Measure pilot duration with the lane's dependency set; enroll it without increasing timeouts or disturbing existing shard ordering. Prefer a bounded step in an existing job with measured headroom.
+- [x] Ensure `if: always()` uploads synthetic receipts and JUnit even when tests fail; empty or partial reports fail validation.
+- [x] Run targeted CI-contract checks, pilot/support tests, changed-file lint/format, and diff hygiene. Run Linux qualification through available existing CI only; state any unperformed environment explicitly.
+- [x] Independently review the final branch, repair concrete defects with targeted evidence, and update catalog/task notes with exact node IDs, commands, durations, and limitations. Do not mark the task Done until ACs are actually satisfied.
 
 ## Execution record
 
@@ -74,3 +74,7 @@
 - Run 40802492563 completed the real fenced read and all three answer views, then exposed an invalid oracle assumption: AgentRunsDB deliberately omits tool arguments/file bodies. Correlate its call IDs/outcome with actual provider history instead. Updated native/fenced private-metadata controls: 2 RED; 56 support/report/enrollment checks GREEN (8.71s). Preserve synthetic evidence before assertions for diagnostic failures.
 
 - Run 40803962773 again passed fenced/native/compact but stopped the wrong-family case at the built-in always-ask approval card. Enable its normal optional-tool config and click the sole list_directory Approve once control; assert the exact pending script call before approval. The real high-risk permission floor remains intact.
+
+- Current targeted validation: 147 CI enrollment/workflow contracts passed in 258.78s on Windows Python 3.12; all eight changed Python files pass Ruff and six new Python files pass format checks. No full repository test sweep was run.
+
+- Qualification at 4c0ce64d6c: Linux run 40805071773 passed all four actual-app cases plus 55 controls (59 passed, 171.593s); the real missing-evidence negative control failed for the intended fs_read/code reason (37.802s) and its verifier passed. Both downloaded report sets pass independently. Full existing CI suites still running; keep the draft and task In Progress until their verdict. Windows is explicitly failed qualification; Fedora/Python 3.14/live model/native terminal are not run. The spec records exact node IDs, timings, commands, and artifacts.

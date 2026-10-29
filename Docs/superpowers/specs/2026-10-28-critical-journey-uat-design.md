@@ -1,7 +1,7 @@
 # Critical user-journey UAT: catalog and project-chat pilot
 
 Date: 2026-10-28
-Status: approved 2026-10-28; pre-implementation review incorporated; pilot pending
+Status: implemented and reviewed; scripted Linux pilot qualified 2026-10-29 UTC
 Task: TASK-37270
 Baseline: current origin/dev after PR #3284
 
@@ -171,7 +171,8 @@ Setup: nonempty bound project and empty scratch. Enable the optional built-in
 listing tool with `[tools] list_directory_enabled=true` for this variant only;
 local `fs_*` tools remain enabled.
 Actions: script the reported call `list_directory(root_alias=..., path=".")`;
-then recover using the advertised tool's actual schema and bound-root semantics.
+verify its sole built-in approval card and click Approve once; then recover using
+the advertised tool's actual schema and bound-root semantics.
 Pass: the mismatched call is rejected before an apparent successful empty listing;
 recovery lists/reads the actual project. Unknown fields must not silently select
 scratch. Repeat the equivalent wrong-family read/write variants at their narrow
@@ -313,9 +314,10 @@ Deliver:
 
 ## Run matrix and release decisions
 
-The first implementation qualifies the pilot locally on Windows and, when runner
-access is available, Linux using the existing CI dependency set. These are separate
-results; an Ubuntu job is not described as a Fedora run.
+The first implementation attempts Windows and Linux qualification using the
+existing CI dependency set. Record each result separately, including failures;
+an Ubuntu job is not described as a Fedora run. The measured inventory below
+identifies the supported gate and environments still requiring qualification.
 
 Proposed promotion:
 
@@ -453,8 +455,8 @@ CI enrollment: the existing `pr-fast-lane-admission-2` required job runs this in
 separate pytest process, checks the exact four cases even after failure, and uploads
 evidence with `if: always()`. No runner or job-timeout increase (ADR-103). The base
 job took 12m16s in run 40779693441, leaving headroom under its existing 35-minute cap.
-Qualification results will be added after the actual pilot passes; writing a test
-or enrolling it is not proof that the journey works.
+The measured qualification below establishes the pilot itself. The remaining
+pre-existing CI suites must finish before describing the whole PR as green.
 
 The CI job also runs the missing-evidence negative control after the normal gate.
 It requires pytest exit 1, the precise missing-code failure, and an actual `fs_read`
@@ -464,8 +466,8 @@ control. Its artifacts are kept separately in `project-chat-negative`.
 Independent implementation review found and fixed three additional false-green
 paths: wrong/missing outbound model identity, tool calls that compensate for absent
 argument schemas, and a run linked to the wrong saved assistant message. Ten focused
-negative cases cover these defects. Review fixtures and gate checks passed locally;
-full Linux pilot qualification remains pending. Direct SHA/dependency-version fields
+negative cases cover these defects. Review fixtures and gate checks passed locally; the full Linux pilot and
+negative control are qualified below. Direct SHA/dependency-version fields
 in individual receipts are deferred; CI artifacts remain associated with their run
 and tested head.
 
@@ -486,3 +488,67 @@ so this journey checks the sole list_directory approval card and clicks its real
 Approve once button before validating argument refusal and recovery to fs_list.
 Run 40803962773 exposed this previously omitted user action; it does not justify
 bypassing the built-in permission gate.
+
+## Measured implementation inventory (2026-10-29 UTC)
+
+Tested code head: `4c0ce64d6c66cb976527afecc64b8674a919b943`.
+[Linux qualification run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40805071773),
+artifact `project-chat-uat-40805071773-1` (seven-day retention). Runner:
+`ubuntu-latest`, Python 3.12.15, x86_64/glibc 2.39. The receipts report tiktoken
+available; this is not a real llama.cpp model-tokenizer qualification.
+
+All node IDs start with `Tests/QA/test_project_chat_uat.py::test_project_chat_uat`:
+
+| Node suffix | Catalog coverage | Result | Case body time | Provider requests |
+| --- | --- | --- | ---: | ---: |
+| `[fenced]` | UAT-02, normal discovery | passed | 40.674s | 5 |
+| `[native]` | UAT-02, native protocol subset of UAT-04 | passed | 35.142s | 5 |
+| `[compact-recovery]` | UAT-02, compact/schema recovery subset of UAT-04 | passed | 36.298s | 5 |
+| `[wrong-family]` | UAT-02, listing recovery subset of UAT-05 | passed | 40.719s | 6 |
+
+Normal pytest invocation: **59 passed, zero skipped/errors/failures, 171.593s**
+(four journeys plus 55 fixture/report controls). Each normal receipt has matching
+run/conversation/assistant IDs, an actual bound README read, painted/saved final
+evidence, no model protocol errors, and no blocked network attempts. The compact
+request estimate was 815 input tokens plus 256 output tokens under the 4096 limit.
+The wrong-family case accepted the one real built-in approval, rejected the
+mismatched arguments, then completed through `fs_list`/`fs_read`.
+
+Full negative control: **one expected failure, zero skips/errors, 37.802s**. Its
+real `fs_read` returned the deliberately altered README without a verification
+code; the model boundary rejected it with `README read did not supply a verification
+code`. The independent negative report verifier passed. Both report verifiers
+also passed against the downloaded artifacts. The combined pytest time was
+209.395s; the existing job's 35-minute cap and runner count are unchanged.
+
+Additional local verification: 56 fixture/report/enrollment checks passed in
+8.71s; 147 affected CI workflow/enrollment contracts passed in 258.78s. Scoped Ruff
+checks passed for all eight changed Python files, and formatting checks passed
+for the six new Python files. No full repository test sweep was run.
+
+Windows Python 3.12.10: **failed qualification**, not a passing platform. The latest
+fenced attempt stopped opening the workspace section with Textual
+`WaitForScreenTimeout` before any provider request (161.69s parent run); earlier
+cold storage preparation also exceeded its deadline. Those results do not establish
+a product root cause or a performance regression. No Windows pass is claimed.
+Fedora/Python 3.14, a real llama.cpp model, and native-terminal input/paint are
+**not run**. All other catalog journeys remain planned, including the additional
+UAT-04 budget/denial and UAT-05 read/write variants. The complete PR gate is still
+running; this inventory records the completed UAT steps, not its eventual verdict.
+
+For the full negative control, use fresh directories and preserve the expected
+nonzero pytest result:
+
+```bash
+set +e
+TLDW_UAT_ARTIFACTS=project-chat-negative \
+TLDW_UAT_NEGATIVE_CONTROL=missing-readme python -m pytest \
+  'Tests/QA/test_project_chat_uat.py::test_project_chat_uat[fenced]' \
+  -q -o addopts= --timeout=240 --tb=short \
+  --basetemp=project-chat-negative-pytest --junitxml=project-chat-negative.xml
+status=$?
+set -e
+test "$status" -eq 1
+python scripts/check_project_chat_uat.py --negative-control \
+  --junit project-chat-negative.xml --artifacts project-chat-negative
+```
