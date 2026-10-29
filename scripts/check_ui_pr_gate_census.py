@@ -630,6 +630,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
+# 2026-10-29: dev carried a second, dead-then-live `MINIMUM_FILES = 1144` line left by a
+# merge (the later assignment wins in Python); collapsed to the one value.
 MINIMUM_FILES = 1166
 
 
