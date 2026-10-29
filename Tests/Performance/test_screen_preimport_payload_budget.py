@@ -137,7 +137,8 @@ MAX_PASS_ADDED_MODULES = 558
 #: 2026-10-27 Task 9 fix round 3 (review R2 N2-2 and the release's line-clear skip): 427,118 -> 427,126 (paired arms: base 7c84ec20a2 427,118 + 8; library route 133,173 of 135,111; modules 558 and ui-ready 1031/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-29 Task 10 (TASK-34000.40 N-34: Escape leaves a running import, the import footer chip and F1's painted-footer source, the lasting-sync back label): 427,126 -> 427,160 (paired arms: base 9c73c82855 427,126 + 34; library route 133,207 of 135,111; modules 558, ui-ready 1030/1031 and first-send 93/94 unchanged, both arms) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-29 Task 10 fix round 1 (review R0: Escape follows ‹ Sync folders through one decision, the shared roots return, the receipt's single door, the import tier's one spelling, the progress-region re-entry focus): 427,160 -> 427,178 (paired arms: base 861dc0e176 427,160 + 18; library route 133,225 of 135,111; modules 558, ui-ready 1030/1031 and first-send 93/94 unchanged, both arms) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
-MAX_PASS_ADDED_LOC = 427_178
+#: 2026-10-29 TASK-34000.29 Task 8b (N-29, Delete forever: the Trash row's button and confirm, the x gate and footer chip, the purge worker and its refusals, the parked R4-1/R4-2 settling rules; NotesScopeService.purge_note, CharactersRAGDB.hard_delete_note): 427,178 -> 427,297 (paired arms: base 71f8d8a487 427,178 + 119; library route 133,344 of 135,111; modules 558, ui-ready 1030/1031 and first-send 93/94 unchanged, both arms) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 427_297
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
