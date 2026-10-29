@@ -1398,7 +1398,7 @@ class TestDictionaryNewDuplicate:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1431,19 +1431,23 @@ class TestDictionaryNewDuplicate:
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         """Task-443: Duplicate now also applies to characters (parity fix) -
-        only the Personas mode (profiles have no duplicate seam yet) hides
-        it."""
+        only personas (profiles have no duplicate seam yet) never show it.
+
+        Frame slice B2b (spec 5.3, interim until B5b-2): Duplicate is the
+        Inspector's button for the open item, so it follows the open item's
+        kind, not the mode. This fixture has no characters or personas; those
+        legs are test_roleplay_item_list_app.py's
+        test_the_inspector_duplicate_copies_the_loaded_item[characters] and
+        test_personas_have_no_duplicate.
+        """
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
-            screen = await _mounted(pilot)
-            dup = screen.query_one("#personas-library-duplicate", Button)
-            assert dup.display is True  # characters mode (task-443)
-            await pilot.click("#personas-mode-personas")
-            await pilot.pause()
-            assert dup.display is False
-            await pilot.click("#personas-mode-dictionaries")
-            await pilot.pause()
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            assert screen.query_one("#personas-inspector-actions").display
+            dup = screen.query_one("#personas-duplicate", Button)
             assert dup.display is True
+            assert dup.disabled is False
 
     async def test_duplicate_survives_failed_strategy_copy(
         self, mock_app_instance, stub_characters, fake_dict_service
@@ -1468,7 +1472,7 @@ class TestDictionaryNewDuplicate:
             fake_dict_service.update_dictionary = _failing_update
 
             # Click duplicate
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()

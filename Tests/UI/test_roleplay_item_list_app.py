@@ -21,7 +21,7 @@ from textual.app import App, ComposeResult
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 from textual.worker import WorkerState
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
@@ -553,6 +553,142 @@ async def test_the_inspector_delete_acts_on_the_open_item_only(
         await settle(pilot)
         assert len(screen._marked_rows) == 2
         assert item_at(screen, opened).active
+
+
+# ---- B2b: the open item's Duplicate sits in the Inspector stack (AC#10) ----
+#
+# Spec 5.3 (B2b row, interim until B5b-2). On dev Duplicate is a library
+# toolbar button; B2b's one-row toolbar has no room for it, so it moves to
+# the Inspector's action stack, beside Delete.
+
+
+def _duplicate_source(mode: str, db, mock_app_instance, tmp_path):
+    """Seed one item of ``mode`` on ``db``.
+
+    Returns:
+        The item's name and a read-back of every name of that kind in the DB.
+    """
+    if mode == "characters":
+        return "Character 0010", lambda: [
+            row["name"] for row in db.list_character_cards_page(limit=100_000, offset=0)
+        ]
+    if mode == "lore":
+        from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+        manager = WorldBookManager(db)
+        manager.create_world_book("Codex Arcana")
+        return "Codex Arcana", lambda: [
+            book["name"] for book in manager.list_world_books(True)
+        ]
+    from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
+        ChatDictionaryScopeService,
+    )
+    from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
+        LocalChatDictionaryService,
+    )
+
+    local = LocalChatDictionaryService(
+        db, history_store_path=tmp_path / "dictionary-history.json"
+    )
+    local.create_dictionary({"name": "Medical Abbrev"})
+    mock_app_instance.chat_dictionary_scope_service = ChatDictionaryScopeService(
+        local_service=local, server_service=None
+    )
+    return "Medical Abbrev", lambda: [
+        record["name"]
+        for record in local.list_dictionaries(include_inactive=True)["dictionaries"]
+    ]
+
+
+def _row_named(screen, name: str) -> str | None:
+    item_list = screen.query_one(RoleplayItemList)
+    return next(
+        (i for i in visible_item_ids(screen) if item_list.row(i).name == name), None
+    )
+
+
+@pytest.mark.parametrize("mode", ["characters", "lore", "dictionaries"])
+async def test_the_inspector_duplicate_copies_the_loaded_item(
+    mock_app_instance, volume_348, tmp_path, mode
+):
+    source_name, names_in_db = _duplicate_source(
+        mode, volume_348, mock_app_instance, tmp_path
+    )
+    copy_name = f"{source_name} (copy)"
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        if mode != "characters":
+            assert await pilot.click(f"#personas-mode-{mode}")
+        await wait_until(
+            pilot,
+            lambda: _row_named(screen, source_name) is not None,
+            what=f"the {mode} source row",
+        )
+        await select_roleplay_item(pilot, screen, _row_named(screen, source_name))
+        await settle(pilot)
+        duplicate = screen.query_one("#personas-duplicate", Button)
+        assert duplicate.display and not duplicate.disabled
+        assert await pilot.click("#personas-duplicate")
+        await wait_until(
+            pilot, lambda: copy_name in names_in_db(), what="the copy in the DB"
+        )
+        await wait_until(
+            pilot,
+            lambda: (
+                _row_named(screen, copy_name) is not None
+                and item_at(screen, _row_named(screen, copy_name)).active
+            ),
+            what="the copy's row, open in the list",
+        )
+        assert names_in_db().count(copy_name) == 1
+        assert screen.state.selected_entity_name == copy_name
+
+
+async def test_duplicate_is_disabled_and_says_why_under_the_server_runtime(
+    mock_app_instance,
+):
+    records = [{"id": 7, "name": "Remote Elara"}]
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=AsyncMock(return_value={"items": records, "total": 1}),
+        search_characters=AsyncMock(return_value={"items": records, "total": 1}),
+        get_character=AsyncMock(
+            return_value={"id": 7, "name": "Remote Elara", "description": "Remote"}
+        ),
+    )
+    async with open_styled_roleplay("mock", mock_app_instance, size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        await select_roleplay_item(pilot, screen, "character:7")
+        await settle(pilot)
+        assert screen.state.selected_entity_id == "7"
+        duplicate = screen.query_one("#personas-duplicate", Button)
+        assert duplicate.display
+        assert duplicate.disabled
+        assert duplicate.tooltip == personas_screen_module._SERVER_READ_ONLY_TOOLTIP
+
+
+async def test_personas_have_no_duplicate(mock_app_instance, volume_348):
+    """Persona Duplicate is R14's follow-up, not B2b (as on dev's toolbar)."""
+    service, _ = _persona_service(_personas(3))
+    mock_app_instance.character_persona_scope_service = service
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#personas-mode-personas")
+        await wait_until(
+            pilot,
+            lambda: "persona:p-narrator" in visible_item_ids(screen),
+            what="the persona list",
+        )
+        await select_roleplay_item(pilot, screen, "persona:p-narrator")
+        await settle(pilot)
+        assert screen.state.selected_entity_kind == "persona"
+        assert screen.query_one("#personas-inspector-actions").display
+        assert not screen.query_one("#personas-duplicate", Button).display
 
 
 async def test_space_turns_a_lore_book_off_with_the_undo_toast_and_on_again(

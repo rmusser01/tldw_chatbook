@@ -2394,14 +2394,14 @@ class TestImportExport:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            # Duplicate now applies to characters (task-443) - the library
-            # rail button must be visible in the default characters mode.
-            assert screen.query_one("#personas-library-duplicate", Button).display
             await select_roleplay_item(
                 pilot, pilot.app.screen, "character:1", via="click"
             )
             await pilot.pause()
-            await pilot.click("#personas-library-duplicate")
+            # Duplicate applies to characters (task-443); frame slice B2b
+            # (spec 5.3) moved it from the library toolbar to the Inspector.
+            assert screen.query_one("#personas-duplicate", Button).display
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -2439,7 +2439,7 @@ class TestImportExport:
                 pilot, pilot.app.screen, "character:1", via="click"
             )
             await pilot.pause()
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -8625,11 +8625,11 @@ class TestServerCharacterSourceIsolation:
             for control_id in (
                 "#personas-library-new",
                 "#personas-library-import",
-                "#personas-library-duplicate",
                 "#personas-library-tag",
                 "#personas-card-edit-character",
                 "#personas-export-json",
                 "#personas-export-png",
+                "#personas-duplicate",
                 "#personas-delete",
             ):
                 control = screen.query_one(control_id, Button)
@@ -8661,6 +8661,7 @@ class TestServerCharacterSourceIsolation:
                 "#personas-card-edit-character",
                 "#personas-export-json",
                 "#personas-export-png",
+                "#personas-duplicate",
                 "#personas-delete",
             ):
                 control = screen.query_one(control_id, Button)
