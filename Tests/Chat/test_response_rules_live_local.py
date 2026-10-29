@@ -106,7 +106,7 @@ async def test_actual_local_learning_and_independent_semantic_cases(tmp_path):
         result = await complete(request, **kwargs)
         trace["helper_calls"].append(
             {
-                "messages": list(request.messages),
+                "messages": [dict(row) for row in request.messages],
                 "text": result.text,
                 "usage": repr(result.usage),
             }
@@ -468,3 +468,153 @@ async def test_actual_local_deterministic_rule_controls(tmp_path, control, monke
         trace["client_closed"] = client.is_closed
         trace["physical_helpers"] = rules.helpers.unsettled_count
         output.write_text(json.dumps(trace, indent=2, default=str))
+
+
+@pytest.mark.asyncio
+async def test_actual_execution_backed_semantic_cases(tmp_path):
+    """Qualify real judgments using host self-checks, not invented agent work."""
+    import asyncio
+    import hashlib
+    import subprocess
+    import sys
+
+    from tldw_chatbook.Chat.response_rules.models import RuleEvidence
+
+    endpoint = os.environ.get("PR3010_LIVE_LOCAL_URL")
+    if not endpoint:
+        pytest.skip("requires explicitly owned local model endpoint")
+    resolution = _live_resolution(endpoint)
+    output = Path(os.environ["PR3010_LIVE_EVIDENCE"] + ".execution.json")
+    assert not output.exists()
+    gateway = ConsoleProviderGateway(environ={}, config_provider=dict)
+    trace = {
+        "model": resolution.model,
+        "executions": [],
+        "helper_calls": [],
+        "cases": [],
+    }
+    complete = gateway.complete_auxiliary
+
+    async def observed(request, **kwargs):
+        result = await complete(request, **kwargs)
+        trace["helper_calls"].append(
+            {
+                "messages": [dict(row) for row in request.messages],
+                "text": result.text,
+            }
+        )
+        return result
+
+    gateway.complete_auxiliary = observed
+    pool = RuleHelperPool(
+        usage_sink=lambda *_: None, current=lambda _: True, clock=monotonic
+    )
+    path = tmp_path / "arithmetic_self_check.py"
+
+    async def execute(program, ref):
+        path.write_text(program, encoding="utf-8")
+        revision = hashlib.sha256(path.read_bytes()).hexdigest()
+        argv = [sys.executable, str(path)]
+        result = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        trace["executions"].append(
+            {
+                "argv": argv,
+                "source_sha256": revision,
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+        )
+        text = (
+            "Actual host qualification self-check; this is not Console agent tool work. "
+            f"exit_code={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
+        return RuleEvidence(
+            ref,
+            "settled",
+            "succeeded" if result.returncode == 0 else "failed",
+            revision,
+            text,
+        )
+
+    try:
+        success = await execute(
+            'assert 6 * 7 == 42\nprint("arithmetic self-check passed")\n',
+            "self-check:success",
+        )
+        failure = await execute("assert 6 * 7 == 41\n", "self-check:failure")
+        assert trace["executions"][0]["exit_code"] == 0
+        assert trace["executions"][1]["exit_code"] != 0
+        # A real edit with no new execution makes the earlier result historical.
+        path.write_text("assert 6 * 7 == 43\n", encoding="utf-8")
+        edited_revision = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert edited_revision not in {success.work_revision, failure.work_revision}
+        cases = (
+            (
+                "current_success",
+                "The arithmetic self-check passed.",
+                success,
+                success.work_revision,
+                "pass",
+            ),
+            (
+                "contradicted_success",
+                "The arithmetic self-check passed.",
+                failure,
+                failure.work_revision,
+                "violation",
+            ),
+            (
+                "stale_success",
+                "The current arithmetic self-check passed.",
+                success,
+                edited_revision,
+                "couldnt_verify",
+            ),
+            (
+                "qualified_history",
+                "The earlier arithmetic self-check passed before the edit; the current file is unverified.",
+                success,
+                edited_revision,
+                "pass",
+            ),
+        )
+        evaluator = ResponseRuleEvaluator(gateway)
+        for label, answer, evidence, revision, expected in cases:
+            origin = source(operation_id=str(uuid4()))
+            lease = pool.try_acquire(
+                origin, purpose="checking", deadline=monotonic() + 30
+            )
+            value = inputs(
+                answer,
+                request_text="Report the current arithmetic self-check result.",
+                evidence=(evidence,),
+                work_revision=revision,
+            )
+            assessment = await evaluator.assess(
+                origin, value, (semantic(),), resolution=resolution, lease=lease
+            )
+            trace["cases"].append(
+                {
+                    "label": label,
+                    "expected": expected,
+                    "actual": assessment.outcome,
+                    "checks": [asdict(c) for c in assessment.checks],
+                }
+            )
+    finally:
+        pool.close_admission()
+        await pool.wait_for_cleanup()
+        trace["unsettled_helpers"] = pool.unsettled_count
+        await gateway.http_client.aclose()
+        output.write_text(json.dumps(trace, indent=2))
+    assert len(trace["helper_calls"]) == 4
+    assert all(c["actual"] == c["expected"] for c in trace["cases"]), trace["cases"]
+    assert trace["unsettled_helpers"] == 0

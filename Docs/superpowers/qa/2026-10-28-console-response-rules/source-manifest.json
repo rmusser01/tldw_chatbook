@@ -1,14 +1,17 @@
 {
   "base": "3efe8476cebf70eceafa605d1abed76a4aad4e0e",
   "files": {
-    ".github/workflows/derived-artifacts.yml": "ce956c6ce848dc12741a2c7b885e65330466b631192d63a05db000ce47ef5f23",
-    "Tests/Backup_Recovery/test_canvas_recovery_validation.py": "d6dc40b7b76c92d76fdb9bf9e960144639fa76545c39d79f029769da68a53ca9",
-    "Tests/Backup_Recovery/test_response_rules_restore.py": "9589f379f558596e605246d57dd5610e9093fac8ac11acea10b722124446c2e9",
-    "Tests/CI/test_response_rules_critical_gate.py": "2ea737eca04635645f079c97cd9a72ff6a2a2978197abdd82cc19d55fe3bf44a",
-    "Tests/Chat/test_response_rules_live_local.py": "bcb86f62e419e4555c4d3d5842253c04aa0ac6de0621b4521819733d4832ae0e",
+    ".github/workflows/derived-artifacts.yml": "5cf60ec2673aa8c98c44a0d263bd0ea34bf9981d224b8de7ef27c4945ab18073",
+    "Tests/Backup_Recovery/test_canvas_recovery_validation.py": "358b156e464f1e74836d4977c9bca3507276e0641487f367f2767c9993eb9ec8",
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py": "31991cd8c2631bade5635c1ab72103ae671aede4279bb92008240ce3ac652eb4",
+    "Tests/Backup_Recovery/test_response_rules_restore.py": "438422a6c81ff9486ea2ba332555506f5afe7972430556258e4cbf26c77e2479",
+    "Tests/CI/test_response_rules_critical_gate.py": "313527d089d4acb3b662030ea77133571aedd2d7ef2432e9deacbbf5cd8ee726",
+    "Tests/Chat/test_response_rules_live_local.py": "301406fee8b239547f65e051a4cec9e4fe0c510dbad336550db8e4c7c5495ceb",
     "Tests/Chat/test_response_rules_trace_admission.py": "d920d9e880d807bbbd183e1b163e827043a1b5d5a75e6cf8ecf372c3b9226283",
-    "scripts/ui_pr_gate_census.txt": "8c79b79b6a6b31d9ce7b47eed163dec7ba40f0c69d5e893f4ac461031b467a8e",
-    "tldw_chatbook/Backup_Recovery/sqlite_validation.py": "f2dd7361c06d24b60d4fe2450eebb53c5bff1481a450bba7dd28a18134dba309",
+    "Tests/UI/response_rules_fixtures.py": "a648d920085e9269b3961c57bdb565088be60af50d1b92626c83314cc994af9a",
+    "Tests/UI/test_response_rules_end_to_end.py": "6ea643425aee00035244187cfc40910d6eb271acb80d6922a110d47fffe53fa6",
+    "scripts/ui_pr_gate_census.txt": "d7b7412d87fdfa93a4820a1b0526c2f3d04393b10d9def76feb202282d59dd5b",
+    "tldw_chatbook/Backup_Recovery/sqlite_validation.py": "c263e55a4416d6ba9a5015c3cc01c2fc2d20760a312592db2a5e3e713badd5e2",
     "tldw_chatbook/Chat/console_dispatch_repository.py": "e90905f577238d10fd37caaca20d2ca427c69bc47a27a0bdbef9a90faa18afd1",
     "tldw_chatbook/Chat/console_prompt_queue_coordinator.py": "92a527ca6fd93ec835559c84ab1de93684c66702e0609b5d2342baa126a104b4",
     "tldw_chatbook/Chat/console_provider_gateway.py": "0832ed75ce4c925920a83b9f357004dddbdbadbcd839063955da811b0b5509b7",
@@ -30,7 +33,8 @@
     "tldw_chatbook/Chat/response_rules/runtime.py": "92df3074bb3a9b94e034d9410498f00b04240acf4f53f826854fb0292cd6472e",
     "tldw_chatbook/Chat/response_rules/store.py": "80e184aa8c391907ed302ade29185d3275db47549d17904667d1af8627b46967",
     "tldw_chatbook/DB/ChaChaNotes_DB.py": "bd965e737ffc159ac77afcf251ea982aa8c98dbab37a7243287ea8675e05d56a",
-    "tldw_chatbook/DB/recovery_core_schema.py": "ac96481309910842edacd64abe13b9ca9cb7220133418db2e3c8e61eedd4cb82"
+    "tldw_chatbook/DB/recovery_core_schema.py": "ac96481309910842edacd64abe13b9ca9cb7220133418db2e3c8e61eedd4cb82",
+    "tldw_chatbook/DB/recovery_operations.py": "aef6ce49fcaabff3f640f7d969625a30800ab646e14ebc0f095acf441eb948a9"
   },
   "canonicalization": "Text source bytes with CRLF normalized to LF; source hashes exclude this report and task metadata."
 }

@@ -5,7 +5,7 @@ entry checks SQLite content and owned BLOBs; it never opens those external paths
 """
 
 import sqlite3
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Event
@@ -1156,99 +1156,104 @@ def _validate_candidate(
                         if len(choices) != 1:
                             return (("unsupported_schema_migration",), None)
                         expected, statements = choices[0]
-                        if (
-                            shipped_checkpoint and version == 76
-                            or installed.owner_id == "db.chachanotes.primary"
-                            and version in (77, 78, 79, 80, 81)
+                        # Fixed installed DDL reparses other tables' CHECKs.
+                        # Authenticate the complete pre-step catalog, reuse its
+                        # pure Canvas scope, then retire it before validation.
+                        with _canvas_schema_access(
+                            connection,
+                            tuple(
+                                row[3]
+                                for row in _catalog(connection)
+                                if row[3] is not None
+                            ),
+                            restrictions,
                         ):
-                            migration = (
-                                Path(__file__).resolve().parents[1]
-                                / "DB"
-                                / "migrations"
-                                / (
-                                    "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
-                                    if version == 81
-                                    else "chachanotes_v77_to_v78_fleet_progress.sql"
-                                    if version == 77
-                                    else "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
-                                    if version == 78
-                                    else "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
-                                    if version == 79
-                                    else "chachanotes_v80_to_v81_response_rules.sql"
-                                    if version == 80
-                                    else "chachanotes_v76_to_v77_agent_chat_starts.sql"
+                            if (
+                                shipped_checkpoint
+                                and version == 76
+                                or installed.owner_id == "db.chachanotes.primary"
+                                and version in (77, 78, 79, 80, 81)
+                            ):
+                                migration = (
+                                    Path(__file__).resolve().parents[1]
+                                    / "DB"
+                                    / "migrations"
+                                    / (
+                                        "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
+                                        if version == 81
+                                        else (
+                                            "chachanotes_v77_to_v78_fleet_progress.sql"
+                                            if version == 77
+                                            else (
+                                                "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
+                                                if version == 78
+                                                else (
+                                                    "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
+                                                    if version == 79
+                                                    else (
+                                                        "chachanotes_v80_to_v81_response_rules.sql"
+                                                        if version == 80
+                                                        else "chachanotes_v76_to_v77_agent_chat_starts.sql"
+                                                    )
+                                                )
+                                            )
+                                        )
+                                    )
                                 )
-                            )
-                            restrictions.shipped_checkpoint_migration = version == 76
-                            restrictions.fleet_progress_migration = version == 77
-                            restrictions.sargable_migration = version == 78
-                            restrictions.browse_order_migration = version == 79
-                            restrictions.response_rules_migration = version == 80
-                            restrictions.canvas_sibling_migration = version == 81
-                            try:
-                                pending = ""
-                                for line in migration.read_text(
-                                    encoding="utf-8"
-                                ).splitlines(keepends=True):
-                                    pending += line
-                                    if sqlite3.complete_statement(pending):
-                                        if restrictions.expired():
-                                            raise InterruptedError
-                                        # Only this fixed RENAME needs internal sequence/temp
-                                        # updates; direct SQL cannot borrow their authority.
-                                        restrictions.shipped_checkpoint_rename = (
-                                            pending.strip()
-                                            == (
+                                restrictions.shipped_checkpoint_migration = (
+                                    version == 76
+                                )
+                                restrictions.fleet_progress_migration = version == 77
+                                restrictions.sargable_migration = version == 78
+                                restrictions.browse_order_migration = version == 79
+                                restrictions.response_rules_migration = version == 80
+                                restrictions.canvas_sibling_migration = version == 81
+                                try:
+                                    pending = ""
+                                    for line in migration.read_text(
+                                        encoding="utf-8"
+                                    ).splitlines(keepends=True):
+                                        pending += line
+                                        if sqlite3.complete_statement(pending):
+                                            if restrictions.expired():
+                                                raise InterruptedError
+                                            # Only this fixed RENAME needs internal sequence/temp
+                                            # updates; direct SQL cannot borrow their authority.
+                                            restrictions.shipped_checkpoint_rename = pending.strip() == (
                                                 "ALTER TABLE console_dispatch_checkpoints_v77 "
                                                 "RENAME TO console_dispatch_checkpoints;"
                                             )
+                                            try:
+                                                connection.execute(pending)
+                                            finally:
+                                                restrictions.shipped_checkpoint_rename = (
+                                                    False
+                                                )
+                                            pending = ""
+                                    if pending.strip():
+                                        raise ValueError(
+                                            "incomplete_installed_migration"
                                         )
-                                        try:
-                                            connection.execute(pending)
-                                        finally:
-                                            restrictions.shipped_checkpoint_rename = (
-                                                False
-                                            )
-                                        pending = ""
-                                if pending.strip():
-                                    raise ValueError("incomplete_installed_migration")
-                            finally:
-                                restrictions.shipped_checkpoint_migration = False
-                                restrictions.fleet_progress_migration = False
-                                restrictions.sargable_migration = False
-                                restrictions.browse_order_migration = False
-                                restrictions.response_rules_migration = False
-                                restrictions.canvas_sibling_migration = False
-                        restrictions.portrait_migration = (
-                            version
-                            if installed.owner_id == "db.chachanotes.primary"
-                            and version in (82, 83)
-                            else None
-                        )
-                        try:
-                            # ALTER reparses other tables' CHECK expressions too.
-                            # Reuse the exact-catalog pure Canvas scope only for
-                            # these installed portrait steps, then retire it.
-                            schema_access = (
-                                _canvas_schema_access(
-                                    connection,
-                                    tuple(
-                                        row[3]
-                                        for row in _catalog(connection)
-                                        if row[3] is not None
-                                    ),
-                                    restrictions,
-                                )
-                                if restrictions.portrait_migration is not None
-                                else nullcontext()
+                                finally:
+                                    restrictions.shipped_checkpoint_migration = False
+                                    restrictions.fleet_progress_migration = False
+                                    restrictions.sargable_migration = False
+                                    restrictions.browse_order_migration = False
+                                    restrictions.response_rules_migration = False
+                                    restrictions.canvas_sibling_migration = False
+                            restrictions.portrait_migration = (
+                                version
+                                if installed.owner_id == "db.chachanotes.primary"
+                                and version in (82, 83)
+                                else None
                             )
-                            with schema_access:
+                            try:
                                 for statement in statements:
                                     if restrictions.expired():
                                         raise InterruptedError
                                     connection.execute(statement)
-                        finally:
-                            restrictions.portrait_migration = None
+                            finally:
+                                restrictions.portrait_migration = None
                         restrictions.migrating = False
                         issues, version = _check(
                             connection, installed, policy, restrictions

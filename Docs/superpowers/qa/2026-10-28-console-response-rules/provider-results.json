@@ -82,5 +82,141 @@
         }
       ]
     }
+  },
+  "execution_backed_semantic_qualification": {
+    "model": "deepseek-flash",
+    "scope": "Actual disposable host self-checks, not Console agent tool work",
+    "executions": [
+      {
+        "source_sha256": "87b3897d072acd717f4303b081a7ebbf1e33195efc9ac356103b98df5134227c",
+        "exit_code": 0,
+        "stdout": "arithmetic self-check passed\n"
+      },
+      {
+        "source_sha256": "3b6f0373bcfe8be2e3c2cb287272c7353e95337742cb8327aa39d074ed63d1e3",
+        "exit_code": 1,
+        "stdout": ""
+      }
+    ],
+    "cases": [
+      {
+        "label": "current_success",
+        "expected": "pass",
+        "actual": "pass",
+        "checks": [
+          {
+            "rule_id": "rule",
+            "revision": 1,
+            "applicability": "applicable",
+            "verdict": "pass",
+            "reason": "semantic_grounded",
+            "evidence_refs": [
+              "response",
+              "self-check:success"
+            ]
+          }
+        ]
+      },
+      {
+        "label": "contradicted_success",
+        "expected": "violation",
+        "actual": "violation",
+        "checks": [
+          {
+            "rule_id": "rule",
+            "revision": 1,
+            "applicability": "applicable",
+            "verdict": "violation",
+            "reason": "semantic_grounded",
+            "evidence_refs": [
+              "response",
+              "self-check:failure"
+            ]
+          }
+        ]
+      },
+      {
+        "label": "stale_success",
+        "expected": "couldnt_verify",
+        "actual": "couldnt_verify",
+        "checks": [
+          {
+            "rule_id": "rule",
+            "revision": 1,
+            "applicability": "applicable",
+            "verdict": "couldnt_verify",
+            "reason": "semantic_grounded",
+            "evidence_refs": [
+              "response",
+              "self-check:success"
+            ]
+          }
+        ]
+      },
+      {
+        "label": "qualified_history",
+        "expected": "pass",
+        "actual": "pass",
+        "checks": [
+          {
+            "rule_id": "rule",
+            "revision": 1,
+            "applicability": "applicable",
+            "verdict": "pass",
+            "reason": "semantic_grounded",
+            "evidence_refs": [
+              "response"
+            ]
+          }
+        ]
+      }
+    ],
+    "physical_helpers_after_cleanup": 0,
+    "test_result": "1 passed; four real judgments; 13.59 seconds"
+  },
+  "second_available_model_attempt": {
+    "model": "deepseek-v4-pro",
+    "learning": {
+      "state": "inactive",
+      "reason": "invalid_candidate"
+    },
+    "semantic_cases": [
+      {
+        "label": "unsupported_claim",
+        "expected": "violation",
+        "actual": "couldnt_verify"
+      },
+      {
+        "label": "paraphrase",
+        "expected": "violation",
+        "actual": "couldnt_verify"
+      },
+      {
+        "label": "quotation",
+        "expected": "pass",
+        "actual": "couldnt_verify"
+      },
+      {
+        "label": "honest_unknown",
+        "expected": "pass",
+        "actual": "couldnt_verify"
+      },
+      {
+        "label": "qualified_history",
+        "expected": "pass",
+        "actual": "couldnt_verify"
+      },
+      {
+        "label": "correction",
+        "expected": "pass",
+        "actual": "couldnt_verify"
+      },
+      {
+        "label": "injection",
+        "expected": "violation",
+        "actual": "couldnt_verify"
+      }
+    ],
+    "disposition": "Strict JSON contract refusal retained. Draft supplied objects for string fields; all seven judges used Markdown code fences, and some supplied an array instead of the closed object. No parser relaxation or semantic success claimed."
   }
 }
