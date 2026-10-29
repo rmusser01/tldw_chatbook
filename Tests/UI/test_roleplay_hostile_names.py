@@ -173,8 +173,10 @@ async def test_the_real_app_keeps_running_with_a_character_named_like_markup(
 async def test_a_character_name_tag_and_conversation_title(
     name, mock_app_instance, monkeypatch
 ):
-    """Library row, card, Inspector, conversation row, the Tag filter button,
-    a toast and the header's item label while editing."""
+    """Library row, card, Inspector, conversation row, a toast and the
+    header's item label while editing. The active tag is painted only by the
+    border title since frame slice B2b (dev's Tag button read "Tag: <tag>");
+    test_the_items_border_title_paints_the_tag_literally covers it."""
     seed_mock_characters(
         monkeypatch,
         [{"id": 1, "name": name, "description": "d", "tags": [name], "version": 1}],
@@ -190,11 +192,11 @@ async def test_a_character_name_tag_and_conversation_title(
         screen = app.screen
         assert screen.state.selected_entity_id == "1"
         assert f"Selected: {name}" in _painted(screen)
-        # The Tag filter button names the active tag. Checked, then cleared,
-        # so the click sweep below never opens the tag picker over the copies.
+        # The tag filter on, then off again, so the click sweep below never
+        # opens the tag picker over the copies: nothing it paints is a link.
         await screen._apply_tag_filter(name)
         await settle(pilot)
-        assert f"Tag: {name}" in _painted(screen)
+        assert screen.state.tag_filter == name
         assert click_meta_cells(screen) == []
         await screen._apply_tag_filter(None)
         await settle(pilot)

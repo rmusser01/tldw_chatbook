@@ -495,14 +495,6 @@ _SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
 #: Every window fetch runs in this exclusive worker group (spec 1.5.6).
 _LIST_WINDOW_GROUP = "roleplay-list-window"
 _MAX_CHARACTER_ID = (1 << 63) - 1
-#: Display labels for the library sort keys (shared by the character sort cycle
-#: and the persona render path).
-_LIBRARY_SORT_LABELS: dict[str, str] = {
-    "relevance": "Relevance",
-    "name_asc": "Name",
-    "modified_desc": "Recent edit",
-    "created_desc": "Recent add",
-}
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 # TASK-32806.6: the two importers above cap at 10 MB before reading;
@@ -2677,12 +2669,11 @@ class PersonasScreen(BaseAppScreen):
         that was silently remapped to name_asc (task-463 #4).
         """
         base = [
-            ("name_asc", _LIBRARY_SORT_LABELS["name_asc"]),
-            ("modified_desc", _LIBRARY_SORT_LABELS["modified_desc"]),
-            ("created_desc", _LIBRARY_SORT_LABELS["created_desc"]),
+            (key, frame_state.sort_label(key))
+            for key in ("name_asc", "modified_desc", "created_desc")
         ]
         if self.state.search_query and self.state.active_mode == "characters":
-            return [("relevance", _LIBRARY_SORT_LABELS["relevance"]), *base]
+            return [("relevance", frame_state.sort_label("relevance")), *base]
         return base
 
     def _fts_match_query(self) -> str | None:
@@ -4126,12 +4117,13 @@ class PersonasScreen(BaseAppScreen):
                 library.set_title(self._character_title(), total=self._character_total)
             library.item_list.set_more_available(more)
             if fence.runtime_source == "server":
-                library.set_sort_label("Sort: Server order")
-                library.set_tag_label("Tag: All")
+                library.set_sort_label(frame_state.SERVER_SORT_KEY)
+                library.set_tag_active(False)
             else:
-                labels = dict(self._character_sort_cycle())
-                library.set_sort_label(f"Sort: {labels.get(fence.sort_key, 'Name')}")
-                library.set_tag_label(f"Tag: {fence.tag}" if fence.tag else "Tag: All")
+                cycle = dict(self._character_sort_cycle())
+                key = fence.sort_key if fence.sort_key in cycle else "name_asc"
+                library.set_sort_label(key)
+                library.set_tag_active(bool(fence.tag))
             selected = self.state.selected_entity_id
             if (
                 request.replace
@@ -4299,9 +4291,7 @@ class PersonasScreen(BaseAppScreen):
             )
             library.item_list.set_more_available(False)
             if recovery_state is None:
-                library.set_sort_label(
-                    f"Sort: {_LIBRARY_SORT_LABELS.get(sort_key, 'Name')}"
-                )
+                library.set_sort_label(sort_key)
             if (
                 self.state.selected_entity_kind == "persona"
                 and self.state.selected_entity_id

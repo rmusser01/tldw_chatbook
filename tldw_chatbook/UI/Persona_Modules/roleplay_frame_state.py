@@ -1017,3 +1017,150 @@ def import_landed_toast(name: str, kind: str, *, existed: bool = False) -> str:
         else f"Imported {_one_line(name)}"
     )
     return f"{head} {resolve_glyph(_SEPARATOR)} in {ITEM_KINDS[kind][2]}"
+
+
+# ---- The items toolbar (frame slice B2b, spec 1.5.1; owner decision D2) ----
+
+#: The search box never gets fewer cells than this (spec 1.5.1).
+TOOLBAR_SEARCH_MIN_CELLS = 14
+#: Cells the toolbar spends around its parts. They mirror the CSS:
+#: ``Tests/UI/test_roleplay_item_list_app.py`` pins them against the mounted
+#: widgets, so a CSS edit that forgets these fails there instead of clipping.
+SEARCH_CHROME_CELLS = 3  # .settings-compact-input: border-left + padding 0 1
+CONTROL_GAP_CELLS = 1  # .roleplay-items-control: margin-left $ds-space-1
+RAIL_COLLAPSE_CELLS = 3  # .console-rail-collapse-button: width $ds-size-3
+RAIL_TITLE_CHROME_CELLS = 2  # .personas-column-title: padding 0 1
+#: The rail title, which yields to the interim Import (spec 5.3) when both
+#: do not fit (below about 100 columns).
+RAIL_TITLE = "Library"
+#: The sort the server's own order shows under (it has no local key).
+SERVER_SORT_KEY = "server"
+#: Each sort's label, full and short (spec 1.5.1: labels shorten, never wrap).
+SORT_LABELS: dict[str, tuple[str, str]] = {
+    "relevance": ("Relevance", "Best"),
+    "name_asc": ("Name", "Name"),
+    "modified_desc": ("Recent edit", "Edited"),
+    "created_desc": ("Recent add", "Added"),
+    SERVER_SORT_KEY: ("Server order", "Server"),
+}
+#: The controls each kind's toolbar row shows, left to right (spec 1.5.1);
+#: a mode without an items list keeps only ``+ New``.
+TOOLBAR_CONTROLS: dict[str, tuple[str, ...]] = {
+    "characters": ("sort", "tag", "new"),
+    "personas": ("sort", "new"),
+    "lore": ("new",),
+    "dictionaries": ("new",),
+}
+
+
+def toolbar_controls(mode: str) -> tuple[str, ...]:
+    """The controls a mode's toolbar shows (``sort``, ``tag``, ``new``)."""
+    return TOOLBAR_CONTROLS.get(mode, ("new",))
+
+
+def sort_label(sort_key: str, *, short: bool = False) -> str:
+    """The sort button's label; an unknown key reads as ``Name`` (as on dev)."""
+    full, short_form = SORT_LABELS.get(sort_key, SORT_LABELS["name_asc"])
+    return short_form if short else full
+
+
+def sort_tooltip(sort_key: str) -> str:
+    """The sort button's tooltip: the whole sort name and the key (``s``)."""
+    return f"Sort: {sort_label(sort_key)}. Click to change the order. (s)"
+
+
+def search_placeholder(mode: str, *, short: bool) -> str:
+    """The search box's placeholder: ``Search characters…`` or ``Search…``.
+
+    No ``/`` hint until frame slice B3 binds the key (owner decision D4).
+    """
+    ellipsis = resolve_glyph(_ELLIPSIS)
+    kind = KIND_FOR_MODE.get(mode)
+    if short or kind is None:
+        return f"Search{ellipsis}"
+    return f"Search {ITEM_KINDS[kind][1]}{ellipsis}"
+
+
+def import_label() -> str:
+    """The interim ``Import…`` on the rail's title row (spec 5.3; owner D2)."""
+    return f"Import{resolve_glyph(_ELLIPSIS)}"
+
+
+@dataclass(frozen=True)
+class ToolbarFit:
+    """How the items toolbar lays out at one width (spec 1.5.1).
+
+    Attributes:
+        rows: The toolbar's rows: 1 (the search beside the controls), 2 (the
+            controls on the row under the search) or one more per control
+            (stacked).
+        labels: The words to paint, by part: the search placeholder
+            (``search``), ``import`` and each shown control.
+        stacked: Each control takes its own row (only where one row of
+            controls does not fit: 80x24).
+        title: The rail title shows beside ``Import…``.
+    """
+
+    rows: int
+    labels: Mapping[str, str]
+    stacked: bool
+    title: bool
+
+
+def fit_items_toolbar(mode: str, *, width: int, sort_key: str) -> ToolbarFit:
+    """The toolbar's layout at ``width`` cells: a ladder, never a clipped label.
+
+    One row with the full labels, then one row with the short ones, then two
+    rows (full, then short), then every control on its own row. The search
+    keeps at least ``TOOLBAR_SEARCH_MIN_CELLS`` beside the controls and shows
+    its long placeholder only where it fits.
+
+    Args:
+        mode: The workbench mode (``toolbar_controls``).
+        width: The pane's content width.
+        sort_key: The list's sort (``SERVER_SORT_KEY`` for the server's order).
+
+    Returns:
+        The rows, the labels to paint, whether the controls stack, and
+        whether the rail title shows.
+    """
+    controls = toolbar_controls(mode)
+
+    def labels_for(short: bool) -> dict[str, str]:
+        words = {
+            "sort": sort_label(sort_key, short=short),
+            "tag": "Tag",
+            "new": "+ New",
+        }
+        return {control: words[control] for control in controls}
+
+    def row_cells(labels: Mapping[str, str]) -> int:
+        return sum(CONTROL_GAP_CELLS + cell_len(label) for label in labels.values())
+
+    def placeholder(search_cells: int) -> str:
+        full = search_placeholder(mode, short=False)
+        fits = cell_len(full) <= search_cells - SEARCH_CHROME_CELLS
+        return full if fits else search_placeholder(mode, short=True)
+
+    import_words = import_label()
+    beside_title = width - CONTROL_GAP_CELLS - cell_len(import_words)
+    title = beside_title - RAIL_COLLAPSE_CELLS >= (
+        cell_len(RAIL_TITLE) + RAIL_TITLE_CHROME_CELLS
+    )
+
+    def fit(
+        rows: int, labels: dict[str, str], search_cells: int, stacked: bool
+    ) -> ToolbarFit:
+        words = {"search": placeholder(search_cells), "import": import_words}
+        return ToolbarFit(rows, {**words, **labels}, stacked, title)
+
+    full, short = labels_for(False), labels_for(True)
+    for labels in (full, short):
+        if TOOLBAR_SEARCH_MIN_CELLS + row_cells(labels) <= width:
+            return fit(1, labels, width - row_cells(labels), False)
+    for labels in (full, short):
+        if row_cells(labels) <= width:
+            return fit(2, labels, width, False)
+    widest = max(CONTROL_GAP_CELLS + cell_len(label) for label in full.values())
+    labels = full if widest <= width else short
+    return fit(1 + len(controls), labels, width, True)

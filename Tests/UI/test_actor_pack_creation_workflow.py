@@ -115,7 +115,8 @@ async def test_an_actor_pack_picked_in_the_one_import_says_when_packs_are_unavai
         screen = await _mounted(pilot)
         assert not screen.query("#personas-library-import-actor-pack")
         import_button = screen.query_one("#personas-library-import", Button)
-        assert str(import_button.label) == "Import"
+        # The interim Import… on the rail's title row (frame slice B2b, D2).
+        assert str(import_button.label) == "Import…"
         await pilot.click("#personas-library-import")
         await wait_until(
             pilot,

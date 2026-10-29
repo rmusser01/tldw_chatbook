@@ -318,19 +318,25 @@ def _shared_pane_publication(screen) -> dict[str, object]:
         "mode": screen.state.active_mode,
         "rows": rendered_rows,
         "count": str(screen.query_one("#personas-library-pane").border_title),
-        "sort": str(
-            screen.query_one(
-                "#personas-library-sort",
-                Button,
-            ).label
-        ),
-        "tag": str(
-            screen.query_one(
-                "#personas-library-tag",
-                Button,
-            ).label
-        ),
+        # Frame slice B2b: the pane gets a sort key and a tag on/off, and the
+        # tooltips say what was published whatever the labels' fit (dev
+        # stamped "Sort: ..."/"Tag: ..." label text).
+        "sort": str(screen.query_one("#personas-library-sort", Button).tooltip),
+        "tag": str(screen.query_one("#personas-library-tag", Button).tooltip),
     }
+
+
+#: The tooltips ``_stamp_owner_labels`` publishes. The stale character renders
+#: in these tests publish ``modified_desc`` and an active tag instead.
+_OWNER_SORT = "Sort: Recent add. Click to change the order. (s)"
+_OWNER_TAG = "Filter characters by tag."
+
+
+def _stamp_owner_labels(library) -> tuple[str, str]:
+    """Publish an owner's sort and tag state that no stale render publishes."""
+    library.set_sort_label("created_desc")
+    library.set_tag_active(False)
+    return _OWNER_SORT, _OWNER_TAG
 
 
 def _observe_shared_mode_render(
@@ -345,17 +351,14 @@ def _observe_shared_mode_render(
         "_render_dictionary_rows" if mode == "dictionaries" else "_render_lore_rows"
     )
     original_render = getattr(screen, method_name)
-    owner_sort = f"Sort: {mode} owner"
-    owner_tag = f"Tag: {mode} owner"
 
     async def observed_render(*args, **kwargs):
         started.set()
         await original_render(*args, **kwargs)
-        library.set_sort_label(owner_sort)
-        library.set_tag_label(owner_tag)
+        _stamp_owner_labels(library)
 
     monkeypatch.setattr(screen, method_name, observed_render)
-    return owner_sort, owner_tag
+    return _OWNER_SORT, _OWNER_TAG
 
 
 def _right_edge(widget) -> int:
@@ -9106,13 +9109,14 @@ class TestServerCharacterSourceIsolation:
             assert "· 0" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
+            # B2b: the button names the sort ("Name"; dev "Sort: Name") and no
+            # tag is on (dev's label "Tag: All").
             assert (
-                str(screen.query_one("#personas-library-sort", Button).label)
-                == "Sort: Name"
+                str(screen.query_one("#personas-library-sort", Button).label) == "Name"
             )
             assert (
-                str(screen.query_one("#personas-library-tag", Button).label)
-                == "Tag: All"
+                str(screen.query_one("#personas-library-tag", Button).tooltip)
+                == "Filter characters by tag."
             )
 
     @pytest.mark.parametrize(
@@ -9604,10 +9608,7 @@ class TestServerCharacterSourceIsolation:
                 # A mode with no items list leaves the title blank (B2a).
                 expected_count = ""
 
-            owner_sort = f"Sort: {expected_mode} current owner"
-            owner_tag = f"Tag: {expected_mode} current owner"
-            library.set_sort_label(owner_sort)
-            library.set_tag_label(owner_tag)
+            owner_sort, owner_tag = _stamp_owner_labels(library)
             await pilot.pause()
             current_publication = _shared_pane_publication(screen)
 
@@ -10331,6 +10332,35 @@ class ReadinessMapPreviewGateway(_FakePreviewGateway):
 
 class TestPreviewIntegration:
     """Ephemeral preview-conversation pane wiring on the screen (Task 13)."""
+
+    async def test_preview_pane_anchors_top_of_center_canvas(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-039: the preview affordance is attached to the canvas it previews -
+        the toggle sits immediately above the center detail stack, not stranded
+        at the bottom of the work area. (Moved verbatim from the deleted
+        test_personas_library_toolbar_layout.py, frame slice B2b.)"""
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(170, 50)) as pilot:
+            screen = await _mounted(pilot)
+            work_area = screen.query_one("#personas-work-area")
+            preview = screen.query_one("#personas-preview-pane")
+            stack = screen.query_one("#personas-detail-stack")
+            # Inside the center column...
+            assert preview.region.x >= work_area.region.x
+            assert preview.region.x + preview.region.width <= (
+                work_area.region.x + work_area.region.width
+            )
+            # ...and flush against the top of the detail stack (adjacent edges).
+            assert preview.region.y + preview.region.height == stack.region.y
+            # The toggle reads as an expand/collapse section header, and
+            # (task-2234) its label states the payoff, not the feature name.
+            toggle = screen.query_one("#personas-preview-toggle", Button)
+            assert str(toggle.label) == "▸ Try a test chat (nothing saved)"
+            await pilot.click("#personas-preview-toggle")
+            await pilot.pause()
+            assert str(toggle.label) == "▾ Try a test chat (nothing saved)"
+            assert screen.query_one("#personas-preview-body").display is True
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
