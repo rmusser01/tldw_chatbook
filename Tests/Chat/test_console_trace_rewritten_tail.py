@@ -17,7 +17,15 @@ from uuid import uuid4
 
 import pytest
 
-from tldw_chatbook.Chat.console_trace_final_values import RewrittenTailWitness
+from tldw_chatbook.Chat.console_trace_final_values import (
+    CompletedToolTurnWitness,
+    RewrittenTailWitness,
+    SurfaceDeltaAdmission,
+    VerifiedSurfaceDelta,
+    VerifiedSurfaceDeltaItem,
+    VerifiedSurfaceReplacement,
+    VerifiedSurfaceReplacementRange,
+)
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy
 from tldw_chatbook.Chat.console_trace_provenance import (
     ProviderArtifactTraceProvenance,
@@ -232,6 +240,23 @@ def test_a_compacted_history_hangs_off_the_active_memory_boundary(branch):
     )
 
 
+def test_a_memory_anchor_may_follow_retained_saved_rows(branch):
+    """The shape a manual range memory sends: kept turns, a gap, later turns.
+
+    Pinned as today's behaviour: no link from the retained tail to the
+    memory's range is proven, and the anchor is any active memory of the
+    conversation. Tightening both is TASK-37601 (ADR-097, 2026-10-29).
+    """
+
+    branch.remember(branch.a1)
+
+    witness = branch.build([branch.saved(branch.q1)], _edited_tail(branch), branch.q3)
+
+    assert witness is not None
+    assert witness.memory_anchor is True
+    assert witness.anchor_message_id == branch.a1
+
+
 @pytest.mark.parametrize(
     "case", ["no_memory", "inactive_memory", "memory_boundary_elsewhere"]
 )
@@ -300,3 +325,56 @@ def test_final_binding_rechecks_the_proof(branch, anchor, change):
     else:
         with pytest.raises(ValueError, match="^rewritten_tail_unavailable$"):
             recheck()
+
+
+@pytest.mark.parametrize("field_name", ["completed_tool_turn", "rewritten_tail"])
+def test_each_witness_field_accepts_only_its_own_witness_type(branch, field_name):
+    """A witness in the other kind's field never passes as that kind."""
+
+    incoming = tuple(_edited_tail(branch))
+    rewritten = RewrittenTailWitness(
+        incoming[:-1], branch.revisions[branch.q3].revision_id
+    )
+    tool_turn = CompletedToolTurnWitness(
+        str(uuid4()),
+        str(uuid4()),
+        incoming[1].revision_id,
+        incoming[2].revision_id,
+        incoming[0].revision_id,
+    )
+    # Both witnesses match these exact descriptors, so only the type differs.
+    assert rewritten.matches_descriptors(incoming)
+    assert tool_turn.matches_descriptors(incoming)
+    misplaced = {field_name: rewritten if field_name != "rewritten_tail" else tool_turn}
+    replacement_range = VerifiedSurfaceReplacementRange(
+        str(uuid4()), str(uuid4()), str(uuid4()), 0, 1
+    )
+    items = tuple(
+        VerifiedSurfaceDeltaItem("messages_payload", ordinal, descriptor)
+        for ordinal, descriptor in enumerate(incoming)
+    )
+
+    with pytest.raises(ValueError, match="^surface_delta_shape$"):
+        SurfaceDeltaAdmission(
+            OWNER,
+            str(uuid4()),
+            str(uuid4()),
+            "fresh",
+            "preparation",
+            incoming,
+            replacement_range=replacement_range,
+            **misplaced,
+        )
+    with pytest.raises(ValueError, match="^surface_delta_shape$"):
+        VerifiedSurfaceDelta(
+            OWNER,
+            str(uuid4()),
+            str(uuid4()),
+            "fresh",
+            "preparation",
+            items=items[1:],
+            replacement=VerifiedSurfaceReplacement(
+                str(uuid4()), str(uuid4()), str(uuid4()), 0, 1, 0, items[0]
+            ),
+            **misplaced,
+        )
