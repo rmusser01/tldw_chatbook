@@ -13,14 +13,15 @@ and this project adheres to Some kind of Versioning
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
   streaming` value, and applies to an existing `config.toml` that does not
   set `[chat_defaults] streaming` (or the older `enable_streaming`) itself.
-  A self-hosted or Custom OpenAI-compatible server that cannot stream (it
-  refuses a streamed request with a client error such as HTTP 400, or sends
-  no text) is asked once more without streaming, as llama.cpp already was,
-  and the reply arrives whole; a Custom endpoint pointed at a paid service
-  is asked again too. To skip that extra request, turn Streaming off for
-  that model ("Save as model default" in Chat settings) or provider
-  (`[console.provider_defaults.<provider>] streaming = false`). A cloud
-  provider is never retried this way; when one refuses a streamed request
+  A self-hosted server or Custom OpenAI-compatible slot (Custom, Custom 2)
+  that cannot stream (it refuses a streamed request with a client error such
+  as HTTP 400, or sends no text) is asked once more without streaming, as
+  llama.cpp already was, and the reply arrives whole; a Custom slot pointed
+  at a paid service is asked again too. To skip that extra request, turn
+  Streaming off for that model ("Save as model default" in Chat settings) or
+  provider (`[console.provider_defaults.<provider>] streaming = false`). A
+  cloud provider is never retried this way, nor for now is a named
+  OpenAI-compatible custom endpoint; when one refuses a streamed request
   before any text, the failure now says how to turn Streaming off. OpenAI
   is the exception for now: its refused streamed request is still sent up
   to three times and fails as a general provider error (HTTP 502) without
