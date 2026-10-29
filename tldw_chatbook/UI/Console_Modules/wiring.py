@@ -1678,6 +1678,11 @@ def build_console_controllers(
         default_session_settings=(
             lambda: screen._session._default_console_session_settings()
         ),
+        set_active_workspace_for_session=(
+            lambda session_id: screen._workspace._set_active_workspace_for_console_session(
+                session_id
+            )
+        ),
         swap_session_character=(
             lambda store, character_id, seed, *, global_default: (
                 screen._session._swap_console_session_character(

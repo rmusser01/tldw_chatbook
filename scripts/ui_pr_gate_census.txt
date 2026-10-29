@@ -1600,3 +1600,12 @@ Tests/UI/test_console_send_ready_attachment.py
 # 1141 entries (about 18 s each locally at load 34).
 Tests/UI/test_console_tray_patch_styles.py
 Tests/UI/test_console_tray_patch_sequence.py
+# TASK-37620: roleplay activation keeps the originating chat through model
+# Apply/Cancel (three entry paths, measured separately to spread private boots).
+Tests/UI/test_console_roleplay_model_workspace.py::test_pristine_roleplay_handoff_keeps_its_named_workspace
+Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[apply-picker]
+Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[apply-character]
+Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[apply-persona]
+Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[cancel-picker]
+Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[cancel-character]
+Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[cancel-persona]

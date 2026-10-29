@@ -11,6 +11,23 @@ bring the incident.
 
 ---
 
+## A correct model Apply can be hidden by a stale workspace activation (TASK-37620, 2026-10-29)
+
+**Incident.** A user selected a model in a character chat and landed in another
+chat. A mouse-driven regression reproduced it after starting a new character
+chat from an asserted active named workspace: the new global conversation kept
+the old registry workspace, and picker dismissal's resume reconciliation selected
+that workspace's chat. Apply had correctly changed the originating conversation.
+The same regression failed for character and persona Start Chat handoffs; an
+alignment control using the existing workspace helper retained the selected chat.
+
+**What to do.** Align the registry at every UI conversation-activation seam,
+including creation paths that activate inside `store.create_session`. Exercise a
+modal round trip and assert the active chat, its scope and registry together;
+checking only the model written to the origin misses the navigation failure.
+
+---
+
 ## Moving a stale-scope check onto the worker leaves the hop to the UI loop open (TASK-33620.15.1.6, 2026-10-27)
 
 **Incident.** The Console Environment panel's `_land` used to read the

@@ -555,7 +555,9 @@ _BUDGETS: dict[str, int] = {
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
-    "tldw_chatbook/UI/Console_Modules/session.py": 7000,
+    # TASK-37620: document the live workspace-alignment seam rather than
+    # historical extraction call counts, retaining activation notifications.
+    "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     "tldw_chatbook/Chat/console_runtime.py": 6686,

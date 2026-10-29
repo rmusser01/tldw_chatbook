@@ -80,6 +80,7 @@ class ConsoleCharacterController:
         ensure_chat_store: Callable[[], Any],
         provider_readiness_config_accessor: Callable[[], Mapping[str, Any]],
         default_session_settings: Callable[[], Any],
+        set_active_workspace_for_session: Callable[[str], None],
         swap_session_character: Callable[..., bool],
         sync_temporary_chip: Callable[[], None],
         sync_native_chat_ui: Callable[[], Awaitable[None]],
@@ -105,6 +106,7 @@ class ConsoleCharacterController:
         self._ensure_chat_store = ensure_chat_store
         self._provider_readiness_config_accessor = provider_readiness_config_accessor
         self._default_session_settings = default_session_settings
+        self._set_active_workspace_for_session = set_active_workspace_for_session
         self._swap_session_character = swap_session_character
         self._sync_temporary_chip = sync_temporary_chip
         self._sync_native_chat_ui = sync_native_chat_ui
@@ -339,6 +341,7 @@ class ConsoleCharacterController:
                 logger.opt(exception=True).warning(
                     "Character picker: roleplay template seed failed; continuing."
                 )
+            self._set_active_workspace_for_session(session.id)
             store.switch_session(session.id)
             self._sync_temporary_chip()
             self._notify(f"Started a new chat with {notification_name}.")
