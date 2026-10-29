@@ -587,7 +587,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # pump waits for it (one mounted case, 9-24 s per call locally depending on
 # load, most of it the private-profile child's start-up), so no existing
 # entry changes shard: 908 -> 909.
-MINIMUM_FILES = 1159
+# Rebased 2026-10-29 onto dev's 1140 entries: 1140 + 1 = 1141.
+MINIMUM_FILES = 1141
 
 
 def read_census(path: Path) -> list[str]:
