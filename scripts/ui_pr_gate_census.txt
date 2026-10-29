@@ -1773,3 +1773,11 @@ Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude
 
 # TASK-34100.5.3: the Tools & MCP Tool gates pane (now led by Full agent tools) fits its content (about 3 s).
 Tests/UI/test_mcp_servers_mode.py::test_builtin_toggles_container_does_not_expand_past_content
+# TASK-33622.3/.4 (2026-10-27): the Console key-ownership P1 regressions, as
+# three node entries at the tail (the whole file runs ~55 s locally, over the
+# lane's per-file budget): F6/j/Esc/Esc returns to the composer, typing after
+# Help's dismissal reaches the draft, and 'y' on the status strip types
+# instead of opening Trace (3-6 s each locally). Existing slots stay fixed.
+Tests/UI/test_console_key_ownership.py::test_f6_j_esc_esc_returns_to_the_composer_and_prose_types_there
+Tests/UI/test_console_key_ownership.py::test_typing_after_dismissing_help_lands_in_the_draft
+Tests/UI/test_console_key_ownership.py::test_y_on_a_non_text_control_types_instead_of_opening_trace[#console-status-text]

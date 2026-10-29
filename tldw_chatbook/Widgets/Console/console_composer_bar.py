@@ -600,6 +600,9 @@ class ConsoleComposerBar(Horizontal):
     INTERACTION_STYLED_DESCENDANTS = ("#console-command-visible-text",)
     DEFAULT_STATUS = "No active Console session."
     DRAFT_PLACEHOLDER = "Ask, command, or paste task..."
+    #: TASK-33622.3 AC#4: the draft area's cue while focus is elsewhere.
+    FOCUS_CUE = "Esc to type"
+    FOCUS_CUE_STYLE = "bold"
     PASTE_COLLAPSE_THRESHOLD = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
@@ -3913,6 +3916,7 @@ class ConsoleComposerBar(Horizontal):
             draft,
             width,
             self.draft_has_focus,
+            self._focus_cue_suffix(),
             self._segments_initialized,
             self._cursor_index,
             self._cursor_display_index() if self._segments_initialized else None,
@@ -3952,12 +3956,19 @@ class ConsoleComposerBar(Horizontal):
 
     def _build_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
+        cue = self._focus_cue_suffix()
         if draft:
             focused = self.draft_has_focus
+            style_ranges = self._display_draft_style_ranges()
+            if cue:
+                # Render-only, like the ghost suffix, and measured into the
+                # row count (`_refresh_visible_draft`), so it is never cropped.
+                cue_range = (len(draft), len(draft) + len(cue), self.FOCUS_CUE_STYLE)
+                style_ranges = [*style_ranges, cue_range]
             return self._draft_renderable(
-                draft,
+                draft + cue,
                 width=width,
-                style_ranges=self._display_draft_style_ranges(),
+                style_ranges=style_ranges,
                 focused=focused,
                 cursor_visible=getattr(self, "_cursor_visible", True),
                 cursor_index=(
@@ -3972,7 +3983,48 @@ class ConsoleComposerBar(Horizontal):
                 # through the history revision in the memo key.
                 ghost_suffix=self._ghost_suffix() if focused else "",
             )
+        if cue:
+            # Cue first: the placeholder row clips at its right edge.
+            return Text.assemble(
+                (f"{self.FOCUS_CUE} · ", self.FOCUS_CUE_STYLE),
+                (self.DRAFT_PLACEHOLDER, "bright_black"),
+            )
         return self._placeholder_renderable(width=width)
+
+    def _focus_cue_suffix(self) -> str:
+        """Return the draft's focus cue while focus is outside the composer.
+
+        TASK-33622.3 AC#4: typing does not reliably reach a composer whose
+        focus is elsewhere (a focused transcript takes letters as commands,
+        a text field keeps them), so the draft area says how to get back.
+        Empty while focus is anywhere in the composer (a focused composer
+        button already types into the draft), while collapsed, and while the
+        composer cannot take focus (the first-run setup card).
+
+        Returns:
+            `` · Esc to type`` (appended to a draft; the placeholder leads
+            with the cue instead), or ``""``.
+        """
+        if self._collapsed or not self.can_focus:
+            return ""
+        try:
+            if self.has_focus_within:
+                return ""
+        except NoScreen:
+            return ""
+        return f" · {self.FOCUS_CUE}"
+
+    def set_draft_focusable(self, focusable: bool) -> None:
+        """Set whether the draft can take focus, repainting its focus cue.
+
+        Args:
+            focusable: False while the first-run setup card blocks typing.
+        """
+        if self.can_focus == focusable:
+            return
+        self.can_focus = focusable
+        if self.is_mounted:
+            self._refresh_visible_draft()
 
     def _render_visible_draft_only(self) -> None:
         """Re-render the visible-draft Static without recomputing composer height.
@@ -4030,7 +4082,9 @@ class ConsoleComposerBar(Horizontal):
             # composer, not only on the draft (which alone PAINTS the caret),
             # so Tab onto a composer button never resizes the bar.
             row_count = self._visible_draft_row_count(
-                draft, width, reserve_trailing_cell=self.has_focus_within
+                f"{draft}{self._focus_cue_suffix()}" if draft else draft,
+                width,
+                reserve_trailing_cell=self.has_focus_within,
             )
             renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)

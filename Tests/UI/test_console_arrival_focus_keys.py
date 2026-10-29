@@ -13,7 +13,9 @@ open for as long as the case needs, and type through the app's driver queue
 (`pump_probe.key`), the path a terminal's keys take. A printable key typed in
 the window now lands where that restore is about to put focus (the draft), in
 order; a modal, the setup card, a collapsed composer and a focus the user
-moved keep their input.
+moved keep their input from the arrival claim. (Outside the window, a letter
+typed on a non-text control is typed into the draft by TASK-33622.3's
+type-to-compose rule, which defers to this claim while the window is open.)
 """
 
 from __future__ import annotations
@@ -147,18 +149,27 @@ async def test_keys_typed_before_the_activation_restore_land_in_the_draft_in_ord
         assert console.focused is composer
         assert composer.draft_text() == "name one colour"
 
-        # The window is over: Home, focused on purpose now, keeps its keys.
+        # The window is over: Home, focused on purpose now, is not re-armed.
+        # A letter typed on it follows the Console's general rule instead
+        # (TASK-33622.3, ADR-031 refinement 2026-10-27): a printable key no
+        # binding claims on a non-text control is typed into the draft.
         console.set_focus(arrival)
         await pilot.pause()
+        assert console._console_arrival_focus is None
         _type(host, "x")
-        await pilot.pause(0.3)
-        assert composer.draft_text() == "name one colour"
-        assert console.focused is arrival
+        await _wait_for(
+            pilot,
+            lambda: composer.draft_text() == "name one colourx",
+            lambda: f"draft {composer.draft_text()!r}, focus {_name(console.focused)}",
+        )
+        assert console.focused is composer
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_a_focus_the_user_moves_before_the_restore_keeps_its_input(request):
+async def test_a_focus_the_user_moves_before_the_restore_closes_the_arrival_window(
+    request,
+):
     host = _ready_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _arrived(host, pilot)
@@ -170,29 +181,33 @@ async def test_a_focus_the_user_moves_before_the_restore_keeps_its_input(request
             and console._console_workbench_focus_id_for_widget(widget) is None
         )
 
+        # A focus the user moves closes the window for good.
         console.set_focus(elsewhere)
         await pilot.pause()
-        _type(host, "x")
-        await pilot.pause(0.3)
-        assert composer.draft_text() == ""
-        assert console.focused is elsewhere
+        assert console._console_arrival_focus is None
 
         # The attach reconcile replays on_screen_resume directly; that is not
         # an arrival, so the focus the user moved is not re-armed.
         console.on_screen_resume()
         await pilot.pause()
-        _type(host, "z")
-        await pilot.pause(0.3)
-        assert composer.draft_text() == ""
-        assert console.focused is elsewhere
+        assert console._console_arrival_focus is None
 
         # Back on the arrival widget by choice: still the user's focus.
         console.set_focus(arrival)
         await pilot.pause()
-        _type(host, "y")
-        await pilot.pause(0.3)
-        assert composer.draft_text() == ""
+        assert console._console_arrival_focus is None
         assert console.focused is arrival
+
+        # Outside the window a letter typed on a non-text control follows the
+        # Console's general rule (TASK-33622.3, ADR-031 refinement
+        # 2026-10-27): no binding claims it, so it is typed into the draft.
+        _type(host, "y")
+        await _wait_for(
+            pilot,
+            lambda: composer.draft_text() == "y",
+            lambda: f"draft {composer.draft_text()!r}, focus {_name(console.focused)}",
+        )
+        assert console.focused is composer
 
 
 @pytest.mark.asyncio
