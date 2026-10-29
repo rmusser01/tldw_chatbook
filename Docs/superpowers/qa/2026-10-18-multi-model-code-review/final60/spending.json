@@ -1,0 +1,51 @@
+{
+  "source_head": "0ab1e549f0c02b9621ce9be295baa969e0cb9e75",
+  "outcome": "failed",
+  "exit_code": 2,
+  "reason": "live_report_incomplete_V1",
+  "actual_new_generation_requests": 24,
+  "actual_new_children": 2,
+  "cumulative_generation_requests": 338,
+  "cumulative_children": 23,
+  "unused_new_requests": 36,
+  "unlaunched_new_children": 1,
+  "single_invocation_consumed": true,
+  "retry_authorized": false,
+  "metadata_requests": 6,
+  "models": {
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 10,
+    "gpt-6-luna": 6,
+    "deepseek-flash": 8
+  },
+  "physical_http_statuses": {
+    "200": 24
+  },
+  "manifest_sha256": "a6d78ff7d3a0e1e08917e8a3a062cccdc5ca1a74e9715daf7997c720ab037269",
+  "native_accounting_chains": [
+    {
+      "status": "review_required",
+      "pause_reason": "usage_unknown"
+    }
+  ],
+  "native_token_reservations": [
+    {
+      "state": "settled",
+      "amount": 13020,
+      "actual_amount": 14897
+    },
+    {
+      "state": "uncertain",
+      "amount": 13241,
+      "actual_amount": null
+    }
+  ],
+  "cleanup": {
+    "native_shutdown_completed": true,
+    "remaining_running_run_ids": [],
+    "owned_fleet_threads_after_shutdown": [],
+    "retirement_uncertain": false,
+    "workspace_connections_after_shutdown": 0,
+    "workspace_leases_after_shutdown": 0,
+    "chat_registered_connections_after_shutdown": 0
+  }
+}

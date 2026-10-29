@@ -1,30 +1,25 @@
 # TASK-35582 delivery evidence
 
-AC24 remains open. The delivery candidate carries the implemented review recipe
-onto dev `3efe8476cebf70eceafa605d1abed76a4aad4e0e`; it does not claim that prior
-live qualification passed. The single bounded live run is now recorded below; it did not complete AC24.
+AC24 remains open. The [single final run on the repaired candidate](final60/report.md)
+failed before the verifier launched. Both reviewers sealed and presented their
+reports; the accepted continuation failed locally before its next physical
+request. Required CI passed on source `0ab1e549f0c02b9621ce9be295baa969e0cb9e75`.
+PR #3286 remains draft. The separate Windows GGUF timeout is disclosed in the report.
 
 ## Current boundary
 
-The [single final qualification](bounded-final/report.md) ran on delivery commit
-47093a3175 after the real Haiku tool-result/accounting preflight passed. It exited
-2: R2 and V1 are incomplete, despite accepted useful findings/dispositions,
-complete two-original mapping and readable unified pages. Native [2,1], one chain
-and cleanup were preserved. AC24 is unchecked; PR3286 stays draft.
+The final run used 24 of 60 approved requests and two of three children:
+**338 cumulative requests / 23 children**. The single invocation is consumed;
+no automatic retry or additional budget request was made. AC24 is unchecked.
+See the [outcome report](final60/report.md) for the request-validation boundary,
+accounting pause, exact CI outcomes and retained evidence.
 
-The approved grant used59 new generation requests and3 children, for cumulative
-314 requests/21 children. Seven financial requests are unused, but the permitted
-retry/final invocation and child scope are consumed; no live replay is authorized.
-The demonstrated R2/V1 boundaries are now repaired and verified offline, and all
-eight module-size guards pass locally without increased limits. See the
-[offline repair evidence](offline-repairs/report.md) for recovery, extraction,
-startup and baseline-failure results. No new live call or product child launch
-was made. The live result above and its [independent assessment](bounded-final/outcome-review.md)
-remain unchanged. The separate composer-state CI failure previously passed its
-exact local test and is not claimed fixed.
-
-The prior fresh43 run and earlier failures remain historical evidence in the
-retained reviews/archive. Their HTTP200 responses never established completion.
+The earlier [bounded run](bounded-final/report.md) and its
+[independent assessment](bounded-final/outcome-review.md) remain failed historical
+evidence. Its R2/V1 completion problems and eight size failures received the
+[offline repairs](offline-repairs/report.md). Those checks and reviews remain
+valid within their scope; the latest run establishes reviewer completion but
+cannot validate the unlaunched verifier. Earlier unused capacity is not revived.
 
 ## Existing evidence reused
 
