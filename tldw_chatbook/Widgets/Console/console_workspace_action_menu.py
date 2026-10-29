@@ -259,7 +259,7 @@ class ConsoleWorkspaceActionMenu(Vertical):
         self._claimed = True
         if restore_focus:
             self.post_message(WorkspaceActionMenuDismissed(self._opener_id))
-        self._detach()
+        self._remove_once()
 
     async def await_detachment(self) -> None:
         """Claim and fully detach this menu, awaiting the DOM removal.
@@ -271,10 +271,15 @@ class ConsoleWorkspaceActionMenu(Vertical):
         takes focus anyway.
         """
         self._claimed = True
-        await self._detach()
+        await self._remove_once()
 
-    def _detach(self) -> "AwaitRemove":
-        """Return the memoized single removal awaitable for this menu."""
+    def _remove_once(self) -> "AwaitRemove":
+        """Return the memoized single removal awaitable for this menu.
+
+        Not named ``_detach``: that is Textual's hook for clearing a removed
+        widget's parent, and shadowing it left every closed menu in the
+        registry, claiming the Console's next Esc (TASK-37620).
+        """
         if self._removal is None:
             self._removal = self.remove()
         return self._removal
@@ -327,7 +332,7 @@ class ConsoleWorkspaceActionMenu(Vertical):
             return
         self._claimed = True
         self.post_message(WorkspaceActionChosen(action_id, self._target))
-        self._detach()
+        self._remove_once()
 
 
 def _slug(action_id: str) -> str:

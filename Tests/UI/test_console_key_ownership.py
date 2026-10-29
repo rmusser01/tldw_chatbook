@@ -49,6 +49,7 @@ from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConsoleConversationActionMenu,
+    conversation_action_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_message_more_menu import (
     message_more_menus_on_screen,
@@ -61,6 +62,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 )
 from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
     ConsoleWorkspaceActionMenu,
+    workspace_action_menus_on_screen,
 )
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -782,3 +784,41 @@ async def test_type_to_compose_folds_a_row_menu_without_handing_focus_back(kind)
         )
         await pilot.pause()
         assert composer.draft_has_focus, "the menu handed focus back to its opener"
+
+
+@pytest.mark.parametrize("kind", ["conversation", "workspace"])
+@pytest.mark.asyncio
+async def test_a_closed_row_menu_does_not_eat_a_later_esc(kind):
+    """TASK-37620: once a row menu has closed, Esc from the transcript still
+    returns to the composer.
+
+    The row menus shadowed Textual's private ``_detach`` (the hook that clears
+    a removed widget's parent), so a closed menu kept its parent, the menu
+    registry still reported it, and the screen's Esc "dismissed" that ghost
+    instead of returning to the composer -- for as long as anything still
+    referenced the menu (as ``menu`` does here, and a long-lived object does
+    until a full garbage collection).
+    """
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, transcript = await _mounted(host, pilot)
+        menu = _row_menu(kind)
+        await console.mount(menu)
+        await _wait_for(
+            pilot, lambda: _focus_in(console, menu), "the row menu never took focus"
+        )
+        await pilot.press("escape")
+        await _wait_for(
+            pilot, lambda: not console.query(type(menu)), "Esc left the row menu"
+        )
+        assert menu.parent is None, "the closed menu kept its parent"
+        assert not conversation_action_menus_on_screen(console)
+        assert not workspace_action_menus_on_screen(console)
+
+        await _focus_transcript_with_f6(console, pilot, transcript)
+        await pilot.press("escape")
+        await _wait_for(
+            pilot,
+            lambda: composer.draft_has_focus,
+            lambda: f"Esc from the transcript left focus on {console.focused!r}",
+        )
