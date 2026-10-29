@@ -858,6 +858,58 @@ def resolve_console_rail_priority(
     )
 
 
+#: TASK-33625.3: below this width both rails yield while the Terminal owns
+#: the Console center. At 80x24 an Inspector the user had opened left the
+#: shell about 44x6 with clipped tabs and actions; a terminal needs the
+#: columns more than a reading rail does. Same boundary as the default
+#: Context collapse, so the "narrow" bands agree.
+CONSOLE_TERMINAL_RAIL_YIELD_COLUMNS = CONSOLE_RAIL_LEFT_COMPACT_COLLAPSE_COLUMNS
+
+
+def yield_console_rails_to_terminal(
+    rail_state: ConsoleRailState,
+    available_columns: int | None,
+    *,
+    reclaimed: frozenset[str] = frozenset(),
+) -> ConsoleRailState:
+    """Collapse the rails for an open Terminal at narrow widths, render-only.
+
+    TASK-33625.3. Like every responsive rule here this is a rendering
+    override: the stored preference (and ``preferred_*_open``) is untouched,
+    so "Return to transcript" or a wider window brings the rails back. The
+    yield is a default, not a lock: a side the user asked for while the
+    Terminal owns the center (Alt+C, Alt+I, a handle) is ``reclaimed`` and
+    renders by the ordinary rules, so those toggles never go dead.
+
+    Args:
+        rail_state: Effective rail state after every other rule.
+        available_columns: Current terminal width, when known.
+        reclaimed: Sides (``"left"``, ``"right"``) exempt from the yield.
+
+    Returns:
+        The original state at or above the yield width, or a copy with each
+        unreclaimed rail collapsed and its compact override withdrawn.
+    """
+    if available_columns is None or available_columns >= (
+        CONSOLE_TERMINAL_RAIL_YIELD_COLUMNS
+    ):
+        return rail_state
+    left_open = rail_state.left_open and "left" in reclaimed
+    right_open = rail_state.right_open and "right" in reclaimed
+    if (left_open, right_open) == (rail_state.left_open, rail_state.right_open):
+        return rail_state
+    left_override = rail_state.left_compact_override and left_open
+    right_override = rail_state.right_compact_override and right_open
+    return replace(
+        rail_state,
+        left_open=left_open,
+        right_open=right_open,
+        left_compact_override=left_override,
+        right_compact_override=right_override,
+        compact_override=left_override or right_override,
+    )
+
+
 def console_context_reveal_preferences(
     rail_state: ConsoleRailState,
     available_columns: int | None,

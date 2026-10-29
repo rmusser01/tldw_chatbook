@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from pathlib import Path
+import shlex
+import sys
 import time
 
 import pytest
@@ -142,8 +145,9 @@ async def _wait_until(
     predicate: Callable[[], bool],
     *,
     detail: Callable[[], object] | None = None,
+    timeout: float = 4.0,
 ) -> None:
-    deadline = time.monotonic() + 4.0
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             await pilot.pause()
@@ -844,5 +848,315 @@ async def test_terminal_round_trip_restores_tabs_transcript_and_composer_focus()
         await pilot.pause()
         assert _composer_draft(console) == draft_before + "y"
         assert pilot.app.screen is console  # "y" did not open Trace
+
+    manager.finalize_shutdown()
+
+
+#: Prints, from the PTY's own ioctl size, one row per visible line but the
+#: prompt's: a leading-space status pair, a full-width A....Z line, then rows
+#: numbered to the bottom. Every cell the PTY thinks it has is accounted for.
+_FULL_SCREEN_PROBE = (
+    "import os, sys; "
+    "c, r = os.get_terminal_size(sys.stdout.fileno()); "
+    "rows = [' M a', '?? b', 'A' + '.' * (c - 2) + 'Z']; "
+    "rows += [f'R{i:03d}' for i in range(len(rows) + 1, r)]; "
+    "sys.stdout.write(chr(10).join(rows) + chr(10))"
+)
+
+
+def _pty_size(manager: TerminalSessionManager, console: ChatScreen) -> tuple[int, int]:
+    view = console._terminal._view
+    state = manager.view_state(view) if view is not None else None
+    if state is None or state.selected_session_id is None:
+        return (0, 0)
+    selected = next(
+        session
+        for session in state.sessions
+        if session.projection.session_id == state.selected_session_id
+    )
+    return (selected.columns, selected.rows)
+
+
+def _pty_screen_lines(manager: TerminalSessionManager, console: ChatScreen) -> list[str]:
+    view = console._terminal._view
+    state = manager.view_state(view) if view is not None else None
+    if state is None:
+        return []
+    selected = next(
+        (
+            session
+            for session in state.sessions
+            if session.projection.session_id == state.selected_session_id
+        ),
+        None,
+    )
+    return [] if selected is None else [line.text for line in selected.screen.lines]
+
+
+def _content_size(widget) -> tuple[int, int]:
+    region = widget.content_region
+    return (region.width, region.height)
+
+
+def _painted_rows(console: ChatScreen, widget) -> list[str]:
+    """The compositor's cells inside ``widget``'s content region, row by row."""
+    region = widget.content_region
+    strips = list(console._compositor.render_strips())
+    return [strips[y].crop(region.x, region.right).text for y in range(region.y, region.bottom)]
+
+
+def _assert_full_screen_probe_visible(rows: list[str], state: str) -> None:
+    width, height = len(rows[0]), len(rows)
+    assert rows[0].startswith(" M a"), (state, rows[:3])
+    assert rows[1].startswith("?? b"), (state, rows[:3])
+    assert rows[2] == "A" + "." * (width - 2) + "Z", (state, rows[2])
+    assert rows[height - 2].startswith(f"R{height - 1:03d}"), (state, rows[-3:])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX PTY")
+@pytest.mark.asyncio
+async def test_real_pty_cells_stay_visible_and_sized_in_both_focus_states(
+    tmp_path: Path,
+) -> None:
+    """TASK-33625.3 AC#1/#2/#4 with a real shell in a real PTY.
+
+    On dev the focused viewport drew a focus outline OVER its outermost cells:
+    column 0 (" M" read "M", "??" read "?"), the last column and the top and
+    bottom rows vanished while the PTY was sized to the full widget.
+    """
+    from tldw_chatbook.app_service_wiring import _build_terminal_backend
+
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    _configure_native_ready_console(app)
+    app.terminal_session_manager.finalize_shutdown()
+    manager = TerminalSessionManager(lambda: True, _build_terminal_backend)
+    app.terminal_session_manager = manager
+    assert manager.arm(acknowledge_disclosure=True).armed is True
+    created = manager.create_session(
+        TerminalLaunchRequest(
+            name="Real shell",
+            shell="default",
+            start_directory=str(tmp_path),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert created.admitted is True
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-terminal-open")
+            assert await pilot.click("#console-terminal-open")
+            await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+            viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+            await _wait_until(pilot, lambda: pilot.app.focused is viewport, timeout=8)
+            await _wait_until(
+                pilot,
+                lambda: _pty_size(manager, console) == _content_size(viewport),
+                detail=lambda: (_pty_size(manager, console), _content_size(viewport)),
+                timeout=8,
+            )
+            command = f"{shlex.quote(sys.executable)} -c {shlex.quote(_FULL_SCREEN_PROBE)}"
+            assert console._terminal.send_paste(command, bracketed=False) is True
+            await pilot.press("enter")
+            height = viewport.content_region.height
+            # Wait on the PTY's own screen, then judge what the user sees.
+            await _wait_until(
+                pilot,
+                lambda: any(
+                    line.startswith(f"R{height - 1:03d}")
+                    for line in _pty_screen_lines(manager, console)
+                )
+                and any(
+                    line.startswith(f"R{height - 1:03d}")
+                    for line in viewport.renderable.plain.splitlines()
+                ),
+                detail=lambda: _pty_screen_lines(manager, console),
+                timeout=15,
+            )
+
+            # AC#1: focused -- every PTY cell is on screen, column 0 included.
+            assert pilot.app.focused is viewport
+            _assert_full_screen_probe_visible(_painted_rows(console, viewport), "focused")
+            assert _pty_size(manager, console) == _content_size(viewport)
+
+            # Unfocused: nothing shifts and nothing reappears or vanishes.
+            console.query_one("#console-terminal-return").focus()
+            await _wait_until(pilot, lambda: not viewport.has_focus)
+            _assert_full_screen_probe_visible(_painted_rows(console, viewport), "unfocused")
+            assert _pty_size(manager, console) == _content_size(viewport)
+
+            viewport.focus()
+            await _wait_until(pilot, lambda: viewport.has_focus)
+            _assert_full_screen_probe_visible(_painted_rows(console, viewport), "refocused")
+
+            # AC#2: the PTY follows the visible content through a rail toggle
+            # and a terminal resize.
+            before = _content_size(viewport)
+            console.action_toggle_console_context_rail()
+            await _wait_until(
+                pilot,
+                lambda: _content_size(viewport) != before
+                and _pty_size(manager, console) == _content_size(viewport),
+                detail=lambda: (before, _pty_size(manager, console), _content_size(viewport)),
+                timeout=8,
+            )
+            await pilot.resize_terminal(140, 40)
+            await _wait_until(
+                pilot,
+                lambda: _pty_size(manager, console) == _content_size(viewport)
+                and viewport.content_region.right <= 140,
+                detail=lambda: (_pty_size(manager, console), _content_size(viewport)),
+                timeout=8,
+            )
+    finally:
+        await manager.shutdown(deadline_seconds=5.0)
+        manager.finalize_shutdown()
+
+
+def _visible_terminal_buttons(workspace: ConsoleTerminalWorkspace) -> list[Button]:
+    return [
+        button
+        for button in workspace.query(Button)
+        if button.display and str(button.label).strip()
+    ]
+
+
+@pytest.mark.parametrize(
+    ("terminal_size", "explicit_inspector", "rails_yield"),
+    [
+        ((80, 24), False, True),
+        ((80, 24), True, True),
+        ((100, 30), True, False),
+    ],
+    ids=["80x24", "80x24-inspector-opened", "100-columns-inspector-opened"],
+)
+@pytest.mark.asyncio
+async def test_narrow_terminal_gets_the_center_and_unclipped_labels(
+    tmp_path: Path,
+    terminal_size: tuple[int, int],
+    explicit_inspector: bool,
+    rails_yield: bool,
+) -> None:
+    """TASK-33625.3 AC#3: rails yield below 100 columns, labels never clip.
+
+    On dev an Inspector the user had opened stayed open at 80x24, leaving the
+    Terminal about 44x6 with tabs reading "Ter" and actions reading
+    "Ren / Focu / Clos / Jum / Return to".
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    second = manager.create_session(
+        TerminalLaunchRequest(
+            name="Terminal 2",
+            shell="default",
+            start_directory=str(tmp_path),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert second.admitted is True
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=terminal_size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        left = console.query_one("#console-left-rail")
+        right = console.query_one("#console-right-rail")
+        if explicit_inspector:
+            console._set_console_rail_preference(right_open=True)
+            await _wait_until(pilot, lambda: right.display is True)
+        preferred = (
+            console._current_console_rail_state().preferred_left_open,
+            console._current_console_rail_state().preferred_right_open,
+        )
+
+        console.action_open_console_terminal()
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        workspace = console.query_one("#console-main-column", ConsoleTerminalWorkspace)
+        grid = console.query_one("#console-workspace-grid")
+        if rails_yield:
+            await _wait_until(
+                pilot,
+                lambda: not left.display
+                and not right.display
+                and workspace.region.width == grid.content_region.width,
+                detail=lambda: (left.display, right.display, workspace.region, grid.content_region),
+            )
+        await pilot.pause()
+
+        # The user's rail preference is untouched by the yield.
+        state = console._current_console_rail_state()
+        assert (state.preferred_left_open, state.preferred_right_open) == preferred
+
+        # Every visible label is painted whole: never a word cut short.
+        buttons = _visible_terminal_buttons(workspace)
+        labels = [str(button.label) for button in buttons]
+        assert "Terminal 1" in labels and "Terminal 2" in labels, labels
+        strips = list(console._compositor.render_strips())
+        for button in buttons:
+            label = str(button.label)
+            region = button.content_region
+            painted = strips[region.y].crop(region.x, region.right).text.strip()
+            assert painted == label, (terminal_size, button.id, label, painted, region)
+
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        if explicit_inspector and terminal_size[0] < 100:
+            # Returning gives the rail the user opened back to them.
+            await _wait_until(pilot, lambda: right.display is True)
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_rail_toggles_still_open_a_rail_over_a_narrow_terminal(
+    tmp_path: Path,
+) -> None:
+    """TASK-33625.3: the yield is a default, never a lock on Alt+I / Alt+C.
+
+    Without this, a rail toggle under a narrow Terminal wrote a preference
+    and showed nothing -- the Alt+I "way back" (TASK-24604) went dead.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        left = console.query_one("#console-left-rail")
+        right = console.query_one("#console-right-rail")
+        console.action_open_console_terminal()
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        await _wait_until(pilot, lambda: not left.display and not right.display)
+
+        await console.action_toggle_console_inspector_rail()
+        await _wait_until(
+            pilot,
+            lambda: right.display is True,
+            detail=lambda: (left.display, right.display),
+        )
+        await console.action_toggle_console_inspector_rail()
+        await _wait_until(pilot, lambda: right.display is False)
+
+        console.action_toggle_console_context_rail()
+        await _wait_until(
+            pilot,
+            lambda: left.display is True,
+            detail=lambda: (left.display, right.display),
+        )
+
+        # Opening the Terminal again starts from the yield once more.
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console.action_open_console_terminal()
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        await _wait_until(
+            pilot,
+            lambda: not left.display and not right.display,
+            detail=lambda: (left.display, right.display),
+        )
 
     manager.finalize_shutdown()
