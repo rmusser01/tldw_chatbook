@@ -22916,8 +22916,8 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
     produces and notifies on success -- the "pure part" the brief calls out
     as pilot-testable independent of driving the real file dialog.
 
-    ``_write_library_note_export_file`` is a plain (non-async) method --
-    it awaits nothing -- so this calls it directly rather than awaiting it.
+    ``_write_library_note_export_file`` synchronously admits a native worker.
+    Wait for its completion receipt before inspecting the published file.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -22939,6 +22939,15 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
             "n-1",
         )
 
+        await _wait_for_condition(
+            pilot,
+            lambda: str(
+                screen.query_one("#library-note-transfer-status", Static).renderable
+            )
+            == "Export complete.",
+            message="The accepted Notes export did not complete.",
+        )
+        await host.workers.wait_for_complete()
         written = destination.read_text(encoding="utf-8")
         assert "title: Q3 retro" in written
         assert "keywords: alpha, beta" in written
