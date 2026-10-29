@@ -4474,8 +4474,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "0bfb2738fc1005a083c9",
+      "call_count": 1,
+      "diagnostic_digest": "9c32d51bb295de9fd896",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
       "reason": "remaining Chatbook production diagnostic owner"

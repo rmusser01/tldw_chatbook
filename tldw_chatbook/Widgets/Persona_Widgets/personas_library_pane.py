@@ -45,9 +45,12 @@ from .personas_messages import (
 
 logger = logger.bind(module="PersonasLibraryPane")
 
-#: Columns one toolbar button occupies beyond its label: `padding: 0 1`
-#: plus the `margin-right: 1` gap from the pane CSS below.
-_TOOLBAR_BUTTON_CHROME_COLS = 3
+#: Every toolbar control's classes: the shared flat action look plus the
+#: Roleplay toolbar's own sizing (css/features/_roleplay.tcss).
+_CONTROL_CLASSES = "console-action-secondary roleplay-items-control"
+#: The Tag button's words; the tag itself shows in the border title (B2a).
+_TAG_OFF_TOOLTIP = "Filter characters by tag."
+_TAG_ON_TOOLTIP = "A tag narrows the list (named in its title). Pick All to clear it."
 
 
 def _singular_noun(noun: str) -> str:
@@ -661,45 +664,36 @@ class PersonasLibraryPane(Vertical):
     so unsaved-edit guards stay quiet while the user browses.
     """
 
-    # Structure only: colors come from the app stylesheet.
+    # Harness fallback only (spec 2.12 item 3): the unstyled test tier loads
+    # no app sheet, and there the stock Static (the whole row), Input (3 rows,
+    # 100% wide) and Button (16 cells) would push Import and the controls out
+    # of the pane. The real rules are app-tier (css/features/_roleplay.tcss
+    # and the rail header's), and win wherever both load. Id and class
+    # subjects only (spec 2.12 item 1).
     BUNDLED_CSS = """
-    /* F-030: toolbar buttons size to their labels. The Textual Button
-       default min-width:16 let "New" alone fill a narrow pane and clipped
-       Import/Duplicate/Tag off the right edge at supported widths. */
-    PersonasLibraryPane #personas-library-toolbar Button,
-    PersonasLibraryPane #personas-library-filterbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
+    PersonasLibraryPane #personas-library-title {
+        width: 1fr;
     }
 
-    /* F-030 narrow panes: stack each bar vertically so every action wraps
-       onto its own full-width row (a Textual Horizontal never wraps, so one
-       over-wide row would clip instead). */
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar,
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar {
-        layout: vertical;
+    PersonasLibraryPane .roleplay-items-search {
+        width: 1fr;
+        height: 1;
+        border: none;
+    }
+
+    PersonasLibraryPane .roleplay-items-controls {
+        width: auto;
         height: auto;
     }
 
-    /* The smallest supported terminal has no spare vertical chrome once
-       both action bars stack.  Collapse the search field's stock three-row
-       border to one row so the final Tag action remains inside the pane. */
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-search {
-        height: 1;
-        min-height: 1;
-        border: none;
-        padding: 0 1;
+    PersonasLibraryPane .roleplay-items-control {
+        min-width: 0;
+        margin-left: 1;
     }
 
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button,
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar Button {
-        width: 100%;
-        margin-right: 0;
+    PersonasLibraryPane .roleplay-items-toolbar-wrapped,
+    PersonasLibraryPane .roleplay-items-controls-stacked {
+        layout: vertical;
     }
     """
 
@@ -714,6 +708,11 @@ class PersonasLibraryPane(Vertical):
         # tag narrows the list (spec 1.5.1).
         self._list_total: int | None = None
         self._filtered: bool = False
+        # What the toolbar fits (spec 1.5.1): the mode, the sort it names and
+        # the fit last applied (None until the pane has a width).
+        self._mode = "characters"
+        self._sort_key = "name_asc"
+        self._toolbar_fit: frame_state.ToolbarFit | None = None
 
     @property
     def item_list(self) -> RoleplayItemList:
@@ -721,61 +720,56 @@ class PersonasLibraryPane(Vertical):
         return self.query_one("#personas-library-rows", RoleplayItemList)
 
     def on_mount(self) -> None:
-        """Initialize control visibility for default characters mode.
+        """Fit the toolbar for the default characters mode.
 
         ``PersonasScreen.on_mount`` calls ``set_mode`` immediately after this
         pane mounts, so this only sets the very first paint.
         """
-        self._sync_control_layout()
+        self._apply_toolbar_fit()
 
     def on_resize(self, event: Resize) -> None:
-        """Re-fit the toolbar bars (F-030) and the marks bar to the pane's width."""
-        self._sync_control_layout()
+        """Re-fit the toolbar and the marks bar to the pane's width."""
+        self._apply_toolbar_fit()
         self._sync_marks_bar()
 
-    def _required_toolbar_row_width(self) -> int:
-        """Widest single-row width the currently visible bar buttons need.
+    def _apply_toolbar_fit(self) -> None:
+        """Lay the toolbar out for the pane's width (spec 1.5.1): display only.
 
-        Derived from labels, not rendered sizes, so toggling the stacked
-        class never changes the measurement (no layout oscillation).
-        """
-        required = 0
-        for bar_id in ("#personas-library-toolbar", "#personas-library-filterbar"):
-            row = 0
-            for button in self.query(f"{bar_id} Button").results():
-                if not button.display:
-                    continue
-                row += len(str(button.label)) + _TOOLBAR_BUTTON_CHROME_COLS
-            required = max(required, row)
-        return required
-
-    def _sync_control_layout(self) -> None:
-        """Stack the toolbar bars when one row would clip actions (F-030).
-
-        A pane narrower than the single-row width clipped the rightmost
-        buttons off-screen (at 100x30 that hid Import -- the roleplay
-        onboarding path). Stacking switches each bar to a vertical layout so
-        every action wraps onto its own row instead.
+        Two classes, the labels and one width per control; it mounts nothing,
+        and a fit equal to the one applied does nothing at all, so a resize
+        that keeps the fit costs one pure function call.
         """
         width = self.content_size.width
         if width <= 0:
-            # Not laid out yet (on_mount); on_resize re-syncs once sized.
+            return  # not laid out yet (on_mount); on_resize fits it once sized
+        fit = frame_state.fit_items_toolbar(
+            self._mode, width=width, sort_key=self._sort_key
+        )
+        if fit == self._toolbar_fit:
             return
-        try:
-            required = self._required_toolbar_row_width()
-        except Exception:
-            # Widths are label-derived, so a failure here is a teardown or
-            # pre-compose race - but never something to swallow silently:
-            # leaving the bars clipped with no trace was the bug under
-            # review. Debug level, matching the teardown-race idiom used
-            # across the personas widgets (the layout simply keeps its
-            # previous state and re-syncs on the next resize).
-            logger.opt(exception=True).debug(
-                "PersonasLibraryPane toolbar width measurement failed; "
-                "keeping the previous control layout."
-            )
-            return
-        self.set_class(width < required, "personas-library-stacked-controls")
+        self._toolbar_fit = fit
+        self.query_one("#personas-library-toolbar", Horizontal).set_class(
+            fit.rows > 1, "roleplay-items-toolbar-wrapped"
+        )
+        self.query_one("#personas-library-controls", Horizontal).set_class(
+            fit.stacked, "roleplay-items-controls-stacked"
+        )
+        self.query_one("#personas-library-search", Input).placeholder = fit.labels[
+            "search"
+        ]
+        self.query_one("#personas-library-title", Static).display = fit.title
+        for part in ("import", "sort", "tag", "new"):
+            label = fit.labels.get(part)
+            if label is not None:
+                button = self.query_one(f"#personas-library-{part}", Button)
+                button.label = Content(label)
+                # Exactly the label's cells, unpadded, as the marks bar's
+                # actions: the controls' margin is the gap (Textual 8.2.8's
+                # Button pads an auto width by two cells, and its CSS parser
+                # refuses `line-pad: 0`).
+                # ds-runtime: the cell width of the label this fit chose.
+                button.styles.width = cell_len(label)
+                button.styles.line_pad = 0
 
     def compose(self) -> ComposeResult:
         """Compose the Library pane header, search controls, rows and marks bar.
@@ -788,13 +782,29 @@ class PersonasLibraryPane(Vertical):
         Returns:
             Textual compose result for the Library pane.
         """
+        # The title row carries the interim Import (spec 5.3, owner decision
+        # D2) until frame slice B6's rail takes it: the toolbar then fits one
+        # row at 160 columns with whole labels. "Library" yields first.
         with Horizontal(classes="console-rail-header"):
             title = Static(
-                "Library",
+                frame_state.RAIL_TITLE,
+                id="personas-library-title",
                 classes="destination-section personas-column-title console-rail-title",
             )
             title.add_class("w-fill")
             yield title
+            # One Import picker for every kind (frame slice B2b, spec 1.4.6);
+            # dev had Import (by kind) and Import Actor Pack in the toolbar.
+            yield Button(
+                frame_state.import_label(),
+                id="personas-library-import",
+                tooltip=(
+                    "Import a character card, lore book, chat dictionary, "
+                    "Actor Pack or Buddy from a file."
+                ),
+                classes=_CONTROL_CLASSES,
+                compact=True,
+            )
             collapse_button = Button(
                 "<",
                 id="personas-library-rail-collapse",
@@ -803,38 +813,41 @@ class PersonasLibraryPane(Vertical):
             )
             collapse_button.tooltip = "Collapse Library rail"
             yield collapse_button
-        yield Input(placeholder="Search...", id="personas-library-search")
-        with Horizontal(id="personas-library-toolbar", classes="ds-toolbar"):
-            yield Button(
-                "New",
-                id="personas-library-new",
-                tooltip="Create something new: pick a kind and a starting point.",
-                classes="console-action-secondary",
+        # The one-row toolbar (spec 1.5.1): the dense one-row search box
+        # (.settings-compact-input keeps its height focused, RP-009) beside
+        # the controls, which take the next row where they do not fit.
+        with Horizontal(
+            id="personas-library-toolbar", classes="roleplay-items-toolbar"
+        ):
+            yield Input(
+                placeholder=frame_state.search_placeholder("characters", short=True),
+                id="personas-library-search",
+                classes="settings-compact-input roleplay-items-search",
             )
-            # One Import picker for every kind (frame slice B2b, spec 1.4.6);
-            # dev had Import (by kind) and Import Actor Pack.
-            yield Button(
-                "Import",
-                id="personas-library-import",
-                tooltip=(
-                    "Import a character card, lore book, chat dictionary, "
-                    "Actor Pack or Buddy from a file."
-                ),
-                classes="console-action-secondary",
-            )
-        with Horizontal(id="personas-library-filterbar", classes="ds-toolbar"):
-            yield Button(
-                "Sort: Name",
-                id="personas-library-sort",
-                tooltip="Cycle the list sort order. (s)",
-                classes="console-action-secondary",
-            )
-            yield Button(
-                "Tag: All",
-                id="personas-library-tag",
-                tooltip="Filter characters by tag.",
-                classes="console-action-secondary",
-            )
+            with Horizontal(
+                id="personas-library-controls", classes="roleplay-items-controls"
+            ):
+                yield Button(
+                    frame_state.sort_label("name_asc"),
+                    id="personas-library-sort",
+                    tooltip=Content(frame_state.sort_tooltip("name_asc")),
+                    classes=_CONTROL_CLASSES,
+                    compact=True,
+                )
+                yield Button(
+                    "Tag",
+                    id="personas-library-tag",
+                    tooltip=_TAG_OFF_TOOLTIP,
+                    classes=_CONTROL_CLASSES,
+                    compact=True,
+                )
+                yield Button(
+                    "+ New",
+                    id="personas-library-new",
+                    tooltip="Create something new: pick a kind and a starting point.",
+                    classes=_CONTROL_CLASSES,
+                    compact=True,
+                )
         # The empty / recovery copy: one Static beside the list, mounted only
         # when the state changes (rows / empty / recovery), never per row.
         # Hidden while the list has rows, so it takes no row from it.
@@ -879,12 +892,14 @@ class PersonasLibraryPane(Vertical):
             mode: The active workbench mode id (``characters``/``personas``/
                 ``dictionaries``/``lore``).
         """
-        sort_visible = mode in ("characters", "personas")
-        self._sort_visible = sort_visible
-        self.query_one("#personas-library-sort", Button).display = sort_visible
-        self.query_one("#personas-library-tag", Button).display = mode == "characters"
-        # Which buttons render changed, so the single-row fit changed too.
-        self._sync_control_layout()
+        controls = frame_state.toolbar_controls(mode)
+        self._mode = mode
+        self._sort_visible = "sort" in controls
+        for part in ("sort", "tag"):
+            button = self.query_one(f"#personas-library-{part}", Button)
+            button.display = part in controls
+        # Which controls show changed, so the toolbar's fit changed too.
+        self._apply_toolbar_fit()
         self.item_list.set_kind(frame_state.KIND_FOR_MODE.get(mode, "character"))
         self.marks_changed()
 
@@ -1105,16 +1120,22 @@ class PersonasLibraryPane(Vertical):
         """Move only the cursor to one row (no loaded-marker change)."""
         return self.item_list.highlight(option_id_for(kind, item_id))
 
-    def set_sort_label(self, text: str) -> None:
-        """Update the sort button's label (the screen owns the sort cycle/copy)."""
-        button = self.query_one("#personas-library-sort", Button)
-        button.label = text
-        # Button.label does not re-measure an auto-width button, so a longer
-        # label wrapped onto a second, unpainted line while the bar was one
-        # row (exists on dev in Personas at 220; fixed by frame slice B2b).
-        button.refresh(layout=True)
-        # A longer/shorter label changes the single-row fit (F-030).
-        self._sync_control_layout()
+    def set_sort_label(self, sort_key: str) -> None:
+        """Name the list's sort on its button (the screen owns the sort cycle).
+
+        The button paints the sort's full or short label, whichever the
+        toolbar's fit chose (spec 1.5.1); its tooltip always says it whole.
+
+        Args:
+            sort_key: The sort (``frame_state.SORT_LABELS``; ``SERVER_SORT_KEY``
+                while browsing the server's own order).
+        """
+        self._sort_key = sort_key
+        self.query_one("#personas-library-sort", Button).tooltip = Content(
+            frame_state.sort_tooltip(sort_key)
+        )
+        # A longer or shorter label can change the toolbar's fit.
+        self._apply_toolbar_fit()
 
     # ===== F-040: marks (multi-select) =====
 
@@ -1160,13 +1181,16 @@ class PersonasLibraryPane(Vertical):
             )
         )
 
-    def set_tag_label(self, text: str) -> None:
-        """Update the tag button's label (the screen owns the active tag)."""
-        # TASK-34400: the active tag is untrusted; a str label parses as markup.
-        button = self.query_one("#personas-library-tag", Button)
-        button.label = Content(text)
-        button.refresh(layout=True)  # as set_sort_label: re-measure the label
-        self._sync_control_layout()
+    def set_tag_active(self, active: bool) -> None:
+        """Say on the Tag button whether a tag narrows the list.
+
+        The button keeps the one label ``Tag``, so its fit never changes; the
+        tag itself (untrusted text) shows only in the literal border title
+        (frame slice B2a). Dev's button read ``Tag: <tag>``.
+        """
+        self.query_one("#personas-library-tag", Button).tooltip = (
+            _TAG_ON_TOOLTIP if active else _TAG_OFF_TOOLTIP
+        )
 
     @on(Input.Changed, "#personas-library-search")
     def _search_changed(self, event: Input.Changed) -> None:

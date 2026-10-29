@@ -1199,12 +1199,135 @@ async def test_prompts_are_rebuilt_once_per_settled_width_and_only_where_changed
         assert built == [long_name]  # the one cut row, once
 
 
-# ==== Moved from test_personas_library_pane_paging.py (deleted with paging, B2a) ====
-# The toolbar's Sort and Tag stay until frame slice B2b; their pager
-# assertions left with the pager.
+# ==== The one-row toolbar (frame slice B2b, spec 1.5.1; owner decision D2) ====
+# Dev's toolbar stacked one button per row at every design size (the first
+# item sat on row 19 at 120x36); B2b fits search, sort, Tag and + New on one
+# row at 160 columns and two at 120, with Import on the rail's title row.
+
+_MODES = ("characters", "personas", "lore", "dictionaries")
+#: The pane's content width at 120, 160 and 220 columns (measured, Survey 1).
+_DESIGN_WIDTHS = {120: 24, 160: 35, 220: 50}
+
+
+def _row_cells(fit: frame_state.ToolbarFit, mode: str) -> int:
+    """The cells the controls take on their row: a gap and the label each."""
+    return sum(
+        frame_state.CONTROL_GAP_CELLS + cell_len(fit.labels[control])
+        for control in frame_state.toolbar_controls(mode)
+    )
+
+
+@pytest.mark.parametrize(
+    "sort_key", ["name_asc", "relevance", "modified_desc", "created_desc", "server"]
+)
+@pytest.mark.parametrize("mode", _MODES)
+def test_the_toolbar_fits_one_row_at_160_and_two_at_120(mode, sort_key):
+    """AC#1: at most 2 rows at 120 columns and 1 at 160 and wider, in every
+    kind and with every sort label, and never a cut label: each one is its
+    sort's full or short form. The search keeps at least 14 cells beside the
+    controls (spec 1.5.1)."""
+    forms = frame_state.SORT_LABELS[sort_key]
+    assert set(frame_state.SORT_LABELS) == {
+        "name_asc",
+        "relevance",
+        "modified_desc",
+        "created_desc",
+        frame_state.SERVER_SORT_KEY,
+    }
+    for columns, width in _DESIGN_WIDTHS.items():
+        fit = frame_state.fit_items_toolbar(mode, width=width, sort_key=sort_key)
+        assert not fit.stacked, (columns, fit)
+        assert fit.rows <= (2 if columns == 120 else 1), (columns, fit)
+        assert set(fit.labels) == {
+            "search",
+            "import",
+            *frame_state.toolbar_controls(mode),
+        }
+        if "sort" in fit.labels:
+            assert fit.labels["sort"] in forms
+        if fit.rows == 1:
+            assert frame_state.TOOLBAR_SEARCH_MIN_CELLS + _row_cells(fit, mode) <= width
+        else:
+            assert _row_cells(fit, mode) <= width
+
+
+def test_labels_shorten_before_the_toolbar_takes_a_second_row():
+    """Spec 1.5.1: "labels shorten, never wrap". At 160 columns "Recent edit"
+    does not fit beside a 14-cell search, so it reads "Edited" on one row."""
+    narrow = frame_state.fit_items_toolbar(
+        "characters", width=35, sort_key="modified_desc"
+    )
+    wide = frame_state.fit_items_toolbar(
+        "characters", width=50, sort_key="modified_desc"
+    )
+    assert (narrow.rows, narrow.labels["sort"]) == (1, "Edited")
+    assert (wide.rows, wide.labels["sort"]) == (1, "Recent edit")
+
+
+def test_only_a_pane_too_narrow_for_one_row_of_controls_stacks_them():
+    """80x24 (12 cells): Name, Tag and + New cannot share a row, so each takes
+    its own and stays whole (TASK-33787 AC#4); two controls that fit share it."""
+    fit = frame_state.fit_items_toolbar("characters", width=12, sort_key="name_asc")
+    assert (fit.rows, fit.stacked) == (4, True)
+    for control in frame_state.toolbar_controls("characters"):
+        assert frame_state.CONTROL_GAP_CELLS + cell_len(fit.labels[control]) <= 12
+    personas = frame_state.fit_items_toolbar("personas", width=12, sort_key="name_asc")
+    assert (personas.rows, personas.stacked) == (2, False)
+
+
+def test_the_rail_title_yields_to_import_below_about_100_columns():
+    """Owner decision D2: "Library" shows beside the interim Import… where
+    both fit whole (100 columns and wider), and yields below that."""
+    shown = {
+        width: frame_state.fit_items_toolbar(
+            "characters", width=width, sort_key="name_asc"
+        ).title
+        for width in (12, 19, 20, 24)
+    }
+    assert shown == {12: False, 19: False, 20: True, 24: True}
+
+
+@pytest.mark.parametrize("mode", _MODES)
+def test_the_search_placeholder_names_the_kind_and_carries_no_slash_hint(mode):
+    """Owner decision D4: no "/" hint until frame slice B3 binds the key; the
+    long form names the kind, and the fit falls back to "Search…" where the
+    long one does not fit."""
+    noun = frame_state.ITEM_KINDS[frame_state.KIND_FOR_MODE[mode]][1]
+    assert frame_state.search_placeholder(mode, short=False) == f"Search {noun}…"
+    assert frame_state.search_placeholder(mode, short=True) == "Search…"
+    for width in (12, 24, 35, 50):
+        fit = frame_state.fit_items_toolbar(mode, width=width, sort_key="name_asc")
+        assert "/" not in fit.labels["search"]
+        search_cells = width if fit.rows > 1 else width - _row_cells(fit, mode)
+        inside = search_cells - frame_state.SEARCH_CHROME_CELLS
+        assert (
+            cell_len(fit.labels["search"]) <= inside
+            or fit.labels["search"] == "Search…"
+        )
+
+
+def test_the_toolbar_follows_the_ascii_glyph_mode(ascii_mode):
+    """ASCII mode spells the ellipsis "...", so Import takes 9 cells: the fit
+    measures the words it paints."""
+    fit = frame_state.fit_items_toolbar("characters", width=20, sort_key="name_asc")
+    assert fit.labels["import"] == "Import..."
+    assert fit.labels["search"] == "Search..."
+    assert fit.title is False  # 20 - 1 - 9 - 3 leaves 7 cells; "Library" needs 9
+
+
+def test_the_sort_names_an_unknown_key_as_name_and_says_it_whole():
+    """Dev labelled an unknown key "Sort: Name"; the tooltip carries the whole
+    sort and the key, so a short label never hides which sort is on."""
+    assert frame_state.sort_label("bogus") == "Name"
+    assert frame_state.sort_label(frame_state.SERVER_SORT_KEY, short=True) == "Server"
+    assert frame_state.sort_tooltip("modified_desc") == (
+        "Sort: Recent edit. Click to change the order. (s)"
+    )
 
 
 class _ToolbarHost(ConsolidatedCSSApp):
+    """The pane alone on the unstyled tier (widget defaults only)."""
+
     def __init__(self) -> None:
         super().__init__()
         self.events: list[tuple[str, None]] = []
@@ -1219,13 +1342,21 @@ class _ToolbarHost(ConsolidatedCSSApp):
         self.events.append(("tag", None))
 
 
+class _StyledToolbarHost(_ToolbarHost):
+    """The pane alone, styled like the app; its width is the content width."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+
 async def test_sort_and_tag_buttons_post_intents():
+    """Clickable on the unstyled tier too: the pane's harness fallback keeps
+    every control on screen there."""
     app = _ToolbarHost()
     async with app.run_test() as pilot:
         app.query_one(PersonasLibraryPane).set_mode("characters")
         await pilot.pause()
-        await pilot.click("#personas-library-sort")
-        await pilot.click("#personas-library-tag")
+        assert await pilot.click("#personas-library-sort")
+        assert await pilot.click("#personas-library-tag")
         await pilot.pause()
         assert ("sort", None) in app.events and ("tag", None) in app.events
 
@@ -1250,36 +1381,99 @@ async def test_sort_and_tag_hidden_for_lore():
         assert app.query_one("#personas-library-tag").display is False
 
 
-async def test_set_sort_label_and_set_tag_label():
-    app = _ToolbarHost()
-    async with app.run_test():
-        pane = app.query_one(PersonasLibraryPane)
-        pane.set_sort_label("Sort: Recent")
-        pane.set_tag_label("Tag: villain")
-        assert str(app.query_one("#personas-library-sort").label) == "Sort: Recent"
-        assert str(app.query_one("#personas-library-tag").label) == "Tag: villain"
+def _painted_label(app, selector: str) -> str:
+    """What the terminal shows inside one control's region."""
+    region = app.query_one(selector).region
+    return painted_rows(app.screen)[region.y][region.x : region.right]
 
 
-@pytest.mark.parametrize("mode", ["characters", "personas"])
-async def test_a_longer_label_paints_whole_on_a_one_row_bar(mode):
-    """Button.label never re-measured an auto-width button, so a label that
-    grew wrapped onto an unpainted second line while the bar was one row.
-    Exists on dev in Personas (whose bar is one row at 220); frame slice
-    B2b's New chooser makes Characters' bar one row too, and fixes it."""
-    app = _ToolbarHost()
+@pytest.mark.parametrize(
+    ("width", "label"), [(35, "Edited"), (50, "Recent edit")], ids=["35", "50"]
+)
+async def test_the_sort_button_paints_its_key_whole_and_the_tooltip_says_it(
+    width, label
+):
+    """The screen hands the pane a sort key, not words: the button paints the
+    label the fit chose, whole, and the tooltip names the sort whole. Dev's
+    button read "Sort: Recent edit", and a label that grew wrapped onto an
+    unpainted second line (Button.label never re-measured; fixed in T2)."""
+    app = _StyledToolbarHost()
     async with app.run_test(size=(120, 36)) as pilot:
         pane = app.query_one(PersonasLibraryPane)
-        pane.set_mode(mode)
+        pane.styles.width = width
+        pane.set_mode("characters")
         await pilot.pause()
-        assert not pane.has_class("personas-library-stacked-controls")
-        pane.set_sort_label("Sort: Recent edit")
-        if mode == "characters":
-            pane.set_tag_label("Tag: villains")
+        pane.set_sort_label("modified_desc")
         await pilot.pause()
-        painted = "\n".join(painted_rows(app.screen))
-        assert "Sort: Recent edit" in painted
-        if mode == "characters":
-            assert "Tag: villains" in painted
+        button = app.query_one("#personas-library-sort")
+        assert str(button.label) == label
+        assert _painted_label(app, "#personas-library-sort") == label
+        assert (
+            str(button.tooltip) == "Sort: Recent edit. Click to change the order. (s)"
+        )
+
+
+async def test_the_tag_button_keeps_its_label_and_says_when_a_tag_narrows():
+    """The active tag is untrusted text; since B2b it shows only in the
+    literal border title (B2a), so the button's label and fit never change
+    (dev's read "Tag: <tag>"). Its tooltip says whether a tag is on."""
+    app = _StyledToolbarHost()
+    async with app.run_test(size=(120, 36)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        pane.styles.width = 35
+        await pilot.pause()
+        tag = app.query_one("#personas-library-tag")
+        pane.set_tag_active(True)
+        await pilot.pause()
+        assert str(tag.label) == "Tag"
+        assert _painted_label(app, "#personas-library-tag") == "Tag"
+        assert "Pick All to clear it" in str(tag.tooltip)
+        pane.set_tag_active(False)
+        assert str(tag.tooltip) == "Filter characters by tag."
+
+
+@pytest.mark.parametrize("width", [12, 24, 35, 50])
+async def test_the_toolbar_paints_what_its_fit_chose(width):
+    """The fit's cell constants mirror the lazy sheet: each control is exactly
+    its label wide, one gap after the previous part, and the search spends
+    SEARCH_CHROME_CELLS around its text. A CSS edit that forgets the
+    constants fails here instead of clipping a control."""
+    app = _StyledToolbarHost()
+    async with app.run_test(size=(120, 36)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        pane.styles.width = width
+        pane.set_mode("characters")
+        await pilot.pause()
+        await pilot.pause()
+        fit = frame_state.fit_items_toolbar(
+            "characters", width=width, sort_key="name_asc"
+        )
+        toolbar = app.query_one("#personas-library-toolbar")
+        search = app.query_one("#personas-library-search", Input)
+        assert toolbar.region.height == fit.rows
+        assert search.region.height == 1
+        assert search.region.width - search.content_region.width == (
+            frame_state.SEARCH_CHROME_CELLS
+        )
+        assert search.placeholder == fit.labels["search"]
+        # On one row the first control follows the search box.
+        previous = search.region if fit.rows == 1 else None
+        for control in frame_state.toolbar_controls("characters"):
+            selector = f"#personas-library-{control}"
+            region = app.query_one(selector).region
+            assert _painted_label(app, selector) == fit.labels[control]
+            assert region.width == cell_len(fit.labels[control])
+            if fit.stacked or previous is None:
+                assert region.x == pane.content_region.x + frame_state.CONTROL_GAP_CELLS
+            else:
+                assert region.x == previous.right + frame_state.CONTROL_GAP_CELLS
+            if not fit.stacked:
+                previous = region
+        if fit.rows == 1:
+            assert search.region.width == width - _row_cells(fit, "characters")
+        title = app.query_one("#personas-library-title")
+        assert title.display is fit.title
+        assert _painted_label(app, "#personas-library-import") == fit.labels["import"]
 
 
 # ==== Marks by id and the marks bar (spec 1.5.5; B2a plan Task 5) ====

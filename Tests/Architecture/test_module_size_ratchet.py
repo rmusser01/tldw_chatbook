@@ -197,7 +197,10 @@ _BUDGETS: dict[str, int] = {
     # T5 fix round 1, the landing decides again after its own awaits, and a
     # typed search, sort cycle or tag pick is a newer intent: +26
     # (17,121 -> 17,147).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17147,
+    # T7, the one-row toolbar: the screen hands the pane sort keys and a tag
+    # on/off instead of label text: -10, lowered to the measurement
+    # (17,147 -> 17,137).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17137,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -227,7 +230,9 @@ _BUDGETS: dict[str, int] = {
     # T5, where an import lands (MODE_FOR_KIND, import_landing,
     # import_landed_toast; ListWindowState.moves lives in
     # roleplay_list_window_state.py since dev's ed82096930): +51 (968 -> 1,019).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1019,
+    # T7, the one-row toolbar's fit (fit_items_toolbar, its labels, sort
+    # labels and the search placeholder): +147 (1,019 -> 1,166).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1166,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
@@ -248,7 +253,11 @@ _BUDGETS: dict[str, int] = {
     # T5 fix round 1, End is a newer move before the window it owes: +3
     # (1,246 -> 1,249); owner decision (expand limits, never contort code),
     # TASK-33910.4, 2026-10-26.
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1249,
+    # T7, the one-row toolbar (the fit applier, the title-row Import, the
+    # sort-key and tag-state setters, the harness fallback CSS) replaces the
+    # stacking trigger, owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: +24 (1,249 -> 1,273).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1273,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
