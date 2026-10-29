@@ -74,6 +74,7 @@ def note_state(
             from an earlier session holds scheduled dispatches too).
     """
     first_view = getattr(screen, "_console_emergency_stop_path", None) is None
+    _note_newer_view(screen)
     screen._console_emergency_stop_path = Path(path)
     copy = HELD_COPY if state.active else ""
     changed = copy != screen._console_emergency_stop_copy
@@ -85,6 +86,15 @@ def note_state(
         screen._sync_console_control_bar()
 
 
+def _note_newer_view(screen: Any) -> None:
+    """Count a change to the view, so an arrival read older than it is dropped."""
+    screen._console_emergency_stop_serial = _view_serial(screen) + 1
+
+
+def _view_serial(screen: Any) -> int:
+    return getattr(screen, "_console_emergency_stop_serial", 0)
+
+
 def _read_default_stop() -> tuple[Path, EmergencyStopState]:
     path = default_emergency_stop_path()
     return path, read_emergency_stop(path)
@@ -94,8 +104,11 @@ async def refresh(screen: Any) -> None:
     """Read the stop off the UI loop and record it (Console arrival).
 
     Resolving the default path is a guarded config read and the read is file
-    I/O, so both run on a worker thread (the TASK-33620.15.24 rule).
+    I/O, so both run on a worker thread (the TASK-33620.15.24 rule). A write
+    or a send's own read recorded while this read was in flight is newer than
+    it, so this result is then dropped rather than restoring a stale view.
     """
+    serial = _view_serial(screen)
     try:
         path, state = await asyncio.to_thread(_read_default_stop)
     except Exception as exc:  # noqa: BLE001 -- an unknown state leaves the view unknown
@@ -104,7 +117,7 @@ async def refresh(screen: Any) -> None:
             "emergency-stop arrival read failed (error_type={})", type(exc).__name__
         )
         return
-    if screen.is_mounted:
+    if screen.is_mounted and _view_serial(screen) == serial:
         note_state(screen, path, state, announce=True)
 
 
@@ -120,14 +133,36 @@ def received_send_held(screen: Any) -> bool:
     if held(screen):
         return True
     path = getattr(screen, "_console_emergency_stop_path", None)
+    if path is None:
+        # The arrival read has not landed (or failed). Resolving the path here
+        # would be a guarded config read on the UI loop; the dispatch path
+        # reads the stop itself.
+        return True
     try:
-        if path is None:  # The arrival read has not landed yet.
-            path = default_emergency_stop_path()
         state = read_emergency_stop(path)
     except Exception:  # noqa: BLE001 -- doubt holds: the dispatch path decides
         return True
     if state.active:
         note_state(screen, path, state)
+    return state.active
+
+
+def still_held(screen: Any) -> bool:
+    """Whether a refusal from the cached hold is still true.
+
+    The view is refreshed on arrival and by this Console's own writes, so a
+    stop that another app instance cleared on the same profile would keep
+    Send refused until the next arrival. A send the cached view would refuse
+    reads the file first (one small read, only while the view says held); a
+    cleared file lifts the hold everywhere and lets the send through.
+    """
+    if not held(screen):
+        return False
+    path = getattr(screen, "_console_emergency_stop_path", None)
+    if path is None:
+        return True
+    state = read_emergency_stop(path)  # Never raises: an unreadable file holds.
+    note_state(screen, path, state)
     return state.active
 
 
@@ -142,32 +177,69 @@ async def run_command(screen: Any, parse: Any) -> bool:
     """
     arg = (parse.args or "").strip()
     if arg.lower() in CLEAR_ARGUMENTS:
-        await _write_off_loop(screen, EmergencyStopState(active=False))
-        screen._clear_console_composer_draft()
-        screen.app_instance.notify(CLEARED_NOTICE)
+        if await _write_off_loop(screen, EmergencyStopState(active=False)):
+            screen._clear_console_composer_draft()
+            screen.app_instance.notify(CLEARED_NOTICE)
         return True
-    await _write_off_loop(screen, EmergencyStopState(active=True, reason=arg))
-    screen._clear_console_composer_draft()
-    screen.app_instance.notify(ACTIVATED_NOTICE, severity="warning")
+    if await _write_off_loop(screen, EmergencyStopState(active=True, reason=arg)):
+        screen._clear_console_composer_draft()
+        screen.app_instance.notify(ACTIVATED_NOTICE, severity="warning")
     return True
 
 
 async def clear_from_strip(screen: Any) -> None:
     """The status strip's Clear: lift the stop (AC#2)."""
-    await _write_off_loop(screen, EmergencyStopState(active=False))
-    screen.app_instance.notify(CLEARED_NOTICE)
+    if await _write_off_loop(screen, EmergencyStopState(active=False)):
+        screen.app_instance.notify(CLEARED_NOTICE)
 
 
-async def _write_off_loop(screen: Any, state: EmergencyStopState) -> None:
-    """Write ``state`` to the stop file on a worker thread, then record it."""
+async def _write_off_loop(screen: Any, state: EmergencyStopState) -> bool:
+    """Write ``state`` to the stop file on a worker thread, then record it.
+
+    Returns whether the write landed. A refused write (a read-only data
+    directory, a full disk) is reported, never raised: raised, it escaped the
+    command's worker or the strip's message handler and closed the app. The
+    view then follows what the file actually says.
+    """
     known = getattr(screen, "_console_emergency_stop_path", None)
+    _note_newer_view(screen)  # An arrival read already in flight is older.
 
-    def write() -> Path:
+    def write() -> tuple[Path, EmergencyStopState, Exception | None]:
         path = known if known is not None else default_emergency_stop_path()
-        if state.active:
-            set_emergency_stop(path, reason=state.reason)
-        else:
-            clear_emergency_stop(path)
-        return path
+        try:
+            if state.active:
+                set_emergency_stop(path, reason=state.reason)
+            else:
+                clear_emergency_stop(path)
+        except Exception as exc:  # noqa: BLE001 -- reported below, never raised
+            return path, read_emergency_stop(path), exc
+        return path, state, None
 
-    note_state(screen, await asyncio.to_thread(write), state)
+    verb = "set" if state.active else "clear"
+    try:
+        path, recorded, error = await asyncio.to_thread(write)
+    except Exception as exc:  # noqa: BLE001 -- the path itself did not resolve
+        _report_write_failure(screen, verb, exc, None)
+        return False
+    note_state(screen, path, recorded)
+    if error is None:
+        return True
+    _report_write_failure(screen, verb, error, recorded)
+    return False
+
+
+def _report_write_failure(
+    screen: Any, verb: str, exc: Exception, state: EmergencyStopState | None
+) -> None:
+    """Say the stop was not changed, and what it is now (when that is known)."""
+    # The type only: an OSError's message names the data directory.
+    error_type = type(exc).__name__
+    logger.warning("emergency-stop {} failed (error_type={})", verb, error_type)
+    now = "" if state is None else f" It is {'on' if state.active else 'off'}."
+    if state is not None and state.active and verb == "clear":
+        now = " It is still on."
+    screen.app_instance.notify(
+        f"Couldn't {verb} the emergency stop ({error_type}).{now}",
+        severity="error",
+        markup=False,
+    )

@@ -1408,8 +1408,11 @@ is on", and an empty chat says the stop is active. A send you try anyway is
 refused with a notice that names `/emergency-stop clear`. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
-resume at once; no restart is needed. To end just this tab's in-flight run,
-use **Stop**, **Ctrl+G**, or `/stop` instead.
+resume at once; no restart is needed. If the stop can't be saved (for
+example, the data folder is read-only), the Console says so and keeps
+showing the stop's real state. A stop cleared from another copy of the app
+is noticed the next time you send, and that send goes through. To end just
+this tab's in-flight run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 
 ## Related settings & docs
 

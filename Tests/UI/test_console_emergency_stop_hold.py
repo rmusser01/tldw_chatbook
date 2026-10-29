@@ -304,3 +304,108 @@ async def test_the_command_holds_and_clears_the_console_visibly(tmp_path) -> Non
             assert not chips.segment_visible("estop")
     finally:
         path.unlink(missing_ok=True)
+
+
+def _click_strip_clear(chat, pilot):
+    line = chat.query_one("#console-status-text", ConsoleStatusText)
+    start, _end = next(
+        (start, end) for name, start, end in line.segment_spans if name == "estop-clear"
+    )
+    return pilot.click("#console-status-text", offset=(start + 1, 0))
+
+
+@pytest.mark.asyncio
+async def test_a_strip_clear_that_cannot_write_keeps_the_hold_and_the_app(
+    tmp_path, monkeypatch, persisted_stop: Path
+) -> None:
+    """Review follow-up: a failed Clear is reported; it never closes the app.
+
+    An unreadable stop file fails safe to active, which shows Clear; a
+    read-only data directory then refuses the write. The ``OSError`` used to
+    escape the strip's message handler and exit the app.
+    """
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
+    def refuse(_path):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(emergency_stop_hold, "clear_emergency_stop", refuse)
+    app, gateway = _console_app(tmp_path)
+    notices = _record_notices(monkeypatch, app)
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        await _click_strip_clear(chat, pilot)
+        assert await _until(
+            pilot,
+            lambda: any("Couldn't clear the emergency stop" in n for n in notices),
+        ), f"the failed Clear was not reported: {notices}"
+        assert any("PermissionError" in n and "still on" in n for n in notices)
+        assert not any(n.startswith("Emergency stop cleared") for n in notices)
+        assert _header_status(chat) == HEADER_HOLD
+        chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
+        assert chips.segment_visible("estop")
+        assert app.is_running
+        assert gateway.payloads == []
+    assert read_emergency_stop(persisted_stop).active
+
+
+@pytest.mark.asyncio
+async def test_a_stop_command_that_cannot_write_says_so_and_keeps_the_draft(
+    tmp_path, monkeypatch
+) -> None:
+    """Review follow-up: ``/emergency-stop`` never claims a stop it did not set."""
+    from tldw_chatbook.UI.Console_Modules import emergency_stop_hold
+
+    def refuse(_path, *, reason=""):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(emergency_stop_hold, "set_emergency_stop", refuse)
+    app, _gateway = _console_app(tmp_path)
+    notices = _record_notices(monkeypatch, app)
+    path = default_emergency_stop_path()
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        composer = await _type_and_press_enter(chat, pilot, "/emergency-stop freeze")
+        assert await _until(
+            pilot, lambda: any("Couldn't set the emergency stop" in n for n in notices)
+        ), f"the failed stop was not reported: {notices}"
+        assert any("OSError" in n and "It is off." in n for n in notices), notices
+        assert not any(n.startswith("Emergency stop ACTIVE") for n in notices)
+        assert _header_status(chat).startswith("Ready")
+        assert composer.draft_text() == "/emergency-stop freeze"
+        assert app.is_running
+    assert not read_emergency_stop(path).active
+
+
+@pytest.mark.asyncio
+async def test_a_stop_cleared_elsewhere_lets_the_next_send_through(
+    tmp_path, persisted_stop: Path
+) -> None:
+    """Review follow-up: the cached hold re-reads the file before refusing.
+
+    Another app instance on the same profile clears the stop. This Console's
+    cached view still says held; Enter must find the cleared file, send, and
+    lift the hold everywhere.
+    """
+    from tldw_chatbook.emergency_stop import clear_emergency_stop
+
+    app, gateway = _console_app(tmp_path)
+    gateway.reply = "resumed-reply"
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        clear_emergency_stop(persisted_stop)  # the other instance's Clear
+        await _type_and_press_enter(chat, pilot, "say resumed")
+        store = chat._console_chat_store
+        assert await _until(
+            pilot,
+            lambda: any(
+                "resumed-reply" in message.content
+                for message in store.messages_for_session(store.active_session_id)
+            ),
+        ), "a send after the stop was cleared elsewhere was still refused"
+        assert len(gateway.payloads) == 1
+        assert await _until(pilot, lambda: "Held" not in _header_status(chat))
+        chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
+        assert not chips.segment_visible("estop")

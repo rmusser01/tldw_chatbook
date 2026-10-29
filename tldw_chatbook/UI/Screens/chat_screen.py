@@ -17999,7 +17999,7 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
-        if self._console_emergency_stop_copy:  # TASK-33620.1: before queueing too
+        if run_controls.emergency_stop_still_held(self):  # TASK-33620.1: re-read
             return self._console_emergency_stop_copy
         conversation_id = self._current_console_conversation_id()
         if conversation_id in getattr(

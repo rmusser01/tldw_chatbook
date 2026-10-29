@@ -422,6 +422,18 @@ async def clear_emergency_stop(screen: Any) -> None:
     await emergency_stop_hold.clear_from_strip(screen)
 
 
+def emergency_stop_still_held(screen: Any) -> bool:
+    """Whether a send the cached hold refuses is still held (``still_held``).
+
+    Free while the view says not held: no module load, no read.
+    """
+    if not screen._console_emergency_stop_copy:
+        return False
+    from . import emergency_stop_hold
+
+    return emergency_stop_hold.still_held(screen)
+
+
 def schedule_emergency_stop_refresh(screen: Any) -> None:
     """Re-read the stop off the UI loop once the arriving Console has painted."""
 
