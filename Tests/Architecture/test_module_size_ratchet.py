@@ -503,7 +503,17 @@ _BUDGETS: dict[str, int] = {
     # Round 3: the key mark came back to the listing's call site, where a
     # reader sees it (that line stays pure) -> 2,454.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2454,
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
+    # download's cancel switch, its live status line and the cancelled
+    # outcome are wired on the step (its @on handlers must stay on the
+    # class); the copy itself lives in first_run_speech_step_state.py.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.14 +2 (review
+    # F4) -- leaving setup abandons a Speech download still waiting in line;
+    # then -4 (review F3), the use-from-disk VAD status copy moved to
+    # first_run_speech_step_state.external_vad_install_status -> 1,766;
+    # then +2 (review F5), a progress tick handled after the install's
+    # result no longer rewrites the status line -> 1,768.
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1768,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained
@@ -555,7 +565,11 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,
-    "tldw_chatbook/Model_Artifacts/service.py": 4853,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.14 +43 -- the
+    # cancelled download's stage discard (_discard_download_stage_for, run
+    # while the session lease is still held) and its provision-continuation
+    # allowlist entry; dev pinned this row while the branch was in flight.
+    "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
     "tldw_chatbook/Chat/citation_trace_repository.py": 4719,

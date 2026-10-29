@@ -612,3 +612,251 @@ async def test_service_row_fits_at_every_supported_width(monkeypatch, size) -> N
             assert button.content_size.width >= button.get_content_width(
                 button.size, host.size
             ), str(button.label)
+
+
+async def test_omnivoice_install_names_itself_waits_in_line_and_can_be_cancelled(
+    monkeypatch,
+) -> None:
+    """TASK-34100.14: the 1.1 GB OmniVoice download shares the Speech step's
+    download control -- it names itself for a second install that has to
+    wait, waits in line itself, and stops from the progress widget's Cancel.
+    """
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionCancelledError,
+        AcquisitionProgress,
+    )
+
+    _state(monkeypatch, "model_missing")
+    seen: dict = {}
+
+    async def preflight(**_):
+        return "REPORT"
+
+    async def provision(report, *, progress=None, control=None, **_):
+        seen["control"] = control
+        progress(
+            AcquisitionProgress(
+                "fetch", ArtifactRef("omnivoice-onnx-int8hq", "r1", "int8"),
+                "model.onnx", 1, 2,
+            )
+        )
+        for _ in range(100):
+            if control is not None and control.cancel_requested:
+                raise AcquisitionCancelledError()
+            await asyncio.sleep(0.05)
+        raise AssertionError("the download was never cancelled")
+
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
+    step = _step()
+    host = _Host(step)
+    monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-omnivoice-install", Button).press()
+        cancel = None
+        for _ in range(40):
+            await pilot.pause(0.05)
+            found = step.query("#setup-voice-omnivoice-progress .model-install-cancel")
+            if found and found.first(Button).display:
+                cancel = found.first(Button)
+                break
+        assert cancel is not None, "no Cancel download on the OmniVoice progress"
+        await pilot.click(cancel)
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if not step._omnivoice_installing:
+                break
+        status = str(step.query_one("#setup-voice-omnivoice-status", Static).renderable)
+        install = step.query_one("#setup-voice-omnivoice-install", Button)
+
+    control = seen["control"]
+    assert control.label == "OmniVoice voice model"
+    assert control.wait_if_busy is True
+    assert control.cancel_requested is True
+    assert status == "Download cancelled — nothing was saved."
+    assert install.disabled is False
+
+
+async def test_omnivoice_download_ending_under_a_focused_cancel_keeps_focus_alive(
+    monkeypatch,
+) -> None:
+    """TASK-34100.14 live recheck: the step hides the whole progress widget
+    when the download ends. Textual blurs a hidden focused widget, and the
+    Cancel button had no focusable sibling, so focus fell to None and the
+    wizard's Ctrl+N/Ctrl+B (bound on its container) did nothing until Tab.
+    """
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
+    _state(monkeypatch, "model_missing")
+    release = asyncio.Event()
+
+    async def preflight(**_):
+        return "REPORT"
+
+    async def provision(report, *, progress=None, control=None, **_):
+        progress(
+            AcquisitionProgress(
+                "fetch", ArtifactRef("omnivoice-onnx-int8hq", "r1", "int8"),
+                "model.onnx", 1, 2,
+            )
+        )
+        for _ in range(100):
+            if release.is_set():
+                break
+            await asyncio.sleep(0.05)
+        raise RuntimeError("upstream went away")
+
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
+    step = _step()
+    host = _Host(step)
+    monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-omnivoice-install", Button).press()
+        cancel = None
+        for _ in range(40):
+            await pilot.pause(0.05)
+            found = step.query("#setup-voice-omnivoice-progress .model-install-cancel")
+            if found and found.first(Button).display:
+                cancel = found.first(Button)
+                break
+        assert cancel is not None, "no Cancel download on the OmniVoice progress"
+        cancel.focus()
+        await pilot.pause()
+        assert host.focused is cancel
+        host.call_later(release.set)
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if not step._omnivoice_installing:
+                break
+        await pilot.pause()
+        focused = host.focused
+        alive = focused is not None and focused.is_attached
+        node = focused
+        while alive and node is not None and node is not host.screen:
+            alive = bool(node.display)
+            node = node.parent
+        in_step = focused is not None and step in focused.ancestors
+
+    assert not step._omnivoice_installing
+    assert alive, f"focus stranded after the download ended: {focused!r}"
+    assert in_step, f"focus left the step: {focused!r}"
+
+
+async def test_omnivoice_second_download_after_a_cancel_can_be_cancelled_too(
+    monkeypatch,
+) -> None:
+    """TASK-34100.14 review F1: the Voice step composes its OmniVoice
+    progress widget once and only hides it between downloads. After one
+    cancel, the next download used to read "Cancelling download…" for the
+    whole 1.1 GB transfer with Cancel disabled -- it could not be stopped.
+    """
+    from tldw_chatbook.Model_Artifacts import ArtifactRef
+    from tldw_chatbook.Model_Artifacts.acquisition import (
+        AcquisitionCancelledError,
+        AcquisitionProgress,
+    )
+
+    _state(monkeypatch, "model_missing")
+    controls: list = []
+
+    async def preflight(**_):
+        return "REPORT"
+
+    async def provision(report, *, progress=None, control=None, **_):
+        controls.append(control)
+        progress(
+            AcquisitionProgress(
+                "fetch", ArtifactRef("omnivoice-onnx-int8hq", "r1", "int8"),
+                "model.onnx", 1, 2,
+            )
+        )
+        for _ in range(100):
+            if control is not None and control.cancel_requested:
+                raise AcquisitionCancelledError()
+            await asyncio.sleep(0.05)
+        raise AssertionError("the download was never cancelled")
+
+    async def start_and_find_cancel(step, pilot) -> tuple:
+        step.query_one("#setup-voice-omnivoice-install", Button).press()
+        for _ in range(60):
+            await pilot.pause(0.05)
+            found = step.query("#setup-voice-omnivoice-progress .model-install-cancel")
+            if found and found.first(Button).display and step._omnivoice_download:
+                break
+        cancel = step.query_one(
+            "#setup-voice-omnivoice-progress .model-install-cancel", Button
+        )
+        phase = str(
+            step.query_one("#model-install-progress-phase", Static).render()
+        )
+        status = str(
+            step.query_one("#setup-voice-omnivoice-status", Static).renderable
+        )
+        return cancel, phase, cancel.disabled, status
+
+    async def wait_finished(step, pilot) -> None:
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if not step._omnivoice_installing:
+                return
+
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
+    step = _step()
+    host = _Host(step)
+    monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        cancel, first_phase, first_disabled, first_status = (
+            await start_and_find_cancel(step, pilot)
+        )
+        await pilot.click(cancel)
+        await wait_finished(step, pilot)
+        assert not step._omnivoice_installing
+
+        cancel, second_phase, second_disabled, second_status = (
+            await start_and_find_cancel(step, pilot)
+        )
+        await pilot.click(cancel)
+        await wait_finished(step, pilot)
+        status = str(step.query_one("#setup-voice-omnivoice-status", Static).renderable)
+
+    assert len(controls) == 2
+    assert (first_phase, first_disabled) == ("Downloading model", False)
+    assert (second_phase, second_disabled) == ("Downloading model", False)
+    # Found live (g14v5-voice/08): the last outcome stayed on the status
+    # line above the running download.
+    assert first_status == vs.OMNIVOICE_MODEL_MISSING_COPY
+    assert second_status == first_status
+    assert controls[1].cancel_requested is True
+    assert status == "Download cancelled — nothing was saved."
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_leaving_setup_abandons_an_omnivoice_download_still_waiting_in_line(
+    monkeypatch, started
+) -> None:
+    """TASK-34100.14 review F4: see the Speech step's twin test."""
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
+
+    _state(monkeypatch, "model_missing")
+    step = _step()
+    host = _Host(step)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        control = DownloadControl(label="OmniVoice voice model", wait_if_busy=True)
+        if started:
+            control.mark_started()
+        step._omnivoice_download = control
+        await step.remove()
+        await pilot.pause()
+
+    assert control.cancel_requested is (not started)

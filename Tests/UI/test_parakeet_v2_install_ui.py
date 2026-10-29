@@ -403,7 +403,11 @@ def test_failure_message_maps_gated_repository() -> None:
 def test_failure_message_maps_acquisition_busy() -> None:
     exc = AcquisitionBusyError(f"{_RAW_MARKER}: session lease held")
     message = _failure(exc)
-    assert "already in progress" in message
+    # TASK-34100.14 ([voice-speech-08]): with no in-process holder named,
+    # the copy says another download is running -- it no longer blames the
+    # caller's own model ("Another Parakeet v2 install...").
+    assert "already running" in message
+    assert "Parakeet" not in message
     assert _RAW_MARKER not in message
 
 

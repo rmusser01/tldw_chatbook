@@ -49,6 +49,7 @@ from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     run_parakeet_vad_preflight,
     run_parakeet_vad_provision,
 )
+from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
 from tldw_chatbook.STT.parakeet_external import (
     ExternalParakeetVerificationError,
     format_external_parakeet_recovery,
@@ -160,6 +161,11 @@ class SpeechSetupStep(SetupStep):
         self._operation: Optional[str] = None
         self._pending_report: Any = None
         self._progress: Any = None
+        # TASK-34100.14: the running download's cancel switch, the status
+        # line its progress drives, and the last install's outcome.
+        self._download: DownloadControl | None = None
+        self._install_status: Optional[str] = None
+        self._install_outcome: Optional[str] = None
         self._external_selection_generation = 0
         self._external_selection_token: tuple[int, int] | None = None
         self._external_scope_ids: dict[tuple[int, int], str] = {}
@@ -248,7 +254,7 @@ class SpeechSetupStep(SetupStep):
                 markup=False,
             )
             progress = ModelInstallProgress(
-                self._progress, id="setup-speech-install-progress"
+                self._progress, id="setup-speech-install-progress", cancellable=True
             )
             progress.display = (
                 self._operation == "install" and self._progress is not None
@@ -304,7 +310,7 @@ class SpeechSetupStep(SetupStep):
                 if self._transcribe_cpp_configured
                 else "Use an existing transcribe.cpp GGUF…",
                 id="setup-speech-choose-transcribe-cpp-gguf",
-                disabled=self._external_commit_pending,
+                disabled=self._external_commit_pending or self._lifecycle_pending,
             )
             yield Label("Language", classes="setup-field-label")
             with SetupRadioSet(
@@ -561,7 +567,12 @@ class SpeechSetupStep(SetupStep):
             return "Checking installed models…", None
         item = self._installed_item
         if item is None:
-            return "Not installed.", Button(
+            status = (
+                self._install_status
+                if self._operation == "install" and self._install_status
+                else speech_state.speech_not_installed_status(self._install_outcome)
+            )
+            return status, Button(
                 "Review and install…",
                 id="setup-speech-install",
                 variant="primary",
@@ -1031,14 +1042,16 @@ class SpeechSetupStep(SetupStep):
         report: Any,
     ) -> None:
         def progress(event: Any) -> None:
-            self._apply_external_vad_progress(
-                token,
-                event.bytes_done,
-                event.bytes_total,
-            )
+            self._apply_external_vad_progress(token, event)
 
+        # Review F3: wait in line behind another download, naming this one.
+        control = DownloadControl(
+            label=speech_state.EXTERNAL_VAD_DOWNLOAD_LABEL, wait_if_busy=True
+        )
         try:
-            await run_parakeet_vad_provision(report, progress=progress)
+            await run_parakeet_vad_provision(
+                report, progress=progress, control=control
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -1058,16 +1071,10 @@ class SpeechSetupStep(SetupStep):
             None,
         )
 
-    def _apply_external_vad_progress(
-        self,
-        token: tuple[int, int],
-        done: int,
-        total: int,
-    ) -> None:
+    def _apply_external_vad_progress(self, token: tuple[int, int], event: Any) -> None:
         if self._owns_external_token(token):
             self._set_external_status(
-                f"Installing managed VAD dependency · {done:,} / {total:,} bytes",
-                busy=True,
+                speech_state.external_vad_install_status(event), busy=True
             )
 
     def _apply_external_vad_provision_result(
@@ -1096,6 +1103,8 @@ class SpeechSetupStep(SetupStep):
 
     def on_unmount(self) -> None:
         self._discard_external_selection()
+        if self._download is not None:  # review F4: never start after setup
+            self._download.cancel_if_waiting()
 
     # -- lazy installed-state load ----------------------------------------
     def on_show(self) -> None:
@@ -1179,6 +1188,7 @@ class SpeechSetupStep(SetupStep):
         if self._lifecycle_pending:  # review NEW-3: also refuse during a reload
             return
         self._operation = "install"
+        self._install_outcome = None
         self.refresh(recompose=True)
         self._preflight_install()
 
@@ -1302,6 +1312,7 @@ class SpeechSetupStep(SetupStep):
             self._operation = None
             self.refresh(recompose=True)
             return
+        self._download = DownloadControl(label=self._model_label(), wait_if_busy=True)
         self._provision_install()
 
     @wizard_work(thread=True, group="setup-speech-install", exclusive=True)
@@ -1323,13 +1334,22 @@ class SpeechSetupStep(SetupStep):
                     selection.precision,
                     report,
                     progress=make_progress_callback(self.post_message),
+                    control=self._download,
                 )
             )
         except Exception as exc:
-            logger.opt(exception=True).error("Speech model installation failed")
+            from tldw_chatbook.Model_Artifacts.acquisition import (
+                AcquisitionCancelledError,
+            )
+
+            cancelled = isinstance(exc, AcquisitionCancelledError)
+            if not cancelled:
+                logger.opt(exception=True).error("Speech model installation failed")
             self.app.call_from_thread(
                 self._apply_provision_result,
                 install_failure_message(exc, model_label=self._model_label()),
+                None,
+                cancelled,
             )
             return
         try:
@@ -1353,6 +1373,8 @@ class SpeechSetupStep(SetupStep):
     @on(InstallProgressed)
     def _install_progressed(self, event: InstallProgressed) -> None:
         event.stop()  # Minor 9: LibraryScreen's equivalent handler stops it too
+        if self._operation != "install":  # review F5: a tick after the result
+            return
         self._progress = event.progress
         try:
             progress = self.query_one(
@@ -1363,16 +1385,54 @@ class SpeechSetupStep(SetupStep):
             return
         progress.display = True
         progress.update_progress(event.progress)
+        self._show_install_status(
+            speech_state.speech_install_status(
+                self._model_label(),
+                event.progress,
+                progress.transfer_line,
+                cancelling=progress.cancel_pending,
+            )
+        )
+
+    @on(ModelInstallProgress.CancelRequested)
+    def _install_cancel_requested(self, event: ModelInstallProgress.CancelRequested) -> None:
+        event.stop()
+        if self._download is None:
+            return
+        self._download.cancel()
+        self._show_install_status(
+            speech_state.speech_install_status(
+                self._model_label(), self._progress, "", cancelling=True
+            )
+        )
+
+    def _show_install_status(self, text: Optional[str]) -> None:
+        """Echo the running download on the step's own status line."""
+        if text is None:
+            return
+        self._install_status = text
+        try:
+            self.query_one("#setup-speech-status", Static).update(text)
+        except NoMatches:
+            pass
 
     def _apply_provision_result(
         self,
         error: Optional[str],
         preference_error: Optional[str] = None,
+        cancelled: bool = False,
     ) -> None:
         self._pending_report = None
         self._operation = None
         self._progress = None
-        if error is not None:
+        self._download = None
+        self._install_status = None
+        if cancelled:
+            # TASK-34100.14: a cancel the user asked for is an outcome, not a
+            # failure; the status line keeps saying what happened.
+            self._install_outcome = error
+            self.notify(error, severity="information")
+        elif error is not None:
             self.notify(error, severity="error")
         else:
             # Review Important 3: a SUCCESSFUL install made through this

@@ -482,3 +482,34 @@ class TestShouldPersistSpeechConfig:
 
     def test_active_and_acted_this_run_persists(self):
         assert should_persist_speech_config(active=True, acted_this_run=True) is True
+
+
+class TestSpeechInstallStatus:
+    """TASK-34100.14: the step's status line while its managed download runs."""
+
+    def test_queued_status_names_this_step_s_model_not_the_widget_s_line(self):
+        """Live run g14v3-both/04: while Parakeet waited for OmniVoice, the
+        status line and the progress widget both read "Waiting for the
+        OmniVoice voice model download to finish…" -- the same sentence
+        twice. The widget names what it waits for; the status line says
+        what is queued."""
+        from tldw_chatbook.UI.Screens.model_browser_state import waiting_for_copy
+
+        queued = SimpleNamespace(phase="queued", waiting_for="OmniVoice voice model")
+        text = speech_state.speech_install_status(
+            "Parakeet v2 (English, INT8)", queued, ""
+        )
+        assert text == "Parakeet v2 (English, INT8) is queued and downloads next."
+        assert text != waiting_for_copy("OmniVoice voice model")
+
+    def test_fetch_status_echoes_the_widget_transfer_clause(self):
+        fetch = SimpleNamespace(phase="fetch", waiting_for=None)
+        text = speech_state.speech_install_status(
+            "Parakeet v2 (English, INT8)",
+            fetch,
+            "65.0 of 632.8 MiB · 4.1 MiB/s · about 2 min left",
+        )
+        assert text == (
+            "Downloading Parakeet v2 (English, INT8) — 65.0 of 632.8 MiB · "
+            "4.1 MiB/s · about 2 min left"
+        )

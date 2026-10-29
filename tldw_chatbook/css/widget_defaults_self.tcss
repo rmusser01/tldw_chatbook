@@ -1919,6 +1919,20 @@ ModelInstallProgress ProgressBar {
     margin-top: 1;
 }
 
+ModelInstallProgress .model-install-cancel {
+    margin-top: 1;
+}
+
+/* ===== WIDGET: ModelPlanPanel (Widgets/ModelArtifacts/plan_panel.py) ===== */
+
+ModelPlanPanel {
+    height: auto;
+}
+
+ModelPlanPanel .model-plan-details {
+    margin-top: 1;
+}
+
 /* ===== WIDGET: ManagedGGUFRuntimeChoiceModal (Widgets/ModelArtifacts/runtime_choice_modal.py) ===== */
 
 ManagedGGUFRuntimeChoiceModal {

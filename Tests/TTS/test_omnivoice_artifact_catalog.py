@@ -211,8 +211,10 @@ async def test_wrappers_pass_the_pinned_sources(monkeypatch: pytest.MonkeyPatch)
             calls.append(("preflight", ref, type(catalog).__name__, sources))
             return "REPORT"
 
-        async def provision(self, ref, grant, catalog, *, sources, progress=None):
-            calls.append(("provision", ref, grant, sources, progress))
+        async def provision(
+            self, ref, grant, catalog, *, sources, progress=None, control=None
+        ):
+            calls.append(("provision", ref, grant, sources, progress, control))
             return ref
 
     class FakeReport:
@@ -230,10 +232,20 @@ async def test_wrappers_pass_the_pinned_sources(monkeypatch: pytest.MonkeyPatch)
     ref = cat.omnivoice_onnx_reference()
     sources = cat.omnivoice_onnx_source_map()
 
+    # TASK-34100.14 final review T1: the Voice step's Cancel and the
+    # wait-in-line both live on this control; a wrapper that drops it still
+    # downloads, but nothing can stop or queue it.
+    control = object()
+
     assert await cat.run_omnivoice_preflight(core=service, credential_resolver=object()) == "REPORT"
     path = await cat.run_omnivoice_provision(
-        FakeReport(), core=service, credential_resolver=object(), progress=print
+        FakeReport(),
+        core=service,
+        credential_resolver=object(),
+        progress=print,
+        control=control,
     )
     assert path == Path("/managed/omnivoice")
     assert calls[1] == ("preflight", ref, "OmniVoiceCatalog", sources)
-    assert calls[3] == ("provision", ref, "GRANT", sources, print)
+    assert calls[3][:5] == ("provision", ref, "GRANT", sources, print)
+    assert calls[3][5] is control

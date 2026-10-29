@@ -751,6 +751,34 @@ TUI. Instrument with a plain append-to-file probe gated by an env var (or a
 diagnostics event); a probe you cannot see is indistinguishable from a probe
 that never fired.
 
+## A button that disables or hides itself when pressed drops focus to None (TASK-34100.14, 2026-10-19)
+
+**What happened.** The shared model-download progress widget gained a "Cancel
+download" button that disables itself on press, and its host hides the whole
+widget when the download ends. On the live recheck, after clicking Cancel in
+the wizard's Voice step, Ctrl+N did nothing (three presses; the step stayed
+on 4 of 11). Esc still opened "Exit setup?", so input was not soft-locked, and
+after that modal closed Ctrl+N worked again. Every Pilot test was green: none
+pressed a key after Cancel.
+
+**Mechanism.** `Widget.watch_disabled` blurs a focused widget that becomes
+disabled, and `_on_hide` blurs one that becomes hidden. `Screen._reset_focus`
+then looks for a replacement. The button is no longer in the focus chain, so
+it falls back to the button's *visible focusable siblings*; inside that
+widget there were none (a Static, a ProgressBar), so it called
+`set_focus(None)`. With focus None, bindings on a container several levels up
+(the wizard's Ctrl+N/Ctrl+B) have no chain to resolve through. Screen-level
+and app-level bindings (Tab, Esc) still fire, which makes this look like a
+flaky key rather than lost focus. The Speech step hid the same bug, because
+its recompose runs `SetupStep._heal_orphaned_focus` (entry above).
+
+**The rule.** Before a widget disables or hides its own focused control, hand
+focus on (`self.screen.focus_next()`). A host that hides a subtree that may
+hold focus re-anchors afterwards (`call_after_refresh(self._heal_orphaned_focus)`
+in a `SetupStep`). The test that catches it focuses the control, triggers the
+disable or hide, and asserts something attached and on-screen (every ancestor
+displayed) has focus. A green press-and-assert-the-outcome test does not.
+
 ## Textual's focus order is VISUAL (y, x) order, not DOM order (TASK-21142, 2026-08-25)
 
 **What happened.** To make Tab reach Next before the abandon button, the

@@ -1468,7 +1468,9 @@ def test_end_to_end_install_flow_calls_the_real_wrapped_functions(
         preflight_calls.append((model, precision))
         return report
 
-    async def fake_provision(model, precision, passed_report, *, progress=None):
+    async def fake_provision(
+        model, precision, passed_report, *, progress=None, control=None
+    ):
         provision_calls.append((model, precision, passed_report))
         return tmp_path / "installed"
 
@@ -1759,7 +1761,7 @@ async def test_vad_provision_cancellation_reaches_underlying_coroutine(
     release = threading.Event()
     terminal_results = []
 
-    async def gated_provision(report, *, progress=None):
+    async def gated_provision(report, *, progress=None, control=None):
         started.set()
         try:
             while not release.is_set():
@@ -2556,3 +2558,336 @@ def test_managed_activation_preference_failure_reports_partial_success(monkeypat
     message = str(step.notify.call_args.args[0]).lower()
     assert "activated" in message and "preference" in message
     assert "activation failed" not in message
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.14 ([voice-speech-09]): while a Speech download runs, the step's
+# status line says what is happening (not "Not installed."), the download can
+# be cancelled from the shared progress widget, a cancelled run says nothing
+# was saved, and the controls that would change the target are disabled.
+# ---------------------------------------------------------------------------
+
+
+def _fetch_event(done: int, total: int):
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
+    return AcquisitionProgress(
+        "fetch", parakeet_v2_reference(), "encoder-model.int8.onnx", done, total
+    )
+
+
+@pytest.mark.asyncio
+async def test_status_line_reports_the_running_download_instead_of_not_installed():
+    mib = 1024 * 1024
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step._operation = "install"
+        step.refresh(recompose=True)
+        await pilot.pause()
+        step.post_message(InstallProgressed(_fetch_event(65 * mib, 632 * mib)))
+        await pilot.pause(0.2)
+        status = str(step.query_one("#setup-speech-status", Static).render())
+        assert status.startswith(
+            "Downloading Parakeet v2 (English, INT8) — 65.0 of 632.0 MiB"
+        )
+        assert "Not installed" not in status
+        # A recompose mid-download keeps the line (not a stale "Not installed.").
+        step.refresh(recompose=True)
+        await pilot.pause()
+        status = str(step.query_one("#setup-speech-status", Static).render())
+        assert status.startswith("Downloading Parakeet v2 (English, INT8)")
+
+
+@pytest.mark.asyncio
+async def test_target_controls_are_disabled_while_a_download_runs():
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        gguf = step.query_one("#setup-speech-choose-transcribe-cpp-gguf", Button)
+        assert gguf.disabled is False
+        step._operation = "install"
+        step.refresh(recompose=True)
+        await pilot.pause()
+        gguf = step.query_one("#setup-speech-choose-transcribe-cpp-gguf", Button)
+        assert gguf.disabled is True
+        assert all(radio.disabled for radio in step.query(RadioButton))
+
+
+@pytest.mark.asyncio
+async def test_cancel_in_the_progress_widget_cancels_the_running_download():
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
+
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        control = DownloadControl(label=step._model_label(), wait_if_busy=True)
+        step._download = control
+        step._operation = "install"
+        step.refresh(recompose=True)
+        await pilot.pause()
+        step.post_message(InstallProgressed(_fetch_event(1, 2)))
+        await pilot.pause(0.2)
+        cancel = step.query_one(
+            "#setup-speech-install-progress .model-install-cancel", Button
+        )
+        assert str(cancel.label) == "Cancel download"
+        await pilot.click(cancel)
+        await pilot.pause(0.2)
+        status = str(step.query_one("#setup-speech-status", Static).render())
+
+    assert control.cancel_requested is True
+    assert status == "Cancelling the Parakeet v2 (English, INT8) download…"
+
+
+def test_provision_names_the_download_and_waits_in_line(monkeypatch, tmp_path):
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
+
+    captured = {}
+
+    async def provision(*args, **kwargs):
+        captured.update(kwargs)
+        return tmp_path / "managed" / "root"
+
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", provision)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
+    step = _step(wizard=_wizard_with_source(MagicMock()))
+    step._pending_report = _report(destination=tmp_path / "managed")
+    step.refresh = MagicMock()
+    step._provision_install = MagicMock()
+    step._confirm_install(True)
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    control = captured["control"]
+    assert control.label == "Parakeet v2 (English, INT8)"
+    assert control.wait_if_busy is True
+
+
+@pytest.mark.asyncio
+async def test_progress_cancel_stops_the_control_the_install_was_given(
+    monkeypatch, tmp_path
+):
+    """TASK-34100.14 final review T2: the tests above prove Cancel cancels
+    ``step._download`` and that provision gets *a* control, but not that they
+    are the same object. Mirrors the Voice step's end-to-end test: the fake
+    download only stops when the control it was handed is cancelled, and the
+    Cancel button in the step's own progress widget is what cancels it.
+    """
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionCancelledError
+
+    seen: dict = {}
+
+    async def provision(model, precision, report, *, progress=None, control=None):
+        seen["control"] = control
+        progress(_fetch_event(1, 2))
+        for _ in range(200):
+            if control is not None and control.cancel_requested:
+                raise AcquisitionCancelledError()
+            await asyncio.sleep(0.05)
+        raise AssertionError("the download was never cancelled")
+
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", provision)
+    source_service = MagicMock()
+    step = _step(installed=(), wizard=_wizard_with_source(source_service))
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        # What Install + the consent modal's Confirm do, minus the preflight.
+        step._operation = "install"
+        step._pending_report = _report(destination=tmp_path / "managed")
+        step._confirm_install(True)
+        cancel = None
+        for _ in range(80):
+            await pilot.pause(0.05)
+            found = step.query("#setup-speech-install-progress .model-install-cancel")
+            if found and found.first(Button).display and "control" in seen:
+                cancel = found.first(Button)
+                break
+        assert cancel is not None, "no Cancel download on the Speech progress"
+        await pilot.click(cancel)
+        for _ in range(80):
+            await pilot.pause(0.05)
+            if step._operation is None:
+                break
+        await pilot.pause(0.2)
+        status = str(step.query_one("#setup-speech-status", Static).render())
+
+    control = seen["control"]
+    assert control.label == "Parakeet v2 (English, INT8)"
+    assert control.cancel_requested is True
+    assert step._download is None
+    assert status == "Not installed. Download cancelled — nothing was saved."
+    source_service.prefer_managed.assert_not_called()
+
+
+def test_cancelled_download_says_nothing_was_saved_and_stays_not_installed(
+    monkeypatch, tmp_path
+):
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionCancelledError
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
+
+    async def cancelled(*args, **kwargs):
+        raise AcquisitionCancelledError()
+
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", cancelled)
+    fake_app = _patch_app(monkeypatch)
+    fake_app.call_from_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
+    source_service = MagicMock()
+    step = _step(wizard=_wizard_with_source(source_service))
+    step._pending_report = _report(destination=tmp_path / "managed")
+    step._operation = "install"
+    control = DownloadControl(label=step._model_label())
+    control.cancel()
+    step._download = control
+    step.notify = MagicMock()
+    step._ensure_loaded = MagicMock()
+
+    SpeechSetupStep._provision_install.__wrapped__(step)
+
+    step.notify.assert_called_once()
+    assert step.notify.call_args.args[0] == "Download cancelled — nothing was saved."
+    assert step.notify.call_args.kwargs.get("severity") == "information"
+    assert step._acted_this_run is False
+    source_service.prefer_managed.assert_not_called()
+    step._loaded = True
+    step._installed_item = None
+    status, _action = step._status_and_action()
+    assert status == "Not installed. Download cancelled — nothing was saved."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("started", [False, True])
+async def test_leaving_setup_abandons_a_speech_download_still_waiting_in_line(
+    started,
+):
+    """TASK-34100.14 review F4: a Speech install queued behind another
+    download must not start on its own after the wizard is gone (no UI would
+    be left to see or stop it); one already transferring carries on, as it
+    did before this branch, until part 2's leave guard decides.
+    """
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
+
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        control = DownloadControl(label=step._model_label(), wait_if_busy=True)
+        if started:
+            control.mark_started()
+        step._download = control
+        await step.remove()
+        await pilot.pause()
+
+    assert control.cancel_requested is (not started)
+
+
+@pytest.mark.asyncio
+async def test_external_vad_install_waits_in_line_naming_what_it_waits_for(
+    monkeypatch, tmp_path
+):
+    """TASK-34100.14 review F3: the managed VAD install behind "Use model from
+    disk…" (external Parakeet files, not the transcribe.cpp GGUF button) was
+    the one wizard install without a DownloadControl. While OmniVoice downloaded
+    from the Voice step it failed fast as busy and said only "could not be
+    installed"; it now waits in line, says which download it waits for, and
+    names itself for any install that has to wait for it.
+    """
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
+    from tldw_chatbook.Model_Artifacts.acquisition import AcquisitionProgress
+
+    seen: dict = {}
+    statuses: list[str] = []
+    release = asyncio.Event()
+
+    async def queued_provision(report, *, progress=None, control=None):
+        seen["control"] = control
+        progress(
+            AcquisitionProgress(
+                "queued", parakeet_vad_reference(), None, 0, 0,
+                waiting_for="OmniVoice voice model",
+            )
+        )
+        await release.wait()
+        progress(
+            AcquisitionProgress(
+                "fetch", parakeet_vad_reference(), "silero_vad.onnx", 1024, 2048
+            )
+        )
+        return tmp_path / "vad"
+
+    monkeypatch.setattr(
+        speech_step_module, "run_parakeet_vad_provision", queued_provision
+    )
+    prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
+    step = _step(wizard=_wizard_with_source(_OwnerTrackingSource()))
+    step._apply_external_vad_provision_result = lambda *args: None
+    app = _StepHost(step)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        token = step._next_external_token()
+        step._external_selection_token = token
+        step._owns_external_token = lambda candidate: candidate == token
+        step._external_selection_worker = step._provision_external_vad(
+            token, prepared, _vad_report(destination=tmp_path / "vad")
+        )
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if "control" in seen:
+                break
+        statuses.append(step._external_status)
+        release.set()
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if step._external_status != statuses[0]:
+                break
+        statuses.append(step._external_status)
+
+    control = seen["control"]
+    assert control.label == "Silero VAD (voice-activity detector)"
+    assert control.wait_if_busy is True
+    assert statuses[0] == "Waiting for the OmniVoice voice model download to finish…"
+    assert statuses[1] == "Installing managed VAD dependency · 1,024 / 2,048 bytes"
+
+
+@pytest.mark.asyncio
+async def test_a_late_progress_tick_never_rewrites_a_finished_install_status():
+    """TASK-34100.14 review F5: a worker's last InstallProgressed can be
+    handled after its result was applied (post_message vs call_from_thread
+    ordering); it used to flip "Not installed. Download cancelled — nothing
+    was saved." back to "Downloading …" until the reload recomposed.
+    """
+    step = _step(installed=())
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.on_show()
+        await pilot.pause(0.2)
+        step._install_outcome = "Download cancelled — nothing was saved."
+        step.refresh(recompose=True)
+        await pilot.pause()
+        before = str(step.query_one("#setup-speech-status", Static).render())
+        assert step._operation is None
+        step.post_message(InstallProgressed(_fetch_event(1, 2)))
+        await pilot.pause(0.2)
+        after = str(step.query_one("#setup-speech-status", Static).render())
+
+    assert before == "Not installed. Download cancelled — nothing was saved."
+    assert after == before
+    assert step._progress is None

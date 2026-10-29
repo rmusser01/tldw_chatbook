@@ -248,6 +248,31 @@ this computer. Saving it as the default also saves a fixed voice seed, but the
 default voice can still vary between replies — create a voice profile in Voice
 Cloning for a consistent voice.
 
+**Model downloads (Speech and OmniVoice).** Both installs open the same
+review as Lab ▸ Models. It leads with what you are deciding: the download
+size, where it installs and how much space is free, and each component's
+licence (for Parakeet: "CC-BY-4.0 (speech model) · MIT (voice-activity
+detector)"). Source, pinned revision hash, provenance and staging figures
+are under **Details**. While a download runs, the progress line shows
+how much has arrived, the speed and the time left (Speech also repeats it on
+its own status line: "Downloading Parakeet v2 (English, INT8) — 65.0 of
+632.8 MiB · 4.1 MiB/s · about 2 min left"), and **Cancel download** stops it
+within a few seconds: the partial download is removed and the step says
+"Download cancelled — nothing was saved." Only one model downloads at a
+time, so starting the second install while the first is running waits in
+line ("Waiting for the OmniVoice voice model download to finish…") and then
+starts on its own; Cancel works while it waits, too, and leaving setup
+cancels an install that is still waiting its turn. **Use model from disk…**
+(Parakeet files you already have) also installs the voice-activity detector
+those files need when it is not installed yet, and that download waits in
+line the same way. If
+Chatbook is closed or killed part-way through, the next review says "A
+previous download stopped at 120.0 of 632.8 MiB", its button reads
+**Resume download**, and the download continues from about that point
+instead of starting over.
+While the Speech download runs, its language, precision and GGUF choices
+are disabled.
+
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved — and if the connection check failed while you were setting up (a
 rejected API key, a server that needs a key you didn't set, an unreachable

@@ -1647,6 +1647,19 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_preflight.py",
             "test_provision_install.py",
             "test_provision_crash_recovery.py",
+            # TASK-34100.14: the cancel/queue/mid-file-resume suite drives
+            # provision() and preflight() on worker threads against loopback
+            # fixture servers -- the same egress._config_enabled ->
+            # get_cli_setting read, and the same admission signature (every
+            # node red at setup-free first fetch without this). It fakes the
+            # HTTP source, not the config getters, and never re-selects a
+            # config. The provision lease/serialization suite is the same
+            # class and was missed when its siblings were enrolled: 2 of its
+            # 7 nodes were red with RecoveryRequired("raw_source_selection_
+            # changed") on a clean dev export (4de437a5c5), 7/7 green
+            # enrolled -- and it pins the lease code this task restructured.
+            "test_download_control.py",
+            "test_provision_serialization.py",
             # TASK-32171: the Library media-reader traversal suite mounts
             # real production-CSS apps through _flow_app -> _build_test_app ->
             # load_settings on the guarded config loader, so the per-test env
@@ -1734,6 +1747,21 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # mounts instead -- keeping the bootstrap profile is the fit, as
             # for the Home cluster above.
             "test_timer_path_layout_cost.py",
+            # TASK-34100.14: the shared managed-model widget suite (progress,
+            # plan panel, install modal) hits the same signature through
+            # Tests/UI/conftest.py's _disable_model_catalog_refresh, which
+            # imports tldw_chatbook.app after the per-test redirect: all 31
+            # nodes errored in setup on a clean dev export (4de437a5c5) and
+            # all 31 pass enrolled. It never re-selects a config.
+            "test_model_artifact_widgets.py",
+            # TASK-34100.14 review F9: the model-browser state suite (plan
+            # rows, inventory, install-failure copy, transfer readout) hits
+            # the same signature through the same Tests/UI/conftest.py
+            # fixture: all 28 nodes errored in setup (2026-10-27, on dev
+            # 0923ec0ca2 plus this branch) and all 28 pass enrolled, so its
+            # repinned busy-copy assertion now runs locally. It never
+            # re-selects a config.
+            "test_model_browser_state.py",
         }
     )
     test_data_dir = (
