@@ -59,6 +59,7 @@ from tldw_chatbook.Actor_Packs.persona_coordinator import (
 from tldw_chatbook.UI.Library_Modules.library_notes_sync_controller import (
     LibraryNotesSyncController,
 )
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -328,6 +329,26 @@ def _label(host, widget) -> str:
     return _painted_widget_text(host, widget).strip("┃▊▎▌▐│ ")
 
 
+def _footer(host, screen) -> str:
+    found = screen.query(AppFooterStatus)
+    return _painted_widget_text(host, found.first()) if found else ""
+
+
+async def _wait_for_painted_back(host, screen, pilot, label: str) -> None:
+    """Wait for the back control's PAINTED words (review R0 M-5): re-queried
+    inside the wait, never one compositor read after a DOM-only wait."""
+
+    def painted() -> str:
+        found = screen.query("#notes-sync-back")
+        return _label(host, found.first()) if found else ""
+
+    await _wait_for_condition(
+        pilot,
+        lambda: painted() == label,
+        message=lambda: f"the back control painted {painted()!r}, not {label!r}",
+    )
+
+
 async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
     tmp_path: Path,
 ) -> None:
@@ -336,8 +357,10 @@ async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
     The back control of a review opened from Manage sync folders returns
     there (``handle_library_notes_lasting_back``), so it says so:
     "‹ Sync folders", not "‹ Notes". Pressing it and checking again paints
-    the kept choice and the status line; Escape from the review (to the Notes
-    list) keeps it too. Nothing reaches the note or the file.
+    the kept choice and the status line. Fix round 1 (review R0 I-1):
+    Escape goes where that control goes -- the footer says
+    ``esc back to sync folders`` and the key lands on the folder list -- and
+    the choice is still kept. Nothing reaches the note or the file.
     """
 
     notes_path, state_path, sync_root = _seed_real_conflict_authority(tmp_path)
@@ -356,10 +379,7 @@ async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
             await _press(screen, pilot, "#library-notes-manage-sync-folders")
             await _check_changes_from_manage_sync_folders(screen, pilot)
 
-            back = screen.query_one("#notes-sync-back", Button)
-            assert _label(host, back) == "‹ Sync folders", (
-                f"the back control reads {_label(host, back)!r}"
-            )
+            await _wait_for_painted_back(host, screen, pilot, "‹ Sync folders")
             await _press(screen, pilot, "#notes-sync-conflict-0-keep-both")
             await _wait_for_condition(
                 pilot,
@@ -387,13 +407,25 @@ async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
             )
             assert _painted_of(host, screen, "#notes-sync-status") == STAGED_ONE
 
-            await pilot.press("escape")
+            # I-1: the footer names Escape's destination before the key ...
             await _wait_for_condition(
                 pilot,
-                lambda: screen._notes_state.view == "list",
-                message="Escape did not leave the review for the Notes list",
+                lambda: "esc back to sync folders" in _footer(host, screen),
+                message=lambda: f"the review's footer painted {_footer(host, screen)!r}",
             )
-            await _press(screen, pilot, "#library-notes-manage-sync-folders")
+            await pilot.press("escape")
+            # ... and the key goes where ‹ Sync folders goes: the folder list.
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.view == "lasting_roots"
+                and _painted_of(host, screen, "#notes-sync-roots-status")
+                == "Sync folders refreshed.",
+                message=lambda: (
+                    "Escape did not return to Manage sync folders: "
+                    f"view={screen._notes_state.view!r} "
+                    f"roots status={_painted_of(host, screen, '#notes-sync-roots-status')!r}"
+                ),
+            )
             await _check_changes_from_manage_sync_folders(screen, pilot)
             await _wait_for_condition(
                 pilot,
@@ -412,11 +444,13 @@ async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
         await _close_real_conflict_stack(owner, database, interop)
 
 
-async def test_a_review_started_from_add_from_files_still_says_notes(
+async def test_a_review_started_from_add_from_files_says_notes_and_escape_returns_there(
     tmp_path: Path,
 ) -> None:
-    """Negative control: the setup route's back control returns to Notes and
-    keeps its words (``lasting_origin == "setup"``, never "‹ Sync folders")."""
+    """Negative control for I-1: a review the user reached from Notes (Add
+    from files ▸ Keep a folder synced ▸ Check changes) offers "‹ Notes", its
+    footer says ``esc back to notes``, and Escape returns to the Notes list
+    (``lasting_origin == "setup"``, never "‹ Sync folders")."""
 
     notes_path, state_path, _sync_root = _seed_real_conflict_authority(
         tmp_path, diverge=False
@@ -424,6 +458,9 @@ async def test_a_review_started_from_add_from_files_still_says_notes(
     owner, database, interop, _controller_unused = await _start_real_conflict_stack(
         notes_path, state_path
     )
+    folder = tmp_path / "new-sync-folder"
+    folder.mkdir()
+    (folder / "plain.md").write_text("plain", encoding="utf-8")
     try:
         app = _build_test_app()
         _seed_conversations(app, [], notes=_two_notes())
@@ -435,8 +472,165 @@ async def test_a_review_started_from_add_from_files_still_says_notes(
             await _press(screen, pilot, "#library-row-browse-notes")
             await _press(screen, pilot, "#library-notes-add-from-files")
             await _press(screen, pilot, "#notes-add-keep-synced")
-            back = await _wait_for_selector(screen, pilot, "#notes-sync-back")
-            assert _label(host, back) == "‹ Notes"
+            await _wait_for_painted_back(host, screen, pilot, "‹ Notes")
             assert screen._notes_state.lasting_origin == "setup"
+            controller = screen._library_notes_sync_controller
+            controller.set_setup("display_name", "Plain folder")
+            controller.set_setup("folder", str(folder))
+            await _press(screen, pilot, "#notes-sync-check")
+            await _wait_for_condition(
+                pilot,
+                lambda: controller.snapshot.phase == "review"
+                and controller.snapshot.review.source == "setup",
+                message=lambda: (
+                    "the setup check never reached its review: "
+                    f"phase={controller.snapshot.phase!r} "
+                    f"status={controller.snapshot.status_line!r}"
+                ),
+            )
+            await _wait_for_painted_back(host, screen, pilot, "‹ Notes")
+            await _wait_for_condition(
+                pilot,
+                lambda: "esc back to notes" in _footer(host, screen),
+                message=lambda: f"the review's footer painted {_footer(host, screen)!r}",
+            )
+            assert "sync folders" not in _footer(host, screen)
+            await pilot.press("escape")
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._notes_state.view == "list",
+                message=lambda: (
+                    f"Escape left view={screen._notes_state.view!r}, not the Notes list"
+                ),
+            )
     finally:
         await _close_real_conflict_stack(owner, database, interop)
+
+
+# --- Fix round 1 (review R0) -----------------------------------------------
+
+
+def _receipt_snapshot(**changes: object):
+    from dataclasses import replace
+
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        initial_lasting_sync_snapshot,
+    )
+
+    return replace(
+        initial_lasting_sync_snapshot(lasting_available=True),
+        phase="receipt",
+        status_line="1 applied · no conflicts remain.",
+        receipt_line="1 applied · listed under Receipts",
+        **changes,
+    )
+
+
+@pytest.mark.parametrize(
+    ("back_label", "manage_shown"),
+    (("‹ Sync folders", False), ("‹ Notes", True)),
+)
+async def test_a_receipt_names_the_folder_list_once(
+    back_label: str, manage_shown: bool
+) -> None:
+    """M-1, one name for one place: a receipt reached from Manage sync
+    folders already has "‹ Sync folders", so it does not also offer
+    "Manage sync folders" (both opened the folder list). A receipt reached
+    from Notes keeps "Manage sync folders" as the way onward."""
+
+    from Tests.Widgets.Library.test_library_notes_add_from_files_canvas import (
+        _Host,
+        _frame,
+    )
+
+    app = _Host(_receipt_snapshot(back_label=back_label))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        assert bool(app.query("#notes-sync-manage-roots")) is manage_shown, _frame(app)
+        assert app.query_one("#notes-sync-back", Button).label.plain == back_label
+
+
+@pytest.mark.parametrize("action", ("retarget", "recover"))
+async def test_an_inert_root_action_keeps_the_staged_choice(action: str) -> None:
+    """M-2: Retarget (and Recover without an open entry) answer "unavailable
+    in this release; no files or notes changed." -- nothing changed, so the
+    staged choice is kept for the same observation token (T10-b: navigation
+    only)."""
+
+    runtime = _Runtime()
+    runtime.check_plan = _conflict_plan()
+    controller = _controller(runtime)
+    await controller.check_root("root-1")
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep both")
+
+    controller.stage_root_action("root-1", action)
+    assert controller.snapshot.status_line == (
+        f"{action.title()} is unavailable in this release; no files or notes changed."
+    )
+    await controller.check_root("root-1")
+
+    assert controller.snapshot.review.rows[0].selected_label == SELECTED_KEEP_BOTH
+    assert controller.snapshot.status_line == STAGED_ONE
+    assert _applied(runtime) == []
+
+
+async def test_a_migration_review_keeps_the_hold_reason_ahead_of_the_staged_line() -> (
+    None
+):
+    """M-3: on a migration review whose Activate is held, the status line
+    names the hold first and the staged choices after it -- on staging, on a
+    re-entry that finds them, and on a refused Activate. One derivation."""
+
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        migration_activation_blocked_line,
+    )
+    from tldw_chatbook.Notes.notes_sync_reconciler import (
+        ReconciliationAttention,
+        ReconciliationAttentionKind,
+        ReconciliationItemSkip,
+        ReconciliationPlan,
+    )
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootRuntimeSnapshot,
+        NotesSyncRuntimeSnapshot,
+    )
+
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root-1", "paused", "review_migration"),),
+    )
+    runtime.check_plan = ReconciliationPlan(
+        root_id="root-1",
+        observation_token=TOKEN,
+        safe_actions=(),
+        attention=(
+            ReconciliationAttention(
+                ReconciliationAttentionKind.CONFLICT, "both_sides_changed", "bind-1"
+            ),
+        ),
+        skips=(),
+        managed_placement_effects=(),
+        deletion_groups=(),
+        item_skips=(ReconciliationItemSkip("b.md", "mixed_newlines", bound=True),),
+    )
+    controller = _controller(runtime)
+    hold = migration_activation_blocked_line(
+        ("b.md · Mixed line endings — save it with one style",)
+    )
+
+    await controller.check_migration("root-1")
+    assert controller.snapshot.status_line == hold
+    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep both")
+    assert controller.snapshot.status_line == f"{hold} {STAGED_ONE}"
+
+    controller.return_to_roots()
+    await controller.check_migration("root-1")
+    assert controller.snapshot.review.rows[0].selected_label == SELECTED_KEEP_BOTH
+    assert controller.snapshot.status_line == f"{hold} {STAGED_ONE}"
+
+    assert await controller.activate_root("root-1", TOKEN) is False
+    assert controller.snapshot.status_line == f"{hold} {STAGED_ONE}"
+    assert not any(call[0] == "activate_root" for call in runtime.calls)
+    assert _applied(runtime) == []
