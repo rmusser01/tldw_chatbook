@@ -157,7 +157,9 @@ class ConsoleDispatchRecoveryRegion(Widget):
         assistant_message_id = (
             recovery.assistant_message_id if recovery is not None else ""
         )
+        dropped_pending = False
         if session_id != self._session_id or recovery is not self._recovery_snapshot:
+            dropped_pending = self._pending_intent is not None
             self._pending_intent = None
         self._recovery_snapshot = recovery
         self._model_in_flight = recovery.in_flight if recovery is not None else False
@@ -166,6 +168,8 @@ class ConsoleDispatchRecoveryRegion(Widget):
             and assistant_message_id == self._assistant_message_id
             and updated == self._presentation
         ):
+            if dropped_pending:  # no recompose follows: release the busy state
+                self._show_pending(None)
             return False
         self._session_id = session_id
         self._assistant_message_id = assistant_message_id

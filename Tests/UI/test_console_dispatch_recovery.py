@@ -308,3 +308,43 @@ async def test_retry_anyway_is_busy_at_once_until_its_outcome_arrives() -> None:
         assert str(warning.render()) == (
             "Retry anyway may send a duplicate request because delivery status is unknown."
         )
+
+
+@pytest.mark.asyncio
+async def test_a_new_equal_snapshot_releases_the_busy_state_it_drops() -> None:
+    """Review follow-up: a sync with an unchanged presentation dropped the
+    pending intent but left 'Discarding…' and both buttons disabled, and the
+    stale completion could no longer restore them."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    module = _ui_module()
+    intents: list[tuple] = []
+
+    class _Host(App):
+        def compose(self):
+            yield module.ConsoleDispatchRecoveryRegion(
+                _state(started=True),
+                session_id="session-1",
+                on_action=lambda *intent: intents.append(intent),
+            )
+
+    host = _Host()
+    async with host.run_test(size=(100, 12)) as pilot:
+        region = host.query_one(module.ConsoleDispatchRecoveryRegion)
+        retry = region.query_one("#console-dispatch-recovery-retry_anyway", Button)
+        discard = region.query_one("#console-dispatch-recovery-discard", Button)
+        warning = region.query_one("#console-dispatch-recovery-warning", Static)
+
+        discard.press()
+        await pilot.pause()
+        assert str(warning.render()) == "Discarding…"
+
+        assert region.sync_recovery("session-1", _state(started=True)) is False
+        intents[0][3]()  # the stale completion is ignored
+        await pilot.pause()
+
+        assert not retry.disabled and not discard.disabled
+        assert str(warning.render()) == (
+            "Retry anyway may send a duplicate request because delivery status is unknown."
+        )
