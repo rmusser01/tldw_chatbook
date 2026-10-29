@@ -11,6 +11,11 @@ passing prefix test of the steps delivered so far plus a strict
 ``xfail(raises=NotYetDelivered)`` full-journey test (RC-7). ``/`` is frame
 slice B3's key and ``o`` is B5c's; until B3, Ctrl+F is the prefix's search key
 (spec 0.4 keeps ``Ctrl+F > name > Enter > Enter``). Later slices add J1-J4.
+
+From frame slice B2b: J1, import a PNG card and chat with it (spec 5.7.3), the
+same way: a passing prefix (Import, the one picker, the card selected and
+loaded, read back from the database) and a strict full-journey test whose
+Chat now step is B5b-2's and whose provider request is B5c's.
 """
 
 from __future__ import annotations
@@ -23,7 +28,9 @@ import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_m
 from Tests.UI.roleplay_frame_harness import (
     ISOLDE,
     NotYetDelivered,
+    fake_file_picker,
     highlighted_item_id,
+    item_at,
     not_yet_delivered,
     open_styled_roleplay,
     open_volume_db,
@@ -34,6 +41,7 @@ from Tests.UI.roleplay_frame_harness import (
     volume_db_path,
     wait_until,
 )
+from Tests.UI.roleplay_import_fixtures import png_card_bytes
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Workbench.workbench_widgets import FittedText
 
@@ -172,3 +180,78 @@ async def test_j1_fast_full_journey_slash_isolde_enter_enter_o(volume_348):
             what="Isolde's card",
         )
         not_yet_delivered("o on the loaded row starts a Console chat", "B5c")
+
+
+# ---- J1: import a PNG card, then chat with it (frame slice B2b; spec 5.7.3) ----
+
+#: The PNG fixture's card name (Tests/UI/roleplay_import_fixtures.py).
+J1_CARD = "Wren Halloway"
+
+
+@pytest.fixture
+def j1_db(tmp_path):
+    """A file-backed ChaChaNotes with one character (the list needs a first row)."""
+    db = CharactersRAGDB(tmp_path / "j1.db", "roleplay-journey-j1")
+    db.add_character_card({"name": "Abel Host", "description": "seed"})
+    yield db
+    db.close_connection()
+
+
+async def _import_the_png_card(pilot, monkeypatch, tmp_path) -> str:
+    """Import (the one picker answers with a PNG card), then wait for it to load.
+
+    Returns:
+        The imported card's option id.
+    """
+    card = tmp_path / "wren.png"
+    card.write_bytes(png_card_bytes())
+    fake_file_picker(monkeypatch, card)
+    screen = pilot.app.screen
+    assert await pilot.click("#personas-library-import")
+    await wait_until(
+        pilot,
+        lambda: screen.state.selected_entity_name == J1_CARD,
+        what="the imported card loaded",
+    )
+    await settle(pilot)
+    return f"character:{screen.state.selected_entity_id}"
+
+
+async def test_j1_prefix_import_a_png_card_selects_and_loads_it(
+    j1_db, monkeypatch, tmp_path
+):
+    """J1's delivered steps on the real app: Import, the PNG card through the
+    one picker, then its row is the loaded one (the gutter's loaded glyph),
+    its card shows, and the database holds it."""
+    async with roleplay_full_app(size=(120, 36), character_db=j1_db) as pilot:
+        screen = pilot.app.screen
+        option_id = await _import_the_png_card(pilot, monkeypatch, tmp_path)
+        row = item_at(screen, option_id)
+        assert row.active and row.name == J1_CARD
+        prompt = screen.query_one("#personas-library-rows").get_option(option_id).prompt
+        assert "▸" in prompt.plain.split(J1_CARD)[0]
+        card_name = screen.query_one("#personas-character-card-name", Static)
+        assert str(card_name.render()) == f"Name: {J1_CARD}"
+        stored = j1_db.get_character_card_by_name(J1_CARD)
+        assert stored is not None
+        assert option_id == f"character:{stored['id']}"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=NotYetDelivered,
+    reason="J1: Chat now from the card is frame slice B5b-2's, the request B5c's",
+)
+async def test_j1_full_journey_import_png_chat_now_provider_received_one_request(
+    j1_db, monkeypatch, tmp_path
+):
+    """Import a PNG card, Chat now, and the provider receives one request
+    (spec 5.7.3). Every undelivered step raises ``NotYetDelivered``; the slice
+    that delivers a step replaces its raise with the step."""
+    async with roleplay_full_app(size=(120, 36), character_db=j1_db) as pilot:
+        screen = pilot.app.screen
+        await _import_the_png_card(pilot, monkeypatch, tmp_path)
+        not_yet_delivered("Chat now from the loaded card", "B5b-2")
+        assert await pilot.click("#personas-start-chat")
+        not_yet_delivered("the provider received one request", "B5c")
+        assert screen.state.selected_entity_name == J1_CARD
