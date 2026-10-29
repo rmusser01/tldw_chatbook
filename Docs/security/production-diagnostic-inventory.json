@@ -2990,8 +2990,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "f69bf2d7dff8a85a49a4",
+      "call_count": 2,
+      "diagnostic_digest": "431614dedfbf3ca6c5be",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/emergency_stop_hold.py",
       "reason": "remaining Chatbook production diagnostic owner"
