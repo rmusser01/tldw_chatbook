@@ -200,3 +200,44 @@ product, fixture/service/getter, workflow, census, timeout or privacy guard chan
 are included in the repair. These native controls qualify preparation and its
 outcome assertions; final delivery still requires actual green CI and resolved
 feedback on the final pushed head, recorded in the PR description.
+
+## Latest-dev integration
+
+The repaired head `f73ab0247974114c13f53d6569484b9a81c76a07` subsequently passed
+all 40 Derived Artifacts jobs and Perf Guard. All 32 UI shards passed, maximum
+697 seconds; all 44 added selections, exact old Notes Escape/Replace and the
+canonical-class guard have successful execution rows. There were no unresolved
+threads. Its [qualification receipt](2026-10-28-textual-followups-implementation/dev-sync/qualified-predecessor.json)
+is preserved as a historical result. Dev advanced to
+`38c9d2edcf10bc69d0d7597514fa319db7e4ccd2` during qualification and produced
+an integration conflict, so delivery rebases and checks the integrated head.
+
+The two manual conflicts were the census and its floor. The integrated census
+retains all **1,145 latest-dev selectors plus 44 PR additions = 1,189**, each
+once. The previous 1,184-entry replay block/order remains intact; the five new
+dev selectors append outside that block, preserving all existing shard slots.
+The floor is 1,189. Dev's split-file contracts and three new required Console
+targets remain. Matrix/concurrency, fail-closed required aggregation and all
+timeouts are unchanged. The [measured append replay](2026-10-28-textual-followups-implementation/dev-sync/capacity.json)
+uses complete setup/call/teardown rows from successful merged dev PR jobs for
+the five additions: 13.37, 7.52, 18.04, 13.85 and 16.50 seconds. Combined with
+the preserved prior model, maximum work is 616.99 seconds and the existing
+forecast is 1,019.54 seconds against 1,020. This narrow forecast margin is an
+estimate; actual integrated-head hosted success remains required.
+
+All ten task/repair source blobs and 146 branch blobs outside the six shared
+integration paths are unchanged. Latest-dev diagnostic owners, privacy rules
+and sinks are preserved except the previously reviewed Notes warning-owner
+digest; the actual integrated inventory check passes. Both branches' lesson
+entries survive. The [source conservation](2026-10-28-textual-followups-implementation/dev-sync/source-conservation.json)
+and [diagnostic receipt](2026-10-28-textual-followups-implementation/dev-sync/diagnostic.json)
+record these boundaries. All **251 targeted census/workflow/replay/queue/backlog
+contracts pass** in one run, with zero failures/errors/skips. Scoped checker
+lint/format and diff whitespace checks pass.
+
+The [integration receipt map](2026-10-28-textual-followups-implementation/dev-sync/integration.json)
+retains actual XML/commands and member hashes. The
+[scoped Superpowers integration review](2026-10-28-textual-followups-implementation/dev-sync/review.md)
+checks the shared paths and conflict resolution; it does not repeat the approved
+product review. Final pushed-head CI and feedback results are recorded in the
+PR description; the successful predecessor is not proof of the rebased result.

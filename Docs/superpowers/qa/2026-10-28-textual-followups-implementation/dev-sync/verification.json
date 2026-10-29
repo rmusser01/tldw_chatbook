@@ -1,0 +1,14 @@
+{
+  "exit_code": 0,
+  "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-7e7a66d1321747c89c49c78c3d8e3d58",
+  "reports": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\dev-sync-ci-contracts\\result.xml",
+      "sha256": "0e02347451fe60f8c6f82327e679d430a1b1a16004df3b1f3726769215399252",
+      "cases": 251,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0
+    }
+  ]
+}
