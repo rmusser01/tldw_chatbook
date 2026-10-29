@@ -20,7 +20,6 @@ from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from tldw_chatbook.Library.library_note_import_state import UNIFORM_RUN_MIN
 from tldw_chatbook.Library.library_shell_state import (
-    back_cue_label,
     library_disabled_action_label,
     library_disabled_reason_line,
 )
@@ -1044,7 +1043,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
         phase = self.snapshot.phase
         if phase == "choose":
             yield Button(
-                back_cue_label("Notes"),
+                self.snapshot.back_label,
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1062,8 +1061,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             yield Button(
                 # task-32624: was a bare "Back" -- the one spelling left
                 # unconverted when task-32553 unified every other back
-                # control on this canvas (and the app) to back_cue_label().
-                back_cue_label("Notes"),
+                # control on this canvas (and the app) to back_cue_label(); the
+                # snapshot carries its words (TASK-34000.40: back_label).
+                self.snapshot.back_label,
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1154,8 +1154,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             yield Button(
                 # task-32624: was a bare "Back" -- the one spelling left
                 # unconverted when task-32553 unified every other back
-                # control on this canvas (and the app) to back_cue_label().
-                back_cue_label("Notes"),
+                # control on this canvas (and the app) to back_cue_label(); the
+                # snapshot carries its words (TASK-34000.40: back_label).
+                self.snapshot.back_label,
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1195,7 +1196,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
                 compact=True,
             )
             yield Button(
-                back_cue_label("Notes"),
+                self.snapshot.back_label,
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1205,7 +1206,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             # TASK-34000.17 AC#3: Previous/Next/Return alone left this page
             # without the way back every other settled page offers.
             yield Button(
-                back_cue_label("Notes"),
+                self.snapshot.back_label,
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1214,7 +1215,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             # TASK-34000.17 AC#3/AC#5: the chooser bar, for ``roots`` and any
             # phase this chain does not name -- never a page without ‹ Notes.
             yield Button(
-                back_cue_label("Notes"),
+                self.snapshot.back_label,
                 id="notes-sync-back",
                 classes="library-canvas-action",
                 compact=True,
@@ -1260,6 +1261,9 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             # flips that answer has to rebuild.
             and previous_snapshot.setup.obsidian_vault
             == snapshot.setup.obsidian_vault
+            # TASK-34000.40: the fast paths patch fields, never the back
+            # control; a new route's words need the rebuild.
+            and previous_snapshot.back_label == snapshot.back_label
         ):
             status = self.query("#notes-sync-status")
             if status:
@@ -1310,6 +1314,7 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             == tuple(row.item_id for row in snapshot.review.rows)
             and previous_snapshot.receipts == snapshot.receipts
             and previous_snapshot.receipts_unavailable == snapshot.receipts_unavailable
+            and previous_snapshot.back_label == snapshot.back_label
         ):
             self._sync_review(snapshot, previous_snapshot)
             return
