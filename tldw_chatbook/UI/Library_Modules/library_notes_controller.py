@@ -3739,7 +3739,12 @@ class LibraryNotesController:
             "import_receipt_available": (
                 self._library_note_import_controller.snapshot.can_revisit_receipt
             ),
-            "lasting_sync_snapshot": self._library_notes_lasting_snapshot_for_canvas(),
+            # Class-forwarded: the kwargs tests run this method on a fake.
+            "lasting_sync_snapshot": (
+                LibraryNotesController._library_notes_lasting_snapshot_for_canvas(
+                    self
+                )
+            ),
             "tree_projection": tree_projection,
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""

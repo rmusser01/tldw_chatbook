@@ -687,7 +687,9 @@ _BUDGETS: dict[str, int] = {
     # cancelling it (a running check still cancels, ruling T10-c), and the
     # lasting-sync snapshot is handed to the canvas with its back control
     # named for the route in ("‹ Sync folders"): 8441 -> 8462 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8462,
+    # Same day, same decision: that hand-off is class-forwarded, because the
+    # canvas-kwargs tests run the method on a fake: 8462 -> 8467 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8467,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
