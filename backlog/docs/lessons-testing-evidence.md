@@ -22577,3 +22577,18 @@ replay byte-identical and recover current revision/cursor/completion through the
 existing checkpoint owner. Test history reduction, replay and current-state recovery
 together; an empty pending-delivered list also needs a control with undelivered units.
 These controls establish protocol recovery, not later live-model compliance or AC24.
+
+
+## Exercise deferred tool results through the strict production request builder
+
+**TASK-35582, 2026-10-29.** A final review run's resumed primary returned a
+`code_review_read` call, then failed before another physical request; the UI
+classified the local refusal as HTTP400 although all physical receipts were200.
+A narrow offline test through the real loop, Console preparation, dispatcher
+projection and hosted payload builder found two sequential shape defects:
+native deferral rows retained the fenced-only `name`, then the context row leaked
+its internal delivery key. Removing only the first defect was insufficient.
+The repaired control preserves canonical receipt state, defers without execution
+and completes the reissued read. A scripted test that stops before
+the strict builder cannot establish request compatibility. The
+missing original live payload still limits retrospective attribution.

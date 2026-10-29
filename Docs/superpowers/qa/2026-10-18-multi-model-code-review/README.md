@@ -8,6 +8,13 @@ PR #3286 remains draft. The separate Windows GGUF timeout is disclosed in the re
 
 ## Current boundary
 
+The [offline continuation repair](continuation-offline/report.md) now fixes both
+reproduced shape defects: fenced-only names on native deferrals and internal
+instruction-delivery keys leaking into prepared provider rows. The complete
+runtime-to-strict-builder regression passes; scoped review found no issues.
+This changes no prior live outcome. No new live run or budget request occurred.
+
+
 The final run used 24 of 60 approved requests and two of three children:
 **338 cumulative requests / 23 children**. The single invocation is consumed;
 no automatic retry or additional budget request was made. AC24 is unchecked.
