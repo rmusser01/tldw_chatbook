@@ -51,10 +51,7 @@ from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
-from ...Chat.console_display_state import (
-    QUEUE_REASON_PREPARING,
-    build_console_disabled_reason,
-)
+from ...Chat.console_display_state import build_console_disabled_reason
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
 
 # TASK-22504: the dictation STATE_* constants are loaded on first voice
@@ -2623,12 +2620,6 @@ class ConsoleComposerBar(Horizontal):
             dispatch_recovery_blocked=dispatch_recovery_blocked,
             send_label=normalized_send_label,
         )
-        if reason == QUEUE_REASON_PREPARING and self._shows_draft_being_sent():
-            # TASK-33620.15.26: beside the text being sent, the strip's ~40
-            # cells wrapped a one-row draft to two and back, and each height
-            # change moved the whole transcript twice. The copy waits for the
-            # text to leave; Send's label and tooltip carry the state.
-            reason = ""
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason
         self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
@@ -4056,6 +4047,12 @@ class ConsoleComposerBar(Horizontal):
             row_count = self._visible_draft_row_count(
                 draft, width, reserve_trailing_cell=self.has_focus_within
             )
+            shown = self._draft_geometry_signature
+            if shown is not None and self._shows_draft_being_sent():
+                # TASK-33620.15.26: the Send reason strip narrows the text a
+                # send is taking; grown to two rows and back, the composer
+                # moved the whole transcript twice each way. It keeps its rows.
+                row_count = min(row_count, shown[0])
             renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)
             self._apply_draft_height(row_count)

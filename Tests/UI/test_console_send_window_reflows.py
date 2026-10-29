@@ -22,10 +22,10 @@ to the provider call recorded with the regions it changed:
   reflows in all.
 
 Live, each such reflow and its paint is the window's longest UI-loop callback
-(TASK-33620.15.20). Now the reason strip's queue copy waits until the sent text
-leaves the composer, and on the acknowledged path the "Sending…" row stands in
-for the echo until the echo's turn writes its next row, so the echo and its
-placeholder land in one layout pass.
+(TASK-33620.15.20). Now the composer keeps its rows while it shows the text a
+send took (the strip still shows beside it), and on the acknowledged path the
+"Sending…" row stands in for the echo until the echo's turn writes its next
+row, so the echo and its placeholder land in one layout pass.
 """
 
 from __future__ import annotations
@@ -375,19 +375,12 @@ def _composer_findings(window: _Window, console, composer) -> list[str]:
             f"the composer changed height after Enter (the provider was called "
             f"after reflow {window.post}): {heights}"
         )
-    # The cause, independent of when the composer next re-wraps its draft
-    # (headless, the send can take the text before that): the strip laid out
-    # beside the text being sent.
-    beside = [
-        (index, reflow.strip_copy)
-        for index, reflow in enumerate(reflows)
-        if reflow.strip_shown and not reflow.draft_empty
-    ]
-    if beside:
-        findings.append(f"the reason strip was laid out beside the sent text: {beside}")
-    # Positive controls: the prompt fits one row at the idle width and wraps
-    # beside the reason strip, so a strip shown next to the sent text would
-    # have grown the composer; the strip did show once the draft was empty.
+    # Positive controls: the strip was laid out beside the text being sent
+    # (the condition that grew the composer on origin/dev), and the prompt
+    # fits one row at the idle width but wraps at the width the strip leaves.
+    assert [r for r in reflows if r.strip_shown and not r.draft_empty], (
+        "the reason strip never sat beside the sent text"
+    )
     idle_width = window.draft_width_at_enter - 2
     assert composer._visible_draft_row_count(PROMPT, idle_width) == 1
     beside_width = window.draft_width_beside_strip - 2
@@ -475,8 +468,9 @@ async def test_a_stock_later_send_keeps_the_composer_one_row_tall(
 ) -> None:
     """The live path: no composer height change, two transcript moves at most.
 
-    Red on origin/dev 38c9d2edcf: the composer read 1, 2, 2, 1, ... rows as the
-    reason strip narrowed the sent draft to two rows and the draft then cleared.
+    Red on origin/dev 38c9d2edcf in 3 of 3 runs: the composer read 1, 2, 2, 2,
+    2, 1, ... rows as the reason strip narrowed the sent draft to two rows and
+    the draft then cleared.
     """
     async with _stock_later_send(monkeypatch) as (window, console, composer, store):
         assert window.post, "no reflow was recorded between Enter and the provider call"
@@ -510,53 +504,50 @@ async def test_an_acknowledged_later_send_lands_its_echo_with_the_placeholder(
         assert findings == [], "\n".join(findings)
 
 
-async def test_the_queue_copy_waits_until_the_sent_text_leaves_the_composer() -> None:
-    """The rule on the composer alone: hidden only beside the text being sent.
+async def test_the_composer_keeps_its_rows_while_a_send_takes_its_text(
+    monkeypatch,
+) -> None:
+    """The rule on the composer alone (TASK-33620.15.26).
 
-    An edit makes the draft the user's again, a refused send gives it back,
-    and once the send takes the text the copy shows on the empty draft
-    (TASK-33620.15.26 AC#4). New API on this branch (``note_draft_sending``);
-    the mounted sends above are the base-build reds.
+    The draft's width is set directly (the standalone composer has no Console
+    row to narrow it): at the narrow width the text wraps to two rows. While
+    the composer shows the text a send took, unedited, it keeps the rows it
+    had; an edit or a refused send makes the draft the user's again, and the
+    empty draft after the send is one row. New API on this branch
+    (``note_draft_sending``); the mounted sends above are the base-build reds.
     """
     from Tests.UI.test_console_run_tick_layout_requests import _Host
-    from tldw_chatbook.Chat.console_display_state import (
-        QUEUE_REASON_PREPARING,
-        SEND_LABEL_PREPARING,
-    )
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
     composer = ConsoleComposerBar()
-    preparing = dict(
-        has_draft=True,
-        run_active=False,
-        can_save_chatbook=False,
-        send_blocked=True,
-        send_label=SEND_LABEL_PREPARING,
-        queue_blocked_reason=QUEUE_REASON_PREPARING,
-    )
+    width = {"cells": 80}
     async with _Host(composer).run_test(size=(160, 10)) as pilot:
-        strip = composer.query_one("#console-send-disabled-reason", Static)
+        monkeypatch.setattr(composer, "_draft_render_width", lambda: width["cells"])
 
-        async def sync(**changes) -> bool:
-            composer.sync_action_state(**{**preparing, **changes})
-            await pilot.pause()
-            return bool(strip.display) and str(strip.content) == QUEUE_REASON_PREPARING
+        def rows(cells: int) -> int:
+            width["cells"] = cells
+            composer._refresh_visible_draft()
+            return composer._draft_geometry_signature[0]
 
-        composer.load_draft(PROMPT)
+        text = "Growth check: in one short sentence, share a fact about lanterns."
+        composer.load_draft(text)
         await pilot.pause()
-        # Positive control: a draft no send has taken shows the copy.
-        assert await sync()
+        assert rows(80) == 1
+        # Positive control: a draft no send has taken wraps when narrowed.
+        assert rows(50) == 2
+        assert rows(80) == 1
         composer.note_draft_sending(composer.capture_draft_for_send())
-        assert not await sync()
-        composer.insert_text("!")
-        assert await sync(), "an edited draft is the user's again"
+        assert rows(50) == 1, "the text being sent grew the composer"
+        composer.insert_text(" Now.")
+        assert rows(50) == 2, "an edited draft is the user's again"
+        assert rows(80) == 1
         composer.note_draft_sending(composer.capture_draft_for_send())
-        assert not await sync()
-        composer.note_draft_sending(None)
-        await pilot.pause()
-        assert bool(strip.display), "a refused send's draft hid the copy"
+        assert rows(50) == 1
+        composer.note_draft_sending(None)  # refused: the draft is the user's
+        assert rows(50) == 2
+        assert rows(80) == 1
         stash = composer.capture_draft_for_send()
         composer.note_draft_sending(stash)
-        assert not await sync()
+        assert rows(50) == 1
         assert composer.commit_captured_draft(stash)
-        assert await sync(has_draft=False), "the empty draft lost its Send reason"
+        assert rows(50) == 1 and composer.draft_text() == ""
