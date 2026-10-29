@@ -831,8 +831,7 @@ class ConsoleComposerBar(Horizontal):
         #: Last rendered `#console-send-disabled-reason` copy, tracked so a
         #: reason change can re-window the draft at its new width.
         self._send_disabled_reason = ""
-        #: TASK-33620.15.26: the draft revision (generation, edit serial) an
-        #: acknowledged send is taking, while the composer still shows it.
+        #: TASK-33620.15.26: (generation, edit serial) a visible send took.
         self._sending_draft_revision: tuple[int, int] | None = None
         self._can_save_chatbook = False
         self._ephemeral = False
@@ -2430,24 +2429,24 @@ class ConsoleComposerBar(Horizontal):
         self._send_label = label
         self._send_blocked = True
         self._queue_blocked_reason = reason
-        self._sending_draft_revision = (
-            (self._draft_generation, self._user_edit_serial)
-            if self.draft_text()
-            else None
-        )
         self._sync_current_action_state()
 
-    def _shows_draft_being_sent(self) -> bool:
-        """Whether the draft shown is the one an acknowledged send is taking.
+    def note_draft_sending(self, stash: ConsoleDraftStash | None) -> None:
+        """Record the capture a visible send took; ``None`` once it is refused.
 
-        True from :meth:`show_send_acknowledged` until that draft leaves the
-        composer (the send's commit clears it) or is edited.
+        Args:
+            stash: The capture, or ``None`` when the draft is the user's again.
         """
-        return (
-            self._sending_draft_revision
-            == (self._draft_generation, self._user_edit_serial)
-            and bool(self.draft_text())
-        )
+        revision = None if stash is None else (stash.generation, stash.edit_serial)
+        if revision != self._sending_draft_revision:
+            self._sending_draft_revision = revision
+            if revision is None:
+                self._sync_current_action_state()
+
+    def _shows_draft_being_sent(self) -> bool:
+        """Whether the shown draft is, unedited, the one a visible send took."""
+        revision = (self._draft_generation, self._user_edit_serial)
+        return self._sending_draft_revision == revision and bool(self.draft_text())
 
     def sync_action_state(
         self,
@@ -2640,12 +2639,10 @@ class ConsoleComposerBar(Horizontal):
             send_label=normalized_send_label,
         )
         if reason == QUEUE_REASON_PREPARING and self._shows_draft_being_sent():
-            # TASK-33620.15.26: while the composer still shows the text being
-            # sent, the queue copy waits for that text to clear. Shown beside
-            # it, the strip took about 40 cells from the draft: a draft that
-            # fitted one row wrapped to two and back, and each height change
-            # moved the whole transcript twice. Send reads "Sending..." /
-            # "Preparing..." and its tooltip carries this reason meanwhile.
+            # TASK-33620.15.26: beside the text being sent, the strip's ~40
+            # cells wrapped a one-row draft to two and back, and each height
+            # change moved the whole transcript twice. The copy waits for the
+            # text to leave; Send's label and tooltip carry the state.
             reason = ""
         reason_changed = reason != self._send_disabled_reason
         self._send_disabled_reason = reason

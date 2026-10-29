@@ -610,6 +610,11 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
             markup=False,
         )
         return
+    # TASK-33620.15.26: record the captured draft before acknowledgement
+    # and received-intent admission can synchronize the composer to Preparing.
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        composer.note_draft_sending(request.stash)
     flight.running = request.stash
     flight.running_image = (
         screen._console_pending_image_attachment() if request.stash is None else None
