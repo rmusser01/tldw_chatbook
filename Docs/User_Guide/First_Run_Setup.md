@@ -335,10 +335,12 @@ for that turn, since you asked for the skill. The app's internal
 offered. A small local model whose context window cannot hold the light set
 (a server whose window the app has not read yet is planned as 4,096 tokens)
 gets a plain request with no tools and a one-line system prompt. With
-**Create note** off, the assistant has no other note-creating tool, even with
-Full agent tools on: the app's own MCP server's `create_note` is left out of
-the agent's tools, and likewise its character create and update tools while
-character tools are off.
+**Create note** off, the app's own MCP server's `create_note` is left out of
+the agent's tools too, even with Full agent tools on, and likewise its
+character create and update tools while character tools are off. One note
+tool stays outside these switches: when you let the assistant use your
+Library in a conversation, it gets `library_save_note`, which asks before it
+saves.
 
 The Search step has one control, "When you chat": **Search my Library only when
 I ask** (the default) or **Search my Library automatically**, the same setting
@@ -369,7 +371,12 @@ download now; it fetches its speech model the first time you dictate),
 **On this computer — Parakeet (633 MiB download)**, and, when an OpenAI key is
 set up, **Cloud — OpenAI Whisper (audio is sent to OpenAI)**. Cloud Whisper is
 used when you transcribe audio and video files and reuses your OpenAI provider
-key; live dictation in the Console stays on this computer. Under Parakeet the
+key — the key Console itself would use, so it is not offered when the OpenAI
+provider is set to use no key, or names a variable that isn't set; live
+dictation in the Console stays on this computer. If audio files already go to a
+Whisper server of your own, **No dictation for now** is chosen and says it
+keeps that server; choosing Cloud instead points it at OpenAI and clears that
+server's own key so it is never sent to OpenAI. Under Parakeet the
 step reads choice first, then action: a "Recommended:" card with the download
 size, a Language list, **Review and install…**, and an **Advanced** section
 with precision, "Use model from disk…" and the transcribe.cpp GGUF option.

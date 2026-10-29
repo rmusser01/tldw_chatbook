@@ -1365,39 +1365,6 @@ def is_valid_provider_api_key(value: object) -> bool:
     return resolve_provider_api_key(value) is not None
 
 
-def resolve_openai_provider_key(
-    openai_settings: object,
-    legacy_api_key: object,
-    environ: Mapping[str, str],
-) -> Optional[str]:
-    """The OpenAI provider key from raw config or the environment, in load order.
-
-    ``[api_settings.openai] api_key``, then the provider's ``api_key_env_var``
-    (default ``OPENAI_API_KEY``), then the legacy ``[API] openai_api_key``,
-    each screened by ``resolve_provider_api_key``. ``load_settings`` folds the
-    legacy key in itself; a reader of the raw TOML (``get_cli_setting``) must
-    apply it here. TASK-34100.13 review F6: setup's Speech step offered
-    Cloud Whisper on a legacy-only key that the transcription path never
-    read, so the two now share this one resolver.
-
-    Args:
-        openai_settings: The raw ``[api_settings.openai]`` table (any value).
-        legacy_api_key: The raw ``[API] openai_api_key`` value.
-        environ: The environment mapping.
-
-    Returns:
-        The key, or None when no usable key exists.
-    """
-    table = openai_settings if isinstance(openai_settings, Mapping) else {}
-    env_name = str(table.get("api_key_env_var") or "OPENAI_API_KEY")
-    return (
-        resolve_provider_api_key(table.get("api_key"))
-        or resolve_provider_api_key(environ.get(env_name))
-        or resolve_provider_api_key(environ.get("OPENAI_API_KEY"))
-        or resolve_provider_api_key(legacy_api_key)
-    )
-
-
 def resolve_tldw_api_auth_token(value: object) -> Optional[str]:
     """Return `value` stripped, or None if blank/placeholder/synthesized.
 

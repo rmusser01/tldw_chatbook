@@ -489,69 +489,42 @@ async def test_runtime_missing_copy_names_the_extras_package_with_a_copy_action(
     assert copied == [engines.PARAKEET_EXTRAS_PACKAGE]
 
 
-def _raw_settings(monkeypatch, *, openai=None, legacy_key=None) -> None:
-    """Stand in for get_cli_setting's raw-TOML reads (no load_settings fold)."""
+def _real_config(tmp_path, monkeypatch, toml_text: str, environ: dict) -> dict:
+    """Point the real loader at a scratch TOML (no stand-in for its reads)."""
+    from Tests.Backup_Recovery.config_test_support import install_config_source
 
-    def get_cli_setting(section, key=None, default=None):
-        if section == "api_settings.openai":
-            return dict(openai or {})
-        if (section, key) == ("API", "openai_api_key"):
-            return legacy_key if legacy_key is not None else default
-        return default if key is not None else key
+    for name in ("OPENAI_API_KEY", "MY_OPENAI"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environ.items():
+        monkeypatch.setenv(name, value)
+    config_path = tmp_path / "speech-cloud-config.toml"
+    config_path.write_text(toml_text, encoding="utf-8")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    fresh = install_config_source(monkeypatch)
+    fresh.load_cli_config_and_ensure_existence(force_reload=True)
+    return fresh.load_settings(force_reload=True)
 
-    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", get_cli_setting)
+
+_PROVIDER_KEY = '[api_settings.openai]\napi_key = "sk-provider-key"\n'
 
 
-def test_remote_whisper_reuses_the_openai_provider_key_only_for_openai(monkeypatch) -> None:
+def test_remote_whisper_reuses_the_openai_provider_key_only_for_openai(
+    tmp_path, monkeypatch
+) -> None:
     from tldw_chatbook.Local_Ingestion import transcription_service as ts
 
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    _raw_settings(monkeypatch, openai={"api_key": "sk-provider-key"})
+    _real_config(tmp_path, monkeypatch, _PROVIDER_KEY, {})
     assert ts._openai_key_for_endpoint(engines.OPENAI_TRANSCRIPTIONS_URL) == "sk-provider-key"
     assert ts._openai_key_for_endpoint("http://localhost:8000/v1/audio/transcriptions") == ""
 
 
-def test_remote_whisper_never_sends_the_key_over_plain_http(monkeypatch) -> None:
+def test_remote_whisper_never_sends_the_key_over_plain_http(tmp_path, monkeypatch) -> None:
     """Review F6 (TASK-34100.13): a hand-set http://api.openai.com endpoint got
     the bearer key in clear text; the host check did not require https."""
     from tldw_chatbook.Local_Ingestion import transcription_service as ts
 
-    _raw_settings(monkeypatch, openai={"api_key": "sk-provider-key"})
+    _real_config(tmp_path, monkeypatch, _PROVIDER_KEY, {})
     assert ts._openai_key_for_endpoint("http://api.openai.com/v1/audio/transcriptions") == ""
-
-
-def test_a_legacy_only_key_is_offered_and_used_alike(monkeypatch) -> None:
-    """Review F6 (TASK-34100.13): the step counted a legacy ``[API]
-    openai_api_key`` and offered Cloud, but transcription read only the raw
-    ``[api_settings.openai]`` table and the environment, so remote-whisper
-    sent no key (401). Readiness and spend now share one resolver."""
-    from tldw_chatbook.Local_Ingestion import transcription_service as ts
-
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    app_config = {"API": {"openai_api_key": "sk-legacy-only-key"}}
-    assert engines.openai_key_configured(app_config, {}) is True
-    _raw_settings(monkeypatch, legacy_key="sk-legacy-only-key")
-    assert ts._openai_key_for_endpoint(engines.OPENAI_TRANSCRIPTIONS_URL) == (
-        "sk-legacy-only-key"
-    )
-
-
-@pytest.mark.parametrize(
-    ("openai", "legacy", "environ", "expected"),
-    [
-        ({"api_key": "sk-table"}, "sk-legacy", {"OPENAI_API_KEY": "sk-env"}, "sk-table"),
-        ({}, "sk-legacy", {"OPENAI_API_KEY": "sk-env"}, "sk-env"),
-        ({"api_key_env_var": "MY_KEY"}, None, {"MY_KEY": "sk-mine"}, "sk-mine"),
-        ({"api_key": "<API_KEY_HERE>"}, "sk-legacy", {}, "sk-legacy"),
-        ({}, "<API_KEY_HERE>", {}, None),
-    ],
-)
-def test_one_resolver_orders_table_then_environment_then_legacy(
-    openai, legacy, environ, expected
-) -> None:
-    from tldw_chatbook.config import resolve_openai_provider_key
-
-    assert resolve_openai_provider_key(openai, legacy, environ) == expected
 
 
 # -- the Summary row reads what the engine choice wrote ---------------------------
@@ -573,7 +546,10 @@ def test_summary_names_cloud_whisper_after_the_cloud_choice() -> None:
             "transcription": {
                 "default_provider": "remote-whisper",
                 "default_model": "whisper-1",
-                "remote_whisper": {"enabled": True},
+                "remote_whisper": {
+                    "enabled": True,
+                    "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
+                },
             }
         }
     )
@@ -619,3 +595,218 @@ async def test_a_key_saved_on_connect_this_run_adds_the_cloud_row_on_show(monkey
                 break
         labels = _labels(step)
     assert "Cloud — OpenAI Whisper (audio is sent to OpenAI)" in labels
+
+
+# -- review v5r1 R1: a self-hosted Whisper server is not "Cloud — OpenAI" ------
+
+SELF_HOSTED = {
+    "default_provider": "remote-whisper",
+    "default_model": "large-v3",
+    "remote_whisper": {
+        "enabled": True,
+        "api_endpoint": "http://whisper.lan:9000/v1/audio/transcriptions",
+        "api_key": "selfhosted-secret",
+    },
+}
+
+
+def test_a_self_hosted_remote_whisper_is_not_the_cloud_choice() -> None:
+    """Review R1 (TASK-34100.13): any enabled remote-whisper counted as the
+    Cloud choice, so an untouched re-run's Next repointed a self-hosted
+    server at api.openai.com -- with that server's own key as the bearer."""
+    assert engines.saved_engine(SELF_HOSTED, FACTS) == engines.ENGINE_NONE
+    facts = engines.detect_engine_facts({"transcription": SELF_HOSTED}, environ={})
+    assert facts.kept_remote == "whisper.lan"
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_rerun_over_a_self_hosted_server_writes_nothing() -> None:
+    from dataclasses import replace
+
+    facts = replace(FACTS, kept_remote="whisper.lan")
+    wizard, step = _step(facts=facts, app_config={"transcription": SELF_HOSTED})
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        pressed = [
+            b.id for b in step.query("#setup-speech-engine RadioButton") if b.value
+        ]
+        detail = str(step.query_one("#setup-speech-engine-detail", Static).render())
+        ok, error = await step.commit()
+    assert pressed == ["setup-speech-engine-none"]
+    assert "whisper.lan" in detail and "Nothing is changed" in detail
+    assert (ok, error) == (True, "")
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_rerun_over_cloud_with_its_own_model_writes_nothing() -> None:
+    """Only a choice made this run writes [transcription] (AC#8): a saved
+    OpenAI endpoint with a model of the user's own is not reset to whisper-1
+    by a Next that never touched the step."""
+    transcription = {
+        "default_provider": "remote-whisper",
+        "default_model": "gpt-4o-transcribe",
+        "remote_whisper": {
+            "enabled": True,
+            "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
+        },
+    }
+    wizard, step = _step(app_config={"transcription": transcription})
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        pressed = [
+            b.id for b in step.query("#setup-speech-engine RadioButton") if b.value
+        ]
+        ok, _ = await step.commit()
+    assert pressed == ["setup-speech-engine-cloud"]
+    assert ok
+    wizard.commit_config.assert_not_awaited()
+
+
+def test_choosing_cloud_over_a_self_hosted_server_drops_that_servers_key() -> None:
+    """A key issued for the self-hosted server is never sent to OpenAI: the
+    Cloud choice blanks it (and an env-var name meant for that server) as it
+    repoints the endpoint."""
+    commit = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=SELF_HOSTED
+    )
+    assert commit["transcription.remote_whisper"] == {
+        "enabled": True,
+        "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
+        "model": engines.OPENAI_WHISPER_MODEL,
+        "api_key": "",
+    }
+    by_env = {
+        "default_provider": "faster-whisper",
+        "remote_whisper": {
+            "enabled": False,
+            "api_endpoint": "http://localhost:8000/v1/audio/transcriptions",
+            "api_key_env_var": "REMOTE_WHISPER_API_KEY",
+        },
+    }
+    remote = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=by_env
+    )["transcription.remote_whisper"]
+    assert remote["api_key_env_var"] == ""
+    assert "api_key" not in remote
+    # A key the user gave this same OpenAI endpoint stays theirs.
+    own_openai = {
+        "default_provider": "faster-whisper",
+        "remote_whisper": {
+            "enabled": False,
+            "api_endpoint": engines.OPENAI_TRANSCRIPTIONS_URL,
+            "api_key": "sk-their-own",
+        },
+    }
+    remote = engines.build_engine_commit(
+        engines.ENGINE_CLOUD, facts=FACTS, transcription=own_openai
+    )["transcription.remote_whisper"]
+    assert "api_key" not in remote and "api_key_env_var" not in remote
+
+
+def test_summary_names_openai_only_for_openais_endpoint() -> None:
+    row = _speech_row({"transcription": SELF_HOSTED})
+    assert row.state == wizard_state.ROW_CONFIGURED
+    assert row.detail == "Whisper server at whisper.lan (for audio and video files)"
+
+
+# -- review v5r1 R4: "Already available" keeps a model the user chose -----------
+
+
+def test_already_available_keeps_a_model_the_user_chose_for_that_engine() -> None:
+    facts = engines.EngineFacts(installed_engine="faster-whisper")
+    assert (
+        engines.build_engine_commit(
+            engines.ENGINE_INSTALLED,
+            facts=facts,
+            transcription={"default_provider": "faster-whisper", "default_model": "large-v3"},
+        )
+        == {}
+    )
+
+
+@pytest.mark.parametrize("model", ["base", "distil-large-v3", ""])
+def test_already_available_replaces_a_model_the_engine_cannot_load(model) -> None:
+    """parakeet-mlx asked for a Whisper id (the shipped template's ``base``,
+    or the older ``distil-large-v3``) 404s; that model is not a choice."""
+    facts = engines.EngineFacts(installed_engine="parakeet-mlx")
+    assert engines.build_engine_commit(
+        engines.ENGINE_INSTALLED,
+        facts=facts,
+        transcription={"default_provider": "parakeet-mlx", "default_model": model},
+    ) == {"transcription": {"default_model": "mlx-community/parakeet-tdt-0.6b-v2"}}
+
+
+# -- review v5r1 R2: Cloud follows the provider's own credential rule ------------
+
+
+@pytest.mark.parametrize(
+    ("openai_table", "environ", "expected"),
+    [
+        ({"credential_source": "none", "api_key": "sk-table-key"}, {"OPENAI_API_KEY": "sk-env"}, False),
+        ({"credential_source": "stored"}, {"OPENAI_API_KEY": "sk-env-key"}, False),
+        ({"api_key_env_var": "MY_OPENAI"}, {"OPENAI_API_KEY": "sk-env-key"}, False),
+        ({"api_key_env_var": "MY_OPENAI"}, {"MY_OPENAI": "sk-named-key"}, True),
+        ({"credential_source": "environment", "api_key": "sk-table-key"}, {}, False),
+        ({"api_key": "sk-table-key"}, {}, True),
+    ],
+)
+def test_cloud_is_offered_only_on_a_key_the_provider_resolves(
+    openai_table, environ, expected
+) -> None:
+    """Review R2 (TASK-34100.13): the F6 resolver ignored dev's ADR-012
+    ``credential_source`` and a named ``api_key_env_var``, so Cloud was
+    offered (and remote-whisper spent) a key the provider config excludes."""
+    app_config = {"api_settings": {"openai": openai_table}}
+    assert engines.openai_key_configured(app_config, environ) is expected
+
+
+_REAL_TOML_CASES = [
+    # Review F6: a legacy-only key is offered and sent alike.
+    ('[API]\nopenai_api_key = "sk-legacy-only-key"\n', {}, "sk-legacy-only-key"),
+    # The provider's own table outranks its environment variable.
+    (_PROVIDER_KEY, {"OPENAI_API_KEY": "sk-env-key"}, "sk-provider-key"),
+    ("", {"OPENAI_API_KEY": "sk-env-key"}, "sk-env-key"),
+    (
+        '[api_settings.openai]\napi_key = "<API_KEY_HERE>"\n'
+        '[API]\nopenai_api_key = "sk-legacy-only-key"\n',
+        {},
+        "sk-legacy-only-key",
+    ),
+    ('[API]\nopenai_api_key = "<API_KEY_HERE>"\n', {}, ""),
+    # Review R2: dev's ADR-012 credential_source and a named variable decide.
+    (
+        '[api_settings.openai]\ncredential_source = "none"\n'
+        '[API]\nopenai_api_key = "sk-legacy-only-key"\n',
+        {"OPENAI_API_KEY": "sk-env-key"},
+        "",
+    ),
+    (
+        '[api_settings.openai]\ncredential_source = "stored"\n',
+        {"OPENAI_API_KEY": "sk-env-key"},
+        "",
+    ),
+    (
+        '[api_settings.openai]\napi_key_env_var = "MY_OPENAI"\n',
+        {"OPENAI_API_KEY": "sk-env-key", "MY_OPENAI": "sk-named-key"},
+        "sk-named-key",
+    ),
+]
+
+
+@pytest.mark.parametrize(("toml_text", "environ", "expected"), _REAL_TOML_CASES)
+def test_readiness_and_spend_read_one_real_config_alike(
+    tmp_path, monkeypatch, toml_text, environ, expected
+) -> None:
+    """T-G13-6: both halves read the same real TOML through the real loader
+    (no stand-in for get_cli_setting): the Speech step's Cloud offer and the
+    key remote-whisper sends to api.openai.com agree."""
+    import os
+
+    from tldw_chatbook.Local_Ingestion import transcription_service as ts
+
+    settings = _real_config(tmp_path, monkeypatch, toml_text, environ)
+    offered = engines.openai_key_configured(settings, os.environ)
+    sent = ts._openai_key_for_endpoint(engines.OPENAI_TRANSCRIPTIONS_URL)
+    assert sent == expected
+    assert offered is bool(expected)
