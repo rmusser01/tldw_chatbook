@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -34,6 +36,9 @@ class ConsoleDispatchRecoveryPresentation:
     markup: bool = False
 
 
+DISPATCH_RECOVERY_BUSY_COPY = "Working… actions are disabled until it finishes."
+
+
 def derive_dispatch_recovery_presentation(
     recovery: ConsoleDispatchRecoveryState | None,
 ) -> ConsoleDispatchRecoveryPresentation:
@@ -48,7 +53,8 @@ def derive_dispatch_recovery_presentation(
     return ConsoleDispatchRecoveryPresentation(
         visible=True,
         visible_copy=recovery.visible_copy,
-        warning=recovery.warning,
+        # TASK-33621.6 AC#4: a claimed action says it is running.
+        warning=DISPATCH_RECOVERY_BUSY_COPY if recovery.in_flight else recovery.warning,
         actions=tuple(
             ConsoleDispatchRecoveryActionPresentation(
                 action_id=action.action_id.value,
@@ -169,6 +175,27 @@ class ConsoleDispatchRecoveryRegion(Widget):
             self.refresh(recompose=True, layout=True)
         return True
 
+    def _show_pending(self, action_id: str | None) -> None:
+        """Acknowledge a pressed action at once, until its outcome arrives.
+
+        TASK-33621.6 AC#4: Retry anyway left its row byte-identical for
+        seconds until the reply came. The buttons now disable and the warning
+        line says what is running; the model's own projection (in-flight
+        reason, or the settled owner) replaces this on its next sync.
+        """
+        with contextlib.suppress(NoMatches):
+            for action in self._presentation.actions:
+                self.query_one(
+                    f"#console-dispatch-recovery-{action.action_id}", Button
+                ).disabled = action_id is not None or not action.enabled
+            self.query_one("#console-dispatch-recovery-warning", Static).update(
+                self._presentation.warning
+                if action_id is None
+                else "Discarding…"
+                if action_id == "discard"
+                else "Retrying… actions are disabled until it finishes."
+            )
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Forward one enabled intent; repeated presses are ignored."""
 
@@ -194,11 +221,13 @@ class ConsoleDispatchRecoveryRegion(Widget):
         event.stop()
         if self._on_action is not None:
             token = self._pending_intent = object()
+            self._show_pending(action_id)
 
             def complete() -> None:
                 # A stale worker must not release a newer owner's/click's claim.
                 if self._pending_intent is token:
                     self._pending_intent = None
+                    self._show_pending(None)
 
             try:
                 self._on_action(
@@ -213,6 +242,7 @@ class ConsoleDispatchRecoveryRegion(Widget):
 
 
 __all__ = [
+    "DISPATCH_RECOVERY_BUSY_COPY",
     "ConsoleDispatchRecoveryActionPresentation",
     "ConsoleDispatchRecoveryPresentation",
     "ConsoleDispatchRecoveryRegion",

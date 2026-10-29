@@ -234,6 +234,12 @@ def blocked_turn_reason(controller: Any) -> str:
     preparation = getattr(controller, "trace_call_recovery_preparation", None)
     paused = preparation() if callable(preparation) else None
     if trace_call_recovery_state(paused) is None:
+        # TASK-33621.6 AC#4: an unresolved response recovery refuses the next
+        # send too; the composer, rail and Inspect said so, the header "Ready".
+        store = getattr(controller, "store", None)
+        blocks = getattr(store, "dispatch_recovery_blocks_submission", None)
+        if callable(blocks) and blocks(getattr(store, "active_session_id", None)):
+            return "recovery needed"
         return ""
     if paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL:
         outcome_for = getattr(controller, "preparation_outcome", None)
