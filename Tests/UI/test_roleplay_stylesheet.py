@@ -44,6 +44,7 @@ SHARED_CLAIMS = frozenset(
         "workbench-header-status",
         "-active",
         "option-list--option-highlighted",
+        "input--placeholder",
     }
 )
 _TOKEN = re.compile(r"[#.]([A-Za-z0-9_-]+)")
