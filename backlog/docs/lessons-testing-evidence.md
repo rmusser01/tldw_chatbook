@@ -21376,6 +21376,16 @@ journeys pass. The CI schedule itself was not captured; this control proves
 the helper defect, not a historical request/epoch cause.
 Evidence: [Buddy closeout receipt](../../Docs/Reviews/artifacts/buddy-closeout-20261011/verification.json).
 
+2026-10-28 recurrence, PR3291: the older Notes sync attention journey still
+waited for any folder before calling `next(VSync)` inside its status predicate.
+Required UI lane9 failed with `RuntimeError: coroutine raised StopIteration`.
+Reuse the existing settled-canvas live-button helper for exact `folder-1`, and
+let polling predicates retry when it is absent. Executing the old/new predicate
+ASTs against delayed folder snapshots reproduced both old held/healed failures;
+the fixed waits survive both and refuse a pruning canvas. All real sync Recovery,
+database and file-byte assertions remain for the Linux job; the Windows host
+does not support that POSIX writable fixture.
+
 ## A safe output wrapper cannot protect an earlier markup parse (PR #3040, TASK-1513)
 
 **Incident.** Post-merge review of f509ef52 found that the new markup guard

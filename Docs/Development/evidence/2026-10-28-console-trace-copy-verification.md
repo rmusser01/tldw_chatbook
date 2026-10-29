@@ -264,3 +264,24 @@ painted More-label regression all pass: **91 passed**, 34.80s. A bootstrap-enrol
 theme case runs before the unmarked inventory case, matching CI's initialized
 App-module setup; the initial inventory-first run stopped in fixture import.
 This is metadata closeout for the existing focus fix, with no product change.
+
+### Notes sync attention wait correction
+
+UI Fast Lane (9), job `123281089390`, passed 71 cases and failed the existing
+Notes sync attention journey: `_folder_row` raised `StopIteration` while a
+generic folder row existed but VSync had not arrived. This is the known
+independent-tree-slice readiness trap (TASK-34414/34789). Reused the existing
+settled-canvas `_live_button` helper to find exact `folder-1`, made the lookup
+optional during recomposition, and guarded both held/healed status predicates.
+Reads and presses capture that current row without an intervening await.
+Attention, list/editor, real Recovery, SQLite and exact file-byte assertions and
+the original deadline remain unchanged. Independent review found no weakening.
+
+A deterministic scratch probe executes the actual old/new wait predicate ASTs
+and existing live-row helper across partial snapshots: both old missing-row
+phases raise the CI's `RuntimeError: coroutine raised StopIteration`; both fixed
+phases wait for the exact row. A pruning-canvas control also shows the old
+premature match and the fixed wait for settled readiness. All three controls
+pass, as do Ruff/format and whitespace checks. Windows reports the POSIX fixture's
+`supports_writes()` as false, so the unchanged real sync/storage journey remains
+subject to its required Linux CI rather than a claimed local end-to-end pass.

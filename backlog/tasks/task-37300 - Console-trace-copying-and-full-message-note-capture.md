@@ -233,3 +233,14 @@ single obsolete row; no contrast exemptions or assertions were weakened.
 The 89-theme edge sweep, inventory consistency and actual painted-menu check
 pass together: **91 passed** in 34.80s, using CI-equivalent profile initialization
 order. The PR was disarmed/synchronized before this metadata-only update.
+
+UI Fast Lane (9) then exposed the pre-existing Notes sync attention test's
+generic-folder readiness race (71 other cases passed). Its VSync lookup could
+raise `StopIteration` during a partial tree snapshot. Reused the existing live,
+settled-canvas helper with exact folder identity and optional-safe held/healed
+wait predicates. All original status, Recovery, database, file-byte assertions
+and deadlines remain. The actual old/new predicates reproduce/reject the fault
+under deterministic delayed-row and pruning controls; static checks and an
+independent review pass. The real POSIX sync journey is verified by Linux CI;
+the Windows host correctly reports that writable fixture unsupported. No product
+behavior changed. Disarmed and synchronized the PR before this test-only fix.
