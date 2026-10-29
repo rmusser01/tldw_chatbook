@@ -338,6 +338,8 @@ class ConsoleReviewSelectionController:
         present_trajectory: Callable[..., None],
         notify: Callable[..., None],
         copy_to_clipboard: Callable[[str], None] | None = None,
+        clipboard_revision_accessor: Callable[[], int | None] | None = None,
+        selection_note_context_active: Callable[[], bool] | None = None,
         save_selection_note: Callable[[str, str], Awaitable[str | None]] | None = None,
         open_selection_note: Callable[[str], bool] | None = None,
         offer_selection_note_open: Callable[[str], Awaitable[None]] | None = None,
@@ -361,6 +363,8 @@ class ConsoleReviewSelectionController:
             present_trajectory: Present a completed trajectory launch.
             notify: Show a user-facing Console notification.
             copy_to_clipboard: Send the completed trace on the UI thread.
+            clipboard_revision_accessor: Latest app clipboard intent revision.
+            selection_note_context_active: Whether the source Console is foreground.
             save_selection_note: Persist the full selection through Notes authority.
             open_selection_note: Hand off the exact saved note to Library.
             offer_selection_note_open: Offer retry of a failed handoff without saving again.
@@ -381,6 +385,10 @@ class ConsoleReviewSelectionController:
         self._present_trajectory = present_trajectory
         self._notify = notify
         self._copy_to_clipboard = copy_to_clipboard
+        self._clipboard_revision_accessor = clipboard_revision_accessor
+        self._selection_note_context_active = selection_note_context_active or (
+            lambda: True
+        )
         self._trace_copy_serial = 0
         self._save_selection_note = save_selection_note
         self._open_selection_note = open_selection_note
@@ -433,6 +441,11 @@ class ConsoleReviewSelectionController:
         try:
             store = self._store_accessor()
             messages = tuple(store.read_only_messages_for_session(session_id))
+            clipboard_revision = (
+                self._clipboard_revision_accessor()
+                if self._clipboard_revision_accessor is not None
+                else None
+            )
             if source_message_ids is not None:
                 from ...Chat.console_chat_models import ConsoleMessageRole
 
@@ -460,13 +473,17 @@ class ConsoleReviewSelectionController:
             self._notify("The source chat is no longer available.", severity="warning")
             return
         self._run_worker(
-            self._copy_trace_snapshot(messages, title, message_id, serial),
+            self._copy_trace_snapshot(
+                messages, title, message_id, serial, clipboard_revision
+            ),
             group="console-trace-copy",
             exclusive=True,
             exit_on_error=False,
         )
 
-    async def _copy_trace_snapshot(self, messages, title, message_id, serial) -> None:
+    async def _copy_trace_snapshot(
+        self, messages, title, message_id, serial, clipboard_revision=None
+    ) -> None:
         """Format detached data off-thread and reject superseded publication."""
 
         def render():
@@ -484,6 +501,12 @@ class ConsoleReviewSelectionController:
         try:
             text = await asyncio.to_thread(render)
             if serial != self._trace_copy_serial:
+                return
+            if (
+                clipboard_revision is not None
+                and self._clipboard_revision_accessor is not None
+                and self._clipboard_revision_accessor() != clipboard_revision
+            ):
                 return
             if text is None:
                 self._notify(
@@ -707,6 +730,7 @@ class ConsoleReviewSelectionController:
             if (
                 cancelled
                 or self._store_accessor().active_session_id != source_session_id
+                or not self._selection_note_context_active()
             ):
                 self._notify(
                     f"Note saved ({escape_markup(note_id)}). Open it in Library > Notes."

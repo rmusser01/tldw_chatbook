@@ -3549,9 +3549,13 @@ class LibraryNotesController:
             note_id: Exact initial target, valid only while its route remains current.
         """
 
+        route_key = self._library_entry_route_key()
+
         def load_initial_note() -> None:
             if (
                 self.is_mounted
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_entry_route_key() == route_key
                 and self._selected_note_id == note_id
                 and self._library_notes_view == "editor"
                 and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE

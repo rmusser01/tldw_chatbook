@@ -2210,6 +2210,20 @@ class TldwCli(
         except Exception as e:
             logger.debug(f"Could not surface RAG indexing guidance in UI: {e}")
 
+    @property
+    def clipboard_revision(self) -> int:
+        """Return the revision of the latest in-app clipboard write intent."""
+        return getattr(self, "_clipboard_revision", 0)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy text and invalidate earlier asynchronous clipboard requests.
+
+        Args:
+            text: Text to send through the existing clipboard transport.
+        """
+        self._clipboard_revision = self.clipboard_revision + 1
+        super().copy_to_clipboard(text)
+
     def _init_worker_handlers(self) -> None:
         """Initialize the worker handler registry and register all handlers."""
         self.worker_handler_registry = WorkerHandlerRegistry(self)

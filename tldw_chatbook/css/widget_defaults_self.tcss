@@ -1462,6 +1462,8 @@ ConsoleMessageMoreMenu {
     overlay: screen;
     width: 24;
     height: auto;
+    max-height: 100%;
+    overflow-y: auto;
     border: round $primary;
     background: $surface;
     padding: 0 1;

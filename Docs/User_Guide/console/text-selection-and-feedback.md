@@ -96,7 +96,8 @@ bytes are excluded; attachment names remain readable.
 
 These actions impose no character cap. The notification reports the payload
 sent to the terminal, whose clipboard support may reject large OSC 52 requests.
-It cannot confirm clipboard delivery.
+It cannot confirm clipboard delivery. A later in-app Copy action takes priority
+over a trace that is still being formatted.
 
 ### Select full message
 
@@ -107,7 +108,10 @@ or choose either note action. A shortened selection preview shows the full
 character count and does not shorten the copied or saved content.
 
 This selects the message body. Use **Copy all** to include the response's
-thinking and tool activities.
+thinking and tool activities. Full-message capture preserves the body's source
+Markdown even when Markdown rendering is disabled; status labels, citations
+and attachment labels are excluded. Ordinary drag selection still copies the
+highlighted rendered text in that mode.
 
 ### Add to chat
 
@@ -146,7 +150,8 @@ messages too, with or without a run; saving is disabled in temporary chats.
 **Create Note** stays in Console. **Create+Go to Note** opens the exact created
 note in Library ▸ Notes. If opening fails, a saved-note receipt lets you retry
 without creating another note. If you switch chats while saving, the note keeps
-its original provenance and Console leaves your new context alone.
+its original provenance and Console leaves your new context alone. The same
+applies if you leave Console for another screen while the save is pending.
 
 The 4000-character limit still applies to **Add to chat**, side-chat prompts,
 and review feedback. It does not apply to copying or either note action.
@@ -268,8 +273,8 @@ Inside the menu itself:
   if streaming replaces the row you selected, the quote clamps to the last
   stable text rather than following the new content.
 - **Quotes are capped at 4000 characters.** Longer selections are truncated
-  with a marker for chat, side chat, notes, and feedback. **Copy selection**
-  copies the full highlighted text.
+  with a marker for chat, side chat, and feedback. Copying and both note
+  actions preserve the full selected text.
 - **Request changes / LGTM look broken with no run.** They're disabled on
   purpose — hover for the hint, or use **Comment**.
 - **Keyboard selection always starts at the text's beginning.** Use `o` to

@@ -2279,6 +2279,17 @@ class ConsoleMessageController:
         store = self._ensure_console_chat_store()
         source_session_id = store.active_session_id
 
+        def source_is_current() -> bool:
+            return (
+                store.active_session_id == source_session_id
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
+
+        async def offer_if_current() -> None:
+            if source_is_current():
+                await self._offer_captured_note_handoff(note_id)
+
         def completed(succeeded: bool) -> None:
             if succeeded:
                 return
@@ -2286,9 +2297,9 @@ class ConsoleMessageController:
                 f"Note saved ({escape_markup(note_id)}), but it could not be opened.",
                 severity="warning",
             )
-            if store.active_session_id == source_session_id:
+            if source_is_current():
                 self.run_worker(
-                    self._offer_captured_note_handoff(note_id),
+                    offer_if_current(),
                     group="console-selection-note-open",
                     exclusive=True,
                     exit_on_error=False,
@@ -2386,9 +2397,7 @@ class ConsoleMessageController:
         await self.push_screen(
             ConfirmationDialog(
                 title="Saved to Notes",
-                message=(
-                    "The note was saved in Library ▸ Notes."
-                ),
+                message="The note was saved in Library ▸ Notes.",
                 confirm_label="Open note",
                 cancel_label="Stay in Console",
             ),

@@ -147,21 +147,31 @@ async def test_failed_handoff_receipt_does_not_report_failed_creation():
 
 
 @pytest.mark.asyncio
-async def test_navigation_completion_failure_retries_only_the_saved_note():
+@pytest.mark.parametrize(
+    "context_change", ["none", "screen-before", "screen-after", "chat-after"]
+)
+async def test_navigation_completion_failure_retries_only_the_saved_note(
+    context_change,
+):
     from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
     from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 
     events, offered, jobs, notices = [], [], [], []
     store = SimpleNamespace(active_session_id="source")
+    source_screen = SimpleNamespace(is_mounted=True)
+    app = SimpleNamespace(
+        post_message=lambda event: events.append(event) or True,
+        notify=lambda message, **_kwargs: notices.append(message),
+        screen=source_screen,
+    )
+    source_screen.app = app
 
     async def offer(note_id):
         offered.append(note_id)
 
     host = SimpleNamespace(
-        app_instance=SimpleNamespace(
-            post_message=lambda event: events.append(event) or True,
-            notify=lambda message, **_kwargs: notices.append(message),
-        ),
+        app_instance=app,
+        _screen=source_screen,
         _ensure_console_chat_store=lambda: store,
         _offer_captured_note_handoff=offer,
         run_worker=lambda work, **_kwargs: jobs.append(asyncio.create_task(work)),
@@ -169,9 +179,15 @@ async def test_navigation_completion_failure_retries_only_the_saved_note():
     assert ConsoleMessageController.open_console_selection_note(host, "saved-note")
     assert events[0].screen_name == TAB_LIBRARY
     assert events[0].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "saved-note"}
+    if context_change == "screen-before":
+        app.screen = SimpleNamespace()
     events[0].report_completion(False)
+    if context_change == "screen-after":
+        app.screen = SimpleNamespace()
+    if context_change == "chat-after":
+        store.active_session_id = "other"
     await asyncio.gather(*jobs)
-    assert offered == ["saved-note"]
+    assert offered == (["saved-note"] if context_change == "none" else [])
     assert notices
 
 
@@ -202,6 +218,62 @@ async def test_tab_switch_during_save_keeps_source_provenance_and_does_not_navig
     assert "Source chat" in writes[0] and "Other chat" not in writes[0]
     assert opened == []
     assert any("saved-note" in notice for notice in notices)
+
+
+@pytest.mark.asyncio
+async def test_leaving_console_during_save_does_not_navigate_away_from_new_screen():
+    entered, release = asyncio.Event(), asyncio.Event()
+    current_context = [True]
+    opened = []
+
+    async def save(_title, _content):
+        entered.set()
+        await release.wait()
+        return "saved-note"
+
+    controller, jobs, _, notices = trace_controller(
+        NoteStore(),
+        save_selection_note=save,
+        open_selection_note=lambda note_id: opened.append(note_id) or True,
+    )
+    controller._selection_note_context_active = lambda: current_context[0]
+    controller.request_selection_note(
+        "selected", source_session_id="source", open_note=True
+    )
+    await entered.wait()
+    current_context[0] = (
+        False  # Settings is now foreground; source chat ID is unchanged.
+    )
+    release.set()
+    await asyncio.gather(*jobs)
+    assert opened == []
+    assert any("saved-note" in notice for notice in notices)
+
+
+def test_deferred_library_note_load_refuses_changed_navigation_context():
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    deferred, jobs = [], []
+    route = ["browse-notes"]
+    host = SimpleNamespace(
+        is_mounted=True,
+        _selected_note_id="note",
+        _library_notes_view="editor",
+        _library_notes_source="database",
+        _library_note_session=SimpleNamespace(snapshot=None),
+        _library_entry_route_key=lambda: tuple(route),
+        _library_selected_row_id="browse-notes",
+        call_after_refresh=deferred.append,
+        run_worker=lambda work, **_kwargs: jobs.append(work),
+        _refresh_library_note_detail=lambda *_args, **_kwargs: "load note",
+    )
+    LibraryNotesController.defer_initial_note_load(host, "note")
+    route[0] = "search"  # apply_navigation_context preserves the prior Notes fields.
+    host._library_selected_row_id = "search"
+    deferred.pop()()
+    assert jobs == []
 
 
 @pytest.mark.asyncio
@@ -319,6 +391,8 @@ async def test_create_and_go_arrives_at_the_created_note_in_real_library(tmp_pat
     )
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+    from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_NOTE_ID
+    from tldw_chatbook.Library.library_notes_session import PortLoadKind
     from tldw_chatbook.Widgets.Console.console_selection_menu import (
         ConsoleSelectionNoteRequested,
     )
@@ -326,6 +400,19 @@ async def test_create_and_go_arrives_at_the_created_note_in_real_library(tmp_pat
     class NoteNavigationHarness(ConsoleHarness):
         async def on_navigate_to_screen(self, event):
             library = LibraryScreen(self.app_instance)
+            # Qualify the saved record through the real Notes port before
+            # starting Library's separate three-second UI load deadline.
+            # This journey tests exact handoff/data, not cold-read latency.
+            port = library._library_note_session._port
+            load = port.load_note
+            target_id = event.screen_context[LIBRARY_NAV_CONTEXT_NOTE_ID]
+            saved = await load(target_id)
+            assert saved.kind is PortLoadKind.LOADED
+
+            async def load_saved_snapshot(note_id):
+                return saved if note_id == target_id else await load(note_id)
+
+            port.load_note = load_saved_snapshot
             library.apply_navigation_context(event.screen_context)
             await self.switch_screen(library)
             event.report_completion(True)
@@ -338,6 +425,7 @@ async def test_create_and_go_arrives_at_the_created_note_in_real_library(tmp_pat
     app.notes_scope_service = profile.scope_service
     app.notes_service = profile.interop
     host = NoteNavigationHarness(app)
+    host.app_config = app.app_config  # Library workers use the mounted app's config.
     app.post_message = host.post_message
     selected = "whole response café λ\n" * 600 + "FINAL SELECTED CHARACTERS  "
     try:
@@ -368,7 +456,18 @@ async def test_create_and_go_arrives_at_the_created_note_in_real_library(tmp_pat
                 if row["content"].startswith(selected)
             ]
             assert len(rows) == 1
-            await _armed_editor(host.screen, pilot, rows[0]["id"])
+            try:
+                await _armed_editor(host.screen, pilot, rows[0]["id"])
+            except AssertionError:
+                raise AssertionError(
+                    f"route={host.screen._library_entry_route_key()!r}; "
+                    f"load={host.screen._notes_state.load_state!r}; "
+                    f"message={host.screen._notes_state.load_message!r}; "
+                    f"armed={host.screen._notes_state.editor_armed}; "
+                    f"snapshot={host.screen._library_note_session.snapshot is not None}; "
+                    f"body_widgets={len(host.screen.query('#library-note-body'))}; "
+                    f"phase={host.screen._notes_state.work_session_phase}"
+                ) from None
             assert rows[0]["content"].startswith(
                 selected + f"\n\n— Console selection, {source_title}, "
             )

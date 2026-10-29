@@ -711,7 +711,13 @@ class ConsoleSelectionMenu(Vertical):
 
     @on(Button.Pressed, "#console-selection-create-note-go")
     def _create_note_go(self) -> None:
-        self._post(self.CreateNote(row_id=self._selection_row_id, session_id=self._source_session_id, open_note=True))
+        self._post(
+            self.CreateNote(
+                row_id=self._selection_row_id,
+                session_id=self._source_session_id,
+                open_note=True,
+            )
+        )
 
     @on(Button.Pressed, "#console-selection-request-changes")
     def _request_changes(self) -> None:

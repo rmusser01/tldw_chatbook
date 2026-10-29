@@ -10,7 +10,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.dom import NoScreen
-from textual.events import Click, Key
+from textual.events import Click, Key, Resize
 from textual.geometry import Offset
 from textual.widget import Widget
 from textual.widgets import Button
@@ -62,6 +62,8 @@ class ConsoleMessageMoreMenu(Vertical):
         overlay: screen;
         width: 24;
         height: auto;
+        max-height: 100%;
+        overflow-y: auto;
         border: round $primary;
         background: $surface;
         padding: 0 1;
@@ -99,6 +101,8 @@ class ConsoleMessageMoreMenu(Vertical):
         self._owner = owner
         self._anchor = (screen_x, screen_y)
         self._claimed = False
+        self._layout_refresh_signal = None
+        self._owner_bounds_size: tuple[int, int] | None = None
         _LIVE_MORE_MENUS.add(self)
 
     @property
@@ -136,9 +140,47 @@ class ConsoleMessageMoreMenu(Vertical):
 
     def on_mount(self) -> None:
         self.absolute_offset = Offset(*self._anchor)
+        self._layout_refresh_signal = self.screen.screen_layout_refresh_signal
+        self._layout_refresh_signal.subscribe(self, self._on_screen_layout_refresh)
+        self.call_after_refresh(self._clamp_within_owner)
         buttons = [button for button in self.query(Button) if not button.disabled]
         if buttons:
             buttons[0].focus(scroll_visible=False)
+
+    def on_resize(self, _event: Resize) -> None:
+        self.call_after_refresh(self._clamp_within_owner)
+
+    def _on_screen_layout_refresh(self, _screen: Screen) -> None:
+        self._clamp_within_owner()
+
+    def _clamp_within_owner(self) -> None:
+        """Keep the scrollable action viewport inside the transcript."""
+        if not self.is_mounted:
+            return
+        bounds = self._owner.region.intersection(self.screen.region)
+        if not bounds:
+            bounds = self.screen.region
+        bounds_size = (bounds.width, bounds.height)
+        if self._owner_bounds_size != bounds_size:
+            self._owner_bounds_size = bounds_size
+            self.styles.max_width = bounds.width
+            self.styles.max_height = bounds.height
+        width = min(self.outer_size.width, bounds.width)
+        height = min(self.outer_size.height, bounds.height)
+        offset = Offset(
+            max(bounds.x, min(self._anchor[0], bounds.right - width)),
+            max(bounds.y, min(self._anchor[1], bounds.bottom - height)),
+        )
+        if self.absolute_offset != offset:
+            self.absolute_offset = offset
+            self.refresh(layout=True)
+        focused = self.screen.focused
+        if (
+            isinstance(focused, Button)
+            and focused.parent is self
+            and not self.region.contains_region(focused.region)
+        ):
+            focused.scroll_visible(animate=False, immediate=True)
 
     @property
     def owner(self) -> Widget:
@@ -190,4 +232,7 @@ class ConsoleMessageMoreMenu(Vertical):
         event.stop()
 
     def _on_unmount(self) -> None:
+        if self._layout_refresh_signal is not None:
+            self._layout_refresh_signal.unsubscribe(self)
+            self._layout_refresh_signal = None
         _LIVE_MORE_MENUS.discard(self)

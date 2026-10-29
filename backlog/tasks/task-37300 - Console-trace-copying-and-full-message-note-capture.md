@@ -139,3 +139,36 @@ screen-size ratchets: **5 passed**. Four native terminal-driver journeys passed.
   closeout and repository DoD/integration checks are satisfied.
 
 Execution evidence and rulings: [verification record](../../Docs/Development/evidence/2026-10-28-console-trace-copy-verification.md).
+
+### Pre-PR review follow-up
+
+At the user's request, rebased cleanly onto `origin/dev` at
+`3efe8476cebf70eceafa605d1abed76a4aad4e0e` and completed a fresh read-only review.
+Five confirmed P2 issues were fixed with regression coverage:
+
+- Any later in-app clipboard write invalidates pending trace publication,
+  including an identical-text copy.
+- Full-message selection preserves source Markdown without row chrome in
+  plain rendering; ordinary drag selection keeps its original text domain.
+- Post-save navigation and failed-handoff receipts require foreground Console
+  ownership as well as the captured chat ID. Queued receipts recheck both at
+  execution, covering context changes after dispatch.
+- Deferred Library loading requires its complete captured route and Notes rail.
+- Response More actions remain visible/reachable through scrolling and resize
+  cycles in a short terminal.
+
+Additional core file: `app.py` owns the shared clipboard revision. The guide's
+remaining obsolete note-cap wording was corrected. The real-screen handoff
+test qualifies the real saved snapshot through Notes before Library's UI load
+deadline, isolating exact-note projection from cold-read latency; no production
+deadline changed. See the verification record for the limits and final checks.
+Existing ADRs remain sufficient. Formal CLI closeout stays pending; the user
+authorized publishing this feature branch as a PR against `dev`.
+
+Current-base verification: **175 focused checks passed**, followed by **25/25
+Notes tests** after the final queued-receipt guard; **7 controller-boundary
+checks passed**, with two documented baseline/environment failures excluded.
+Scoped Ruff reports zero new findings/changed-range drift across 22 Python
+files (188 inherited diagnostics). CSS reproduction, all active screen
+ratchets, task-ID uniqueness across 5908 files and diff whitespace checks pass.
+No full test sweep was requested or run.

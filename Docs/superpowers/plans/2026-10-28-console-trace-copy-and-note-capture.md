@@ -199,3 +199,29 @@ snapshots; OS clipboard acceptance and a full live-model/full-app startup walk
 are not claimed. Backlog CLI closeout remains pending because the CLI is absent.
 See the [verification record](../../Development/evidence/2026-10-28-console-trace-copy-verification.md)
 and TASK-37300 implementation notes for commands, evidence and rulings.
+
+## Pre-PR Review Follow-up
+
+The user requested a fresh review, fixes and a PR against `dev`. Rebased the
+feature cleanly onto `3efe8476cebf70eceafa605d1abed76a4aad4e0e` before review.
+The five confirmed review findings extend existing acceptance criteria:
+
+1. Invalidate pending trace publication after any later in-app clipboard write,
+   including identical clipboard text.
+2. Preserve canonical body Markdown in full-message selection with rendering
+   disabled, while retaining ordinary drag selection's rendered text domain.
+3. Require foreground Console ownership for post-save navigation and failed
+   handoff receipts, even when the source session ID is unchanged. Recheck
+   scheduled receipts at execution after possible screen/chat changes.
+4. Pin deferred Library note loading to its complete captured route and Notes
+   rail, so a Search route cannot start the former note load.
+5. Bound and scroll the response More menu, preserving keyboard/mouse reachability
+   across short-terminal shrink/grow cycles.
+
+Each finding has failing-then-passing regression evidence. The real-screen
+handoff test reads the actual saved note through the canonical Notes port before
+mounting Library, then reuses that typed snapshot during its UI load deadline.
+This isolates exact-note navigation/projection from cold SQLite/worker latency;
+it does not establish cold-start latency. The production deadline is unchanged.
+No ADR or dependency change is required. Publish the verified branch as a PR
+against `dev`; keep formal Backlog CLI closeout pending while its CLI is absent.

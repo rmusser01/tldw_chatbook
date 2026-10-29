@@ -66,6 +66,15 @@ async def _wait_for_menu(app, pilot, predicate):
     )
 
 
+async def _click_menu_action(pilot, selector):
+    def ready(menu):
+        button = menu.query_one(selector, Button)
+        return button.region.height > 0 and menu.region.contains_region(button.region)
+
+    await _wait_for_menu(pilot.app, pilot, ready)
+    assert await pilot.click(selector)
+
+
 class _MenuApp(ConsolidatedCSSApp):
     def __init__(self) -> None:
         super().__init__()
@@ -314,7 +323,7 @@ async def test_add_to_chat_quotes_selection_and_cleans_up():
     app = _TranscriptMenuApp()
     async with app.run_test() as pilot:
         await _finish_drag_selection(pilot)
-        await pilot.click("#console-selection-add-to-chat")
+        await _click_menu_action(pilot, "#console-selection-add-to-chat")
         await pilot.pause()
         assert len(app.quote_requests) == 1
         assert app.quote_requests[0].quote == "hello"
@@ -396,7 +405,7 @@ async def test_more_details_requests_side_chat_and_cleans_up():
     app = _TranscriptMenuApp()
     async with app.run_test() as pilot:
         await _finish_drag_selection(pilot)
-        await pilot.click("#console-selection-more-details")
+        await _click_menu_action(pilot, "#console-selection-more-details")
         await pilot.pause()
         assert len(app.side_chat_requests) == 1
         assert app.side_chat_requests[0].mode == "more-details"
@@ -411,7 +420,7 @@ async def test_ask_side_chat_requests_side_chat_and_cleans_up():
     app = _TranscriptMenuApp()
     async with app.run_test() as pilot:
         await _finish_drag_selection(pilot)
-        await pilot.click("#console-selection-ask-side-chat")
+        await _click_menu_action(pilot, "#console-selection-ask-side-chat")
         await pilot.pause()
         assert len(app.side_chat_requests) == 1
         assert app.side_chat_requests[0].mode == "ask"
@@ -426,7 +435,7 @@ async def test_side_chat_quote_is_capped_more_details():
     app = _LongTranscriptMenuApp()
     async with app.run_test(size=(120, 32)) as pilot:
         await _select_whole_row(pilot)
-        await pilot.click("#console-selection-more-details")
+        await _click_menu_action(pilot, "#console-selection-more-details")
         await pilot.pause()
         assert len(app.side_chat_requests) == 1
         expected = cap_quote(_LongTranscriptMenuApp._LONG_CONTENT)
@@ -439,7 +448,7 @@ async def test_side_chat_quote_is_capped_ask():
     app = _LongTranscriptMenuApp()
     async with app.run_test(size=(120, 32)) as pilot:
         await _select_whole_row(pilot)
-        await pilot.click("#console-selection-ask-side-chat")
+        await _click_menu_action(pilot, "#console-selection-ask-side-chat")
         await pilot.pause()
         assert len(app.side_chat_requests) == 1
         assert app.side_chat_requests[0].quote == cap_quote(

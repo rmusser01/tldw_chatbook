@@ -87,6 +87,8 @@ CONTROLLER_DEPENDENCIES = frozenset(
         "present_trajectory",
         "notify",
         "copy_to_clipboard",
+        "clipboard_revision_accessor",
+        "selection_note_context_active",
         "save_selection_note",
         "open_selection_note",
         "offer_selection_note_open",

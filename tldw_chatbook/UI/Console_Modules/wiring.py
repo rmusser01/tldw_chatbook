@@ -3037,6 +3037,11 @@ def build_console_controllers(
         present_trajectory=lambda launch: _present_console_trajectory(screen, launch),
         notify=lambda *args, **kwargs: screen.notify(*args, **kwargs),
         copy_to_clipboard=lambda text: screen.app.copy_to_clipboard(text),
+        clipboard_revision_accessor=lambda: getattr(
+            screen.app, "clipboard_revision", None
+        ),
+        selection_note_context_active=lambda: screen.is_mounted
+        and screen.app.screen is screen,
         save_selection_note=lambda title,
         content: screen._message.save_console_selection_note(title, content),
         open_selection_note=lambda note_id: screen._message.open_console_selection_note(

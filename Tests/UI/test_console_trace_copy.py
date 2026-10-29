@@ -197,6 +197,43 @@ async def test_late_copy_worker_cannot_overwrite_newer_request(monkeypatch):
     assert all(thread != threading.get_ident() for thread in worker_threads)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("later_text", ["new ordinary copy", "initial clipboard"])
+async def test_ordinary_copy_supersedes_pending_trace_even_for_same_text(
+    monkeypatch, later_text
+):
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook.Chat import console_response_trace
+
+    app = _build_test_app()
+    app.copy_to_clipboard("initial clipboard")
+    entered, release = threading.Event(), threading.Event()
+
+    def render(_turn):
+        entered.set()
+        assert release.wait(10)
+        return "old pending trace"
+
+    monkeypatch.setattr(
+        console_response_trace, "render_response_trace_markdown", render
+    )
+    controller, jobs, _, _ = trace_controller(
+        TraceStore(
+            [ConsoleChatMessage(ConsoleMessageRole.ASSISTANT, "answer", id="answer")]
+        ),
+        copy_to_clipboard=app.copy_to_clipboard,
+    )
+    controller._clipboard_revision_accessor = lambda: app.clipboard_revision
+    controller.request_trace_copy("source", message_id="answer")
+    assert await asyncio.to_thread(entered.wait, 5)
+    try:
+        app.copy_to_clipboard(later_text)
+    finally:
+        release.set()
+        await asyncio.gather(*jobs)
+    assert app.clipboard == later_text
+
+
 class TraceCopyApp(ConsolidatedCSSApp):
     def __init__(self, messages):
         super().__init__()
@@ -215,6 +252,83 @@ class TraceCopyApp(ConsolidatedCSSApp):
             message_id=event.message_id,
             source_message_ids=event.source_message_ids,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "role", [ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT]
+)
+@pytest.mark.parametrize("action", ["copy", "create-note", "create-note-go"])
+async def test_full_plain_message_preserves_source_without_rendered_chrome(
+    role, action
+):
+    from Tests.UI.test_console_selection_menu import _wait_for_menu
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        ConsoleTranscriptMessage,
+    )
+
+    body = "  # Heading\n**bold** and `code`\nλ last line  "
+    message = ConsoleChatMessage(
+        role,
+        body,
+        id="body",
+        status="stopped" if role == ConsoleMessageRole.ASSISTANT else "complete",
+        attachments=(
+            MessageAttachment(
+                data=None, mime_type="text/plain", display_name="file.txt", position=0
+            ),
+        ),
+    )
+
+    class SourceBodyApp(TraceCopyApp):
+        def __init__(self):
+            super().__init__([message])
+            self.app_config = {"chat_defaults": {"assistant_markdown": False}}
+            self.notes = []
+
+        def on_console_selection_note_requested(self, event):
+            self.notes.append((event.quote, event.open_note))
+
+    app = SourceBodyApp()
+    async with app.run_test(size=(100, 40)) as pilot:
+        _, row = await open_trace_menu(app, pilot, "body")
+        assert isinstance(row, ConsoleTranscriptMessage)
+        await _wait_for_menu(
+            app,
+            pilot,
+            lambda menu: menu.region.contains_region(
+                menu.query_one("#console-selection-full-message").region
+            )
+            and menu.query_one("#console-selection-full-message").region.height > 0,
+        )
+        assert await pilot.click("#console-selection-full-message")
+        await pilot.pause()
+        assert row.get_selection_text(capped=False) == body
+        await pilot.click(f"#console-selection-{action}")
+        await pilot.pause()
+        if action == "copy":
+            assert app.clipboard == body
+        else:
+            assert app.notes == [(body, action == "create-note-go")]
+
+
+def test_ordinary_drag_after_full_message_keeps_its_rendered_text_domain():
+    from tldw_chatbook.Widgets.Console.console_transcript import (
+        ConsoleTranscriptMessage,
+    )
+
+    body = "# Heading\n**bold** and `code`"
+    row = ConsoleTranscriptMessage(
+        ConsoleChatMessage(ConsoleMessageRole.ASSISTANT, body)
+    )
+    end = len(row.get_display_text())
+    row.set_selection_range(0, end, full_body=True)
+    assert row.get_selection_text(capped=False) == body
+    row.set_selection_range(0, end)
+    assert row.get_selection_text(capped=False) == row.get_display_text()
+    row.clear_selection()
+    assert row.get_selection_text(capped=False) == ""
 
 
 async def open_trace_menu(app, pilot, message_id):
@@ -376,3 +490,54 @@ async def test_expanded_selection_menu_scrolls_and_restores_after_resize():
         await pilot.wait_for_scheduled_animations()
         assert not menu.has_class("shrunk-for-short-owner")
         assert transcript.region.contains_region(app.focused.region)
+
+
+@pytest.mark.asyncio
+async def test_more_menu_keeps_last_action_reachable_in_short_terminal():
+    from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+        ConsoleMessageMoreMenu,
+    )
+
+    app = TraceCopyApp(
+        [ConsoleChatMessage(ConsoleMessageRole.ASSISTANT, "answer", id="answer")]
+    )
+    chosen = []
+    async with app.run_test(size=(80, 8)) as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+
+        async def choose(message_id, action_id, *, opener_button_id):
+            chosen.append((message_id, action_id))
+            await transcript.dismiss_message_more_menu()
+
+        transcript.choose_captured_message_more_action = choose
+        transcript.select_message("answer")
+        await pilot.pause()
+        # Activate the focused action's framework path independently of the
+        # primary action row's horizontal layout; this tests the popup viewport.
+        transcript.query_one("#console-message-action-more-answer").press()
+        await pilot.pause()
+        menu = app.query_one(ConsoleMessageMoreMenu)
+        last_action = menu.action_ids[-1]
+        assert len(menu.action_ids) >= 8
+        await pilot.resize_terminal(80, 8)
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert transcript.region.contains_region(menu.region)
+        await pilot.press("up")
+        await pilot.wait_for_scheduled_animations()
+        assert app.focused.id == f"console-message-more-{last_action}"
+        assert menu.region.contains_region(app.focused.region)
+        await pilot.resize_terminal(160, 40)
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert all(
+            menu.region.contains_region(button.region)
+            for button in menu.query("Button")
+        )
+        await pilot.resize_terminal(80, 8)
+        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
+        assert menu.region.contains_region(app.focused.region)
+        await pilot.click(app.focused)
+        await pilot.pause()
+        assert chosen == [("answer", last_action)]

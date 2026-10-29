@@ -620,6 +620,8 @@ transcript** (up to here as note), when those actions are available; the
 diagnostic **View original** also appears there when an original attempt can
 be shown safely. The menu is 24 cells wide and cuts a long label at about
 fifteen characters, which is why the last two read short.
+In a short terminal the menu scrolls; **↑/↓** bring the focused action into
+view, including after resizing.
 
 | Action | What it does | Where it appears |
 |---|---|---|

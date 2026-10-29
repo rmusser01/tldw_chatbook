@@ -28,25 +28,32 @@ The pure formatter reuses response grouping/activity ordering and reads only
 displayable thinking, retained tool arguments/results/diffs and message text.
 Private provider exchanges and binary attachments never enter the projection.
 A request serial prevents an older formatter worker from publishing over a
-newer copy request. Clipboard publication uses the existing UI-thread callback
-and OSC 52 transport; notification means sent, not terminal acceptance.
+newer trace request. The app's clipboard revision also invalidates pending
+traces when another in-app copy occurs, including a copy of identical text.
+Clipboard publication uses the existing UI-thread callback and OSC 52 transport;
+notification means sent, not terminal acceptance.
 Selection-menu requests also carry the captured user/assistant message path,
 so a stale menu cannot follow a same-session branch replacement. Raw command
 traces include their retained execution metadata and truncation status.
 
 `Select full message` uses the existing selection manager on a selectable user
-or assistant body. Copy and note consumers request uncapped text; prompt quote
+or assistant body. Plain-rendered rows keep an explicit full-body selection
+flag so full capture uses canonical source Markdown rather than row chrome;
+ordinary drag offsets remain in the rendered text domain. Copy and note
+consumers request uncapped text; prompt quote
 consumers retain `SELECTION_QUOTE_CAP`. Both note buttons use one source-pinned
 controller path, the existing temporary-chat gate, and a per-source in-flight
 guard. `ConsoleMessageController.save_console_selection_note` runs the canonical
 local `NotesScopeService` save with the configured Notes identity off-thread and
 retires operation-owned database handles. The returned note ID is the only
 navigation target; failed handoff recovery offers that saved note without
-repeating the write. Screen handlers remain thin delegates, and wiring supplies
-late-bound callbacks.
+repeating the write. Both automatic navigation and the retry receipt require
+the source session and the mounted Console screen to remain foreground.
+Queued retry receipts check again at execution, before presenting the dialog.
+Screen handlers remain thin delegates, and wiring supplies late-bound callbacks.
 On a fresh Library destination, the Notes controller starts a deep-linked
 note's existing load deadline after the first paint, provided its captured
-note ID, source and editor route are still current.
+note ID, source, selected Notes rail and complete entry route are still current.
 
 ## Streaming flow
 

@@ -1,7 +1,8 @@
 # Console trace copy verification — 2026-10-28
 
 Workspace: `C:/Users/GDesktop-1/Working/Github/tldw_tui`.
-Branch: `codex/console-trace-copy`; base: `e3d07afa65927b9d477fe9f13af619550da9e005`.
+Branch: `codex/console-trace-copy`; initial base: `e3d07afa65927b9d477fe9f13af619550da9e005`.
+Pre-PR review base: `3efe8476cebf70eceafa605d1abed76a4aad4e0e` (`origin/dev`).
 Task: [TASK-37300](../../../backlog/tasks/task-37300%20-%20Console-trace-copying-and-full-message-note-capture.md).
 
 Python 3.12.10, Textual 8.2.8, pytest 8.3.5. Targeted tests run with the
@@ -42,6 +43,82 @@ python -m pytest Tests/UI/test_console_trace_copy.py Tests/UI/test_console_selec
   zero format drift in changed ranges. Existing findings in legacy files remain.
 - CSS generator reproduction, Backlog ID uniqueness (5896 files), and
   `git diff --check` passed.
+
+## Pre-PR review and fixes
+
+The user subsequently requested review, fixes and a PR against `dev`. Rebased
+the three unpublished feature commits cleanly onto the review base above.
+One fresh read-only reviewer found five P2 defects; all were reproduced and fixed:
+
+- A pending trace could overwrite a later ordinary Copy, even if its text
+  matched the initial clipboard. The shared app clipboard revision now guards
+  publication, alongside the existing trace request serial.
+- Plain-rendered full-message selection used rendered text and included row
+  chrome. Explicit full-body selection now returns canonical source Markdown;
+  ordinary drag selection retains rendered offsets and resets that state.
+- Post-save Go and failed-handoff receipts could take over another screen
+  while the source chat ID remained unchanged. They now require the exact
+  mounted Console screen to remain foreground as well as the source session.
+  A further held-dispatch regression reproduced screen/chat changes between
+  receipt scheduling and execution; the queued receipt rechecks both identities
+  when it starts.
+- Deferred initial Library loading could follow a later Search route because
+  old Notes fields survive route changes. It now checks the captured complete
+  entry route and selected Notes rail before starting the load.
+- The response More menu's last action was outside an 80×8 viewport. It now
+  clamps to its owner's visible region and scrolls; keyboard focus remains
+  visible across grow/shrink cycles and the last action is clickable.
+
+Regression evidence includes held formatter/save workers, identical-text copy,
+both roles and all three full-body consumers with Markdown rendering disabled,
+ordinary-drag state reset, failed navigation after leaving Console, changed
+Library route, and measured More-menu geometry. The original menu reproduced
+the short-terminal defect with only its production Python/generated CSS restored
+temporarily; the current fixes were restored before the passing run.
+
+The real Console → Library handoff test uses the shared app configuration from
+the established Library harness. Under the loaded Windows test host, cold note
+reads intermittently exhausted Library's existing three-second UI deadline.
+The test now reads the actual saved record through the canonical Notes port
+before mounting Library, then reuses that typed snapshot for the same target.
+The production write/read, route, exact note ID, provenance and armed editor
+projection remain real; cold-read/startup latency is not established by this
+qualified journey. A separate real SQLite write test holds the write and checks
+the UI heartbeat and operation-owned connection cleanup. No production timeout,
+budget or behavior assertion was relaxed.
+
+Current-base verification:
+
+- **175 passed, 2 warnings** in 298.73 seconds for the focused feature run below,
+  including all screen-size ratchets. After the final receipt-dispatch guard,
+  all **25 Notes tests passed** in 101.72 seconds, including its two new race
+  cases and real Console → Library arrival. The new cases first failed on the
+  preceding implementation (2 failed / 2 passed).
+- **7 passed, 2 deselected** for controller-boundary architecture checks.
+  The excluded tests are the existing whole-tree constructor scanner blocked
+  by unrelated invalid-UTF-8 AppleDouble files and the obsolete frozen
+  ChatScreen projection assertion. Their assertions remain unchanged.
+- Scoped Ruff across 22 changed Python files: **zero new diagnostics**, zero
+  changed-range format drift and identical ASTs after formatting. There are
+  188 inherited diagnostics in those files; no whole-file lint pass is claimed.
+- CSS reproduction, `git diff --check` and task-ID uniqueness passed (5908 task
+  files). Five touched formatting ranges were normalized; no ratchet increased.
+- The expanded selection-menu test fixtures now wait for measured target-button
+  geometry before mouse activation, preserving the original payload/cleanup
+  assertions. This follows observed missed clicks during the focused run.
+
+```powershell
+python -m pytest Tests/UI/test_console_trace_copy.py Tests/UI/test_console_selection_notes.py Tests/Chat/test_console_response_trace.py Tests/Chat/test_console_turn_grouping.py Tests/UI/test_console_review_selection_controller.py Tests/UI/test_console_selection_menu.py Tests/UI/test_console_keyboard_selection.py Tests/Architecture/test_screen_size_ratchet.py -q
+python -m pytest Tests/UI/test_console_selection_notes.py -q
+python -m pytest Tests/Architecture/test_console_review_selection_controller_boundary.py -k 'not build_console_controllers_is_the_single_explicit_constructor and not chat_screen_remains_within_reviewed_projection_without_ratchet_raise' -q
+python tldw_chatbook/css/check_bundle_sync.py
+python scripts/check_backlog_task_ids.py
+git diff --check
+```
+
+Rebased feature commits: `8b7e18444d` (formatter), `681bc7becb` (UI/orchestration)
+and `49827ad111` (documentation). This section supersedes the earlier local-only
+delivery ruling; the user's requested next integration step is a PR against `dev`.
 
 ## Baseline and platform failures
 
