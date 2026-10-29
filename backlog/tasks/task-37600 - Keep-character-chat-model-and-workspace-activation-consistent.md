@@ -1,11 +1,11 @@
 ---
 id: TASK-37600
 title: Keep character chat model and workspace activation consistent
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-29 20:04'
-updated_date: '2026-10-29 20:26'
+updated_date: '2026-10-29 20:28'
 labels:
   - console
   - roleplay
@@ -38,4 +38,6 @@ ADR required: no. ADR path: backlog/decisions/095-conversation-owned-console-gen
 
 <!-- SECTION:NOTES:BEGIN -->
 Character launch now resolves the current worked chat provider/model through one shared helper and the existing model-default chain; untouched/no-source fallback remains intact. Personas handoffs and Console picker New Chat align the actual target workspace through the existing seam, preserving the selected chat after modal resume. Source prompts and prefills remain separate. Changed session.py, character.py, wiring.py, the existing session-controller test module, architecture notes, and reproducible QA evidence. Six regressions failed before the fix; 24 character-launch checks and the final 19-case targeted set passed. Real served-app UAT passed launch, model Apply, backdrop Cancel and an HTTP reply using the selected model and character system prompt, with source messages unchanged. Independent code/evidence review found no Critical or Important issue. Five adjacent prompt-seed tests retain pre-existing config-fixture admission errors; one representative reproduced in the pre-fix checkout. Ruff introduced zero diagnostics over baseline; task-ID guard and diff hygiene passed. ADR required: no; existing ADR-006/095 and TASK-15120 apply. Evidence and limitations: Docs/superpowers/qa/2026-10-29-character-chat-selection/qualification.md.
+
+Published PR #3306 against dev: https://github.com/rmusser01/tldw_chatbook/pull/3306. Final targeted run: 19 passed; actual-app UAT and independent evidence review complete. Disposable live services stopped after capture.
 <!-- SECTION:NOTES:END -->

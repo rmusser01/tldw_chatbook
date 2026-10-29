@@ -52,5 +52,7 @@ default_console_session_settings, and the existing workspace alignment callback.
 - [x] Run actual-app UAT with an isolated profile and local HTTP provider,
       exercising launch, Apply, Cancel, and reply; retain screenshots and receipts.
 - [x] Obtain an independent review and resolve actionable findings.
-- [ ] Update task, architecture notes and verification evidence; commit and open
+- [x] Update task, architecture notes and verification evidence; commit and open
       a PR against dev.
+
+Published: https://github.com/rmusser01/tldw_chatbook/pull/3306.
