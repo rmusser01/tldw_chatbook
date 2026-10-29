@@ -4591,6 +4591,21 @@ class ConsoleSessionController:
         )
         return settings
 
+    def _character_console_session_defaults(self) -> ConsoleSessionSettings:
+        """Resolve character defaults from the worked chat's current model pair."""
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            settings = store.session_settings(store.active_session_id)
+            if settings is not None and not store.is_pristine_session(
+                store.active_session_id, expected_settings=settings
+            ):
+                return default_console_session_settings(
+                    self._provider_readiness_app_config(),
+                    settings.provider,
+                    settings.model,
+                )
+        return self._default_console_session_settings()
+
     def _blank_console_session_settings(self) -> ConsoleSessionSettings:
         """Build config-owned defaults for an eligible blank Console chat."""
         app_config = getattr(self.app_instance, "app_config", {})
@@ -5206,7 +5221,7 @@ class ConsoleSessionController:
         )
 
         store = self._ensure_console_chat_store()
-        canonical_defaults = self._default_console_session_settings()
+        canonical_defaults = self._character_console_session_defaults()
         settings = replace(
             canonical_defaults,
             system_prompt=seed.system_prompt,

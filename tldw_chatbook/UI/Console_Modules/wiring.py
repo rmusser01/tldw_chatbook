@@ -1792,7 +1792,7 @@ def build_console_controllers(
             lambda: screen._provider_readiness_app_config()
         ),
         default_session_settings=(
-            lambda: screen._session._default_console_session_settings()
+            lambda: screen._session._character_console_session_defaults()
         ),
         set_active_workspace_for_session=(
             lambda session_id: screen._workspace._set_active_workspace_for_console_session(
