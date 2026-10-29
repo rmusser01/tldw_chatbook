@@ -40,7 +40,6 @@ def stub_characters(monkeypatch):
 _TOOLBAR_BUTTON_IDS = (
     "#personas-library-new",
     "#personas-library-import",
-    "#personas-library-duplicate",
     "#personas-library-sort",
     "#personas-library-tag",
 )

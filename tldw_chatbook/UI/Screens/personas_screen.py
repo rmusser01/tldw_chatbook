@@ -3647,7 +3647,6 @@ class PersonasScreen(BaseAppScreen):
             for selector in (
                 "#personas-library-new",
                 "#personas-library-import",
-                "#personas-library-duplicate",
                 "#personas-library-tag",
             ):
                 self.query_one(selector, Button).disabled = server_characters
@@ -3673,6 +3672,7 @@ class PersonasScreen(BaseAppScreen):
                 for selector in (
                     "#personas-export-json",
                     "#personas-export-png",
+                    "#personas-duplicate",
                     "#personas-delete",
                 ):
                     # F-037: server browsing force-disables these local-only
@@ -15209,7 +15209,17 @@ class PersonasScreen(BaseAppScreen):
         )
         validated.write_text(content, encoding="utf-8")
 
-    # ===== Delete =====
+    # ===== Duplicate and Delete =====
+
+    @on(Button.Pressed, "#personas-duplicate")
+    def _handle_duplicate_pressed(self, event: Button.Pressed) -> None:
+        """Copy the open item (frame slice B2b, spec 5.3, interim until B5b-2).
+
+        The Inspector's Duplicate replaces dev's library-toolbar button and
+        takes the same route: the ``"duplicate"`` action, guarded per kind.
+        """
+        event.stop()
+        self.post_message(PersonaActionRequested(action="duplicate"))
 
     @on(Button.Pressed, "#personas-delete")
     async def _handle_delete_pressed(self, event: Button.Pressed) -> None:

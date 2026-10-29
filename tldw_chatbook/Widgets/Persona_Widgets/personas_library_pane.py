@@ -723,10 +723,8 @@ class PersonasLibraryPane(Vertical):
         """Initialize control visibility for default characters mode.
 
         ``PersonasScreen.on_mount`` calls ``set_mode`` immediately after this
-        pane mounts, so this only sets the very first paint; Duplicate
-        applies to characters (task-443), so it starts visible here too.
+        pane mounts, so this only sets the very first paint.
         """
-        self.query_one("#personas-library-duplicate", Button).display = True
         self._sync_control_layout()
 
     def on_resize(self, event: Resize) -> None:
@@ -833,12 +831,6 @@ class PersonasLibraryPane(Vertical):
                 tooltip="Review and activate a portable .tldw-actor-pack archive.",
                 classes="console-action-secondary",
             )
-            yield Button(
-                "Duplicate",
-                id="personas-library-duplicate",
-                tooltip="Duplicate the selected item.",
-                classes="console-action-secondary",
-            )
         with Horizontal(id="personas-library-filterbar", classes="ds-toolbar"):
             yield Button(
                 "Sort: Name",
@@ -886,8 +878,9 @@ class PersonasLibraryPane(Vertical):
     def set_mode(self, mode: str) -> None:
         """Gate the library toolbar's buttons for the active workbench mode.
 
-        Import and Duplicate render for characters/dictionaries/lore (with a
-        mode-appropriate Import tooltip); personas mode hides both (task-443).
+        Import renders for characters/dictionaries/lore (with a
+        mode-appropriate Import tooltip); personas mode hides it (task-443).
+        Duplicate is the Inspector's (frame slice B2b, spec 5.3).
         Marks are kept per kind for the visit (spec R16): a kind switch shows
         that kind's marks and never drops another kind's.
 
@@ -906,11 +899,6 @@ class PersonasLibraryPane(Vertical):
             import_button.tooltip = (
                 "Import a character card or create a character from a Buddy archive."
             )
-        self.query_one("#personas-library-duplicate", Button).display = mode in (
-            "characters",
-            "dictionaries",
-            "lore",
-        )
         self.query_one("#personas-library-new-actor-pack", Button).display = mode in (
             "characters",
             "personas",
@@ -1272,11 +1260,6 @@ class PersonasLibraryPane(Vertical):
     def _import_actor_pack_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(ActorPackImportRequested())
-
-    @on(Button.Pressed, "#personas-library-duplicate")
-    def _duplicate_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(PersonaActionRequested(action="duplicate"))
 
     @on(Button.Pressed, "#personas-library-sort")
     def _sort_pressed(self, event: Button.Pressed) -> None:
