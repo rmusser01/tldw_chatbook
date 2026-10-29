@@ -632,6 +632,26 @@
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
+/* TASK-34000.29 (review R0, I-2): Delete forever shows on the focused row
+   only -- exactly where `x` is live. On every row it cut each journal title
+   at 120x36 to "Daily log 2026-…", so the list could not tell its notes
+   apart; hidden, it takes no width and every other row keeps its title. The
+   row carries a :focus-within rule of its own because Textual restyles a
+   subtree on focus only from the outermost ancestor that has one (the
+   `#settings-model-row` precedent in screen_agentic_settings.tcss). */
+.library-notes-trash-row,
+.library-notes-trash-row:focus-within {
+    height: auto;
+}
+
+.library-notes-trash-delete {
+    display: none;
+}
+
+.library-notes-trash-row:focus-within > .library-notes-trash-delete {
+    display: block;
+}
+
 /* task-32123: the receipt's copy owns its own row above the two recovery
    actions, so a title too long for the pane ends in an ellipsis instead of
    pushing Undo off the edge. */
