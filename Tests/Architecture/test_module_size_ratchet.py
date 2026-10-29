@@ -603,7 +603,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29, TASK-33621.5/.6 (same owner rule): 7,000 -> 7,010 (+10).
     # Cancel on a trace card returns the draft; the card gets the
     # provider-contact record.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6990,
+    # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 6990 -> 7000.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7000,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     "tldw_chatbook/Chat/console_runtime.py": 6686,
