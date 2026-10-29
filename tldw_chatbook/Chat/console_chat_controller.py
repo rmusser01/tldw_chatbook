@@ -369,6 +369,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
+    TraceReservationUnconfirmed,
 )
 from tldw_chatbook.Chat.library_preparation import LibraryPreparationContribution
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
@@ -12221,7 +12222,18 @@ class ConsoleChatController:
                 # gateway recovery independently checks the newly prepared bytes.
                 # An explicit Capture-Off action uses this same ownership proof,
                 # but never re-admits or changes the abandoned trace reservation.
-            except TraceCallPersistenceError:
+            except TraceCallPersistenceError as exc:
+                if type(exc) is TraceReservationUnconfirmed:
+                    # TASK-33621.6: the failed call never went out; only its
+                    # reservation is unknown. Back to the card, not a false
+                    # unknown delivery.
+                    from .console_trace_call_recovery import (
+                        repause_unconfirmed_trace_call,
+                    )
+
+                    repaused = repause_unconfirmed_trace_call(self, preparation_id)
+                    if repaused is not None:
+                        return repaused
                 visible_copy = (
                     "Delivery status is unknown. Use Retry anyway or Discard."
                 )

@@ -54,3 +54,15 @@ class TraceReservationRefused(ValueError):
 
     def __init__(self, code: str) -> None:
         super().__init__(code)
+
+
+class TraceReservationUnconfirmed(TraceCallPersistenceError):
+    """Capture On cannot retry a call whose reservation outcome is unknown.
+
+    TASK-33621.6: the call never entered the provider adapter, so this is
+    not an unknown delivery, but nothing proves no reservation exists. Only
+    an explicit Capture Off send (or Cancel) may continue.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(reservation_status="unknown")
