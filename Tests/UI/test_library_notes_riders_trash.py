@@ -1284,6 +1284,9 @@ def _purge_press_fake(*, fenced: bool = False, view: str = "trash"):
     fake._confirm_library_notes_trash_delete = MethodType(
         LibraryNotesController._confirm_library_notes_trash_delete, fake
     )
+    fake._cancel_library_notes_trash_delete = MethodType(
+        LibraryNotesController._cancel_library_notes_trash_delete, fake
+    )
     return fake, pushed, workers, notices
 
 
@@ -1323,6 +1326,10 @@ def test_delete_forever_asks_first_and_names_the_note() -> None:
     answer(False)  # Cancel or Escape
     assert workers == []
     assert fake._library_notes_mutation_in_flight is False
+    # The dialog's push withdrew every owed landing; the cancel owes focus
+    # back to the row ``x`` was pressed on, so the resume's reload that
+    # recomposes the list cannot fall back to the first row.
+    assert fake._trash_focus_role == "trash-restore:3"
 
     answer(True)
     ((code, arguments, options),) = workers

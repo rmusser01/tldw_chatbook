@@ -7993,9 +7993,24 @@ class LibraryNotesController:
             lambda confirmed: (
                 self._confirm_library_notes_trash_delete(note_id, title, version, index)
                 if confirmed
-                else None
+                else self._cancel_library_notes_trash_delete(index)
             ),
         )
+
+    def _cancel_library_notes_trash_delete(self, index: str) -> None:
+        """Cancel or Escape: nothing written, focus owed back to the row.
+
+        The dialog's push withdrew every owed landing (suspend is a real-input
+        site), and its close resumes the screen into a visit reload whose
+        re-read recomposes the list; a capture taken while that recompose
+        has focus parked on a pane grip falls back to the owed role, which
+        was empty -- the first row. Owing the row the user pressed ``x`` on
+        keeps them there.
+        """
+        if self._library_notes_view != "trash":
+            return
+        self._trash_focus_role = f"trash-restore:{index}"
+        self._trash_landing_settling = ""
 
     def _confirm_library_notes_trash_delete(
         self, note_id: str, title: str, version: int, index: str
