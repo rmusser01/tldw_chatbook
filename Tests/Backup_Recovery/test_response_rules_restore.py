@@ -371,32 +371,47 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
     @contextmanager
     def checked_schema_access(connection, schema, restrictions=None):
         migrating = (
-            restrictions is not None and restrictions.portrait_migration is not None
+            restrictions is not None
+            and restrictions.migrating
+            and restrictions.migration_owner == owner.owner_id
         )
-        with schema_access(connection, schema, restrictions):
-            if migrating:
-                assert restrictions.migration_owner == owner.owner_id
-                assert restrictions.migrating
-                assert connection.execute("PRAGMA trusted_schema").fetchone() == (1,)
-                assert connection.execute(
-                    "SELECT canvas_revision_payload_valid(?,?,?)",
-                    (b"", hashlib.sha256(b"").hexdigest(), 0),
-                ).fetchone() == (1,)
-                with pytest.raises(sqlite3.DatabaseError):
-                    connection.execute("CREATE TABLE unrelated_migration(value TEXT)")
-                migration_scopes.add(restrictions.portrait_migration)
-            yield
-        if migrating:
-            assert not restrictions.canvas_schema
-            assert not restrictions.changing_schema_trust
-            if not restrictions.expired():
-                assert connection.execute("PRAGMA trusted_schema").fetchone() == (0,)
-                with pytest.raises(sqlite3.DatabaseError):
-                    connection.execute("PRAGMA trusted_schema=ON")
-                with pytest.raises(sqlite3.DatabaseError):
-                    connection.execute(
-                        "SELECT canvas_revision_payload_valid(NULL,NULL,NULL)"
+        try:
+            with schema_access(connection, schema, restrictions):
+                if migrating:
+                    assert restrictions.migration_owner == owner.owner_id
+                    assert restrictions.migrating
+                    assert connection.execute("PRAGMA trusted_schema").fetchone() == (
+                        1,
                     )
+                    assert connection.execute(
+                        "SELECT canvas_revision_payload_valid(?,?,?)",
+                        (b"", hashlib.sha256(b"").hexdigest(), 0),
+                    ).fetchone() == (1,)
+                    with pytest.raises(sqlite3.DatabaseError):
+                        connection.execute(
+                            "CREATE TABLE unrelated_migration(value TEXT)"
+                        )
+                    migration_scopes.add(
+                        connection.execute(
+                            "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+                        ).fetchone()[0]
+                    )
+                yield
+        finally:
+            if migrating:
+                assert not connection.getconfig(sqlite3.SQLITE_DBCONFIG_TRUSTED_SCHEMA)
+                assert not restrictions.canvas_schema
+                assert not restrictions.changing_schema_trust
+                if not restrictions.expired():
+                    assert connection.execute("PRAGMA trusted_schema").fetchone() == (
+                        0,
+                    )
+                    with pytest.raises(sqlite3.DatabaseError):
+                        connection.execute("PRAGMA trusted_schema=ON")
+                    with pytest.raises(sqlite3.DatabaseError):
+                        connection.execute(
+                            "SELECT canvas_revision_payload_valid(NULL,NULL,NULL)"
+                        )
 
     monkeypatch.setattr(validation, "_canvas_schema_access", checked_schema_access)
     before = path.read_bytes()
@@ -415,7 +430,7 @@ def test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant(
         assert path.read_bytes() == before
         return
     assert issues == ()
-    assert migration_scopes == ({82, 83} if version <= 82 else {83})
+    assert migration_scopes == set(range(version, current_version))
     with closing(sqlite3.connect(path)) as connection:
         catalog = tuple(
             r[0]
