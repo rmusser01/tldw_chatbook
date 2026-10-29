@@ -123,3 +123,36 @@ async def test_a_saved_gate_also_updates_the_apps_config(monkeypatch):
         await workbench._save_tool_gate("tools", "read_file_enabled", False)
         assert app.app_config["tools"]["read_file_enabled"] is True
         assert notes == ["Failed to save read_file_enabled."]
+
+
+@pytest.mark.asyncio
+async def test_the_canvas_switch_says_plain_chat_needs_full_agent_tools():
+    """TASK-34100.5.3 pre-merge review: Settings ▸ Privacy & Security's
+    "Enable Canvas tools, actions, and browser delivery" reads as if on were
+    enough, but plain chat's light tool surface carries no Canvas tools. Its
+    help text says so.
+
+    Here rather than in test_settings_canvas.py, whose tests build a
+    per-test sandboxed profile that this environment refuses
+    (RecoveryRequired: raw_source_selection_changed, all five, before this
+    change); this module keeps the bootstrap profile."""
+    from textual.widgets import Checkbox
+
+    from Tests.UI.test_destination_shells import _active_destination_screen
+    from Tests.UI.test_screen_navigation import _build_test_app
+    from Tests.UI.test_settings_category_sweep import _click_settings_category
+    from Tests.UI.test_settings_configuration_hub import (
+        StyledSettingsDestinationHarness,
+    )
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(120, 40)) as pilot:
+        await _click_settings_category(pilot, SettingsCategoryId.PRIVACY_SECURITY.value)
+        screen = _active_destination_screen(pilot.app)
+        switch = screen.query_one("#settings-canvas-enabled", Checkbox)
+        tooltip = str(switch.tooltip)
+
+    assert "Global kill switch." in tooltip, tooltip
+    assert "plain chat" in tooltip and "Full agent tools" in tooltip, tooltip
