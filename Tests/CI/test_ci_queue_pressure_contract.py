@@ -629,6 +629,10 @@ ADMISSION_2_TARGETS = (
     # Environment / Change Review accessor answer from one helper, as str
     # (the mounted Console; bootstrap_profile, two tests).
     "Tests/UI/test_console_session_admitted_roots.py",
+    # TASK-33620.15.1.4: a rail's edge focus cue restyles only the rail and its
+    # own control, never the rail's subtree (the mounted Console;
+    # bootstrap_profile, two tests, ~18 s).
+    "Tests/UI/test_console_edge_focus_restyle_scope.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

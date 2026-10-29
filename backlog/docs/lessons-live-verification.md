@@ -45,6 +45,44 @@ the provider requests (a probe `post` record, or the timing relay's log)
 against the Enters, and treat a mismatch as a broken round. Leave a pause after
 Enter unless typing during the send is what you are measuring.
 
+## A per-round count of long callbacks is mostly boot: count per window around the trigger (TASK-33620.15.1.4, 2026-10-27)
+
+**Incident.** TASK-33620.15.1.4 was filed from live rounds that "still
+logged 11-14 UI-loop callbacks of 100 ms or more per round (up to 666 ms)"
+at Inspect-rail open and run completion, described as MessagePump and
+run_app tasks. Re-measured on origin/dev 3be493413a with the same set-up
+(235x52, haiku, the rail opened mid-reply, four sends per launch, load
+5-8), each launch had 12-13 such callbacks, and 7-10 of them ran before the
+first send: the Console's compose (run_app, 575-705 ms), the ChatScreen and
+composer mounts (MessagePump, 109-370 ms) and deferred start-up work. Only
+1-3 per launch fell within a second of a rail open or 3 s of a completion,
+and those were Textual screen-update timers with a generation-2 pass
+inside, plus the edge focus cue's restyle. The task's one lead, the Next
+Send preview building the turn configuration twice, was not on the
+rail-open path at all: that factory belongs to the Conversation Inspector
+modal (cost chip, Ctrl+Shift+P).
+
+**What to do.** Have the probe record the trigger itself (the key event, a
+run-completion hook) and count long callbacks in a window around each one,
+with boot reported on its own line. Before following a lead, find its
+callers.
+
+## A full shared disk stops every tool call, and the apps you launched keep running (TASK-33620.15.1.4, 2026-10-27)
+
+**Incident.** Mid-round, the host's data volume reached 197 MB free (other
+sessions' 431 worktrees, about 1.2 GB each). Every Bash call then failed
+before it ran (ENOSPC on the harness's own output file), the round's driver
+died on a screenshot write, and its launched app kept running in tmux with
+nobody driving it. Only the Monitor tool still ran commands, which was
+enough to kill the app and measure the disk.
+
+**What to do.** Check `df -m /System/Volumes/Data` before a live round. A
+live arm needs only the package: `git archive <rev> tldw_chatbook | tar -x`
+into a scratch directory under `.worktrees/` is 104 MB against 1.2 GB for a
+worktree, and `launch.sh` runs it the same way (`APP_WT=<dir>`). Precompile
+it (`python -m compileall`, which imports nothing) so its first launch does
+not pay the compile that the other arm's cache already holds.
+
 ## On a quiet host, 4 ms stack samples cannot rank the parts of a 20 ms callback: time the suspects (TASK-33620.15.8, 2026-10-23)
 
 **Incident.** TASK-33620.15.8 was filed from samples taken at load averages of
