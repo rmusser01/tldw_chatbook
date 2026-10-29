@@ -52,6 +52,12 @@ are measuring is on top: look at the PNG, or grep the `.txt` for a dialog title.
 Dismiss first-run and catalog dialogs after the app renders, then capture. A uniformly
 low ratio across unrelated widgets points at a backdrop, not at your change.
 
+## A live Compact now on a short chat fails before it tests anything (TASK-33621.29, 2026-10-29)
+
+**Incident.** Three live rounds checked captured sends after Compact now. The second used five "Reply with exactly: N" exchanges and the default Summary response max (1024). Compact now answered "Compaction failed and nothing changed: no summary of the older turns would both fit under the chat's target size and make it smaller", so the round never reached the send it existed to check; pressing the button again gave the same message. The third round got the same message after lowering Summary response max to 120. It succeeded only after two ~150-word exchanges raised the tab's "Next request" to 473 tokens: "Conversation memory updated", 473 → 338 tokens.
+
+**What to do.** Before a live compaction check, give the chat more older-turn text than a summary can be. Set Chat settings ▸ Context and memory ▸ Summary response max to about 120 and send a couple of long replies first; a few hundred "Next request" tokens was enough. That failure message means the fixture is too small. It says nothing about the code under test.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
