@@ -589,6 +589,9 @@ _BUDGETS: dict[str, int] = {
     # The composer records the draft a visible send took
     # (`note_draft_sending`) and keeps its rows while it still shows that
     # text, so a one-row draft no longer wraps to two and back mid-send.
+    # 2026-10-29, TASK-33620.15.26 review fix (same owner decision): 7068 ->
+    # 7080 (+12). The kept rows apply only while Send refuses for a turn
+    # being prepared, so a refused send's draft re-wraps like any other.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
