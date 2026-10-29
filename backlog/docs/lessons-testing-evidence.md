@@ -129,6 +129,25 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## A Tests/UI file that dies locally on RecoveryRequired can still run (TASK-33622.1, 2026-10-29)
+
+**Incident.** The composer files this task changed failed at setup on this machine
+with `RecoveryRequired: raw_source_selection_changed`: keymap 15 of 16, caret_nav 14
+of 18, undo 19 of 62, internals_decomposition 130 of 142. Only files marked
+`bootstrap_profile` ran, so the edited Enter/token assertions in the rest could not be
+checked at all. A six-line collection hook under `Tests/` that adds the
+`bootstrap_profile` marker to every item, loaded with `-p`, made them run: caret_nav
+18/18, undo 62/62, keymap 15/16, with the same reds as a detached origin/dev worktree
+by test id. It also caught real breakage the copy edits had missed: a click test whose
+caret now lands on the token, and confirm assertions that broke only because the new
+copy soft-wraps.
+
+**What to do.** When a file you touched dies at setup locally, force the marker with a
+throwaway hook (delete it before committing) and compare reds with origin/dev run the
+same way. Expect the setup-modal and caret-blink cases to flip from run to run under the
+shared profile, on dev as well; rerun a suspect alone on both trees before you call it a
+regression.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
