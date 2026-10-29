@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Updating         N  Select a note to edit it here.
+  a   notes…                           o
+  v   Notes (1)                        t
+      Filter  Filter notes… (Enter)    e
+        ○ New     ○ Sort: Newest       s
+        ○ Select
+--->    View import     ○ Export
+        New folder
+                                     <---
+      ▸ Agent_Lessons
+      ▸ VSync  ⚠ Needs attention
+--->
+
+
+
+
+
+
+  typing in field | esc rail | F1 · F6 · Ctrl+P · Ctrl+Q
