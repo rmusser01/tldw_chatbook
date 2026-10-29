@@ -22515,3 +22515,17 @@ test directly replaces settings and before acting on them. Its existing held-rea
 regression verifies old revision 1 is discarded and revision 2 renders; its bounded
 wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
 assertions, rather than retrying the action or weakening its ownership checks.
+
+## A stranded-state fix is evidenced per exit, not per the exit the report named
+
+**TASK-33621.53 review, 2026-10-29.** A send moved READY -> COMMITTING and a
+failed durable commit then returned without releasing it, so the chat refused
+every later send. The fix paused that one branch, and its tests (red on dev,
+green on the fix) covered that one branch. The review read the same function
+and found 'Draft custody is unconfirmed.' returning four lines earlier, after
+the same transition, with no pause; a probe on the real controller and store
+reproduced the identical jam (next send: 'A run is already running in this
+tab.'), now TASK-33621.57. A `_block('Hook continuation is no longer
+current.')` sits right after the transition too. Before calling a "never
+stranded" fix done, list every `return` between the state transition and the
+owner that releases it, and give each one a test or a filed task.
