@@ -48,7 +48,7 @@
 
 - [ ] Read the created Backlog task and existing authority/startup contracts. Save a preconfigured disposable profile before importing TldwCli; sanitize inherited environment in the parent before the child is launched.
 - [ ] Start the owned HTTP server, instantiate TldwCli, and await actual Console readiness. Use supported config for optional background work and all permission preconditions.
-- [ ] Drive visible workspace create/name/folder add/confirm controls, disable the optional interview visibly, create a scoped chat, type the question, and click Send.
+- [ ] Drive visible workspace create/name/folder add/confirm controls, disable the optional interview visibly, create a scoped chat, type the question, click Send, and accept the first-use AGENTS.md disclosure through its visible Proceed button.
 - [ ] Observe each variant's actual provider schema/result sequence, final owning assistant message, real binding and saved run. Assert the actual rendered assistant answer separately from tool cards; export failure receipts even when a wait fails.
 - [ ] Run fenced first under the CI dependency venv; repair setup mistakes without replacing production boundaries. Add native, compact recovery, and wrong-family variants after the first path works.
 - [ ] Run a full negative control with deliberately missing README evidence; require the pilot to fail at the evidence stage, then run unmodified variants green.
@@ -68,3 +68,5 @@
 
 - 2026-10-28: Design approved; user requested deeper review before implementation. Eight concrete design corrections recorded in the spec. No implementation or passing pilot evidence yet.
 - Inline execution selected to keep this small pilot in one context. Existing worktree/branch `codex/uat-project-chat` reused from merged PR; no new checkout needed.
+
+- Qualification found an omitted user action: first-use AGENTS.md disclosure must be accepted before provider entry. Linux run 40801165548 captured the real runtime waiting for that decision and the visible modal. The pilot now asserts its session/source, proves no generation happened before consent, and clicks Proceed. No production consent gate is bypassed.

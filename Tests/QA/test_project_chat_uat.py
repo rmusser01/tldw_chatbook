@@ -369,7 +369,7 @@ async def test_project_chat_uat(
 
                     last_snapshot = 0.0
 
-                    def final_message():
+                    def capture_progress():
                         nonlocal last_snapshot
                         if time.monotonic() - last_snapshot >= 10:
                             last_snapshot = time.monotonic()
@@ -383,6 +383,32 @@ async def test_project_chat_uat(
                                 json.dumps(server.model.received, indent=2),
                                 encoding="utf-8",
                             )
+
+                    def instruction_notice():
+                        capture_progress()
+                        return bool(app.screen.query("#console-project-notice-proceed"))
+
+                    phase("project-instructions")
+                    await wait_for(
+                        pilot,
+                        instruction_notice,
+                        "project instruction disclosure",
+                        server,
+                        timeout=360 if os.name == "nt" else 100,
+                    )
+                    assert app.screen.notice.relative_source == "AGENTS.md"
+                    assert app.screen.notice.session_id == session.id
+                    assert not server.model.received
+                    await click(pilot, "#console-project-notice-proceed", server)
+                    await wait_for(
+                        pilot,
+                        lambda: app.screen is console,
+                        "project disclosure dismissed",
+                        server,
+                    )
+
+                    def final_message():
+                        capture_progress()
                         for message in reversed(store.messages_for_session(session.id)):
                             if (
                                 str(message.role) == "assistant"
