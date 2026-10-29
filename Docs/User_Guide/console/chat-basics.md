@@ -421,8 +421,9 @@ statistics tools.
   strip narrows is cut to its row rather than wrapped. A **Sending…** row
   keeps its mark until the reply's row (or a notice) appears beneath it, so
   the two arrive together. If the turn is refused before that, the
-  **Sending…** row disappears and the draft is kept, or offered back on the
-  shelf as `Not sent: <reason>` with **Restore**.
+  **Sending…** row disappears and the draft is kept (wrapped to its full
+  height again), or offered back on the shelf as `Not sent: <reason>` with
+  **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
 - Console stays responsive while it prepares the turn. Enter sends exactly
