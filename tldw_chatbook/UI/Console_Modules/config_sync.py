@@ -615,30 +615,35 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
         whole-sync replay here); True when it rendered or was not needed.
     """
     cadence = _cadence(screen)
-    try:
-        objects, values = _projection_inputs(screen)
-    except Exception:  # noqa: BLE001 -- the tick worker exits the app on a raise.
-        # An unreadable input is a change: project (the parent's tick read
-        # these inside the cost chip's best-effort build), and record none.
-        objects, values = (), None
-    if not force and not _POLL_SYNC.get() and _left_to_the_poll(screen, cadence):
-        cadence.owed = True
-        return True
-    requested = cadence.requested
-    unchanged = (
-        values is not None
-        and requested == cadence.served
-        and values == cadence.values
-        and len(objects) == len(cadence.objects)
-        and all(now is then for now, then in zip(objects, cadence.objects))
-    )
-    if not force and unchanged and _clock() - cadence.at < RUN_BACKSTOP_SECONDS:
-        cadence.owed = True
-        return True
-    if screen._sync_console_rail_and_controls() is False:
-        # The tick's deferral: the coalesced whole-sync replay owns the
-        # render. A cold checked display defers without asking for one.
-        return replay_whole_console_sync(screen)
+    # TASK-33620.15.1.1: the input read and the render below share one read
+    # of the Agent rail's drilled sub-agent run (the agent's own scope).
+    agent = getattr(screen, "_agent", None)
+    shared_reads = getattr(type(agent), "tick_reads_shared", None)
+    with shared_reads(agent) if shared_reads is not None else nullcontext():
+        try:
+            objects, values = _projection_inputs(screen)
+        except Exception:  # noqa: BLE001 -- the tick worker exits the app on a raise.
+            # An unreadable input is a change: project (the parent's tick read
+            # these inside the cost chip's best-effort build), and record none.
+            objects, values = (), None
+        if not force and not _POLL_SYNC.get() and _left_to_the_poll(screen, cadence):
+            cadence.owed = True
+            return True
+        requested = cadence.requested
+        unchanged = (
+            values is not None
+            and requested == cadence.served
+            and values == cadence.values
+            and len(objects) == len(cadence.objects)
+            and all(now is then for now, then in zip(objects, cadence.objects))
+        )
+        if not force and unchanged and _clock() - cadence.at < RUN_BACKSTOP_SECONDS:
+            cadence.owed = True
+            return True
+        if screen._sync_console_rail_and_controls() is False:
+            # The tick's deferral: the coalesced whole-sync replay owns the
+            # render. A cold checked display defers without asking for one.
+            return replay_whole_console_sync(screen)
     cadence.served = requested
     cadence.objects, cadence.values, cadence.at = objects, values, _clock()
     cadence.owed = False

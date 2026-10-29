@@ -588,7 +588,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # load, most of it the private-profile child's start-up), so no existing
 # entry changes shard: 908 -> 909.
 # Rebased 2026-10-29 onto dev's 1140 entries: 1140 + 1 = 1141.
-MINIMUM_FILES = 1141
+# TASK-33620.15.1.1 (2026-10-27) appends 1 node id at the tail: a projecting
+# poll tick reads the Agent rail's drilled sub-agent run once (one mounted
+# case, about 17 s locally; its resumed-run twin stays in the file), so no
+# existing entry changes shard. Rebased 2026-10-27 onto dev's 964: 964 + 1 = 965.
+# Rebased 2026-10-29 onto dev's 1140 entries: 1140 + 1 = 1141.
+MINIMUM_FILES = 1142
 
 
 def read_census(path: Path) -> list[str]:

@@ -987,6 +987,9 @@ class ConsoleAgentController:
         self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
         self._console_historical_read: dict[str, Any] | None = None
         self._historical_reads_held = False  # TASK-33620.15.1 input reads.
+        #: TASK-33620.15.1.1: the drilled sub-agent run reads one poll tick
+        #: made, as ``(bridge, run_id, record)``; None outside a tick.
+        self._tick_drill_reads: list[tuple[Any, str, Any]] | None = None
         #: TASK-915: sticky suppression of the fleet force-open for the rest
         #: of THIS busy window. Written by the screen's own `_toggle_console_
         #: rail_section`, so it is proxied read-write there.
@@ -1295,7 +1298,7 @@ class ConsoleAgentController:
             self._console_agent_drilldown_conversation_id = conversation_id
         drill = self._console_agent_drilldown_run_id
         if drill:
-            record = bridge.subagent_run(drill)
+            record = self._drilled_run_record(bridge, drill)
             if record is not None and record.get("conversation_id") == conversation_id:
                 # Finding A (review round 2): this used to slice the raw
                 # `summary`/`result` field to a hardcoded 80 characters,
@@ -2544,6 +2547,44 @@ class ConsoleAgentController:
             tuple((child.run_id, child.status) for child in live.subagents),
         )
 
+
+    @contextmanager
+    def tick_reads_shared(self) -> Iterator[None]:
+        """Read the drilled sub-agent run once for one synchronous poll tick.
+
+        TASK-33620.15.1.1: the config-sync cadence reads the rail's section
+        lines as a projection input on every tick, and a tick that projects
+        computes them again to render them. While drilled into a sub-agent
+        each computation read that run's durable record, so a projecting
+        tick read it twice. The tick (``config_sync.project_console_tick``)
+        runs both inside this scope, which hands the render the durable
+        record the input read, so the lines it renders come from the record
+        the cadence recorded. Only that record is shared: the live-slot
+        fallback (``live_run_snapshot``, used while the record has no steps
+        yet) is still read on each computation, and the next tick
+        re-projects whatever moved. Nothing awaits inside a tick; outside
+        one, every computation reads the record afresh, as before.
+        """
+        if self._tick_drill_reads is not None:  # The outer tick owns them.
+            yield
+            return
+        self._tick_drill_reads = []
+        try:
+            yield
+        finally:
+            self._tick_drill_reads = None
+
+    def _drilled_run_record(self, bridge: Any, run_id: str) -> Any:
+        """``bridge.subagent_run(run_id)``, read once per poll tick."""
+        reads = self._tick_drill_reads
+        if reads is None:
+            return bridge.subagent_run(run_id)
+        for owner, read_id, record in reads:
+            if owner is bridge and read_id == run_id:
+                return record
+        record = bridge.subagent_run(run_id)
+        reads.append((bridge, run_id, record))
+        return record
 
     @contextmanager
     def historical_reads_held(self) -> Iterator[None]:

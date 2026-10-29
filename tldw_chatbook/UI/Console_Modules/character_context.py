@@ -144,17 +144,23 @@ def _character_reader_current(record: tuple, receiver: Any = None) -> bool:
         or function.__defaults__ is not defaults
         or function.__kwdefaults__ is not keyword_defaults
         or function.__closure__ is not closure
-        or any(cell.cell_contents is not value for cell, value in cells)
     ):
         return False
-    actual_items = tuple((keyword_defaults or {}).items())
-    if len(actual_items) != len(keyword_items) or any(
-        actual_name != expected_name or actual_value is not expected_value
+    # TASK-35961: the same checks, in the same order, as plain loops: this
+    # runs for every reader on every display check, so a generator per
+    # record was a measurable share of its UI-loop cost.
+    for cell, value in cells:
+        if cell.cell_contents is not value:
+            return False
+    if keyword_defaults is not None or keyword_items:
+        actual_items = tuple((keyword_defaults or {}).items())
+        if len(actual_items) != len(keyword_items):
+            return False
         for (actual_name, actual_value), (expected_name, expected_value) in zip(
             actual_items, keyword_items
-        )
-    ):
-        return False
+        ):
+            if actual_name != expected_name or actual_value is not expected_value:
+                return False
     if owner is None:
         return namespace.get(name) is descriptor
     if (
@@ -206,6 +212,26 @@ def _stock_character_presentation(controller: Any) -> bool:
                 _character_reader_current(record, controller)
                 for record in _CHARACTER_REFRESH_READERS
             )
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _stock_character_check(controller: Any) -> bool:
+    """Whether the display check method about to run is the stock one.
+
+    TASK-35961: a settled run-time check no longer qualifies the whole reader
+    set on the loop before ``_check_recent_batch`` (its selection and worker
+    do); it qualifies that method alone, as the gate did, after the ambient
+    accessors that ran since the display entry's own checks.
+    """
+    try:
+        return (
+            ConsoleCharacterContextController is _CHARACTER_SCOPE_OWNER
+            and type(controller) is _CHARACTER_SCOPE_OWNER
+            and inspect.getattr_static(_CHARACTER_SCOPE_OWNER, "__getattribute__")
+            is object.__getattribute__
+            and _character_reader_current(_CHARACTER_CHECK_READER, controller)
         )
     except (AttributeError, TypeError, ValueError):
         return False
@@ -281,6 +307,30 @@ class _CharacterRefreshReaders:
         ):
             raise _ConsoleCharacterReaderChanged("Character display reader changed")
 
+    def require_loop_readers(self) -> None:
+        """Qualify, on the loop, what a settled first read's midpoints run there.
+
+        TASK-35961: the on-loop midpoint of each pair in a settled check's
+        first scope read (up to ``_SCOPE_CAPTURE_ATTEMPTS`` pairs) calls
+        ``_ambient_scope_matches`` (qualified by ``_stock_character_scope_pair``
+        beside it), which calls the two identity readers through the captured
+        accessors. Those are qualified here; the worker qualifies every reader
+        (``require_current``) before and after each of its reads, as before.
+        """
+        controller = self.controller
+        if (
+            type(controller) is not ConsoleCharacterContextController
+            or any(
+                getattr(controller, name) is not callback
+                for name, callback in self.accessors
+            )
+            or not all(
+                _character_reader_current(record, controller)
+                for record in _CHARACTER_LOOP_READERS
+            )
+        ):
+            raise _ConsoleCharacterReaderChanged("Character display reader changed")
+
     def ambient_current(self) -> bool:
         """Called only on the captured loop, including the paired handoffs."""
         self.require_current()
@@ -315,27 +365,11 @@ class _CharacterRefreshReaders:
             check.cancel()
 
 
-def _stock_character_refresh_readers(
-    controller, presentation, generation, unchanged_from=None
-):
-    """Select only the original display closure and concrete file DB route.
+def _character_reader_sources(controller, presentation):
+    """The display closure's own cells and the three defining modules' records.
 
-    ``unchanged_from`` (TASK-33620.15.6) is a display check's settled
-    fingerprint: the batch then ends after its first scope read when that
-    still matches it.
+    Returns None for a borrowed closure or a module without its records.
     """
-    if (
-        type(controller) is not ConsoleCharacterContextController
-        or type(presentation) is not FunctionType
-        or presentation.__code__ is not _CHARACTER_PRESENTATION_OWNER_CODE
-        or presentation.__globals__ is not globals()
-        or controller._service_factory is not CharacterConversationNavigationService
-        or any(
-            not _character_reader_current(record, controller)
-            for record in _CHARACTER_REFRESH_READERS
-        )
-    ):
-        return None
     # The nested original closure must belong to this exact controller. A
     # borrowed same-code closure cannot authorize another controller's batch.
     closure = dict(
@@ -355,12 +389,16 @@ def _stock_character_refresh_readers(
         or not owned_records
         or CharacterConversationNavigationService is not service_records[0][0]
         or run_owned_db_call is not owned_records[0][3]
-        or any(
-            not _character_reader_current(record)
-            for record in (*db_records, *service_records, *owned_records)
-        )
     ):
         return None
+    return closure, db_records, service_records, owned_records
+
+
+def _build_character_refresh_readers(
+    controller, presentation, generation, unchanged_from, sources
+):
+    """Capture one display callback's readers on the loop; qualify nothing."""
+    closure, db_records, service_records, owned_records = sources
     database = controller._database_accessor()
     if (
         type(database) is not db_records[0][0]
@@ -373,7 +411,7 @@ def _stock_character_refresh_readers(
         *((record, None) for record in service_records),
         *((record, None) for record in owned_records),
     )
-    readers = _CharacterRefreshReaders(
+    return _CharacterRefreshReaders(
         controller,
         database,
         controller._current_character_identity(),
@@ -405,11 +443,118 @@ def _stock_character_refresh_readers(
         ),
         unchanged_from,
     )
+
+
+def _stock_character_refresh_readers(controller, presentation, generation):
+    """Select only the original display closure and concrete file DB route."""
+    if (
+        type(controller) is not ConsoleCharacterContextController
+        or type(presentation) is not FunctionType
+        or presentation.__code__ is not _CHARACTER_PRESENTATION_OWNER_CODE
+        or presentation.__globals__ is not globals()
+        or controller._service_factory is not CharacterConversationNavigationService
+        or any(
+            not _character_reader_current(record, controller)
+            for record in _CHARACTER_REFRESH_READERS
+        )
+    ):
+        return None
+    sources = _character_reader_sources(controller, presentation)
+    if sources is None or any(
+        not _character_reader_current(record)
+        for record in (*sources[1], *sources[2], *sources[3])
+    ):
+        return None
+    readers = _build_character_refresh_readers(
+        controller, presentation, generation, None, sources
+    )
+    if readers is None:
+        return None
     try:
         readers.require_current()
     except _ConsoleCharacterReaderChanged:
         return None
     return readers
+
+
+def _settled_character_refresh_readers(controller, presentation, generation, settled):
+    """Select a settled display check's readers, qualifying only what the loop runs.
+
+    TASK-35961: an unchanged check (about once a second during a reply)
+    qualified every stock reader on the UI loop before its read, through
+    ``_stock_character_refresh_readers`` and that selection's own
+    ``require_current``, on top of the display entry's checks. It now
+    qualifies on the loop what runs there: the owner's structure (as
+    ``_stock_character_presentation`` does), the two identity readers the
+    selection calls, ``_await_database_work`` (the check hands it the finite
+    callback next, on the loop, after ambient accessors that ran since the
+    display entry's checks) and the captured bound callbacks. The finite callback
+    qualifies every reader, in the worker, before its first read and around
+    each read after it, as it did. A reader changed after this selection is
+    refused there before anything is read, so no handle is opened, and the
+    check takes the original route (``_check_recent_batch``).
+
+    Args:
+        controller: The display's controller.
+        presentation: The original display-owner closure.
+        generation: The controller generation the batch belongs to.
+        settled: The fingerprint the display shows; the batch ends after its
+            first scope read when that read still matches it.
+
+    Returns:
+        The readers, or None for anything but the stock display, controller
+        and file database route.
+    """
+    try:
+        if (
+            ConsoleCharacterContextController is not _CHARACTER_SCOPE_OWNER
+            or type(controller) is not ConsoleCharacterContextController
+            or inspect.getattr_static(_CHARACTER_SCOPE_OWNER, "__getattribute__")
+            is not object.__getattribute__
+            or type(presentation) is not FunctionType
+            or presentation.__code__ is not _CHARACTER_PRESENTATION_OWNER_CODE
+            or presentation.__globals__ is not globals()
+            or controller._service_factory is not CharacterConversationNavigationService
+            or not all(
+                _character_reader_current(record, controller)
+                for record in _CHARACTER_SETTLED_SELECTION_READERS
+            )
+        ):
+            return None
+    except (AttributeError, TypeError, ValueError):
+        return None
+    sources = _character_reader_sources(controller, presentation)
+    if sources is None:
+        return None
+    readers = _build_character_refresh_readers(
+        controller, presentation, generation, settled, sources
+    )
+    if readers is None or any(
+        type(callback) is not MethodType
+        or callback.__self__ is not controller
+        or callback.__func__ is not _CHARACTER_READER_FUNCTIONS[name]
+        for name, callback in (
+            ("_read_database_scope_metadata_pair", readers.pair),
+            ("_load_recent_sync", readers.recent),
+            ("_read_refresh_scope_sync", readers.scope),
+            ("_read_recent_scope_sync", readers.batch),
+        )
+    ):
+        return None
+    return readers
+
+
+@dataclass(frozen=True)
+class _CharacterScopeProbed:
+    """A display check's first scope read, handed over as the probe's outcome.
+
+    TASK-35961: a first scope read that did not settle, or failed, for a
+    current display owner is what the original probe (``_capture_scope``)
+    would have raised. The caller takes the probe's branch for ``error``
+    instead of probing the scope again on a handle of its own.
+    """
+
+    error: _ConsoleCharacterScopeChanged | _ConsoleCharacterScopeReadError
 
 
 @dataclass(frozen=True)
@@ -686,8 +831,15 @@ class ConsoleCharacterContextController:
         loop: asyncio.AbstractEventLoop,
         *,
         _reader_check: Callable[[], None] | None = None,
+        _loop_check: Callable[[], None] | None = None,
     ) -> tuple[tuple[str, int], tuple[str, int]] | None:
-        """Keep the original pair on one handle and its ambient check on-loop."""
+        """Keep the original pair on one handle and its ambient check on-loop.
+
+        ``_reader_check`` runs in the worker around each read. The on-loop
+        midpoint runs ``_loop_check`` when given (TASK-35961: each pair of a
+        settled check's first scope read qualifies there what the midpoint
+        runs), else ``_reader_check``.
+        """
         if not _stock_character_scope_pair(self):
             return None
         if _reader_check is not None:
@@ -698,18 +850,19 @@ class ConsoleCharacterContextController:
         if not _stock_character_scope_pair(self):
             return None
         ambient: Future[bool] = Future()
+        midpoint_check = _reader_check if _loop_check is None else _loop_check
 
         def validate() -> None:
             if not ambient.set_running_or_notify_cancel():
                 return
             try:
-                if _reader_check is not None:
-                    _reader_check()
+                if midpoint_check is not None:
+                    midpoint_check()
                 matches = _stock_character_scope_pair(self) and self._ambient_scope_matches(
                     database, current, open_conversation_id
                 )
-                if _reader_check is not None:
-                    _reader_check()
+                if midpoint_check is not None:
+                    midpoint_check()
                 ambient.set_result(matches and _stock_character_scope_pair(self))
             except _ConsoleCharacterReaderChanged as error:
                 ambient.set_exception(error)
@@ -1010,11 +1163,17 @@ class ConsoleCharacterContextController:
                     owner_is_current,
                     settled if type(settled) is ConsoleCharacterScopeFingerprint else None,
                 )
+                probed = None
+                if type(checked) is _CharacterScopeProbed:
+                    # TASK-35961: the merged read was this check's probe.
+                    probed, checked = checked.error, None
                 if checked is False:
                     if not owner_is_current() or key != self._presentation_owner_key(screen):
                         return False
                 elif checked is None:
                     try:
+                        if probed is not None:
+                            raise probed
                         snapshot = await self._capture_scope()
                     except (_ConsoleCharacterScopeChanged, _ConsoleCharacterScopeReadError):
                         if not owner_is_current() or key != self._presentation_owner_key(screen):
@@ -1094,24 +1253,35 @@ class ConsoleCharacterContextController:
             )
             is not None
         )
+        settled = (
+            fingerprint if type(fingerprint) is ConsoleCharacterScopeFingerprint else None
+        )
+        probed = None
         if (
             not known_changed
             and not force
             and _presentation_is_current is not None
-            and _stock_character_presentation(self)
+            # TASK-35961: a settled check's selection qualifies on the loop
+            # what runs there, and its worker every reader before reading; an
+            # unsettled one keeps this whole-set gate.
+            and (
+                _stock_character_check(self)
+                if settled is not None
+                else _stock_character_presentation(self)
+            )
         ):
             # TASK-33620.15.6: decide and reload on one handle (one helper).
-            checked = await self._check_recent_batch(
-                _presentation_is_current,
-                fingerprint
-                if type(fingerprint) is ConsoleCharacterScopeFingerprint
-                else None,
-            )
-            if checked is not None:
+            checked = await self._check_recent_batch(_presentation_is_current, settled)
+            if type(checked) is _CharacterScopeProbed:
+                # TASK-35961: the merged read was this check's probe.
+                probed = checked.error
+            elif checked is not None:
                 self._mark_checked(started, invalidations)
                 return checked
         if not known_changed:
             try:
+                if probed is not None:
+                    raise probed
                 snapshot = await self._capture_scope()
             except _ConsoleCharacterScopeChanged:
                 self.invalidate_scope()
@@ -1248,8 +1418,12 @@ class ConsoleCharacterContextController:
         as ``settled`` (TASK-33620.15.6). A settled pair that still matches it
         returns before the full post-pair owner check: nothing is published
         from it, and the caller confirms the ambient scope on the loop, as
-        after the original probe.
+        after the original probe. The on-loop midpoint of each pair in that
+        read (every attempt) qualifies the readers it runs there (TASK-35961,
+        ``require_loop_readers``); this worker qualifies them all around each
+        read.
         """
+        loop_check = readers.require_loop_readers if settled is not None else None
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
             readers.require_current()
             try:
@@ -1259,6 +1433,7 @@ class ConsoleCharacterContextController:
                     readers.conversation,
                     readers.loop,
                     _reader_check=readers.require_current,
+                    _loop_check=loop_check,
                 )
             except (_ConsoleCharacterReaderChanged, _ConsoleCharacterAmbientError):
                 raise
@@ -1354,7 +1529,7 @@ class ConsoleCharacterContextController:
         self,
         presentation: Callable[[], bool],
         settled: ConsoleCharacterScopeFingerprint | None,
-    ) -> bool | None:
+    ) -> bool | _CharacterScopeProbed | None:
         """Check the stock display's scope and reload it in one finite callback.
 
         TASK-33620.15.6: a display check that found its scope changed made
@@ -1376,6 +1551,15 @@ class ConsoleCharacterContextController:
         so the idle display memo cannot keep serving a list it never reloaded.
         That includes a check that ends by cancellation or by an error.
 
+        TASK-35961: a settled check (``settled`` given) selects its readers
+        with ``_settled_character_refresh_readers``, which qualifies on the
+        loop only what runs there; the worker qualifies every reader before
+        its first read, and a reader changed after the selection is refused
+        there before anything is read (no handle is opened). A first scope
+        read that does not settle, or a callback that fails, for a current
+        owner is returned as the probe's outcome, so the caller does not read
+        the scope again.
+
         Args:
             presentation: The original display-owner closure.
             settled: Fingerprint the display shows, or None when it has none.
@@ -1388,25 +1572,42 @@ class ConsoleCharacterContextController:
             the original batch, an owner that moved on or a reader that
             changed during the read gets no publication, and a scope that
             moved again during the load is reloaded by the original
-            ``refresh``. None when the check reached no decision for a
-            current owner (no stock readers, an unchanged read whose ambient
-            scope or displayed fingerprint changed by its retirement, a first
-            scope read that did not settle or failed, a refresh dispatch
-            customized during the read): the caller then takes the original
-            probe-then-refresh route, which owns those outcomes.
+            ``refresh``. A ``_CharacterScopeProbed`` when, for a current
+            owner, the first scope read did not settle or the callback
+            failed (in that read or after it): the caller takes the original
+            route's branch for that probe outcome, which reloads. None
+            when the check reached no decision for a current owner (no stock
+            readers, a settled check's reader changed before its first read,
+            an unchanged read whose ambient scope or displayed fingerprint
+            changed by its retirement, a refresh dispatch customized during
+            the read): the caller then takes the original probe-then-refresh
+            route, which owns those outcomes.
 
         Raises:
             BaseException: An original ambient accessor failure, unchanged,
                 or a cancellation; either drops the marker before it leaves.
         """
-        readers = _stock_character_refresh_readers(
-            self, presentation, self._generation, settled
-        )
+        if settled is None:
+            readers = _stock_character_refresh_readers(
+                self, presentation, self._generation
+            )
+        else:
+            readers = _settled_character_refresh_readers(
+                self, presentation, self._generation, settled
+            )
         if readers is None:
             return None
 
-        def read_current() -> _CharacterRecentRead:
-            readers.require_current()
+        def read_current() -> _CharacterRecentRead | None:
+            if settled is None:
+                readers.require_current()
+            else:
+                try:
+                    readers.require_current()
+                except _ConsoleCharacterReaderChanged:
+                    # A reader changed after the loop selected this settled
+                    # check: refused before any read, so no handle opened.
+                    return None
             return readers.batch.__func__(readers.controller, readers)
 
         try:
@@ -1428,22 +1629,43 @@ class ConsoleCharacterContextController:
                 return True
             except _ConsoleCharacterAmbientError as failure:
                 ambient_error = failure.error
-            except Exception:  # noqa: BLE001 - an unsettled or unreadable first scope.
+            except Exception as error:  # noqa: BLE001 - an unsettled or unreadable first scope, or a later failure.
                 # As after the original probe: a display owner that moved on gets
                 # nothing; a current one takes the original route, which decides
-                # and presents the read error.
+                # and presents the read error. TASK-35961: the first scope read
+                # was that probe (three tries on its one handle, as
+                # ``_capture_scope`` tries three times), so its outcome is handed
+                # over, not read again. Any other failure here, including one
+                # after that read (an ambient check timing out once the groups
+                # loaded, say), is handed over as a read error: the original
+                # route reloads after either, so the caller reloads once.
                 try:
                     current = readers.ambient_current()
                 except _ConsoleCharacterReaderChanged:
                     current = False
                 if current:
-                    return None
+                    if isinstance(error, _ConsoleCharacterScopeChanged):
+                        return _CharacterScopeProbed(
+                            _ConsoleCharacterScopeChanged(
+                                "Character context scope did not settle"
+                            )
+                        )
+                    return _CharacterScopeProbed(
+                        _ConsoleCharacterScopeReadError(
+                            readers.database, readers.current, readers.conversation
+                        )
+                    )
                 self._successful_refresh_generation = None
                 return False
             # Outside the catch, as _capture_scope does: the exact original
             # accessor exception, cause and traceback, after retirement.
             if ambient_error is not None:
                 raise ambient_error
+            if result is None:
+                # Refused before its first read (a settled check's changed
+                # reader): the original route decides, as after a refused
+                # selection.
+                return None
             if result.unchanged:
                 # As after the original probe: the ambient scope is confirmed on
                 # the loop, and a display invalidated meanwhile no longer shows
@@ -2491,6 +2713,30 @@ _CHARACTER_REFRESH_READERS = (*_CHARACTER_SCOPE_READERS, *tuple(
     for descriptor in (vars(_CHARACTER_SCOPE_OWNER)[name],)
     for function in (descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,)
 ))
+
+#: TASK-35961: the defining function of each stock refresh reader, by name.
+_CHARACTER_READER_FUNCTIONS = {record[1]: record[3] for record in _CHARACTER_REFRESH_READERS}
+#: TASK-35961: the display check method a settled run-time check qualifies.
+_CHARACTER_CHECK_READER = next(
+    record for record in _CHARACTER_REFRESH_READERS if record[1] == "_check_recent_batch"
+)
+#: TASK-35961: the readers a settled display check runs on the UI loop beside
+#: ``_ambient_scope_matches`` (a scope reader, which ``_stock_character_scope_pair``
+#: qualifies): its selection captures these identities, and the scope pair's
+#: midpoint compares them.
+_CHARACTER_LOOP_READERS = tuple(
+    record
+    for record in _CHARACTER_REFRESH_READERS
+    if record[1] in {"_current_character_identity", "_open_conversation_identity"}
+)
+#: TASK-35961: what a settled check's selection qualifies on the UI loop: the
+#: two identity readers it calls, and ``_await_database_work``, which the
+#: check runs next on the loop with its finite callback, so a dispatch changed
+#: since the display entry's checks never receives that callback.
+_CHARACTER_SETTLED_SELECTION_READERS = (
+    *_CHARACTER_LOOP_READERS,
+    *(record for record in _CHARACTER_SCOPE_READERS if record[1] == "_await_database_work"),
+)
 
 
 _CHARACTER_PRESENTATION_OWNER_CODE = next(
