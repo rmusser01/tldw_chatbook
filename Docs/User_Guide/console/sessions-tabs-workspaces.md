@@ -658,14 +658,15 @@ skill, chat-creation and worktree-merge confirmations, cancelling the owning wor
 without affecting other tabs. Declining chat creation creates no chat. Declining
 a merge or discard confirmation performs neither action.
 
-Quitting the app (**Ctrl+Q**) closes every open tab, so it asks the same question
-for all of them at once. **Quit Chatbook?** appears whenever closing any open tab
-would lose something: it adds up the same counts the close dialog shows for each
-tab, lists only the ones that are not zero, and names the affected tabs. Apart
-from those tab names it shows no draft or message text. It also reminds you that
-open tabs are not reopened the next time Chatbook starts; saved chats stay in
-the Chats rail. **Stay** keeps every draft, Temporary chat, staged attachment and
-unsent turn as it was. With nothing to lose, Ctrl+Q quits without asking.
+Quitting the app (**Ctrl+Q**, from any screen) closes every open tab, so it asks
+the same question for all of them at once. **Quit Chatbook?** appears whenever
+closing any open tab would lose something: it adds up the same counts the close
+dialog shows for each tab, lists only the ones that are not zero, and names the
+affected tabs. Apart from those tab names it shows no draft or message text. It
+also reminds you that open tabs are not reopened the next time Chatbook starts;
+saved chats stay in the Chats rail. **Stay** keeps every draft, Temporary chat,
+staged attachment and unsent turn as it was. With nothing to lose, Ctrl+Q quits
+without asking.
 
 ## Assistant recovery choices
 
