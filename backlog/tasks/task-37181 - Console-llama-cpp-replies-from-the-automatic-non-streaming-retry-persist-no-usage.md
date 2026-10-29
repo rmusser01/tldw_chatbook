@@ -25,7 +25,7 @@ priority: low
 <!-- SECTION:DESCRIPTION:BEGIN -->
 When a llama.cpp server refuses a streamed request (or streams no text), the Console gateway retries once without streaming and the reply arrives. Live on 2026-10-27 (TASK-33620.10 verification), a reply delivered by that retry against a real llama-server (qwen2.5-0.5b-instruct) behind a front that refuses `"stream": true` was persisted with an empty `messages.usage_json`, while the same server's non-streamed reply through the Custom OpenAI-compatible provider persisted provider usage (310 input, 3 output tokens). The retry passes `_automatic_signals` only when `prepared` and `call_signals` are both present (console_provider_gateway.py, the llama.cpp fallback branch), which may be why. Whether a plain streamed llama.cpp reply records usage was not checked in that session.
 
-Evidence: tools/evidence/bd5/U19/16-llamacpp-auto-fallback.txt and refuse.log (session evidence of TASK-33620.10).
+Evidence: TASK-33620.10's live run on 2026-10-27 (screen captures, the refusing front's request log and the persisted message rows), kept with that session's working files, not in the repo.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

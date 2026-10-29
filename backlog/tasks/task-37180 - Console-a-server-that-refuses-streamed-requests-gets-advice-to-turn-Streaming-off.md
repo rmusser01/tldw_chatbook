@@ -24,7 +24,7 @@ priority: low
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Since TASK-33620.10 every Console provider streams by default, and `[chat_defaults] streaming = true` now outranks a provider's own `[api_settings.<provider>] streaming = false`. An OpenAI-compatible server that does not support streaming therefore fails the first reply. Live on 2026-10-27, a local server that answers a streamed request with HTTP 400 produced this System row: "Agent run failed: Provider error from Custom OpenAI-compatible: bad request. Status: 400. Custom OpenAI-compatible says: “…” Selected model: qwen2.5-0.5b-instruct. The provider rejected this request. Confirm the model is still available, or choose another model from the model picker." The server's own message is quoted, but the advice points at the model. The fix that works, turning Streaming off for that model or provider, is not mentioned (the User Guide's chat-basics "Turning streaming off" describes it). llama.cpp is not affected: its gateway retries once without streaming.
 
-Evidence: tools/evidence/bd5/U19/14-custom-refused-stream.txt (session evidence of TASK-33620.10).
+Evidence: the screen capture of TASK-33620.10's live run on 2026-10-27; the System row above is quoted from it. The capture was kept with that session's working files, not in the repo.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
