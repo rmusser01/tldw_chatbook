@@ -24,13 +24,15 @@ The TASK-15457 pin (``test_library_canvas_sync_defects.py``) is unchanged:
 with no dirty form the list view's selection still follows the canvas.
 
 Real app stylesheet (``LibraryProductionCSSHarness``), the production-shaped
-exact-page fake (every write recorded), real keys and clicks, painted text
-through the compositor. One boot per test; three boots.
+exact-page fake (every write recorded), real keys, clicks and native Paste
+filter preparation, painted text through the compositor. One boot per test;
+three boots. Slow filter typing is separately tracked in TASK-37360.
 """
 
 from __future__ import annotations
 
 import pytest
+from textual.events import Paste
 from textual.widgets import Button, Input, OptionList
 
 from Tests.UI.library_quit_guard_support import _record_toasts
@@ -41,7 +43,6 @@ from Tests.UI.test_library_media_editor_dirty_escape import (
     _open_edit_form,
     _open_row_1,
     _painted,
-    _type,
 )
 from Tests.UI.test_library_media_editor_dirty_escape_extended import (
     ROW_0,
@@ -120,21 +121,6 @@ async def _focus_filter_box(screen, pilot) -> None:
     )
 
 
-async def _query_settled(screen, pilot, *, suffix: str) -> None:
-    """The browse settled on a query ending with ``suffix`` (rows unchecked)."""
-    browse = screen._library_media_browse_controller
-    await _wait_for_condition(
-        pilot,
-        lambda: browse.applied_scope is not None
-        and browse.applied_scope.query.endswith(suffix)
-        and not browse.loading
-        and browse.applied_scope == browse.requested_scope,
-        message=lambda: f"query {suffix!r} never settled: {browse.applied_scope!r}",
-    )
-    for _ in range(4):
-        await pilot.pause()
-
-
 async def _save_edit_form(screen, pilot, service) -> None:
     await pilot.press("end")
     await pilot.press("exclamation_mark")
@@ -175,21 +161,13 @@ async def test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after
             == f"{ITEM_1_TITLE}!",
             message="typed char never landed",
         )
-        # A query that keeps ONLY the other item on the page. The first
-        # settled query recomposes the Items pane and its box, and a burst
-        # typed across that recompose loses characters under load (once in
-        # five ``-n 4`` runs the applied query was "ct"): so one character,
-        # settle, re-click the fresh box (it is prefilled with the applied
-        # "P" and the click lands the caret at column 0, so End first), then
-        # the rest. "roduct" matches item 2's title alone, with or without
-        # the prefilled "P".
+        # Prepare a query keeping ONLY the other item through the focused
+        # field's native Paste event. Slow keys across filter recomposition
+        # can replace the selected prefix (TASK-37360); this case pins the
+        # Reader's write identity after the actual filtered browse settles.
         await _focus_filter_box(screen, pilot)
-        await _type(pilot, "P")
-        await _query_settled(screen, pilot, suffix="P")
-        await _focus_filter_box(screen, pilot)
-        await pilot.press("end")
-        await _type(pilot, "roduct")
-        await _browse_settled(screen, pilot, query="roduct", rows=1)
+        pilot.app.post_message(Paste("Product"))
+        await _browse_settled(screen, pilot, query="Product", rows=1)
         assert [str(row.media_id) for row in _rows(screen)] == [ROW_0]
 
         await _trash_round_trip(screen, pilot)
