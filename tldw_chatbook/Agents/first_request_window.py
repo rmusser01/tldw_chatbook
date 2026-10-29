@@ -57,7 +57,10 @@ def planning_window(
         -- live, Full agent tools on gpt-4 (8k) failed every send
         ("4033 > 3584"), and a first message that fit tool-less was refused
         before commit. Planned within the same ceiling, such a request goes
-        out with fewer tools, or none. An ADR-253 compact plan carries
+        out with fewer tools, or none. That holds only for a window planned
+        as is: a clamped unverified self-hosted window reserves no margin
+        (pre-existing), so the gateway can still refuse what was planned
+        there. An ADR-253 compact plan carries
         ``window - reserve`` as the input ceiling its runtime additions must
         respect, so that ceiling is the gateway's own too.
     """
