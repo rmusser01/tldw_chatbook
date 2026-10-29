@@ -344,18 +344,20 @@ insert and a large `/prompt` insert become tokens too; a file's token shows
 its name, for example "📄 notes.md · 4 KB | Expand".
 
 Enter sends the draft, every token in full, unless the caret is on a token
-(right before or right after it). Then Enter expands that token instead, in
-two steps: the first Enter asks "Expand pasted text (N characters)? Enter:
-yes · Esc: no" (a file's question names the file), and a second Enter puts
-the full text in place. Esc, or moving the caret off the token, answers no
-and puts the collapsed token back. Clicking a token moves the caret onto it
-and asks the same question. The **Send** button always sends, wherever the
-caret is. Whatever the display state, **the full pasted text is always what
-sends** — collapsing is purely visual. While the draft contains a paste
-token, slash-command parsing is skipped and the draft sends as plain text.
-The collapse behavior is set by `collapse_large_pastes` and
-`paste_collapse_threshold` under `[console]` in config.toml, also editable
-in **Settings > Console Behavior**.
+(right before or right after it). A paste that starts or ends with a line
+break keeps that break outside its token, so a caret on the row the break
+opens is not on the token, and Enter sends. With the caret on a token, Enter
+expands that token instead, in two steps: the first Enter asks "Expand
+pasted text (N characters)? Enter: yes · Esc: no" (a file's question names
+the file), and a second Enter puts the full text in place. Esc, or moving
+the caret off the token, answers no and puts the collapsed token back.
+Clicking a token moves the caret onto it and asks the same question. The
+**Send** button always sends, wherever the caret is. Whatever the display
+state, **the full pasted text is always what sends** — collapsing is purely
+visual. While the draft contains a paste token, slash-command parsing is
+skipped and the draft sends as plain text. The collapse behavior is set by
+`collapse_large_pastes` and `paste_collapse_threshold` under `[console]` in
+config.toml, also editable in **Settings > Console Behavior**.
 
 ### Raw CLI user commands — full host authority
 

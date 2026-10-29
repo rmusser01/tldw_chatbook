@@ -222,3 +222,124 @@ async def test_clicking_a_token_puts_the_caret_on_it_so_enter_answers_the_confir
         await pilot.pause()
 
         assert composer._display_draft_text() == f"{pasted} and a tail"
+
+
+async def _send_once_and_read_users(host, pilot, gateway, console, composer) -> list:
+    """Press Enter once; fail unless exactly one dispatch went out."""
+    press(host, "enter", "\r")
+    try:
+        await until(lambda: gateway.stream_calls >= 1, timeout=10)
+    except AssertionError:
+        pytest.fail(
+            "one Enter did not send; the draft shows "
+            f"{composer._display_draft_text()!r}"
+        )
+    await pilot.pause(0.3)
+    assert gateway.stream_calls == 1
+    store = console._ensure_console_chat_store()
+    return [
+        message.content
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role.value == "user"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("edge", ["trailing", "leading"])
+async def test_one_enter_sends_a_paste_whose_edge_line_break_parts_caret_and_chip(edge):
+    """AC#1/#2: a line break at the paste's edge puts the caret off the chip.
+
+    Text copied as whole lines usually ends in a newline. The chip draws that
+    break outside itself, so the caret at the paste's end sits at the start of
+    the empty row below the chip, not next to it, and one Enter sends. Review
+    of f93748e746: that Enter armed "Expand pasted text (...)?" instead.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            gateway.validation_release.set()
+            body = LOG + "\n" if edge == "trailing" else "\n" + LOG
+            host.post_message(Paste(body))
+            await until(lambda: composer.draft_text() == body)
+            if edge == "leading":
+                press(host, "home")
+                await until(lambda: composer.cursor_index == 0)
+            chip = _paste_chip(body)
+            assert composer._display_draft_text() == (
+                f"{chip}\n" if edge == "trailing" else f"\n{chip}"
+            )
+
+            users = await _send_once_and_read_users(
+                host, pilot, gateway, console, composer
+            )
+
+            assert users == [body]
+
+
+@pytest.mark.asyncio
+async def test_a_click_on_a_chip_ending_in_a_line_break_still_owns_the_next_enter():
+    """AC#3: the click's caret lands after the break, and Enter answers yes."""
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        composer = await _focused_composer(host, pilot)
+        pasted = "P" * (composer.paste_collapse_threshold + 1) + "\n"
+        composer.insert_pasted_text(pasted)
+        composer.insert_text("tail")
+        await pilot.pause()
+        assert composer._display_draft_text() == f"{_paste_chip(pasted)}\ntail"
+
+        await pilot.click("#console-command-visible-text", offset=(4, 0))
+        await pilot.pause()
+        assert composer._display_draft_text() == f"{_paste_confirm(pasted)}\ntail"
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert composer._display_draft_text() == f"{pasted}tail"
+        assert composer.draft_text() == f"{pasted}tail"
+
+
+@pytest.mark.asyncio
+async def test_moving_the_caret_off_a_pending_confirm_answers_no_and_enter_sends():
+    """AC#2/#4: the caret leaving a confirm puts the chip back; Enter then sends.
+
+    Right from the token's left edge jumps the token to its right edge, which
+    is still on it; the next Right leaves it.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            gateway.validation_release.set()
+            host.post_message(Paste(LOG))
+            await until(lambda: composer.draft_text() == LOG)
+            _type(host, " why")
+            expected = LOG + " why"
+            await until(lambda: composer.draft_text() == expected)
+            press(host, "home")
+            await until(lambda: composer.cursor_index == 0)
+
+            press(host, "enter", "\r")
+            await until(composer.has_pending_paste_confirmation)
+            press(host, "right")
+            await until(lambda: composer.cursor_index == len(LOG))
+            await pilot.pause()
+            assert composer._display_draft_text() == f"{_paste_confirm(LOG)} why"
+
+            press(host, "right")
+            await until(lambda: composer.cursor_index == len(LOG) + 1)
+            await pilot.pause()
+            assert composer._display_draft_text() == f"{_paste_chip(LOG)} why"
+            assert not composer.has_pending_paste_confirmation()
+            assert gateway.stream_calls == 0
+
+            users = await _send_once_and_read_users(
+                host, pilot, gateway, console, composer
+            )
+
+            assert users == [expected]

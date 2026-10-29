@@ -5980,16 +5980,23 @@ class ConsoleComposerBar(Horizontal):
         """Return the collapsed/confirm token the caret is on (TASK-33622.1).
 
         The caret never sits inside a token, so "on" is either edge. Between
-        two tokens a pending confirm wins, then the token on the left.
+        two tokens a pending confirm wins, then the token on the left. A
+        paste's edge line break is drawn outside its chip, parting that edge
+        from the chip, so it does not count until a click arms the token.
         """
         touching: list[_DraftSegment] = []
         start = 0
+        cursor = self._cursor_index
         for segment in self._segments:
             end = start + len(segment.text)
-            if segment.collapse_state in {"collapsed", "confirm"} and (
-                start <= self._cursor_index <= end
-            ):
-                touching.append(segment)
+            state = segment.collapse_state
+            if state in {"collapsed", "confirm"} and start <= cursor <= end:
+                leading, trailing = "", ""
+                if segment.origin == "paste" and not segment.label:
+                    leading, trailing = self._paste_edge_line_breaks(segment.text)
+                parted = (cursor == start and leading) or (cursor == end and trailing)
+                if state == "confirm" or not parted:
+                    touching.append(segment)
             start = end
         pending = [item for item in touching if item.collapse_state == "confirm"]
         return (pending or touching or [None])[0]

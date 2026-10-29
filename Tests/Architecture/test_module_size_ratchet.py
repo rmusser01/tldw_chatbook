@@ -587,7 +587,10 @@ _BUDGETS: dict[str, int] = {
     # composer reads the raw-CLI arm through an injected provider and shows
     # each state (armed / not armed / locked) with its own status, primary
     # action and tooltip, so only an armed draft reads "Run".
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7136,
+    # 2026-10-29, TASK-33622.1 review fix (same owner rule): 7136 -> 7143
+    # (+7). A paste's edge line break, drawn outside its chip, parts that
+    # edge from the chip, so Enter there sends instead of arming the expand.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7143,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
