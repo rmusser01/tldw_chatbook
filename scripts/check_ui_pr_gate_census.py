@@ -592,6 +592,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # poll tick reads the Agent rail's drilled sub-agent run once (one mounted
 # case, about 17 s locally; its resumed-run twin stays in the file), so no
 # existing entry changes shard. Rebased 2026-10-27 onto dev's 964: 964 + 1 = 965.
+# Rebased 2026-10-29 onto dev's 1140 entries: 1140 + 1 = 1141.
 MINIMUM_FILES = 1142
 
 
