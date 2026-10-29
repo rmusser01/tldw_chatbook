@@ -146,6 +146,19 @@ def test_master_switch_off_leaves_no_local_group_in_the_posture() -> None:
     assert "character cards" not in note and "questions for you" not in note
 
 
+@pytest.mark.parametrize(("master", "names_todos"), [(True, True), (False, False)])
+def test_the_summary_names_to_dos_only_while_the_local_tools_are_on(
+    master, names_todos
+) -> None:
+    """Review V3 (TASK-34100.13): the Summary's agent-tools note always named
+    to-dos, but the to-do tools live in the local tool provider, which the
+    ``[console]`` master switch drops (live master-off request: no todo_*)."""
+    gates = all_tool_gates(config={"tools": {}, "console": {"local_tools_enabled": master}})
+    detail = posture_mod.tools_summary_detail(posture_mod.tools_posture(gates))
+    assert ("to-dos" in detail) is names_todos
+    assert "sub-agents, skills" in detail
+
+
 @pytest.mark.asyncio
 async def test_the_posture_sentence_follows_the_switches() -> None:
     """Review F4 (TASK-34100.13): the sentence was computed once at compose,
@@ -211,6 +224,27 @@ def test_quick_note_is_derived_from_the_same_posture() -> None:
     assert "web search and Watchlists" in note
 
 
+@pytest.mark.parametrize(
+    ("general", "claims_default_theme"),
+    [({}, True), ({"default_theme": "textual-dark"}, True), ({"default_theme": "nord"}, False)],
+)
+def test_the_quick_note_claims_only_what_it_can_see(general, claims_default_theme) -> None:
+    """Review R6 (TASK-34100.13): the note ended on the literals "default theme;
+    no notes folder sync", false on a Quick re-run over a saved theme or with
+    notes sync roots added in Library (which config cannot see). The theme is
+    named only while it is the default; notes sync is left to its own row."""
+    config = {"tools": {}, "console": {}, "general": general}
+    note = posture_mod.quick_defaults_note(
+        posture_mod.tools_posture(all_tool_gates(config=config)),
+        auto_retrieve=False,
+        default_theme=not wizard_state.theme_is_custom(
+            wizard_state.read_wizard_prefill(config).default_theme
+        ),
+    )
+    assert ("default theme" in note) is claims_default_theme
+    assert "notes folder sync" not in note
+
+
 @pytest.mark.asyncio
 async def test_the_summary_quick_note_is_derived_from_the_reread_config() -> None:
     """review-tests F2: the Summary's own note, not just the pure helper.
@@ -226,6 +260,7 @@ async def test_the_summary_quick_note_is_derived_from_the_reread_config() -> Non
         "tools": {"read_file_enabled": True},
         "console": {},
         "chat_defaults": {"rag_auto_retrieve_on_send": True},
+        "general": {"default_theme": "nord"},
     }
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -251,11 +286,14 @@ async def test_the_summary_quick_note_is_derived_from_the_reread_config() -> Non
             if note:
                 break
     expected = posture_mod.quick_defaults_note(
-        posture_mod.tools_posture(all_tool_gates(config=reread)), auto_retrieve=True
+        posture_mod.tools_posture(all_tool_gates(config=reread)),
+        auto_retrieve=True,
+        default_theme=False,
     )
     assert note == expected
     assert "1 file, note and document switches on" in note
     assert "Library searched on every message" in note
+    assert "default theme" not in note  # a saved Nord theme (review R6)
     for claim in ("tools off", "RAG off"):
         assert claim not in note
 
