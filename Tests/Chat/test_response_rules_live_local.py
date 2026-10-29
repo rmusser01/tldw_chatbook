@@ -544,71 +544,72 @@ async def test_actual_execution_backed_semantic_cases(tmp_path):
             text,
         )
 
+    evaluator = ResponseRuleEvaluator(gateway)
+
+    async def judge(label, answer, evidence, expected):
+        revision = hashlib.sha256(path.read_bytes()).hexdigest()
+        origin = source(operation_id=str(uuid4()))
+        lease = pool.try_acquire(origin, purpose="checking", deadline=monotonic() + 30)
+        value = inputs(
+            answer,
+            request_text="Report the current arithmetic self-check result.",
+            evidence=(evidence,),
+            work_revision=revision,
+        )
+        assessment = await evaluator.assess(
+            origin,
+            value,
+            (semantic(),),
+            resolution=resolution,
+            lease=lease,
+        )
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == revision
+        trace["cases"].append(
+            {
+                "label": label,
+                "expected": expected,
+                "actual": assessment.outcome,
+                "work_revision": revision,
+                "evidence_work_revision": evidence.work_revision,
+                "checks": [asdict(c) for c in assessment.checks],
+            }
+        )
+
     try:
         success = await execute(
             'assert 6 * 7 == 42\nprint("arithmetic self-check passed")\n',
             "self-check:success",
         )
-        failure = await execute("assert 6 * 7 == 41\n", "self-check:failure")
         assert trace["executions"][0]["exit_code"] == 0
+        await judge(
+            "current_success", "The arithmetic self-check passed.", success, "pass"
+        )
+        failure = await execute("assert 6 * 7 == 41\n", "self-check:failure")
         assert trace["executions"][1]["exit_code"] != 0
+        await judge(
+            "contradicted_success",
+            "The arithmetic self-check passed.",
+            failure,
+            "violation",
+        )
         # A real edit with no new execution makes the earlier result historical.
         path.write_text("assert 6 * 7 == 43\n", encoding="utf-8")
-        edited_revision = hashlib.sha256(path.read_bytes()).hexdigest()
-        assert edited_revision not in {success.work_revision, failure.work_revision}
-        cases = (
-            (
-                "current_success",
-                "The arithmetic self-check passed.",
-                success,
-                success.work_revision,
-                "pass",
-            ),
-            (
-                "contradicted_success",
-                "The arithmetic self-check passed.",
-                failure,
-                failure.work_revision,
-                "violation",
-            ),
-            (
-                "stale_success",
-                "The current arithmetic self-check passed.",
-                success,
-                edited_revision,
-                "couldnt_verify",
-            ),
-            (
-                "qualified_history",
-                "The earlier arithmetic self-check passed before the edit; the current file is unverified.",
-                success,
-                edited_revision,
-                "pass",
-            ),
+        assert hashlib.sha256(path.read_bytes()).hexdigest() not in {
+            success.work_revision,
+            failure.work_revision,
+        }
+        await judge(
+            "stale_success",
+            "The current arithmetic self-check passed.",
+            success,
+            "couldnt_verify",
         )
-        evaluator = ResponseRuleEvaluator(gateway)
-        for label, answer, evidence, revision, expected in cases:
-            origin = source(operation_id=str(uuid4()))
-            lease = pool.try_acquire(
-                origin, purpose="checking", deadline=monotonic() + 30
-            )
-            value = inputs(
-                answer,
-                request_text="Report the current arithmetic self-check result.",
-                evidence=(evidence,),
-                work_revision=revision,
-            )
-            assessment = await evaluator.assess(
-                origin, value, (semantic(),), resolution=resolution, lease=lease
-            )
-            trace["cases"].append(
-                {
-                    "label": label,
-                    "expected": expected,
-                    "actual": assessment.outcome,
-                    "checks": [asdict(c) for c in assessment.checks],
-                }
-            )
+        await judge(
+            "qualified_history",
+            "The earlier arithmetic self-check passed before the edit; the current file is unverified.",
+            success,
+            "pass",
+        )
     finally:
         pool.close_admission()
         await pool.wait_for_cleanup()

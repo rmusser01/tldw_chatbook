@@ -1,11 +1,11 @@
 ---
 id: TASK-34975
 title: Qualify integrated Console response rules and document evidence
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: 2026-10-04 05:56
-updated_date: '2026-10-29T01:54:00Z'
+updated_date: '2026-10-29T02:34:00Z'
 labels: []
 dependencies:
   - TASK-34806
@@ -23,11 +23,11 @@ Enable the approved Console response-rule behavior for plan task 9. Preserve exi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Integrated route tests cover learning, checking, cancellation, shared repair and inert reopen.
-- [ ] #2 Provider behavior and native UI evidence are qualified separately from scripted tests.
-- [ ] #3 Targeted regression and static checks pass and independent whole-branch review findings are addressed or recorded.
-- [ ] #4 A bounded named critical selection covering helper-preparation custody, installed schema/recovery/voice and native/hook/currentness boundaries runs in actual required PR lanes with nonvacuous executable membership checks, preserved existing targets/order/limits and exact final-head hosted results.
-- [ ] #5 Concurrent trace GC between current durable semantic admission and provider-call reservation preserves ordinary and native-repair provenance; revoked/orphaned revisions remain reclaimable and stale graph epochs never sweep.
+- [x] #1 Integrated route tests cover learning, checking, cancellation, shared repair and inert reopen.
+- [x] #2 Provider behavior and native UI evidence are qualified separately from scripted tests.
+- [x] #3 Targeted regression and static checks pass and independent whole-branch review findings are addressed or recorded.
+- [x] #4 A bounded named critical selection covering helper-preparation custody, installed schema/recovery/voice and native/hook/currentness boundaries runs in actual required PR lanes with nonvacuous executable membership checks, preserved existing targets/order/limits and exact final-head hosted results.
+- [x] #5 Concurrent trace GC between current durable semantic admission and provider-call reservation preserves ordinary and native-repair provenance; revoked/orphaned revisions remain reclaimable and stale graph epochs never sweep.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -112,6 +112,8 @@ R2 hosted UI4 pending journey at3a865 read Inspector before its full configurati
 2026-10-28 restore blocker: complete initial-base selection ended288PASS21FAIL1974.80s; all failures were successful restricted historical migrations. A passive original-authorizer/exception probe proved unsafe use of canvas_revision_payload_valid during installed portrait ALTER TABLE schema reparse. Genuine RED and narrowed reuse of existing exact-catalog _canvas_schema_access yielded causal success/deny/cancel3PASS19.40s. Already enrolled lineage cases now assert live authority at actual ALTER, unrelated-DDL denial and retired authority; full affected recovery/Canvas repeat is running. Two stale historical Canvas expectations now follow installed current schema policy. No schema/catalog/authorizer/limit change. Scoped mypy15source files passes after validated-state typing and optional-Goal-source refinements; affected evidence/retained-tool15PASS150.49s. Browser manager measured80x24 and120x35, disable/re-enable and focused-input Escape worked; screenshots in qualification packet. Original mounted UI batch timed out and is not a pass. All AC remain open for remaining visible/hosted/review evidence; preserve failed/partial attempts.
 
 2026-10-29 recovery refinement qualified locally: full-step exact-catalog Canvas scope fixes reproduced v76 RENAME and portrait ALTER failures; exact frozen v83/v84 hybrid catalogs/stamps retain all historical and Subscription2/3 variants. Focused success/deny/cancel/current Canvas/genuine-v81 selection14PASS1FAIL247.77s retains the original all-four Windows child45s timeout. Expanded16-combination hybrid acceptance/mismatched-stamp plus original v76 late-index/validation/cancel controls19PASS483.33s. Final executable required-lane membership62PASS10.22s; UI census1141 valid entries. Independent whole-branch review2 Important test defects corrected; focused newly discovered recovery review0 actionable defects, requested matrix/failure controls now passed. Actual Flash settled-execution semantic control1PASS13.59s verifies four judgments: current pass, contradiction violation, stale couldnt_verify, qualified history pass; zero unsettled helpers. Original strict no-evidence5of7 and Pro malformed-JSON failures retained, no parser/assertion relaxation. Browser actual repair Stop/retained prior answer and manager80x24/120x35 proved; learning-cancel race is not a pass and later checkpoint-refused repair remains explicit. Scoped mypy15sourcefiles passes and four existing recovery Ruff findings exactly match fetched dev. New bounded selectors append within existing P0/UI processes and original limits; normal final-head hosted proof remains required. Existing ADR126/232/239, no new ADR; task In Progress and all AC remain open until assessment.
+
+2026-10-29 qualification completed against fetched latest dev3efe8476cebf70eceafa605d1abed76a4aad4e0e. Qualified source head a007eae6fac618eb4fc05e33a179ad1459187486: normal required Derived Artifacts run40803375472 SUCCESS, P0 sandbox195PASS308.14s plus admission238PASS582.79s; full job15m57s under unchanged20m. All28 UI shards passed; actual one-based UI21 (census index20) logs show all four history/ancestry composer journeys at80x24/120x35 passing13.46-14.62s each. Ordinary PR Fast Lane3265PASS3SKIP and admission lane pass, including final executable membership; Perf Guard and Windows/Linux/macOS Eval recovery all SUCCESS. Final local custody/trace20PASS63.88s, hybrid/stamp/v76 failure19PASS483.33s, voice/private dispatch31PASS106.59s, affected typing/evidence15PASS150.49s. Chronological real Flash self-check1PASS11.64s makes each current judgment before the next edit, checks actual current hashes and yields pass/violation/couldnt_verify/pass with zero physical helpers; default opt-in absent6SKIP10.02s and no provider calls. Original strict Flash5of7, Pro malformed JSON, initial failed/partial attempts and Windows all-four45s timeout remain retained; original bounded lineage cases pass in required Linux. User-approved browser route separately proves actual learning/repair, manager80x24/120x35, wide repair Stop, narrow connecting-run Stop and inert saved-rule reopen; native-terminal fidelity and raced manual helper cancellation are not claimed. Both Important whole-branch findings are fixed; focused new recovery review found0 actionable defects and requested coverage now passes. Existing ADR097/126/227/232/239, scoped static checks and34-source manifest complete; four unrelated legacy Ruff diagnostics exactly match dev. No new permission, migration SQL, cap, assertion relaxation, dependency or full-suite claim. Docs/superpowers/qa/2026-10-28-console-response-rules contains receipts, screenshots and limits; lesson incident updated. Final evidence/chronology publication repeats normal exact-head PR checks before the completion report; PR remains unarmed and worktree retained for review.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

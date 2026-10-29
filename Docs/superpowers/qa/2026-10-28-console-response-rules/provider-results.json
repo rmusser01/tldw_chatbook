@@ -86,6 +86,7 @@
   "execution_backed_semantic_qualification": {
     "model": "deepseek-flash",
     "scope": "Actual disposable host self-checks, not Console agent tool work",
+    "chronology": "Each current judgment completed before the next file edit; work hashes checked before and after each real helper call.",
     "executions": [
       {
         "source_sha256": "87b3897d072acd717f4303b081a7ebbf1e33195efc9ac356103b98df5134227c",
@@ -103,6 +104,8 @@
         "label": "current_success",
         "expected": "pass",
         "actual": "pass",
+        "work_revision": "87b3897d072acd717f4303b081a7ebbf1e33195efc9ac356103b98df5134227c",
+        "evidence_work_revision": "87b3897d072acd717f4303b081a7ebbf1e33195efc9ac356103b98df5134227c",
         "checks": [
           {
             "rule_id": "rule",
@@ -121,6 +124,8 @@
         "label": "contradicted_success",
         "expected": "violation",
         "actual": "violation",
+        "work_revision": "3b6f0373bcfe8be2e3c2cb287272c7353e95337742cb8327aa39d074ed63d1e3",
+        "evidence_work_revision": "3b6f0373bcfe8be2e3c2cb287272c7353e95337742cb8327aa39d074ed63d1e3",
         "checks": [
           {
             "rule_id": "rule",
@@ -139,17 +144,16 @@
         "label": "stale_success",
         "expected": "couldnt_verify",
         "actual": "couldnt_verify",
+        "work_revision": "187f88c0969968ad8a6a7d96c8d4be8b60f9aa7978d09719b4ad2f3f84943335",
+        "evidence_work_revision": "87b3897d072acd717f4303b081a7ebbf1e33195efc9ac356103b98df5134227c",
         "checks": [
           {
             "rule_id": "rule",
             "revision": 1,
             "applicability": "applicable",
             "verdict": "couldnt_verify",
-            "reason": "semantic_grounded",
-            "evidence_refs": [
-              "response",
-              "self-check:success"
-            ]
+            "reason": "judge_result_unavailable",
+            "evidence_refs": []
           }
         ]
       },
@@ -157,6 +161,8 @@
         "label": "qualified_history",
         "expected": "pass",
         "actual": "pass",
+        "work_revision": "187f88c0969968ad8a6a7d96c8d4be8b60f9aa7978d09719b4ad2f3f84943335",
+        "evidence_work_revision": "87b3897d072acd717f4303b081a7ebbf1e33195efc9ac356103b98df5134227c",
         "checks": [
           {
             "rule_id": "rule",
@@ -165,14 +171,16 @@
             "verdict": "pass",
             "reason": "semantic_grounded",
             "evidence_refs": [
-              "response"
+              "response",
+              "self-check:success"
             ]
           }
         ]
       }
     ],
     "physical_helpers_after_cleanup": 0,
-    "test_result": "1 passed; four real judgments; 13.59 seconds"
+    "test_result": "1 passed; four real judgments; 11.64 seconds",
+    "earlier_snapshot_attempt": "1 passed in13.59s; retained privately, superseded for current-work chronology proof"
   },
   "second_available_model_attempt": {
     "model": "deepseek-v4-pro",
