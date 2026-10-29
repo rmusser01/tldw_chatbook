@@ -25313,3 +25313,29 @@ minutes:
 **Incident.** TASK-36948.3 added one public method to ChatScreen and raised its `test_screen_size_ratchet.py` row by the measured +38 lines and +1 method, as a dated waiver. The brief called that a one-line fix. The serial `Tests/Architecture` run (26 min) then failed two tests that only that full run reaches: `test_console_review_selection_controller_boundary.py` (`LIVE_RATCHET_ROW`) and `test_console_wave6_closeout_inventory.py` (`LIVE_RATCHET_BUDGET`). TASK-38988 put both pins there on purpose, to catch any raise of the row.
 
 **What to do.** When you raise or lower ChatScreen's row, run `grep -rn "LIVE_RATCHET" Tests/Architecture` and re-pin every match to the new row in the same commit.
+
+## A delete that passes a column census can still leave the words in the index (TASK-34000.29 fix round 1, 2026-10-29)
+
+Delete forever's completeness pin (`Tests/ChaChaNotesDB/note_trace_census.py`)
+found every note-id column from the live schema, swept every text column of
+every ordinary table for the id, and checked the notes FTS index through
+`fts5vocab` instances, its integrity check, its row total and `MATCH` on the
+note's own words. All of it read clean, and review R0 accepted it. Review R0's
+m-3 asked for a byte-level token scan instead: every column of every table in
+`sqlite_master`, virtual and shadow tables included, compared with
+`instr(CAST(col AS BLOB), CAST(? AS BLOB))`. Its first run found
+`notes_fts_data.block` still holding the purged note's title and body words,
+in 4 blocks each. An FTS5 `'delete'` writes a delete marker, and the term
+bytes stay in older segments until a merge. The logical checks cannot see this
+by design: `MATCH` and `fts5vocab` both honour the marker. The fix is one
+`INSERT INTO notes_fts(notes_fts) VALUES('optimize')` inside the purge
+transaction (0.26 s on an 11 MB index). The same scan also showed that a
+column census misses ids inside JSON payloads.
+
+**What to do.** When a feature promises data is gone, scan values, not names.
+Search every column of every table, shadow tables too, as bytes, for the id in
+each form (bare and JSON-quoted) and for words only that record held. Keep an
+explicit, commented allowlist of what is kept on purpose, plus a negative
+control: a table the delete was never told about that holds the title inside
+JSON. Do not count a logical index check (`MATCH`, `fts5vocab`,
+`integrity-check`) as evidence that bytes are gone.
