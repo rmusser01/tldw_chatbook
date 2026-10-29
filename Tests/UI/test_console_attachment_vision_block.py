@@ -267,3 +267,91 @@ async def test_enter_on_remove_image_hands_the_keyboard_back_to_the_composer():
         assert store.pending_attachments(session_id) == []
         assert host.focused is composer, host.focused
         assert composer.draft_text() == "keep typing after this"
+
+
+@pytest.mark.asyncio
+async def test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidden(
+    monkeypatch,
+):
+    """No model chosen is the setup blocker's to say, not the vision row's.
+
+    The row used to read "The selected model can't accept images" beneath a
+    strip that says "choose a model": a claim about a model nobody picked.
+    The image still holds Send; once a model is chosen the row names it.
+    """
+    from dataclasses import replace
+
+    _app, host = _ready_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = await _mounted_console(host, pilot)
+        selection = console._build_console_provider_selection
+        model_chosen = {"on": False}
+
+        def no_model_until_chosen():
+            # A provider entry with no model configured (a fresh llama.cpp).
+            chosen = selection()
+            if model_chosen["on"]:
+                return chosen
+            return replace(chosen, explicit_model=None, configured_model=None)
+
+        monkeypatch.setattr(
+            console, "_build_console_provider_selection", no_model_until_chosen
+        )
+        composer, store, session_id = await _stage_image(console, pilot)
+
+        assert console._console_setup_blocked_reason()
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        assert strip.content.plain == "Send blocked — choose a model to continue ›"
+        assert composer.query_one("#console-send-message", Button).disabled
+        block = console.query_one("#console-attachment-block")
+        assert not block.display
+        assert block.disabled  # hidden, so no focus can land on it
+        assert len(store.pending_attachments(session_id)) == 1
+
+        model_chosen["on"] = True
+        console._sync_console_control_bar()
+        await pilot.pause()
+
+        assert block.display
+        copy = block.query_one("#console-attachment-block-copy", Static)
+        assert copy.content.plain == NOTICE
+        assert strip.content.plain == STRIP_REASON
+
+
+@pytest.mark.asyncio
+async def test_a_long_model_id_is_ellipsized_and_both_actions_stay_whole_at_80x24(
+    monkeypatch,
+):
+    """AC#5 for an id too long for the row: the copy gives, the actions don't.
+
+    At 80 columns the copy has about 48 cells beside the two buttons. A long
+    local id is cut with an ellipsis; its tooltip keeps the full refusal.
+    """
+    from dataclasses import replace
+
+    long_model = "qwen2.5-coder-32b-instruct-q4_k_m.gguf"
+    _app, host = _ready_host()
+    async with host.run_test(size=(80, 24)) as pilot:
+        console = await _mounted_console(host, pilot)
+        selection = console._build_console_provider_selection
+        monkeypatch.setattr(
+            console,
+            "_build_console_provider_selection",
+            lambda: replace(selection(), explicit_model=long_model),
+        )
+        _composer, _store, _session = await _stage_image(console, pilot)
+        await pilot.pause()
+
+        block = console.query_one("#console-attachment-block")
+        copy = block.query_one("#console-attachment-block-copy", Static)
+        assert copy.content.plain == f"{long_model} can't accept images"
+        painted = _row_text(host, copy).strip()
+        assert painted.startswith(long_model[:20]) and painted.endswith("…"), painted
+        assert copy.tooltip.startswith(
+            f"Console send blocked: {long_model} can't accept images."
+        )
+        for button_id, label in (
+            ("#console-attachment-block-remove", "Remove image"),
+            ("#console-attachment-block-switch-model", "Switch model"),
+        ):
+            assert label in _row_text(host, block.query_one(button_id, Button))

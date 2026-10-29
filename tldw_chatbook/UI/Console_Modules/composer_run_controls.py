@@ -424,33 +424,38 @@ def sync_attachment_block(screen: Any) -> ConsoleAttachmentBlock | None:
         no staged image is refused.
     """
     block = None
+    model = None
     reason = screen._console_attachment_blocked_reason()
     if reason:
         from ...Chat.attachment_core import vision_block_notice
 
         settings, _readiness = screen._active_console_settings_readiness()
-        block = ConsoleAttachmentBlock(vision_block_notice(settings.model), reason)
-    elif not getattr(screen, "_console_attachment_block_shown", False):
-        return None  # hidden already: skip the query on every ordinary sync
+        model = settings.model
+        block = ConsoleAttachmentBlock(vision_block_notice(model), reason)
+    # No model chosen: the image still holds Send, but the setup blocker's
+    # "choose a model" owns the strip and the row has no model to name.
+    show = block is not None and bool(model)
+    if not show and not getattr(screen, "_console_attachment_block_shown", False):
+        return block  # hidden already: skip the query on every ordinary sync
     try:
         row = screen.query_one(f"#{ATTACHMENT_BLOCK_ID}", Horizontal)
     except QueryError:
         return block
-    screen._console_attachment_block_shown = block is not None
+    screen._console_attachment_block_shown = show
     focused = screen.focused
-    row.set_class(block is not None, "-visible")
+    row.set_class(show, "-visible")
     # A hidden row is disabled too, so no focus write can land on it: Switch
     # model's picker restores focus to its opener with a deferred focus()
     # that otherwise ran after this hand-back and left every key going to
     # the hidden button (live 2026-10-29).
-    row.disabled = block is None
-    if block is None and focused is not None and row in focused.ancestors_with_self:
+    row.disabled = not show
+    if not show and focused is not None and row in focused.ancestors_with_self:
         # A keyboard Remove image (or a Switch model that fixed it) hides the
         # focused button: hand the keyboard back to the draft, not to nowhere.
         composer = _composer(screen)
         if composer is not None:
             screen.set_focus(composer)
-    if block is not None:
+    if show:
         copy = row.query_one(f"#{ATTACHMENT_BLOCK_COPY_ID}", Static)
         notice = Content(block.notice)
         if copy.content != notice:
