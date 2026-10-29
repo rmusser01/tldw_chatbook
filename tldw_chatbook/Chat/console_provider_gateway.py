@@ -7253,12 +7253,10 @@ class ConsoleProviderGateway:
                     if signals is not None and calls:
                         signals.record_exchange_tool_calls(calls)
                     metadata = _provider_turn_metadata(provider_response)
-                    if not calls and not delivered and stream_fallback:
-                        # A clean terminal turn (finish reason, usage) with
-                        # nothing in it is still an empty stream.
-                        enqueue(_QueueItem("stream_fallback"))
-                    elif calls or metadata is not None:
+                    if calls or metadata is not None:
                         enqueue(_QueueItem.native_tool_calls(calls, metadata))
+                    elif not delivered and stream_fallback:
+                        enqueue(_QueueItem("stream_fallback"))
                     elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
                         # visible content NOR tool-calls. On the fence path
@@ -7302,17 +7300,12 @@ class ConsoleProviderGateway:
                 if isinstance(exc, PRE_EFFECT_ERRORS):
                     enqueue(_QueueItem("error", adapter_error=exc))
                     return
-                from tldw_chatbook.Chat.refused_stream import (
-                    is_refused_stream,
-                    is_unreadable_stream,
-                )
+                from tldw_chatbook.Chat.refused_stream import is_refused_stream
 
                 refused_stream = (
                     resolution.streaming and not delivered and is_refused_stream(exc)
                 )
-                if stream_fallback and (
-                    refused_stream or (not delivered and is_unreadable_stream(exc))
-                ):
+                if refused_stream and stream_fallback:
                     if signals is not None:
                         signals.close_exchange(status="error")
                     enqueue(_QueueItem("stream_fallback"))

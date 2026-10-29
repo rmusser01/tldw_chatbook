@@ -7,7 +7,9 @@ reply failed with advice about the model. llama.cpp already retried such a
 request once without streaming; owner decision 2026-10-29: every self-hosted
 and Custom OpenAI-compatible server gets the same one-time retry. Cloud
 providers do not -- a silent second paid call is not wanted there -- and
-their refused stream names the Streaming setting instead (TASK-37180).
+their refused stream names the Streaming setting instead (TASK-37180). A
+named custom endpoint that runs through the hosted engine is answered the
+same way for now: its retry could not be traced (TASK-37762).
 
 These tests are joined end to end: the real ``ConsoleProviderGateway``
 resolves each provider from config and dispatches through the real
@@ -71,14 +73,12 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         stream_status: int = 400,
         empty_stream: bool = False,
         empty_stream_usage: dict[str, Any] | None = None,
-        ignore_stream: bool = False,
         refuse_all: bool = False,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.stream_status = stream_status
         self.empty_stream = empty_stream
         self.empty_stream_usage = empty_stream_usage
-        self.ignore_stream = ignore_stream
         self.refuse_all = refuse_all
         self.stream_flags: list[bool] = []
 
@@ -119,9 +119,6 @@ class _Handler(BaseHTTPRequestHandler):
             body += b"data: [DONE]\n\n"
             self._send(200, "text/event-stream", body)
             return
-        if streamed and server.ignore_stream:
-            # Answers whole, as JSON, as if ``stream`` had not been sent.
-            streamed = False
         if streamed or server.refuse_all:
             body = json.dumps(
                 {
@@ -257,9 +254,7 @@ def _copy(outcome: Any) -> str:
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize(
-    "provider", ["custom", "custom-ep:box", "vllm"], ids=lambda p: p
-)
+@pytest.mark.parametrize("provider", ["custom", "vllm"], ids=lambda p: p)
 def test_self_hosted_refused_stream_is_retried_once_without_streaming(
     tmp_path, provider
 ):
@@ -280,9 +275,7 @@ def test_self_hosted_refused_stream_is_retried_once_without_streaming(
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize(
-    "provider", ["custom", "custom-ep:box", "vllm"], ids=lambda p: p
-)
+@pytest.mark.parametrize("provider", ["custom", "vllm"], ids=lambda p: p)
 def test_self_hosted_empty_stream_is_retried_once_without_streaming(
     tmp_path, provider
 ):
@@ -295,22 +288,6 @@ def test_self_hosted_empty_stream_is_retried_once_without_streaming(
     assert outcome.final_text == _REPLY
     assert server.stream_flags == [True, False]
     assert outcome.total_tokens == _USAGE["total_tokens"]
-    assert len(signals.usage_payloads()) == 1
-
-
-@pytest.mark.loopback_network
-def test_custom_endpoint_that_ignores_streaming_is_retried_once(tmp_path):
-    """A Custom endpoint entry streams through the hosted engine, which
-    cannot read a whole JSON answer as a stream: asked again without
-    streaming, its answer is the reply (before: "unexpected provider error").
-    """
-    with _server(ignore_stream=True) as server:
-        gateway, resolution = _resolve("custom-ep:box", server.base_url)
-        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
-
-    assert outcome.status == "done", _copy(outcome)
-    assert outcome.final_text == _REPLY
-    assert server.stream_flags == [True, False]
     assert len(signals.usage_payloads()) == 1
 
 
@@ -382,12 +359,19 @@ def test_self_hosted_retry_that_also_fails_shows_the_retry_failure(tmp_path):
 
 
 @pytest.mark.loopback_network
-@pytest.mark.parametrize("provider", ["anthropic", "zenmux"], ids=lambda p: p)
+@pytest.mark.parametrize(
+    "provider", ["anthropic", "zenmux", "custom-ep:box"], ids=lambda p: p
+)
 def test_cloud_refused_stream_is_not_retried_and_names_streaming(tmp_path, provider):
     """A cloud 400 is usually a real request error: no silent second call.
 
     The failure names the Streaming setting beside the model advice
     (TASK-37180). ``zenmux`` stands for the strict hosted-engine presets.
+    ``custom-ep:box`` is a named OpenAI-compatible custom endpoint: it runs
+    through the same hosted engine, whose traced request does not align, so
+    with trace capture on a retry could not be traced and the run would
+    block (TASK-37762); until that is fixed it is answered like a cloud
+    provider.
     """
     with _server() as server:
         gateway, resolution = _resolve(provider, server.base_url)
