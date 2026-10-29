@@ -1,3 +1,7 @@
+Current CI candidate: [UI wait repair and Windows timeout diagnostics](ci-followup/report.md).
+52 focused checks pass; next normal hosted CI remains required before the approved
+single60-request/3-child qualification. No new live spending.
+
 Latest follow-up: [offline V1 conflict recovery](v1-conflict-offline/report.md)
 adds explicit same-ID withdrawal of a rejected resubmission, preserving accepted
 decisions and every completion/sealing gate. 285 focused tests and the module-size

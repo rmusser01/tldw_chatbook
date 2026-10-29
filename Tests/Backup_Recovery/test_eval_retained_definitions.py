@@ -39,8 +39,12 @@ private_eval.write_text('budget: {default_limit: 7}\\n', encoding='utf-8')
 private_eval.chmod(0o600)
 from tldw_chatbook.app import TldwCli""",
 )
+# Retain restore stacks before the unchanged 45s child deadline expires.
 _RETAIN_RESTORE = _replace(
-    _RESTORE,
+    "import faulthandler\n"
+    "faulthandler.dump_traceback_later(10, repeat=True)\n"
+    + _RESTORE
+    + "\nfaulthandler.cancel_dump_traceback_later()\n",
     "source.rename(source.with_name('source-home-removed'))",
     """import shutil
 from tldw_chatbook.Backup_Recovery import bootstrap
