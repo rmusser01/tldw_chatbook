@@ -684,7 +684,18 @@ def capture_center_reading(screen: Any, center: Any) -> None:
     """
     capture = getattr(center, "capture_reading_state", None)
     if callable(capture):
-        screen._console_terminal_return_reading = capture()
+        # Keyed by conversation: Return must never apply this offset to
+        # another conversation activated while the Terminal was open.
+        screen._console_terminal_return_reading = (
+            _active_console_session_id(screen),
+            capture(),
+        )
+
+
+def _active_console_session_id(screen: Any) -> str | None:
+    """Return the Console store's active session id, or ``None`` without one."""
+    store = getattr(screen, "_console_chat_store", None)
+    return getattr(store, "active_session_id", None)
 
 
 def finish_center_swap(screen: Any) -> None:
@@ -723,9 +734,18 @@ def finish_center_swap(screen: Any) -> None:
 
 
 async def _resync_returned_transcript(screen: Any, reading: Any) -> None:
-    """Render the returned center, then put the reader back where they were."""
+    """Render the returned center, then put the reader back where they were.
+
+    ``reading`` is the ``(session id, reading state)`` pair captured before the
+    swap, or ``None``; a different active conversation keeps its own position.
+    """
     await screen._sync_native_console_chat_ui()
-    screen.call_after_refresh(screen._restore_console_transcript_reading_state, reading)
+    if reading is None:
+        return
+    session_id, state = reading
+    if session_id != _active_console_session_id(screen):
+        return
+    screen.call_after_refresh(screen._restore_console_transcript_reading_state, state)
 
 
 def _projection_fingerprint(
