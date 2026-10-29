@@ -6,13 +6,16 @@ TASK-33621.17 / TASK-33621.18, found live on dev 38c9d2edcf (2026-10-29):
   Library policy no longer matches acceptance". The send's Library ceiling
   was frozen while the chat was temporary, so the durable commit carried
   the temporary policy identity into a chat that now had a durable one.
-  The controller-level test never froze a ceiling (it builds no turn
-  configuration), so it stayed green.
+  The controller test for this path froze the same ceiling and was already
+  red on dev, but no CI lane runs its file, and a plain local run of it
+  stops earlier on an unselected profile.
 - Every send in a Temporary tab paused on that card (owner decision
   2026-10-27: a Temporary chat resolves Capture Off instead).
 - With Capture On chosen, the paused send also left an "unsent turn" on the
   shelf; after Send without capture and the reply the shelf still offered
-  Restore for it, and the composer still held the answered prompt.
+  Restore for it, and the composer still held the answered prompt. The turn
+  is now kept off the shelf, not dropped: it holds the send's attachments,
+  which the card's Cancel gives back (pre-merge review).
 
 These drive the real ChatScreen, runtime, controller, store and a
 file-backed database. Only the provider call is a double.
@@ -20,9 +23,12 @@ file-backed database. Only the provider call is a double.
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from textual.widgets import Button
 
+from Tests.Chat.test_console_automatic_library_preparation import _pending_image
 from Tests.UI.test_console_library_auto_outcome import _shelf_offers_unsent_turn
 from Tests.UI.test_console_received_intent_feedback import (
     _received_console_case,
@@ -30,6 +36,10 @@ from Tests.UI.test_console_received_intent_feedback import (
     _until,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_configuration_preparation import (
+    capture_runtime_configuration_owned,
+)
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
@@ -216,8 +226,10 @@ async def test_a_capture_pause_leaves_no_shelf_entry_and_no_answered_prompt(
             ),
             10,
         )
-        # AC#1: the card owns this pause; the shelf holds no second entry.
-        assert _unsent_turns(runtime, session_id) == []
+        # AC#1: the card owns this pause; the shelf offers no second entry.
+        # The runtime keeps the turn, held off the shelf, for the card's Cancel.
+        assert [entry.draft for entry in _unsent_turns(runtime, session_id)] == [sent]
+        assert runtime.recoveries_for_session(session_id) == ()
         assert not _shelf_offers_unsent_turn(case.console)
 
         send_without.press()
@@ -226,8 +238,11 @@ async def test_a_capture_pause_leaves_no_shelf_entry_and_no_answered_prompt(
             case.controller.run_state_for(session_id)
         )
         assert len(case.provider_calls) == 1
-        # AC#2/#3: nothing left to restore once the turn was answered.
-        assert _unsent_turns(runtime, session_id) == []
+        # AC#2/#3: nothing left to restore once the turn was answered (the
+        # card's action settles it when its send returns, just after the reply).
+        assert await _until(lambda: _unsent_turns(runtime, session_id) == [], 10), (
+            _unsent_turns(runtime, session_id)
+        )
         assert runtime.recoveries_for_session(session_id) == ()
         assert await _until(lambda: not _shelf_offers_unsent_turn(case.console), 5)
         # AC#6: and the composer no longer holds the answered prompt.
@@ -235,3 +250,78 @@ async def test_a_capture_pause_leaves_no_shelf_entry_and_no_answered_prompt(
             composer.draft_text()
         )
         assert case.store.session_draft(session_id) == ""
+
+
+@pytest.mark.parametrize("entry", ["composer", "voice"])
+async def test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image(
+    monkeypatch, entry
+):
+    """TASK-33621.18 review: the card's Cancel must lose nothing.
+
+    The runtime's unsent turn is the only thing holding the send's staged
+    image, and the text of a send that never sat in the composer (the voice
+    handoff, ``submit_accepted_voice_turn``, admits its transcript straight
+    into custody). Keeping the turn off the shelf by not recording it at all
+    meant Cancel returned neither: the image was gone with no Restore.
+    """
+    from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.Chat import console_chat_controller as controller_module
+
+    monkeypatch.setattr(attachment_core, "vision_block_reason", lambda *a, **k: None)
+    monkeypatch.setattr(controller_module, "vision_block_reason", lambda *a, **k: None)
+    async with _received_console_case(
+        monkeypatch, f"temporary-capture-cancel-{entry}", durable=True
+    ) as case:
+        session_id = await _temporary_tab(case)
+        await _turn_capture_on(case, session_id)
+        store, runtime = case.store, case.console._console_runtime()
+        composer = case.console._console_composer_or_none()
+        image = _pending_image("pic.png", b"\x89PNG\r\n\x1a\n-pic")
+        assert store.add_pending_attachment(session_id, image)
+        sent = "With a picture"
+        if entry == "composer":
+            await _send_draft(case, sent)
+        else:
+            assert composer.draft_text() == ""
+            runtime.accept_turn(
+                ConsoleTurnCustodyRequest(
+                    turn_id=str(uuid4()),
+                    session_id=session_id,
+                    draft=sent,
+                    configuration=await capture_runtime_configuration_owned(
+                        case.controller, session_id, require_current=lambda: None
+                    ),
+                    attachment_ids=(image.attachment_id,),
+                )
+            )
+        assert await _until(lambda: _paused_for_capture(case, session_id), 15)
+        await case.console._sync_native_console_chat_ui()  # draw the card
+        # The send took the image with it, and left the turn to its card.
+        assert store.pending_attachments(session_id) == []
+        assert await _until(
+            lambda: all(
+                row.session_id != session_id for row in runtime._turn_custody.values()
+            ),
+            10,
+        )
+        assert runtime.recoveries_for_session(session_id) == ()
+        assert not _shelf_offers_unsent_turn(case.console)
+        cancel = case.console.query_one("#console-trace-cancel", Button)
+        assert await _until(lambda: cancel.display and not cancel.disabled, 10)
+        # A voice turn's text never sat in the composer.
+        assert composer.draft_text() == (sent if entry == "composer" else "")
+
+        cancel.press()
+
+        assert await _until(lambda: composer.draft_text() == sent, 10), (
+            composer.draft_text()
+        )
+        assert await _until(
+            lambda: [item.display_name for item in store.pending_attachments(session_id)]
+            == ["pic.png"],
+            10,
+        ), store.pending_attachments(session_id)
+        assert store.preparation_for_session(session_id) is None
+        assert _unsent_turns(runtime, session_id) == []
+        assert not _shelf_offers_unsent_turn(case.console)
+        assert case.provider_calls == []

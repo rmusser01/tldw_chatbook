@@ -702,7 +702,14 @@ _BUDGETS: dict[str, int] = {
     # rather than squeeze unrelated code): 6990 -> 6994. A card action that
     # sends a paused turn clears the answered prompt from the composer.
     # TASK-33621.18: the card-owned refusal check moved to console_unsent_turn.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6995,
+    # 2026-10-29, TASK-33621.18 pre-merge review (same owner decision):
+    # 6994 -> 7001. The card's lifecycle for a capture pause's kept unsent
+    # turn: accepted drops it, Cancel gives back the text and attachments.
+    # 2026-10-29, TASK-33621.18 pre-merge review (owner decision 2026-10-04:
+    # raise the row rather than squeeze unrelated code): 6686 -> 6701. A
+    # capture pause's unsent turn is recorded held off the shelf (the refusal
+    # carries card_held) instead of dropped, so Cancel loses no attachment.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7005,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
