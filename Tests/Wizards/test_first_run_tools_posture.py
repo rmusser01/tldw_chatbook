@@ -543,3 +543,52 @@ async def test_a_rerun_shows_gates_changed_since_launch(monkeypatch) -> None:
     assert sentence.startswith(f"1 of {len(_GATEABLE_BUILTINS)} ")
     assert ok
     wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_step_writes_nothing_when_the_config_moves_after_compose(
+    monkeypatch,
+) -> None:
+    """Review V2 (TASK-34100.13): the switches came from one config read and
+    commit() compared them with a second, fresh one. Live: an external edit
+    turned list_directory_enabled on while the app ran, the warm cache still
+    showed it off when the wizard composed, the wizard's own first save
+    reloaded the file, and the untouched Tools step's Next wrote it back off.
+    The delta is taken against what the switches were built from."""
+    import tldw_chatbook.config as config_module
+
+    live = {"tools": {"read_file_enabled": True}, "console": {}}
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", lambda **_: live
+    )
+    wizard = _LiveWizard(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = ToolsStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="tools", title="Tools", step_number=7),
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        shown = step.query_one("#setup-tool-list_directory", Switch).value
+        # The file changes under the composed step (another reader reloaded it).
+        live["tools"] = {"read_file_enabled": True, "list_directory_enabled": True}
+        ok, _ = await step.commit()
+        untouched_writes = wizard.commit_config.await_count
+        # A real change still writes only itself, and a second Next after it
+        # (Back, then Next) compares against what was saved.
+        step.query_one("#setup-tool-read_file", Switch).value = False
+        await pilot.pause()
+        ok_changed, _ = await step.commit()
+        first_write = wizard.commit_config.await_args.args[0]
+        await step.commit()
+        writes = wizard.commit_config.await_count
+    assert shown is False
+    assert ok and ok_changed
+    assert untouched_writes == 0
+    assert first_write == wizard_state.build_tools_commit(
+        gate_values={"read_file_enabled": False}
+    )
+    assert writes == 1

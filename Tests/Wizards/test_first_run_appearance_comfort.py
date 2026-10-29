@@ -339,3 +339,47 @@ async def test_a_rerun_shows_splash_settings_changed_since_launch(monkeypatch) -
     assert line.startswith("Splash card: Matrix")
     assert ok
     wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_step_writes_nothing_when_the_config_moves_after_compose(
+    monkeypatch,
+) -> None:
+    """Review V2 (TASK-34100.13): Appearance re-read its baseline in commit(),
+    so a config file that changed after the step was built (an external edit
+    the warm cache picked up later) made the untouched step write the shown,
+    stale values back. The delta is taken against what the controls show."""
+    import tldw_chatbook.config as config_module
+
+    live = {"splash_screen": {"enabled": True}, "appearance": {"ascii_glyphs": False}}
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", lambda **_: live
+    )
+    wizard = _LiveWizard(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=True,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=8),
+        environ={},
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        live["splash_screen"] = {"enabled": False}
+        live["appearance"] = {"ascii_glyphs": True, "reduce_motion": True}
+        ok, _ = await step.commit()
+        untouched_writes = wizard.commit_config.await_count
+        step.query_one("#setup-startup-short", RadioButton).value = True
+        await pilot.pause()
+        await step.commit()
+        first_write = wizard.commit_config.await_args.args[0]
+        await step.commit()
+        writes = wizard.commit_config.await_count
+    assert ok
+    assert untouched_writes == 0
+    assert first_write == {
+        "splash_screen": {"enabled": True, "duration": look.SHORT_SPLASH_SECONDS}
+    }
+    assert writes == 1
