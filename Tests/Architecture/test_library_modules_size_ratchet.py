@@ -470,7 +470,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-27, Task 9 fix round 2 (review R1 N-6; same owner decision):
     # opening a row, an external detail and Discard each reset the analysis
     # save guard with the form: 5313 -> 5316 (measured with ``_measure``).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5316,
+    # 2026-10-27, Task 9 fix round 3 (review R2 N2-2; same owner decision):
+    # the analysis save guard is the token of the save that holds it, and a
+    # worker clears it only while it still holds its own: 5316 -> 5321
+    # (measured with ``_measure``).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5321,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

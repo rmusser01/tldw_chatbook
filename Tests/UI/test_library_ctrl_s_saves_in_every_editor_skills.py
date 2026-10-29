@@ -31,6 +31,7 @@ from Tests.UI.library_quit_guard_support import (
 from Tests.UI.test_library_shell import _wait_for_condition
 from Tests.UI.test_library_ctrl_s_saves_in_every_editor import (
     NO_CHANGES,
+    _focused_id,
     _footer,
     _painted,
     _press_processed,
@@ -134,13 +135,16 @@ async def test_ctrl_s_saves_the_focused_skill_and_nothing_from_its_list(
                 "Shift+F6 to leave the skill editor",
             )
             moved_to = screen.focused
+            # Review R2 N2-3: compared by id, the sweep's rule.
+            moved_id = _focused_id(screen)
+            assert moved_id, f"focus landed on an id-less widget: {moved_to!r}"
             # Review R1 N-1: the key fully processed, then what it did not do.
             await _press_processed(pilot, resolved, "ctrl+s")
             assert "fast" not in skill_file.read_text(encoding="utf-8"), (
                 f"Ctrl+S on {moved_to!r} saved the skill open beside it"
             )
             assert screen._skills_state.dirty
-            assert screen.focused is moved_to
+            assert _focused_id(screen) == moved_id, (moved_id, screen.focused)
             assert "ctrl+s" not in _footer(app), _footer(app)
 
             await pilot.click("#library-skill-description")

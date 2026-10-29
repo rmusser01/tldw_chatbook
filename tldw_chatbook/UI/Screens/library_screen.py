@@ -17690,7 +17690,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
-        self._media_state.saving_analysis = False  # see the field (N-6)
+        self._media_state.saving_analysis = None  # see the field (N-6)
         # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
         # were typed for -- a reset that cleared the flags but left the
         # drafts kept the dirty predicate true for a form nobody could see.
@@ -23986,7 +23986,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.editing = False
             self._media_state.edit_draft = None
             self._media_state.editing_analysis = False
-            self._media_state.saving_analysis = False  # see the field (N-6)
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
         self._media_state.confirming_delete = False
         self._close_library_media_find()
@@ -33348,7 +33348,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.edit_draft = None
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
-        self._media_state.saving_analysis = False  # see the field (N-6)
+        self._media_state.saving_analysis = None  # see the field (N-6)
         self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -33408,7 +33408,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if self._media_state.editing_analysis:
             self._media_state.editing_analysis = False
-            self._media_state.saving_analysis = False  # see the field (N-6)
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._sync_library_media_viewer_or_recompose()
             return
@@ -35085,7 +35085,7 @@ class LibraryScreen(BaseAppScreen):
                 self._media_state.composed_detail = None
                 self._media_state.highlights = []
                 self._media_state.editing_analysis = False
-                self._media_state.saving_analysis = False  # see the field (N-6)
+                self._media_state.saving_analysis = None  # see the field (N-6)
                 self._media_state.analysis_draft = None
                 self._close_library_media_find()
                 self._media_state.content_mode = "raw"
@@ -37497,7 +37497,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.confirming_delete = False
             self._media_state.highlights = []
             self._media_state.editing_analysis = False
-            self._media_state.saving_analysis = False  # see the field (N-6)
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._close_library_media_find()
             self._media_state.content_mode = "raw"

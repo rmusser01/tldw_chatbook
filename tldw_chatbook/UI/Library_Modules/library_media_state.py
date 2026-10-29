@@ -518,8 +518,12 @@ class LibraryMediaState:
     # of writing a second analysis version. Review R1 N-6: every reset of
     # ``editing_analysis`` resets this too, so a save worker cancelled before
     # its first step (its ``finally`` never runs) cannot strand the guard
-    # and refuse every later analysis Save.
-    saving_analysis: bool = False
+    # and refuse every later analysis Save. Review R2 N2-2: the guard is the
+    # TOKEN of the save that holds it (None when free), and a worker's
+    # ``finally`` clears it only while it still holds that worker's own
+    # token -- so after a reset, a newer save's guard is never cleared by
+    # the older save finishing.
+    saving_analysis: object | None = None
 
     # task-28006: an LLM analysis generation is in flight for the open item.
     generating_analysis: bool = False

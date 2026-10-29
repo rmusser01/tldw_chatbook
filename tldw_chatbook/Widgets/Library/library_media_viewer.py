@@ -1321,6 +1321,10 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             line = self.query_one(f"#library-media-{form}-status", Static)
         except (NoMatches, QueryError):
             return
+        if not text and not line.display:
+            # Nothing shown, nothing to clear: every Media interlock release
+            # calls this, and an update would cost a layout pass each time.
+            return
         line.update(text)
         line.display = bool(text)
 

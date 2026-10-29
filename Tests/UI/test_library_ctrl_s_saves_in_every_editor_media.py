@@ -85,6 +85,9 @@ async def _reader_settled(screen, pilot) -> None:
             and state.detail is not None
             and state.composed_detail is state.detail
             and viewer is not None
+            # PRIVATE Textual 8.2.8 API (review R2 N2-4): ``Widget.
+            # _recompose_required`` is the pending-rebuild flag. A rename
+            # raises AttributeError, which this wait does not swallow.
             and not viewer._recompose_required
             and not screen.query("#library-media-analysis-edit-form")
         )
@@ -247,7 +250,7 @@ async def test_ctrl_s_never_writes_a_media_form_that_lacks_focus(monkeypatch):
         )
         await _focus_out_of(screen, pilot, "library-media-analysis-edit-form")
         await _press_processed(pilot, resolved, "ctrl+s")
-        assert screen._media_state.saving_analysis is False, service.analysis_calls
+        assert screen._media_state.saving_analysis is None, service.analysis_calls
         assert service.analysis_calls == [], service.analysis_calls
         assert screen._media_state.editing_analysis is True
         assert screen._media_state.analysis_draft == "Kept draft"

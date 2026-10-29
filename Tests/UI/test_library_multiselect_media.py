@@ -3027,17 +3027,27 @@ def test_every_media_mutation_claims_the_interlock_at_one_audited_seam():
     assert "self._media_state.bulk_delete_in_flight = True" in inspect.getsource(
         LibraryScreen._claim_library_media_mutation
     )
+    # 2026-10-27, TASK-34000.40 Task 9: the metadata form's claim moved, with
+    # the rest of its Save body, out of ``handle_library_media_edit_save``
+    # into the event-less seam ``_save_library_media_edit_from_form``, which
+    # the Save press and Ctrl+S share. The audit follows the claim by name:
+    # the seam holds exactly one, and the handler only delegates to it.
     for handler in (
         LibraryScreen.handle_library_media_bulk_delete_confirm,
         LibraryScreen.handle_library_media_bulk_delete_undo,
         LibraryScreen.handle_library_media_delete_confirm,
-        LibraryScreen.handle_library_media_edit_save,
+        LibraryScreen._save_library_media_edit_from_form,
         LibraryScreen.handle_library_media_trash_restore,
         LibraryScreen.handle_library_media_trash_delete_confirm,
     ):
         assert "_claim_library_media_mutation" in inspect.getsource(handler), (
             handler.__name__
         )
+    seam = inspect.getsource(LibraryScreen._save_library_media_edit_from_form)
+    assert len(re.findall(r"self\._claim_library_media_mutation\(", seam)) == 1
+    handler = inspect.getsource(LibraryScreen.handle_library_media_edit_save)
+    assert "self._save_library_media_edit_from_form()" in handler, handler
+    assert "_claim_library_media_mutation" not in handler, handler
 
 
 @pytest.mark.asyncio
