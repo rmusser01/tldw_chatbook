@@ -1022,10 +1022,14 @@ MINIMUM_FILES = 2028
 #   notes_trash_pages_and_purges_extended.py (Delete forever: two production-CSS
 #   Library boots over a real ChaChaNotes database and a real lasting-sync store,
 #   ~19 s alone at load ~11, no plugin; its sibling was already ~33 s): 930 -> 931.
+# - task 8b fix round 1 (2026-10-29, review R0 I-2): Tests/UI/test_library_notes_
+#   trash_focused_row_purge.py (Delete forever on the focused row only: one
+#   production-CSS Library boot at 120x36 over a real ChaChaNotes database,
+#   ~5 s alone at load ~5, no plugin): 931 -> 932.
 # Rebased 2026-11-12 onto dev 4b90eb860b (2028 entries, floor 2028): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2028 + 15 = 2043.
-MINIMUM_FILES = 2043
+# moves; the floor is the measured entry count: 2028 + 16 = 2044.
+MINIMUM_FILES = 2044
 
 
 def read_census(path: Path) -> list[str]:
