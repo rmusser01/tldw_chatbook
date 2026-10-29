@@ -58,7 +58,11 @@ stays literal with a notice. Changes to an imported skill require fresh review.
 ## Create or open a Canvas
 
 Ask the Console assistant to create a Canvas and describe the interaction you
-want. A conversation may own multiple named Canvases; the Canvas selector shows
+want. In plain chat the assistant has the Canvas tools only with **Full agent
+tools** on (**Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates**,
+off by default), or for one turn that names the imported `$canvas` skill; see
+[what plain chat offers](agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface).
+A conversation may own multiple named Canvases; the Canvas selector shows
 only those reachable from the conversation's active message branch. One Canvas
 and revision is selected in each live Chatbook session.
 
@@ -183,7 +187,9 @@ leaves its protections.
 **Settings > Privacy & Security > Enable Canvas tools, actions, and browser
 delivery** is the global kill switch. Turning it off immediately revokes Canvas
 execution and browser delivery while preserving stored artifacts. Re-enabling
-the saved setting requires restarting Chatbook.
+the saved setting requires restarting Chatbook. On is not enough for plain chat:
+the assistant's Canvas tools also need **Full agent tools** (see
+[Create or open a Canvas](#create-or-open-a-canvas)).
 
 `TLDW_CANVAS_ENABLED` and `TLDW_CANVAS_AUTO_OPEN_ON_CREATE` override their
 saved TOML preferences when non-empty. Values are trimmed and accept only

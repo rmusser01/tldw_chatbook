@@ -646,6 +646,25 @@ async def test_panel_inputs_carry_the_compact_class_that_makes_them_paint(runs_d
 
 
 @pytest.mark.asyncio
+async def test_scope_note_says_plain_chat_needs_full_agent_tools(runs_db):
+    """TASK-34100.5.3 review: plain Console chat offers no sub-agents until
+    Full agent tools is on, so the note must not promise that a definition
+    simply "takes effect on the next reply"."""
+    from textual.widgets import Static
+
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)):
+        notes = [
+            _static_text(static)
+            for static in panel.query(Static)
+            if _static_text(static).startswith("Named sub-agents")
+        ]
+    assert len(notes) == 1, notes
+    assert "Plain chat spawns them only with Full agent tools on" in notes[0]
+    assert "Tool gates" in notes[0]
+
+
+@pytest.mark.asyncio
 async def test_panel_without_db_shows_notice(tmp_path):
     panel = AgentsSettingsPanel(app_instance=None, runs_db=None)
     async with PanelHarness(panel).run_test(size=(120, 40)):

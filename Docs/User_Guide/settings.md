@@ -1798,9 +1798,10 @@ to delegate). The supervisor delegates only with **Full agent tools** on
 light tool surface has no sub-agents. A definition is a reusable persona: a name, a one-line
 description the supervisor reads when deciding who to delegate to, and
 instructions — plus optional narrowing of tools and model. It opens with a
-one-line scope note: "Named sub-agents the Console supervisor can spawn.
-Changes apply immediately (stored in agent_runs.db, not config.toml) and take
-effect on the next reply."
+scope note: "Named sub-agents the Console supervisor can spawn. Plain chat
+spawns them only with Full agent tools on (Settings ▸ Tools & MCP ▸ Servers ▸
+built-in row ▸ Tool gates). Changes apply immediately (stored in
+agent_runs.db, not config.toml) and take effect on the next reply."
 
 | Field | What it does |
 |---|---|
