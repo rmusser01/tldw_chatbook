@@ -289,8 +289,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: b5150753eb, which measures 24327/737 (its row kept 24329); with the
     #: same +4, 24331/737, the exact measurement.
     #: Raised to 24331/737 on 2026-10-29 by TASK-33620.2, owner rule (a fix
+    #: Raised to 24333/737 on 2026-10-29 by TASK-33620.2, owner rule (a fix
     #: over a size ratchet raises the row with a dated comment; never move or
-    #: reflow code to make it fit). Dev b5150753eb measures 24327/737; the
+    #: reflow code to make it fit). Dev d36affec9b measures 24329/737; the
     #: fix adds 4 lines and no methods: the composer sync passes the vision
     #: block in its own slot (one kwarg line), compose yields its row (one
     #: line), and the row joins the composer's Tab region and F6 pane map

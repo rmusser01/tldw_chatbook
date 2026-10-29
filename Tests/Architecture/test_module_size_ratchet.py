@@ -655,6 +655,7 @@ _BUDGETS: dict[str, int] = {
     # historical extraction call counts, retaining activation notifications.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
     #: Raised 7024 -> 7039 on 2026-10-27 by TASK-33620.2, owner rule (a fix
+    #: Raised 7043 -> 7058 on 2026-10-29 by TASK-33620.2, owner rule (a fix
     #: over a size ratchet raises the row with a dated comment; never move or
     #: reflow code to make it fit): the vision block gets its own typed
     #: `attachment_block` slot in `sync_action_state` (signature, docstring,
@@ -662,6 +663,7 @@ _BUDGETS: dict[str, int] = {
     #: into "choose a model" and the first-run wizard link. The row and its
     #: actions live in Console_Modules/composer_run_controls.py. Dev
     #: f9baac8706 measures 7024; with the fix, 7039, the exact measurement.
+    #: d36affec9b measures 7043; with the fix, 7058, the exact measurement.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7047,
     "tldw_chatbook/UI/Console_Modules/session.py": 7065,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
