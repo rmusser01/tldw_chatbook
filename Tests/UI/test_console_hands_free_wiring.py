@@ -23,7 +23,10 @@ import pytest
 from Tests.private_profile import private_profile_test
 from textual.widgets import Button
 
-from Tests.UI.hands_free_consent_support import accept_hands_free_consent
+from Tests.UI.hands_free_consent_support import (
+    accept_hands_free_consent,
+    wait_for_hands_free_consent,
+)
 from Tests.UI.test_console_dictation import (
     FakeDictationSession,
     _mounted_console,
@@ -228,8 +231,12 @@ def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
 
 
 @pytest.mark.asyncio
-async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_key_binding_asks_consent_then_starts_loop_from_idle_and_opens_capture(
+    monkeypatch,
+):
     fake = FakeDictationSession()
+    _patch_availability(monkeypatch)
     monkeypatch.setattr(
         dictation_module.ConsoleDictationController,
         "_create_console_dictation_session",
@@ -244,7 +251,13 @@ async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
         )
         assert console._console_hands_free is None
 
-        console._hands_free.action_toggle_console_hands_free()
+        # The real binding: Ctrl+Shift+H asks the Speak replies consent
+        # (TASK-33626.1) and nothing starts until Enable.
+        await pilot.press("ctrl+shift+h")
+        await wait_for_hands_free_consent(host, pilot)
+        assert fake.start_calls == 0
+        assert console._console_hands_free is None
+        await accept_hands_free_consent(host, pilot)
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         assert console._console_hands_free is not None
@@ -253,12 +266,13 @@ async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
     monkeypatch,
 ):
     service = FakeDictationService()
     _patch_availability(monkeypatch)
-    _install_streaming_session(monkeypatch, service)
+    sessions = _install_streaming_session(monkeypatch, service)
     _, host = _ready_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -270,17 +284,38 @@ async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is None
+        capture = console._dictation._console_dictation_session
+        assert capture is not None
+        created = len(sessions)
 
         service.emit_final("Console, hands free.")
-        await pilot.pause()
         # TASK-33626.1: the spoken command turns Hands-free on, so it asks
         # the Speak replies consent first; the capture keeps running.
+        await wait_for_hands_free_consent(host, pilot)
+        # The modal suspends the Console. Let that suspend's own cleanup
+        # finish, then prove it left the live capture alone (a plain suspend
+        # stops dictation; the consent's suspend must not).
+        flush = [
+            task
+            for task in getattr(console, "_console_suspend_flush_tasks", ())
+            if not task.done()
+        ]
+        if flush:
+            await asyncio.wait(flush, timeout=_ASYNC_SETTLE_TIMEOUT)
+        await pilot.pause()
         assert console._console_hands_free is None
+        assert console._console_dictation_state == "recording", (
+            "the consent's suspend stopped the live capture: "
+            f"{console._console_dictation_state!r}"
+        )
+        assert console._dictation._console_dictation_session is capture
         await accept_hands_free_consent(host, pilot)
 
         assert console._console_hands_free is not None
         assert console._console_hands_free.controller.state == "listening"
         # The capture that was already open is adopted, not restarted.
+        assert console._dictation._console_dictation_session is capture
+        assert len(sessions) == created, "accepting opened a second capture"
         assert service.stop_calls == 0
         assert (
             str(composer.query_one("#console-dictation", Button).label) == "Dictating"

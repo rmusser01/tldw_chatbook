@@ -15,6 +15,30 @@ from textual.widgets import Button
 CONSENT_SCREEN = "AutoSpeakConsentModal"
 
 
+async def wait_for_hands_free_consent(host, pilot, *, timeout: float = 5.0):
+    """Wait until the Hands-free consent is the top screen on ``host``.
+
+    Args:
+        host: The App whose screen stack receives the modal.
+        pilot: The running test pilot.
+        timeout: Seconds to wait for the modal to open.
+
+    Returns:
+        The open consent modal.
+
+    Raises:
+        AssertionError: The consent never opened, or a different speech
+            consent opened instead.
+    """
+    deadline = time.monotonic() + timeout
+    while type(host.screen_stack[-1]).__name__ != CONSENT_SCREEN:
+        assert time.monotonic() < deadline, "the Hands-free consent never opened"
+        await pilot.pause(0.02)
+    modal = host.screen_stack[-1]
+    assert modal.hands_free is True, "a different speech consent is open"
+    return modal
+
+
 async def accept_hands_free_consent(host, pilot, *, timeout: float = 5.0) -> None:
     """Wait for the Hands-free consent on ``host`` and press Enable.
 
@@ -27,11 +51,7 @@ async def accept_hands_free_consent(host, pilot, *, timeout: float = 5.0) -> Non
         AssertionError: The consent never opened, or did not close.
     """
     deadline = time.monotonic() + timeout
-    while type(host.screen_stack[-1]).__name__ != CONSENT_SCREEN:
-        assert time.monotonic() < deadline, "the Hands-free consent never opened"
-        await pilot.pause(0.02)
-    modal = host.screen_stack[-1]
-    assert modal.hands_free is True, "a different speech consent is open"
+    modal = await wait_for_hands_free_consent(host, pilot, timeout=timeout)
     modal.query_one("#console-auto-speak-consent-confirm", Button).press()
     while modal in host.screen_stack:
         assert time.monotonic() < deadline, "the Hands-free consent did not close"
