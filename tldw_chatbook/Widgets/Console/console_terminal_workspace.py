@@ -321,12 +321,18 @@ class TerminalViewport(Static):
             return
         _consume(event)
 
-    def on_focus(self) -> None:
-        """Re-state who owns the keyboard once the viewport really has focus."""
-        self._notify_workspace()
+    def watch_has_focus(self, has_focus: bool) -> None:
+        """Re-state who owns the keyboard once focus has really moved.
 
-    def on_blur(self) -> None:
-        """TASK-33622.5: never claim terminal input while keys go elsewhere."""
+        TASK-33622.5: never claim terminal input while keys go elsewhere.
+        This is a watcher, not ``on_focus``/``on_blur``: Textual dispatches a
+        subclass's handler before ``Widget._on_focus``/``_on_blur`` updates
+        ``has_focus``, so a status computed there described the old focus.
+
+        Args:
+            has_focus: The viewport's new focus state.
+        """
+        super().watch_has_focus(has_focus)
         self._notify_workspace()
 
     def on_mouse_scroll_up(self, event: Any) -> None:

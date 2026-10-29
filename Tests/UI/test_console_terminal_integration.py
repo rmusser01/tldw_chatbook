@@ -737,16 +737,25 @@ async def test_creating_another_terminal_session_selects_and_focuses_it(
         assert _composer_draft(console) == draft_before
 
         # F6 leaves the Terminal and Shift+F6 comes back to it: the center
-        # pane is the Terminal while it owns the center.
+        # pane is the Terminal while it owns the center. The line under the
+        # terminal follows real focus both ways (live, it kept claiming
+        # "Ctrl+] Release input" after F6 had moved the keys to a rail).
+        status = console.query_one("#console-terminal-status")
+        assert str(status.renderable).startswith("Ctrl+] Release input")
         await pilot.press("f6")
         await pilot.pause()
         assert pilot.app.focused is not viewport
+        assert str(status.renderable).startswith(
+            "Focus or click the terminal to type in it"
+        )
         await pilot.press("shift+f6")
         await _wait_until(
             pilot,
             lambda: pilot.app.focused is viewport,
             detail=lambda: pilot.app.focused,
         )
+        await pilot.pause()
+        assert str(status.renderable).startswith("Ctrl+] Release input")
 
     manager.finalize_shutdown()
 
