@@ -197,6 +197,12 @@ interval, so a deliberately long interval is not mistaken for a stall. The
 signal is durable (a small heartbeat file), so a stalled or dead loop is
 distinguishable from an idle one even across a restart.
 
+When the Console's **emergency stop** is active, the line adds "scheduled
+dispatches are held by the emergency stop (/emergency-stop clear in
+Console)". The scheduler records that on each tick, so the note appears (and
+goes away after a clear) at the scheduler's next tick, within one poll
+interval. Held tasks are not lost: they run once the stop is cleared.
+
 ## Preflight checks
 
 A handler can declare a **preflight** check that runs immediately before a
