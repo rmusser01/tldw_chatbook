@@ -1262,6 +1262,33 @@ class SyncStateRepository(BaseDB):
                 ).rowcount
         return removed
 
+    def discard_sync_v2_note_history(self, note_id: str) -> int:
+        """Drop a note deleted for good from the outbox, keeping its tombstones.
+
+        TASK-34000.29 (review R0, m-2). The rule this repository already
+        states for object history -- only a tombstone may supersede it
+        (``enqueue_sync_v2_outbox_envelope_with_source_receipt``): every
+        envelope for the note's object in the Notes domains, in any source
+        scope and any status, is deleted except its delete/tombstone
+        envelopes. A queued upsert -- the note's title and text, encrypted
+        or clear -- is never pushed after a purge, while a pending
+        server-side delete still propagates. Source projection receipts go
+        with their rows (``ON DELETE CASCADE``).
+
+        Args:
+            note_id: The note just deleted for good.
+
+        Returns:
+            The number of outbox rows deleted.
+        """
+        with self.transaction() as conn:
+            return conn.execute(
+                "DELETE FROM sync_v2_local_outbox WHERE domain IN ('notes', 'notes.note') "
+                "AND json_extract(envelope, '$.object_id') = ? "
+                "AND json_extract(envelope, '$.operation') NOT IN ('delete', 'tombstone')",
+                (str(note_id),),
+            ).rowcount
+
     def get_sync_v2_outbox_entry(
         self,
         *,

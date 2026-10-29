@@ -20410,19 +20410,40 @@ DELETE FROM keywords
     #: children are deleted explicitly too, so the purge never depends on the
     #: pragma. ``note_links`` goes both ways: the note's own links, and the
     #: backlinks other notes' bodies resolved to it (``target_note_id`` has no
-    #: foreign key). ``sync_conflicts.losing_content`` and the publication
-    #: intents' payloads are earlier versions of the note's text. The
-    #: completeness pin (``Tests/ChaChaNotesDB/test_note_hard_delete.py``)
-    #: discovers these tables from the live schema rather than trusting
-    #: this list.
+    #: foreign key). ``sync_conflicts.losing_content`` is an earlier version
+    #: of the note's text. The completeness pin
+    #: (``Tests/ChaChaNotesDB/test_note_hard_delete.py``) discovers these
+    #: tables from the live schema rather than trusting this list.
+    #: Publication intents are not deleted but reduced to id-only tombstones
+    #: (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``).
     _NOTE_PURGE_DEPENDENTS_SQL: tuple[str, ...] = (
         "DELETE FROM note_keywords WHERE note_id = ?",
         "DELETE FROM note_folder_memberships WHERE note_id = ?",
         "DELETE FROM note_folder_sync_suppressions WHERE note_id = ?",
         "DELETE FROM note_organization_receipts WHERE note_id = ?",
-        "DELETE FROM note_sync_publication_intents WHERE note_id = ?",
         "DELETE FROM research_quick_note_owner_proofs WHERE note_id = ?",
         "DELETE FROM sync_conflicts WHERE note_id = ?",
+    )
+
+    #: TASK-34000.29 (review R0, m-1/m-2): a purge keeps each of the note's
+    #: Sync v2 publication intents as an id-only tombstone -- receipt id,
+    #: versions, fingerprint and status, nothing else. ``payload_json`` held
+    #: the note's title and text (``_insert_note_sync_intent``); it becomes
+    #: ``'{}'``, and the note id becomes ``purged:<receipt id>`` (unique, so
+    #: the UNIQUE(server, dataset, note, version, operation) key holds). An
+    #: unacknowledged intent is cancelled, so the drain
+    #: (``list_latest_dispatchable_note_sync_entries``) never copies it to
+    #: the outbox. The row itself must stay: a replayed agent ``save_note``
+    #: with that receipt id is answered from it -- refused, as "cancelled" or
+    #: "target changed" (``Notes_Library._validate_completed_receipt_retry``)
+    #: -- where a deleted row would let the replay create the note again.
+    #: Parameters: (now, note_id).
+    _NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL = (
+        "UPDATE note_sync_publication_intents SET "
+        "note_id = 'purged:' || intent_id, payload_json = '{}', "
+        "cancelled_at = CASE WHEN acknowledged_at IS NULL "
+        "THEN COALESCE(cancelled_at, ?) ELSE cancelled_at END "
+        "WHERE note_id = ?"
     )
 
     def hard_delete_note(
@@ -20433,8 +20454,11 @@ DELETE FROM keywords
         TASK-34000.29 (N-29, 8b; owner ruling 2026-10-29). One
         ``BEGIN IMMEDIATE`` transaction: the note's keyword and folder links,
         its backlink edges, its sync suppressions, conflict history,
-        organization receipts, publication intents and owner proof, its
-        ``note_keywords`` sync-log rows, then the tombstone itself -- whose
+        organization receipts and owner proof, its ``note_keywords`` sync-log
+        rows; its publication intents become id-only tombstones that keep
+        their receipt ids non-replayable
+        (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``); then the tombstone
+        itself -- whose
         ``AFTER DELETE`` triggers drop its ``notes`` sync-log rows
         (``sync_log_prune_notes_hard``, v46) and its FTS entry (``notes_ad``).
         Nothing is committed unless all of it is.
@@ -20492,6 +20516,10 @@ DELETE FROM keywords
                 for statement in self._NOTE_PURGE_DEPENDENTS_SQL:
                     conn.execute(statement, (note_id,))
                 conn.execute(
+                    self._NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL,
+                    (self._get_current_utc_timestamp_iso(), note_id),
+                )
+                conn.execute(
                     "DELETE FROM note_links WHERE source_note_id = ? "
                     "OR target_note_id = ?",
                     (note_id, note_id),
@@ -20516,6 +20544,13 @@ DELETE FROM keywords
                 conn.execute(
                     "DELETE FROM notes WHERE id = ? AND deleted = 1", (note_id,)
                 )
+                # Review R0, m-3: an FTS5 'delete' only marks the note's
+                # terms deleted -- their bytes stay in older index segments
+                # (``notes_fts_data``) until a merge, where a byte scan still
+                # finds the note's words. 'optimize' merges every segment
+                # now, inside this transaction. Measured: 0.26 s for an
+                # 11 MB index (3,000 notes of 300 words).
+                conn.execute("INSERT INTO notes_fts(notes_fts) VALUES('optimize')")
                 logger.debug("Deleted a note forever")
                 return True
         except ConflictError:

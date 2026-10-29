@@ -21,12 +21,17 @@ delete already took out of the external-content index.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from Tests.ChaChaNotesDB.note_trace_census import note_id_columns, note_traces
+from Tests.ChaChaNotesDB.note_trace_census import (
+    note_id_columns,
+    note_traces,
+    value_traces,
+)
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
@@ -39,12 +44,34 @@ pytestmark = pytest.mark.unit
 _HEX = "a" * 64
 #: Words only the purged note ever held (the Backlinker spells its title).
 _TOKENS = ("plutonium",)
+#: Review R0, m-3: a title word, a body word and a keyword only this note has.
+_TITLE_TOKEN = "zeppelinward"
+_CONTENT_TOKEN = "plutonium"
+_KEYWORD_TOKEN = "quokkatag"
+#: The agent receipt the soft delete cancels into a replay guard (m-1).
+_GUARD_RECEIPT = "receipt-guard-1"
+#: Review R0, m-2: what a purge KEEPS on purpose, by table.column -- Sync v2
+#: organization state that by its v58 contract holds logical ids only, never
+#: a title or text (``chachanotes_v57_to_v58_notes_organization_sync.sql``).
+#: A pending link intent must still reach the server, in order; a head is the
+#: server's acknowledged state a later link tombstone builds on.
+_ID_ONLY_TOMBSTONES = {
+    "notes_organization_sync_intents.payload_json": 1,
+    "notes_organization_heads.payload_json": 1,
+}
 
 
 class _Purgeable:
-    """A soft-deleted note referenced from every discovered note-id column."""
+    """A soft-deleted note referenced from every discovered note-id column.
 
-    def __init__(self, tmp_path: Path) -> None:
+    Args:
+        tmp_path: Directory for the database file.
+        backlinked: Whether another note's body links to this one by title.
+            The token scan (review R0, m-3) turns it off: that note's own
+            words would otherwise spell the purged title.
+    """
+
+    def __init__(self, tmp_path: Path, *, backlinked: bool = True) -> None:
         self.path = tmp_path / "notes.sqlite3"
         self.db = CharactersRAGDB(self.path, client_id="task-34000-29-8b")
         db = self.db
@@ -52,8 +79,12 @@ class _Purgeable:
         self.note_id = db.add_note(
             "Purge zeppelinward", "plutonium secret body links [[Keeper note]]"
         )
-        self.linker = db.add_note("Backlinker", "see [[Purge zeppelinward]]")
-        self.keyword_ids = [db.add_keyword(word) for word in ("alpha", "beta")]
+        self.linker = (
+            db.add_note("Backlinker", "see [[Purge zeppelinward]]")
+            if backlinked
+            else None
+        )
+        self.keyword_ids = [db.add_keyword(word) for word in ("alpha", _KEYWORD_TOKEN)]
         for keyword_id in self.keyword_ids:
             db.link_note_to_keyword(self.note_id, keyword_id)
         db.link_note_to_keyword(self.keeper, self.keyword_ids[0])
@@ -61,6 +92,17 @@ class _Purgeable:
         folder = folders.create_folder(name="Projects", parent_id=None)
         folders.attach_manual(folder_id=folder.folder_id, note_id=self.note_id)
         folders.attach_manual(folder_id=folder.folder_id, note_id=self.keeper)
+        with sqlite3.connect(self.path) as connection:
+            # Review R0, m-1: an agent's organization receipt the delete
+            # below cancels, turning it into the replay guard -- a
+            # content-free publication intent under the receipt's id.
+            connection.execute(
+                "INSERT INTO note_organization_receipts(receipt_id, note_id, "
+                "requested_keywords_json, note_version, organization_version, "
+                "state, created_at, updated_at) VALUES (?, ?, '[]', 1, ?, "
+                "'pending_organization', 't', 't')",
+                (_GUARD_RECEIPT, self.note_id, _HEX),
+            )
         version = db.get_note_by_id(self.note_id)["version"]
         db.soft_delete_note(self.note_id, version)
         self.version = version + 1
@@ -109,6 +151,34 @@ class _Purgeable:
                 "VALUES (?, ?)",
                 (self.note_id, _HEX),
             )
+            # Review R0, m-2: Sync v2 organization state naming the note --
+            # a pending keyword-link intent and its acknowledged head. By the
+            # v58 contract these hold logical ids only, never the note's text.
+            link = json.dumps(
+                {
+                    "subject_type": "note",
+                    "subject_id": self.note_id,
+                    "keyword_sync_id": "kw-sync-1",
+                }
+            )
+            connection.execute(
+                "INSERT INTO notes_organization_sync_intents(intent_id, "
+                "intent_sequence, server_profile_id, dataset_id, domain, "
+                "object_id, operation, schema_version, encryption_policy, "
+                "payload_json, payload_hash, source_version, created_at) VALUES "
+                "('org-intent-1', 1, 'p', 'd', 'notes.keyword_link', 'link-1', "
+                "'upsert', 1, 'server_trusted_v1', ?, ?, 1, 't')",
+                (link, _HEX),
+            )
+            connection.execute(
+                "INSERT INTO notes_organization_heads(server_profile_id, dataset_id, "
+                "domain, object_id, operation, schema_version, encryption_policy, "
+                "payload_json, payload_hash, object_revision, object_hash, "
+                "server_cursor, deleted, apply_state, applied_at, updated_at) "
+                "VALUES ('p', 'd', 'notes.keyword_link', 'link-1', 'upsert', 1, "
+                "'server_trusted_v1', ?, ?, 1, ?, 'c1', 0, 'applied', 't', 't')",
+                (link, _HEX, _HEX),
+            )
 
     def connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
@@ -144,7 +214,7 @@ def test_delete_forever_leaves_no_row_that_names_the_note(tmp_path) -> None:
     assert seed.db.hard_delete_note(seed.note_id, expected_version=seed.version)
 
     with seed.connect() as connection:
-        assert seed.traces(connection) == {}
+        assert seed.traces(connection) == _ID_ONLY_TOMBSTONES
         # Search and keywords, through the store's own readers.
         assert seed.db.search_notes("plutonium") == []
         assert seed.note_id not in {
@@ -189,7 +259,10 @@ def test_a_note_referencing_table_the_purge_does_not_know_is_caught(
     assert seed.db.hard_delete_note(seed.note_id, expected_version=seed.version)
 
     with seed.connect() as connection:
-        assert seed.traces(connection) == {"note_review_flags.flagged_note_id": 1}
+        assert seed.traces(connection) == {
+            **_ID_ONLY_TOMBSTONES,
+            "note_review_flags.flagged_note_id": 1,
+        }
 
 
 def test_delete_forever_refuses_a_live_note(tmp_path) -> None:
@@ -254,3 +327,118 @@ def test_delete_forever_is_one_transaction(tmp_path) -> None:
         assert connection.execute(
             "SELECT COUNT(*) FROM notes_fts_docsize WHERE id = ?", (seed.rowid,)
         ).fetchone()[0] == 0
+
+
+# -- review R0: the replay guard (m-1) and the token scan (m-3) --------------
+
+
+def _needles(note_id: str) -> tuple[str, ...]:
+    """The note's id -- bare, and as a JSON string -- and its three words."""
+    return (note_id, json.dumps(note_id), _TITLE_TOKEN, _CONTENT_TOKEN, _KEYWORD_TOKEN)
+
+
+def _the_tag_itself(where: str) -> bool:
+    """The keyword is its own entity, shared with other notes.
+
+    Delete forever removes the NOTE's link to it (``note_keywords`` and that
+    link's sync-log rows) and never the tag: the word stays in the keyword's
+    own row, its index and its own sync-log entry -- nowhere else.
+    """
+    table, _, rest = where.partition(".")
+    return rest.endswith(f":{_KEYWORD_TOKEN}") and (
+        table == "keywords" or table.startswith("keywords_fts") or table == "sync_log"
+    )
+
+
+def test_a_token_scan_of_every_column_finds_only_id_only_tombstones(tmp_path) -> None:
+    """Review R0, m-3: EVERY column of EVERY table, as bytes, after a purge.
+
+    The note's id (bare and as JSON), a word of its title, a word of its body
+    and its own keyword: before the purge each is found; afterwards nothing
+    is, except the id-only Sync v2 organization rows the purge keeps (m-2)
+    and the tag's own rows. The FTS index's own blocks are scanned too --
+    an FTS ``'delete'`` leaves a word's bytes in older segments until the
+    purge's ``'optimize'`` merges them.
+    """
+    seed = _Purgeable(tmp_path, backlinked=False)
+    needles = _needles(seed.note_id)
+    with seed.connect() as connection:
+        before = value_traces(connection, needles)
+    for needle in needles:
+        assert any(where.endswith(f":{needle}") for where in before), (needle, before)
+
+    assert seed.db.hard_delete_note(seed.note_id, expected_version=seed.version)
+
+    with seed.connect() as connection:
+        after = value_traces(connection, needles)
+        tag_rows = connection.execute(
+            "SELECT entity FROM sync_log WHERE instr(payload, ?) > 0",
+            (_KEYWORD_TOKEN,),
+        ).fetchall()
+    kept = {where: rows for where, rows in after.items() if not _the_tag_itself(where)}
+    assert kept == {
+        f"{where}:{needle}": rows
+        for where, rows in _ID_ONLY_TOMBSTONES.items()
+        for needle in (seed.note_id, json.dumps(seed.note_id))
+    }, kept
+    assert {str(row[0]) for row in tag_rows} <= {"keywords"}, tag_rows
+    assert f"keywords.keyword:{_KEYWORD_TOKEN}" in after
+
+
+def test_the_token_scan_catches_a_title_in_a_json_column_it_was_never_told_about(
+    tmp_path,
+) -> None:
+    """Negative control: a new table holding the title inside JSON is found."""
+    seed = _Purgeable(tmp_path, backlinked=False)
+    with seed.connect() as connection:
+        connection.execute("CREATE TABLE note_export_cache(meta_json TEXT)")
+        connection.execute(
+            "INSERT INTO note_export_cache VALUES (?)",
+            (json.dumps({"title": "Purge zeppelinward", "words": 3}),),
+        )
+
+    assert seed.db.hard_delete_note(seed.note_id, expected_version=seed.version)
+
+    with seed.connect() as connection:
+        after = value_traces(connection, _needles(seed.note_id))
+    assert after.get(f"note_export_cache.meta_json:{_TITLE_TOKEN}") == 1, after
+
+
+def test_a_purge_keeps_the_cancelled_receipt_unreplayable(tmp_path) -> None:
+    """Review R0, m-1: "permanently non-replayable" survives Delete forever.
+
+    The soft delete cancelled the agent's receipt into a content-free
+    publication intent. The purge keeps it as an id-only tombstone, so a
+    replayed ``save_note`` with that receipt id is still refused -- never
+    answered by creating the note again from the agent's request.
+    """
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.note_folder_models import NotesOrganizationRepositoryError
+
+    seed = _Purgeable(tmp_path, backlinked=False)
+    interop = NotesInteropService(
+        base_db_directory=tmp_path, api_client_id="t8b-m1", global_db_to_use=seed.db
+    )
+    assert seed.db.hard_delete_note(seed.note_id, expected_version=seed.version)
+
+    with pytest.raises(NotesOrganizationRepositoryError) as refused:
+        interop.save_note_with_organization(
+            "user-1",
+            title="Purge zeppelinward",
+            content="plutonium secret body",
+            receipt_id=_GUARD_RECEIPT,
+        )
+
+    assert "cancelled" in str(refused.value)
+    with seed.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM notes WHERE title = 'Purge zeppelinward'"
+        ).fetchone()[0] == 0
+        guard = connection.execute(
+            "SELECT note_id, payload_json, cancelled_at FROM "
+            "note_sync_publication_intents WHERE intent_id = ?",
+            (_GUARD_RECEIPT,),
+        ).fetchone()
+        after = value_traces(connection, _needles(seed.note_id))
+    assert guard[0] == f"purged:{_GUARD_RECEIPT}" and guard[1] == "{}" and guard[2]
+    assert not [where for where in after if where.startswith("note_sync_publication")]
