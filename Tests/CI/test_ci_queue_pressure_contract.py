@@ -66,8 +66,6 @@ FAST_LANE_TARGETS = (
     # names the workspace, never its id; pure, a few seconds.
     "Tests/Workspaces/test_link_on_use.py",
     "Tests/Workspaces/test_workspace_eligibility.py",
-    "Tests/Research/test_server_research_search_service.py::test_paper_search_detail_and_ingest_use_public_client_methods",
-    "Tests/Research/test_server_research_search_service.py::test_no_interop_module_calls_private_client_request",
     # TASK-34000.27: the sentence a vetoed nav-bar click gets from Library
     # (the save's own field-naming reason, the Esc path's sentence for
     # the other kinds, the destination in its head); pure, a few seconds.
