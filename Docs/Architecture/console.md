@@ -46,6 +46,14 @@ Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech control
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
 
+Character-picker creation and character/persona Start Chat handoffs align the
+workspace registry with the selected conversation through
+`ConsoleWorkspaceController._set_active_workspace_for_console_session` before
+publishing the activated chat (TASK-37620). A newly created global chat therefore
+selects Default; a repurposed pristine tab keeps its existing workspace. This
+prevents model-picker Apply/Cancel from resuming into the previous workspace's
+chat. Resume reconciliation still honors genuine cross-screen workspace changes.
+
 `ConsoleTranscript.refresh_messages()` keeps its awaited row reconciliation inside
 the existing refresh lock and Textual's `App.batch_update()` (TASK-37145). Native
 remove-before-mount teardown can span several repaint opportunities; the batch

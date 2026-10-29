@@ -27,28 +27,16 @@ statement; restated briefly here):
    controller's own property of the SAME NAME as the original private
    method/attribute is a thin wrapper around the stored callable.
 
-**Controller-to-controller seam (session <-> workspace), the one new binding
-shape this cluster needed**: five of the moved bodies below called straight
-into `ConsoleWorkspaceController` in the pre-move source
-(`self._workspace._set_active_workspace_for_console_session(...)`,
-`.._resume_console_workspace_conversation(...)`,
-`.._console_initial_session_title_for_workspace(...)` x3,
-`.._merge_console_workspace_rows(...)`,
-`.._console_session_id_for_workspace_conversation(...)`). Per the wave-2
-Task 3 brief ("the two controllers may need a named callable between them;
-design it deliberately, never a back-door through the screen"), those seven
-call sites are the only INTENTIONAL, documented deviation from "byte-for-byte
-moved" in this module: each drops its `self._workspace.` prefix in favour of
-a same-named property here (`_set_active_workspace_for_console_session`,
-`_resume_console_workspace_conversation`,
-`_console_initial_session_title_for_workspace`, `_merge_console_workspace_
-rows`, `_console_session_id_for_workspace_conversation`), each wrapping a
-constructor-injected callable `ChatScreen.__init__` points at
-`self._workspace.<same method>` -- Python resolves `self._workspace` at
-CALL time inside that lambda, so construction order between the two
-controllers does not matter. `ChatScreen` itself keeps calling both
-controllers' methods directly by their original private names (ordinary
-screen-calls-its-own-controller traffic, unchanged).
+**Session-to-workspace seam.** Five named constructor callbacks provide
+workspace alignment, saved-conversation resume, initial titles, browser-row
+merging and conversation/session lookup. `build_console_controllers` wires
+late-bound lambdas through `screen._workspace`; properties here retain the
+session controller's local names, without snapshotting its sibling.
+The alignment callback maps `_set_active_workspace_for_session` to
+`ConsoleWorkspaceController._set_active_workspace_for_console_session`.
+Tab selection and character/persona Start Chat handoffs call it before UI
+publication so resume reconciliation sees the selected conversation's scope.
+`ChatScreen` still calls its own controllers directly.
 
 Moved: every `ChatScreen` method matching `*session*` whose body touched
 only session-lifecycle state (or one of the callables above) and no DOM --
@@ -5380,6 +5368,7 @@ class ConsoleSessionController:
                     "(error_type={}).",
                     type(exc).__name__,
                 )
+        self._set_active_workspace_for_session(session.id)
         store.switch_session(session.id)
         self._bind_composer_to_active_session(focus=False)  # TASK-33622.7
         if not duplicate_handoff:
@@ -5560,6 +5549,7 @@ class ConsoleSessionController:
                     "continuing (error_type={}).",
                     type(exc).__name__,
                 )
+        self._set_active_workspace_for_session(session.id)
         store.switch_session(session.id)
         self._bind_composer_to_active_session(focus=False)  # TASK-33622.7
         if not duplicate_handoff:

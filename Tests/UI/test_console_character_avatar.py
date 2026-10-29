@@ -152,6 +152,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         ensure_chat_store=lambda: store,
         provider_readiness_config_accessor=lambda: {},
         default_session_settings=lambda: SimpleNamespace(),
+        set_active_workspace_for_session=lambda _session_id: None,
         swap_session_character=lambda *_args, **_kwargs: False,
         sync_temporary_chip=lambda: None,
         sync_native_chat_ui=AsyncMock(),
