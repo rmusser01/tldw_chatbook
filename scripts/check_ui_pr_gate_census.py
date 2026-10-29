@@ -633,7 +633,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.15.26 (2026-10-29) appends 3 node ids at the tail: a later send
 # keeps the composer one row tall and moves the transcript at most twice (a
 # stock send and an acknowledged-path send, one private-profile app run each)
-# and the composer's queue-copy rule (one widget case), so no existing entry
+# and the composer's kept-rows rule (one widget case), so no existing entry
 # changes shard: dev's 1145 entries + 3 = 1148.
 MINIMUM_FILES = 1166
 
