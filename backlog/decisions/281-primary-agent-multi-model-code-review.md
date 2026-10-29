@@ -206,6 +206,12 @@ aggregate storage limits before implementation planning.
     verifier-only live checkpoint read supplies current revision/cursor and
     distinguishes pending delivered units from completion of the whole unit map;
     it reveals no original provenance and grants no new authority.
+    Read it after each accepted disposition batch; when every unit is disposed and
+    pending checks are clear, submit verifier_complete at its revision and return
+    after acceptance. Strict source-range refusals may include bounded captured
+    line counts and a same-document no-range retry after authority/reference checks;
+    native and fenced model history preserve this feedback. Neither recovery nor
+    completion guidance relaxes failure limits, terminal sealing or accounting.
     Batching grants no extra child, call, time or token budget.
     Complete model-bound response envelopes also fit the smaller positive runtime
     result-character cap and the existing 16,000-character native ceiling, applied

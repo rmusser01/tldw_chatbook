@@ -34,7 +34,9 @@ _SOURCE_DISCOVERY_GUIDANCE = (
     'source_query={"op":"list","relative_dir":".","side":"base"}) using your review_id; '
     "follow returned source references and cursors. Inspect captured base/head sides for "
     "PR, commit-range and patch targets, or base/staged/worktree for working-tree targets. "
-    "Use source_query search/resolve to find evidence and document_ref/source_range to read it. "
+    "Use source_query search/resolve to find evidence, then read document_ref without source_range "
+    "and follow its cursor. Explicit ranges must fit the captured line_count. "
+    "On invalid_source_range use the returned retry; do not guess larger endpoints. "
 )
 _SUBMISSION_RECOVERY_GUIDANCE = (
     "Correct rejected records using the same submission_id; a new ID leaves the rejection unresolved. "
@@ -58,7 +60,9 @@ _ROLE_GUIDANCE = {
         + _SOURCE_DISCOVERY_GUIDANCE
         + _SUBMISSION_RECOVERY_GUIDANCE
         + "Use submission_revision from your page or acknowledgment as expected_revision. "
-        + 'Read view="checkpoint" for current submission_revision, batch_cursor and pending_unit_ids after history reduction or cached replay. '
+        + 'Read view="checkpoint" after each accepted disposition batch, history reduction or cached replay. '
+        + "When all_units_disposed is true and pending_check_refs is empty, submit verifier_complete "
+        + "with empty records at its submission_revision and return after acceptance. "
         + "Batch pages replay their original revision; do not resubmit accepted dispositions. "
         + "On disposition_conflict, withdraw only the rejected submission using the returned retry "
         "arguments (dispositions, empty records, same ID, current revision); accepted decisions remain unchanged."
@@ -228,7 +232,29 @@ class CodeReviewToolProvider:
         except ReviewRefused as exc:
             self.service.diagnostic = exc.reason
             content = ""
-            if name == "code_review_submit" and exc.reason == "disposition_conflict":
+            if name == "code_review_read" and exc.reason == "invalid_source_range":
+                details = getattr(exc, "source_range_details", None)
+                if details is not None:
+                    feedback = {
+                        "reason": exc.reason,
+                        "line_count": details["line_count"],
+                        "recovery": "omit_source_range_and_follow_cursor",
+                        "retry": {
+                            "review_id": args["review_id"],
+                            "view": "source",
+                            "document_ref": details["source_ref"],
+                        },
+                    }
+                    if self._advertised_role() == "verifier":
+                        feedback["checkpoint"] = {
+                            "review_id": args["review_id"],
+                            "view": "checkpoint",
+                        }
+                    try:
+                        content = self.service.encode(feedback)
+                    except ReviewRefused:
+                        pass
+            elif name == "code_review_submit" and exc.reason == "disposition_conflict":
                 try:
                     checkpoint = self.service.verifier_checkpoint(args["review_id"])
                     content = self.service.encode(

@@ -1780,3 +1780,17 @@ marker and its last usage reservation remained uncertain. AC24/DoD stay open,
 PR3286 draft, no retry or merge. The16unused requests retire and the follow-up
 was deleted. See QA/final-handoff60/report.md and its independent outcome review.
 Existing ADR281; no new architectural decision or production repair.
+## Offline V1 source-range/completion follow-up — 2026-10-29
+
+Reproduce the retained worktree/base/worktree invalid-range sequence through real
+source, tool and native/fenced runtime boundaries. Add bounded range-recovery
+feedback only after source authority/reference checks, preserve that feedback in
+the model conversation, and guide accepted dispositions through the existing live
+checkpoint and verifier_complete flow. Keep strict range refusal, failure limits,
+immutable decisions, terminal sealing and accounting unchanged. Verify captured
+empty/short files, revoked/foreign references, capacity refusal, native/fenced
+recovery and terminal sealing offline. Keep AC24 open and PR #3286 draft; no live
+requests, qualification, new children, budget or merge.
+
+ADR required: no new ADR. ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md.
+Reason: bounded diagnostic feedback and guidance within existing authority and completion contracts.

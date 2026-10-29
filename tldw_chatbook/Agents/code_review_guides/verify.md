@@ -27,11 +27,13 @@ Unknown capacity, oversized units or indivisible continuation state may refuse;
 record gaps instead of dropping private history, increasing budgets or reading
 raw originals. Complete-page transport refusal cannot be bypassed with raw paths.
 
-Use source list/search/resolve queries and direct source_range reads of captured
+Use source list/search/resolve queries and direct document_ref reads of captured
 callers/tests. For example code_review_read({"review_id":"RID","view":"source",
 "source_query":{"op":"resolve","relative_path":"pkg/caller.py","side":"head"}}),
-then {"review_id":"RID","view":"source","document_ref":"SOURCE_REF",
-"source_range":{"start_line":20,"end_line":60}}. List uses op:"list",
+then {"review_id":"RID","view":"source","document_ref":"SOURCE_REF"}.
+Omit source_range initially and follow the bounded page cursor. Explicit ranges
+must fit the captured line_count. On invalid_source_range use the returned retry;
+do not guess larger endpoints. List uses op:"list",
 relative_dir and side; search adds op:"search", text (literal), relative_dir and
 side. Valid sides are base/head/staged/worktree already captured. Continue pages
 with review_id/view/cursor; do not change pinned selection. Nested instruction
@@ -77,15 +79,16 @@ Accepted submissions checkpoint dispositions/evidence/cursor outside history
 before host request-history reduction. Let the host reduce only recoverable
 completed rounds; retain task, guidance, pending units and protocol state. Do not
 reset history or gain a new child/model budget. Continue the returned batch
-cursor. After history reduction, cached replay or uncertainty about an accepted
-submission, read code_review_read({"review_id":"RID","view":"checkpoint"}).
+cursor. After each accepted disposition batch, history reduction, cached replay
+or uncertainty, read code_review_read({"review_id":"RID","view":"checkpoint"}).
 This live page supplies current submission_revision and a record with batch_cursor,
-pending_unit_ids and all_units_disposed. Cached batch pages intentionally replay
+pending_unit_ids, all_units_disposed and pending_check_refs. Cached batch pages intentionally replay
 byte-identically with their original revision. Never resubmit accepted decisions.
-If pending_unit_ids is empty and all_units_disposed is true, finish at the current
-checkpoint revision; otherwise handle pending units or follow batch_cursor.
+If all_units_disposed is true and pending_check_refs is empty, finish at the current
+checkpoint revision; otherwise handle pending units/check results or follow batch_cursor.
 Submit kind:"verifier_complete", records:[] only when all units have
-independent dispositions; actual terminal receipts still govern completion.
+independent dispositions, then return after acceptance without rereading or
+resubmitting accepted units; actual terminal receipts still govern completion.
 Unfinished units remain explicitly unresolved rather than disappearing.
 
 ## Executable checks: same live verifier

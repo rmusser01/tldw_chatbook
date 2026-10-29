@@ -3354,7 +3354,7 @@ def run_agent_loop(
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
                 if (
-                    call.name == "code_review_submit"
+                    call.name in {"code_review_read", "code_review_submit"}
                     and not result.ok
                     and result.content
                 ):

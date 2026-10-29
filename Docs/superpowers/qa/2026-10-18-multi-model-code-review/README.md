@@ -12,6 +12,12 @@ No retry, new repair cycle or merge followed, and the follow-up was deleted.
 [Independent outcome review](final-handoff60/outcome-review.md),
 [spending](final-handoff60/spending.json), [retention](final-handoff60/retention.json).
 
+The subsequently authorized [V1 offline recovery fix](v1-source-recovery-offline/report.md)
+adds actionable bounded source-range feedback and directs accepted dispositions
+through the live completion checkpoint. Strict refusal, failure limits, accepted
+decisions, accounting and sealing remain intact. These scripted controls do not
+replace the failed live result or close AC24; no new qualification was run.
+
 The [previous run after green CI](v1-final60/report.md) used26/60generation requests
 and2/3children onb35bb489ea. R1 received an accepted but contradictory completion
 that could not seal; R2 sealed; the primary later reported an unresolved provider
