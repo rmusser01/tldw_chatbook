@@ -169,7 +169,8 @@ async def test_search_input_posts_search_changed_and_new_posts_create_action():
         await pilot.click("#personas-library-import")
         await pilot.pause()
     assert searches[-1] == "sam"
-    assert actions == ["create", "import"]
+    # Frame slice B2b: New opens the New chooser ("create" on dev).
+    assert actions == ["new", "import"]
 
 
 async def test_mark_active_row_applies_is_active_to_selected_only():

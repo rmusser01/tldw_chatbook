@@ -807,16 +807,7 @@ class PersonasLibraryPane(Vertical):
             yield Button(
                 "New",
                 id="personas-library-new",
-                tooltip="Create a new item in this mode.",
-                classes="console-action-secondary",
-            )
-            yield Button(
-                "New Actor Pack",
-                id="personas-library-new-actor-pack",
-                tooltip=(
-                    "Create a local actor with a required portrait and "
-                    "portable identity."
-                ),
+                tooltip="Create something new: pick a kind and a starting point.",
                 classes="console-action-secondary",
             )
             yield Button(
@@ -899,10 +890,6 @@ class PersonasLibraryPane(Vertical):
             import_button.tooltip = (
                 "Import a character card or create a character from a Buddy archive."
             )
-        self.query_one("#personas-library-new-actor-pack", Button).display = mode in (
-            "characters",
-            "personas",
-        )
         self.query_one("#personas-library-import-actor-pack", Button).display = (
             mode
             in (
@@ -1136,7 +1123,12 @@ class PersonasLibraryPane(Vertical):
 
     def set_sort_label(self, text: str) -> None:
         """Update the sort button's label (the screen owns the sort cycle/copy)."""
-        self.query_one("#personas-library-sort", Button).label = text
+        button = self.query_one("#personas-library-sort", Button)
+        button.label = text
+        # Button.label does not re-measure an auto-width button, so a longer
+        # label wrapped onto a second, unpainted line while the bar was one
+        # row (exists on dev in Personas at 220; fixed by frame slice B2b).
+        button.refresh(layout=True)
         # A longer/shorter label changes the single-row fit (F-030).
         self._sync_control_layout()
 
@@ -1187,7 +1179,9 @@ class PersonasLibraryPane(Vertical):
     def set_tag_label(self, text: str) -> None:
         """Update the tag button's label (the screen owns the active tag)."""
         # TASK-34400: the active tag is untrusted; a str label parses as markup.
-        self.query_one("#personas-library-tag", Button).label = Content(text)
+        button = self.query_one("#personas-library-tag", Button)
+        button.label = Content(text)
+        button.refresh(layout=True)  # as set_sort_label: re-measure the label
         self._sync_control_layout()
 
     @on(Input.Changed, "#personas-library-search")
@@ -1243,18 +1237,14 @@ class PersonasLibraryPane(Vertical):
 
     @on(Button.Pressed, "#personas-library-new")
     def _new_pressed(self, event: Button.Pressed) -> None:
+        """Open the New chooser (frame slice B2b, spec 1.4.6)."""
         event.stop()
-        self.post_message(PersonaActionRequested(action="create"))
+        self.post_message(PersonaActionRequested(action="new"))
 
     @on(Button.Pressed, "#personas-library-import")
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
-
-    @on(Button.Pressed, "#personas-library-new-actor-pack")
-    def _new_actor_pack_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(PersonaActionRequested(action="create_actor_pack"))
 
     @on(Button.Pressed, "#personas-library-import-actor-pack")
     def _import_actor_pack_pressed(self, event: Button.Pressed) -> None:

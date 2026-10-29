@@ -43,6 +43,7 @@ from Tests.UI.roleplay_frame_harness import (
     seed_mock_characters,
     select_roleplay_item,
     settle,
+    start_new,
     visible_item_ids,
     wait_until,
 )
@@ -354,7 +355,7 @@ async def test_a_persona_save_that_fails_validation_keeps_the_app_running(
     async with app.run_test(size=SIZE, notifications=True) as pilot:
         await settle(pilot)
         await _enter_mode(pilot, "personas")
-        assert await pilot.click("#personas-library-new")
+        await start_new(pilot)
         await settle(pilot)
         screen = app.screen
         assert screen._edit_mode == "create"

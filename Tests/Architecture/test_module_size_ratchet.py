@@ -184,7 +184,9 @@ _BUDGETS: dict[str, int] = {
     # Roleplay frame B2b (TASK-33910.4), each line one commit that grows it:
     # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
     # T1, the Inspector's interim Duplicate: +10 (dev's 16,859 -> 16,869).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16869,
+    # T2, the New chooser's worker, routing and own reentrancy flag: +90
+    # (16,869 -> 16,959).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16959,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -207,7 +209,11 @@ _BUDGETS: dict[str, int] = {
     # reason (owe_first, landing_owed, take_first); +29 (1,116 -> 1,145).
     # Its fix round 1 (same day) adds landed_elsewhere (a landing owed on a
     # superseded non-character list is dropped); +16 (1,145 -> 1,161).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 855,
+    # Roleplay frame B2b (TASK-33910.4), each line one commit that grows it:
+    # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
+    # T2, the New chooser's rows (NewChoice, new_chooser_options): +113
+    # (855 -> 968).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 968,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision

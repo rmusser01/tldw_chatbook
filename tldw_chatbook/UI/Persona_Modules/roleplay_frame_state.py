@@ -853,3 +853,116 @@ def delete_modal_copy(
 def turned_off_toast(name: str) -> str:
     """R33's one undo copy string, shown when Space turns a book off."""
     return f"{_one_line(name)} turned off {resolve_glyph(_SEPARATOR)} space to undo"
+
+
+# ---- The New chooser (frame slice B2b, spec 1.4.1 "New…", 1.4.6) ----
+
+#: The screen's read-only reason while browsing server characters; the New
+#: chooser's character rows give the same words.
+SERVER_CHARACTERS_READ_ONLY = "Server characters are read-only here."
+#: Why "Persona · From a portrait" is off: the portraits are local characters.
+PORTRAIT_NEEDS_LOCAL = "Portraits come from local characters."
+#: The Blank row each kind's chooser opens on (spec 1.4.6: Enter Enter gives a
+#: blank draft of the current kind).
+NEW_BLANK_FOR_MODE: dict[str, str] = {
+    "characters": "character:blank",
+    "personas": "persona:blank",
+    "lore": "lore",
+    "dictionaries": "dictionary",
+}
+
+
+@dataclass(frozen=True)
+class NewChoice:
+    """One row of the New chooser.
+
+    Attributes:
+        choice_id: The create variant (``character:blank``, ``lore``, ...).
+        mode: The workbench mode that lists what it creates; the screen
+            switches there (inside the unsaved guard) before it creates.
+        label: The row's words, painted literally.
+        hint: A dim note after the label, or None.
+        enabled: False when the variant cannot run here.
+        reason: Why it is disabled (shown instead of the hint).
+        preselected: The row the chooser opens on.
+    """
+
+    choice_id: str
+    mode: str
+    label: str
+    hint: str | None
+    enabled: bool
+    reason: str | None
+    preselected: bool
+
+
+def new_chooser_options(
+    mode: str, *, local_characters: bool, local_runtime: bool
+) -> tuple[NewChoice, ...]:
+    """Every create variant in the rail's order, the current kind's Blank first-picked.
+
+    Character: Blank · From a concept · From a portrait (Actor Pack); Persona:
+    Blank · From a portrait; Lore book; Chat dictionary (spec 1.4.1). The rows
+    are the same in every kind, so the chooser never reshuffles. Lore books and
+    chat dictionaries keep dev's immediate create until B9a (spec 5.3).
+
+    Args:
+        mode: The active workbench mode; its Blank is preselected.
+        local_characters: Whether local character seams own the screen (False
+            while browsing server characters).
+        local_runtime: Whether personas run locally (a persona's portrait is
+            picked from local characters).
+
+    Returns:
+        The rows, exactly one preselected and enabled.
+    """
+    sep = resolve_glyph(_SEPARATOR)
+    rows = [
+        ("character:blank", "characters", f"Character {sep} Blank", None),
+        (
+            "character:concept",
+            "characters",
+            f"Character {sep} From a concept",
+            "describe it, then generate the card",
+        ),
+        (
+            "character:portrait",
+            "characters",
+            f"Character {sep} From a portrait (Actor Pack)",
+            None,
+        ),
+        ("persona:blank", "personas", f"Persona {sep} Blank", None),
+        (
+            "persona:portrait",
+            "personas",
+            f"Persona {sep} From a portrait (Actor Pack)",
+            None,
+        ),
+        ("lore", "lore", "Lore book", "created at once"),
+        ("dictionary", "dictionaries", "Chat dictionary", "created at once"),
+    ]
+
+    def reason_for(choice_id: str) -> str | None:
+        if choice_id.startswith("character:") and not local_characters:
+            return SERVER_CHARACTERS_READ_ONLY
+        if choice_id == "persona:portrait" and not local_runtime:
+            return PORTRAIT_NEEDS_LOCAL
+        return None
+
+    reasons = {choice_id: reason_for(choice_id) for choice_id, *_ in rows}
+    wanted = NEW_BLANK_FOR_MODE.get(mode, "character:blank")
+    if reasons.get(wanted) is not None:
+        # The current Blank is off (server characters): the first row that runs.
+        wanted = next(choice_id for choice_id, *_ in rows if reasons[choice_id] is None)
+    return tuple(
+        NewChoice(
+            choice_id=choice_id,
+            mode=row_mode,
+            label=label,
+            hint=hint,
+            enabled=reasons[choice_id] is None,
+            reason=reasons[choice_id],
+            preselected=choice_id == wanted,
+        )
+        for choice_id, row_mode, label, hint in rows
+    )
