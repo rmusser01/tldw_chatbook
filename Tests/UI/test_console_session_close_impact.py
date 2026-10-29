@@ -121,3 +121,74 @@ def test_close_dialog_lists_only_non_zero_rows_including_unsent_turns() -> None:
         "Closing will discard or cancel:",
         "Unsent turns needing attention: 2",
     ]
+
+
+def _draft_only_impact(session_id: str) -> object:
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionCloseImpact
+
+    return ConsoleSessionCloseImpact(
+        session_id=session_id,
+        transcript_message_count=0,
+        lifecycle=_idle_lifecycle(),
+        has_draft=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("tab_count", "expected_names"),
+    [
+        (5, '"Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5"'),
+        (6, '"Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5" and 1 more'),
+        (8, '"Tab 1", "Tab 2", "Tab 3", "Tab 4", "Tab 5" and 3 more'),
+    ],
+)
+def test_quit_dialog_names_five_tabs_then_counts_the_rest(
+    tab_count: int, expected_names: str
+) -> None:
+    """Quit names at most five affected tabs, then says how many more."""
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import (
+        ConsoleQuitImpact,
+        quit_dialog_message,
+    )
+
+    impact = ConsoleQuitImpact(
+        revision=3,
+        tabs=tuple(
+            (f"Tab {index}", _draft_only_impact(f"session-{index}"))
+            for index in range(1, tab_count + 1)
+        ),
+    )
+
+    lines = quit_dialog_message(impact).splitlines()
+
+    assert f"Unsent drafts: {tab_count}" in lines
+    assert f"Affected tabs: {expected_names}" in lines
+
+
+@pytest.mark.parametrize(
+    ("stored_title", "expected_label"),
+    [
+        ("", "Untitled"),
+        ("[bold]Plan[/bold]", "[bold]Plan[/bold]"),
+        ("x" * 80, None),
+    ],
+)
+def test_close_and_quit_label_a_tab_the_same_way(
+    stored_title: str, expected_label: str | None
+) -> None:
+    """The close dialog, its failure toasts and the quit list share one label."""
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import tab_display_title
+
+    store = SimpleNamespace(
+        sessions=lambda: (SimpleNamespace(id="session-1", title=stored_title),)
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._chat_store_accessor = lambda: store
+
+    close_label = controller._session_close_display_title("session-1")
+
+    assert close_label == tab_display_title(stored_title)
+    if expected_label is None:
+        assert 0 < len(close_label) <= 60
+    else:
+        assert close_label == expected_label
