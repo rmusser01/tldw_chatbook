@@ -689,3 +689,30 @@ async def test_fleet_confirmation_stay_preserves_the_observed_impact():
     assert "Live agent runs: 0" in harness.dialogs[0].message
     assert "Sessions with queued prompts: 1" in harness.dialogs[0].message
     assert "Unsent queued prompts: 2" in harness.dialogs[0].message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "console_runtime", [None, SimpleNamespace(chat_controller=None)]
+)
+async def test_quit_without_a_console_controller_never_loads_the_loss_inventory(
+    monkeypatch, console_runtime
+):
+    """Quitting before Console ever opened stays off the Console session module.
+
+    TASK-33628.1: the loss inventory (and ``session.py`` behind it) is imported
+    only once a Console controller exists, so this quit must not need it.
+    """
+    import sys
+
+    import tldw_chatbook.UI.Console_Modules as console_modules
+
+    monkeypatch.setitem(
+        sys.modules, "tldw_chatbook.UI.Console_Modules.loss_inventory", None
+    )
+    monkeypatch.delattr(console_modules, "loss_inventory", raising=False)
+    app = _ConfirmationHarness(_ConfirmationScreen())
+    app.console_runtime = console_runtime
+
+    assert await app._confirm_console_runtime_quit() is True
+    assert app._console_quit_approved_revision is None
