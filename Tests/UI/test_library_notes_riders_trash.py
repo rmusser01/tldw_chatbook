@@ -1650,3 +1650,63 @@ def test_a_dropped_landing_stops_withholding_the_trash_offset() -> None:
     LibraryScreen._withdraw_library_notes_pending_focus_handoffs(screen)
     assert fake._trash_focus_role == ""
     assert fake._trash_landing_settling == ""
+
+
+def test_a_landing_waits_while_a_pruning_sync_has_focus_parked() -> None:
+    """Ruling T8b-e: settle only once the landed control has focus again.
+
+    Traced at 100x30: a sync right after a Restore's landing recomposed the
+    list and pruned the landed button, Textual parked focus on the Library
+    grip, and the keep-in-view ran THEN -- it scrolled nothing and dropped
+    the marker under the replay, so a later capture re-applied offset 0 over
+    the row below the fold. Seen once in the 100x30 Pilot before this
+    existed; without it, 14 later runs passed, so only this rider can force
+    the window. While focus sits on that framework landing the
+    check defers to the next refresh -- the offset still withheld -- and a
+    bounded number of times.
+    """
+    scrolled: list[str] = []
+    deferred: list[tuple] = []
+    control = SimpleNamespace(scroll_visible=lambda **_kwargs: scrolled.append("row"))
+    grip = SimpleNamespace(id="library-browse-items-grip")
+    parked: dict[str, object] = {"on": grip}
+    fake = SimpleNamespace(
+        _library_notes_view="trash",
+        _trash_focus_role="trash-restore:19",
+        _trash_landing_settling="trash-restore:19",
+        _library_notes_trash_focus_target=lambda _role: control,
+        focused=grip,
+        call_after_refresh=lambda *args: deferred.append(args),
+        _screen=SimpleNamespace(
+            _library_notes_reset_landing_canvas=lambda focused: (
+                object() if focused is parked["on"] else None
+            )
+        ),
+    )
+
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
+    assert fake._trash_landing_settling == "trash-restore:19"
+    assert scrolled == []
+    ((retry, role, attempt),) = deferred
+    assert retry.func is LibraryNotesController._keep_landed_trash_control_in_view
+    assert (role, attempt) == ("trash-restore:19", 1)
+
+    fake.focused = control  # the sync's replay put focus back
+    retry(role, attempt)
+    assert scrolled == ["row"]
+    assert fake._trash_landing_settling == ""
+
+    # Bounded: focus that never comes back stops withholding the offset.
+    fake.focused = grip
+    fake._trash_landing_settling = "trash-restore:19"
+    LibraryNotesController._keep_landed_trash_control_in_view(
+        fake, "trash-restore:19", 5
+    )
+    assert fake._trash_landing_settling == ""
+    # A focus the USER chose (not the framework's landing) settles at once.
+    fake._trash_landing_settling = "trash-restore:19"
+    fake.focused = SimpleNamespace(id="library-notes-trash-back")
+    deferred.clear()
+    LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
+    assert deferred == []
+    assert fake._trash_landing_settling == ""
