@@ -186,7 +186,9 @@ _BUDGETS: dict[str, int] = {
     # T1, the Inspector's interim Duplicate: +10 (dev's 16,859 -> 16,869).
     # T2, the New chooser's worker, routing and own reentrancy flag: +90
     # (16,869 -> 16,959).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16959,
+    # T2 fix round 1, the chooser holds its slot until its create ends: +3
+    # (16,959 -> 16,962).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16962,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
