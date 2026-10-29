@@ -22268,6 +22268,7 @@ PR #3283 passed all 23 application test jobs, all 17 UI shards and Perf Guard, t
 PR3283's Media journey saw no highlighted rows after Edit Save even though the Reader had the edited title. A held native Canvas mount reproduced that exact boundary: loading was false and scopes matched, but DOM rows were empty inside Textual's batch; canonical selection/action identity stayed on item3 and the last render-eligible frame retained its cue. Releasing mount published the edited row and cue. The uninstrumented CI interval is inferred from this matching witness, not directly captured.
 
 Wait for the accepted replacement row objects and edited title before the separate semantic cue assertion. Do not treat settled service/controller flags as a DOM publication receipt, wait on the cue itself, or add an arbitrary pause. A cue-removed negative control must still fail after publication. Actual RED03/GREEN source/XML receipts and native hold evidence are retained in the Textual follow-up QA records.
+
 ## Native Windows handle identity must match Python stat widths
 
 **TASK-37174, 2026-10-28.** While validating Console tool-disclosure recovery
@@ -22308,3 +22309,8 @@ boundaries before testing successful post-refusal execution on a supported host.
 The corrected native Windows selection passed 72 cases with 20 explicit POSIX
 skips and no failure or teardown error. Run the actual command controls on Linux;
 Windows refusal evidence cannot qualify them.
+
+
+## Prepare editing context before holding the parent message pump (TASK-37266, 2026-10-28)
+
+The first Character Bench Save-publication regression run sent special keys while the Screen pump was deliberately held. Binding dispatch reached that held pump and timed out before the intended assertion; shutdown then obscured it as `No screens`. Preparing focus and selection through Pilot before the hold, then posting printable native keys to the focused child, reached the actual draft-replacement assertion. The invalid run was retained separately from intended RED evidence. A later GREEN observer also needed to tolerate zero editor matches during the subsequent explicit Save's legitimate remove/mount gap; its final persistence assertion stayed unchanged. Do not turn harness dispatch or intermediate DOM failures into evidence of the product defect.

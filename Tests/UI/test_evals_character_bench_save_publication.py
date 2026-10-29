@@ -196,7 +196,9 @@ def _assert_submitted_metadata(ctx):
     ("field_id", "later_value"),
     [
         ("name", "Saved-new"),
-        ("description", "Later description"),
+        pytest.param(
+            "description", "Later description", id="description-Later-description"
+        ),
         ("samples", "01"),
         ("seed", "07"),
         ("temperature", "0.70"),
