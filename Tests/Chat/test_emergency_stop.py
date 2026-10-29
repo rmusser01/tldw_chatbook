@@ -86,9 +86,16 @@ async def test_scheduler_holds_dispatch_when_stopped(tmp_path):
             popped["count"] += 1
             return []
 
+    import asyncio
+
     loop = SchedulerLoop.__new__(SchedulerLoop)
     loop.queue = _Queue()
     loop._emergency_stop_path = tmp_path / "estop.json"
+    # TASK-33620.15.24 moved the stop read onto ``_offload``'s worker; a
+    # ``__new__``-built loop lacked its task set, so every read failed SAFE to
+    # stopped and the "not stopped -> pops" step went red on dev.
+    loop._maintenance_db_tasks = set()
+    loop._maintenance_changed = asyncio.Event()
 
     # not stopped -> pops
     await loop._dispatch_due(datetime.now(timezone.utc))
