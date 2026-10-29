@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 import json
 from pathlib import Path
 from typing import Any
@@ -596,6 +597,94 @@ def test_existing_conversation_policy_mismatch_fails_closed_without_version_drif
     assert store.preparation_by_id(acceptance.preparation_id).pause_kind is (
         ConsolePreparationPauseKind.PERSISTENCE
     )
+
+
+def _safe_row_missing_at_commit(
+    tmp_path: Path,
+    *,
+    source: str,
+) -> tuple[CharactersRAGDB, ConsoleChatStore, ConsoleDurableTurnAcceptance]:
+    """An existing chat with no policy row, a safe candidate, and ``source``.
+
+    The session stages Never/Blocked and the turn was frozen under
+    Never/Blocked too; only the frozen authority's ``source`` varies.
+    """
+    db, _service, store, _preparation, acceptance = _ready_store(
+        tmp_path,
+        existing=True,
+        attachments=False,
+    )
+    safe = ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        policy_revision=1 if source == "durable" else None,
+        source=source,  # type: ignore[arg-type]
+        error_code="policy_read_error" if source == "unavailable" else None,
+    )
+    store._session_or_raise("session-1").library_policy_holder.snapshot = (
+        dataclass_replace(safe, policy_revision=None, source="missing", error_code=None)
+    )
+    acceptance = dataclass_replace(
+        acceptance,
+        frozen_authority=dataclass_replace(acceptance.frozen_authority, policy=safe),
+    )
+    db.get_connection().execute(
+        "DELETE FROM console_conversation_library_policy WHERE conversation_id = ?",
+        (acceptance.conversation_id,),
+    )
+    db.get_connection().commit()
+    return db, store, acceptance
+
+
+def _policy_rows(db: CharactersRAGDB, conversation_id: str) -> list[tuple[Any, ...]]:
+    return [
+        tuple(row)
+        for row in db.get_connection().execute(
+            "SELECT auto_retrieve_on_send, assistant_library_access, policy_revision "
+            "FROM console_conversation_library_policy WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+    ]
+
+
+def test_a_missing_policy_row_is_repaired_only_for_a_turn_frozen_on_that_missing_row(
+    tmp_path: Path,
+) -> None:
+    """Positive control for the refusal cases below (TASK-33620.3).
+
+    The same setup, frozen under ``source="missing"``, commits and writes the
+    safe row -- so a refusal below is the source check, not the fixture.
+    """
+    db, store, acceptance = _safe_row_missing_at_commit(tmp_path, source="missing")
+
+    store.commit_durable_turn(acceptance)
+
+    assert _policy_rows(db, acceptance.conversation_id) == [(0, 0, 1)]
+
+
+@pytest.mark.parametrize("source", ["unavailable", "durable"])
+def test_a_turn_frozen_on_an_unreadable_or_since_deleted_row_is_not_repaired(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    """ADR-079 as amended: an unreadable row is never permission (TASK-33620.3).
+
+    A turn frozen while its policy row could not be read (``unavailable``) or
+    while a row existed that has since been deleted (``durable``) did not run
+    under a missing row, so its commit must refuse rather than write one --
+    even though both sides hold the safe Never/Blocked values.
+    """
+    db, store, acceptance = _safe_row_missing_at_commit(tmp_path, source=source)
+    before = _database_snapshot(db)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Durable Console Library policy no longer matches acceptance",
+    ):
+        store.commit_durable_turn(acceptance)
+
+    assert _policy_rows(db, acceptance.conversation_id) == []
+    assert _database_snapshot(db) == before
 
 
 def test_success_persists_exact_attachment_state_hash_sync_intent_and_private_checkpoint(
