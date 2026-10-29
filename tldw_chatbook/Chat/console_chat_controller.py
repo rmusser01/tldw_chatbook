@@ -8149,24 +8149,22 @@ class ConsoleChatController:
         boundary = self._trace_call_boundaries_by_preparation.get(
             preparation.preparation_id
         )
-        if boundary is not None:
-            reservation_status = getattr(boundary, "reservation_status", "unknown")
-            if reservation_status not in {"established", "not_established"}:
-                return self._prepared_action_refusal(
-                    preparation, "Trace reservation status is unavailable."
-                )
-            if reservation_status == "established":
-                mark_not_dispatched = getattr(boundary, "mark_not_dispatched", None)
+        # TASK-33621.6 (owner decision 2026-10-27): Cancel always ends the
+        # send. A reservation whose status is unknown, or whose cancellation
+        # could not be written, is abandoned here; the call never reached
+        # the provider, and startup trace maintenance settles any reservation
+        # that did commit (RESERVED -> NOT_DISPATCHED, recover_open_calls).
+        reservation_status = getattr(boundary, "reservation_status", "unknown")
+        if boundary is not None and reservation_status == "established":
+            mark_not_dispatched = getattr(boundary, "mark_not_dispatched", None)
+            try:
                 if not callable(mark_not_dispatched):
-                    return self._prepared_action_refusal(
-                        preparation, "Trace cancellation could not be saved."
-                    )
-                try:
-                    mark_not_dispatched()
-                except TraceCallPersistenceError:
-                    return self._prepared_action_refusal(
-                        preparation, "Trace cancellation could not be saved."
-                    )
+                    raise TraceCallPersistenceError()
+                mark_not_dispatched()
+            except TraceCallPersistenceError:
+                logger.warning("Trace cancel not saved; left to startup recovery.")
+        elif boundary is not None and reservation_status != "not_established":
+            logger.info("Trace-blocked send canceled; reservation status unknown.")
 
         continuation = self._durable_postcommit_continuations.get(
             preparation.preparation_id
