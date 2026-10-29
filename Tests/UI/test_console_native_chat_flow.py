@@ -13639,7 +13639,8 @@ def test_insert_file_segment_collapses_with_custom_label():
     composer.insert_file_segment("file body text", "📄 notes.md · 4 KB")
 
     assert composer.draft_text() == "file body text"
-    assert composer._display_draft_text() == "📄 notes.md · 4 KB"
+    # TASK-33622.1: a labelled chip names its affordance like a paste chip.
+    assert composer._display_draft_text() == "📄 notes.md · 4 KB | Expand"
 
 
 def test_insert_file_segment_appends_after_typed_draft():
@@ -13648,7 +13649,7 @@ def test_insert_file_segment_appends_after_typed_draft():
     composer.insert_file_segment("file body", "📄 a.md · 9 B")
 
     assert composer.draft_text() == "see attached: file body"
-    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B"
+    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B | Expand"
 
 
 def test_paste_collapse_label_still_defaults_to_character_count():

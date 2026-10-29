@@ -277,10 +277,13 @@ async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
             f"Pasted text | {len(pasted)} characters | Expand"
         )
 
+        # TASK-33622.1: the caret sits right after the token, so it is on it.
         await pilot.press("enter")
         await pilot.pause()
 
-        assert composer._display_draft_text() == "Expand?"
+        assert composer._display_draft_text() == (
+            f"Expand pasted text ({len(pasted)} characters)? Enter: yes · Esc: no"
+        )
         assert composer.draft_text() == pasted
 
 

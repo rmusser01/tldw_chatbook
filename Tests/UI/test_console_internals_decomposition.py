@@ -97,6 +97,21 @@ def _repo_text(path: Path) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8")
 
 
+def _paste_confirm(text: str) -> str:
+    """TASK-33622.1: a paste token's confirm keeps its name and answer keys."""
+    return f"Expand pasted text ({len(text)} characters)? Enter: yes · Esc: no"
+
+
+def _flat_visible(plain: str) -> str:
+    """The visible draft with its soft-wrap row breaks removed.
+
+    TASK-33622.1: the named confirm is long enough to wrap where the old bare
+    "Expand?" never did; wrapping keeps every character, so joining the rows
+    gives the unwrapped display text back.
+    """
+    return _without_trailing_cursor(plain).replace("\n", "")
+
+
 def _without_trailing_cursor(text: str) -> str:
     """Strip a blinking-cursor placeholder from rendered composer text.
 
@@ -1387,14 +1402,21 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
-        _assert_single_style_span(
-            visible_draft.renderable,
-            style=ConsoleComposerBar.PASTE_CONFIRM_STYLE,
-            expected_text="Expand?",
-        )
+        confirm_spans = [
+            span
+            for span in visible_draft.renderable.spans
+            if span.style == ConsoleComposerBar.PASTE_CONFIRM_STYLE
+        ]
+        assert confirm_spans
+        assert "".join(
+            visible_draft.renderable.plain[span.start : span.end]
+            for span in confirm_spans
+        ).replace("\n", "") == _paste_confirm(pasted_text)
 
 
 @pytest.mark.asyncio
@@ -1420,7 +1442,9 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         )
         await pilot.pause(0.1)
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
         assert composer.draft_text() == pasted_text
 
 
@@ -1457,7 +1481,9 @@ async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
             visible_region.y,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
         assert composer.draft_text() == pasted_text
 
 
@@ -1493,7 +1519,9 @@ async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor
             visible_region.y + visible_draft.size.height - 1,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
         assert composer.draft_text() == pasted_text
 
 
@@ -1522,7 +1550,9 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
             visible_region.y + visible_draft.size.height - 1,
         )
 
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
         assert console.app.focused is composer
         assert composer.draft_text() == pasted_text
 
@@ -1548,7 +1578,7 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
         visible_plain = visible_draft.renderable.plain
         assert "literal unfurled paste" in visible_plain
         assert "Pasted text |" not in visible_plain
-        assert "Expand?" not in visible_plain
+        assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1569,7 +1599,7 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(8, 0))
         await pilot.pause(0.1)
-        assert "Expand?" in visible_draft.renderable.plain
+        assert _paste_confirm(pasted_text) in composer._display_draft_text()
 
         await pilot.click("#console-command-visible-text", offset=(0, 0))
         await pilot.pause(0.1)
@@ -1577,7 +1607,7 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         visible_plain = visible_draft.renderable.plain
         assert "prefix " in visible_plain
         assert "Pasted text |" in visible_plain
-        assert "Expand?" not in visible_plain
+        assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
@@ -1601,7 +1631,9 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
@@ -1610,7 +1642,7 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         visible_plain = visible_draft.renderable.plain
         assert "keyboard unfurl paste" in visible_plain
         assert "Pasted text |" not in visible_plain
-        assert "Expand?" not in visible_plain
+        assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1635,8 +1667,8 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
         await pilot.pause(0.1)
 
         assert (
-            _without_trailing_cursor(visible_draft.renderable.plain)
-            == "prefix\nExpand?"
+            _flat_visible(visible_draft.renderable.plain)
+            == f"prefix{_paste_confirm(pasted_text)}"
         )
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
@@ -1671,8 +1703,8 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         )
         await pilot.pause(0.1)
         assert (
-            _without_trailing_cursor(visible_draft.renderable.plain)
-            == f"{first_token}\nExpand?"
+            _flat_visible(visible_draft.renderable.plain)
+            == f"{first_token}{_paste_confirm(second_paste)}"
         )
 
         await pilot.click(
@@ -1685,7 +1717,7 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         assert first_token in visible_plain
         assert "second large paste" in visible_plain
         assert "first large paste" not in visible_plain
-        assert "Expand?" not in visible_plain
+        assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == f"{first_paste}\n{second_paste}"
 
 
@@ -1707,7 +1739,9 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
 
         await pilot.press("x")
         await pilot.pause(0.1)
@@ -1719,7 +1753,10 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
 
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?x"
+        # TASK-33622.1: the click also puts the caret on the token, between
+        # it and the typed "x", so Enter answers this confirm.
+        assert composer._display_draft_text() == f"{_paste_confirm(pasted_text)}x"
+        assert composer.cursor_index == len(pasted_text)
         assert composer.draft_text() == f"{pasted_text}x"
 
 
@@ -1778,7 +1815,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         )
         await pilot.pause(0.1)
 
-        assert "Expand?" in visible_draft.renderable.plain
+        assert _paste_confirm(pasted_text) in composer._display_draft_text()
         assert expected_token not in visible_draft.renderable.plain
         assert composer.draft_text() == f"{prefix}{pasted_text}"
 
@@ -1800,14 +1837,16 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
 
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Expand?" not in visible_plain
+        assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
@@ -1828,7 +1867,9 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _without_trailing_cursor(visible_draft.renderable.plain) == "Expand?"
+        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
+            pasted_text
+        )
 
         composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
@@ -1836,7 +1877,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
 
         visible_plain = visible_draft.renderable.plain
         assert expected_token in visible_plain
-        assert "Expand?" not in visible_plain
+        assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == pasted_text
 
 
