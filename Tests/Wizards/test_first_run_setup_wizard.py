@@ -1100,7 +1100,8 @@ async def test_a_refused_voice_next_without_a_key_offers_no_futile_retry(
         await container._advance()
         await pilot.pause()
         pinned = str(wizard.query_one("#setup-step-error-pinned", Static).render())
-        assert pinned.startswith("OpenAI voice needs an OpenAI API key.")
+        # TASK-34100.6 (provider-16): the pinned strip is prefixed '✗ '.
+        assert pinned.startswith("✗ OpenAI voice needs an OpenAI API key.")
         assert "Retry with Next" not in pinned
         assert container.current_step == index
 
@@ -2252,6 +2253,26 @@ def _provider_step(
     )
 
 
+async def _pick_found_row(pilot, step, index: int = 0) -> None:
+    """Use a detected server the way a user does (TASK-34100.6, provider-02).
+
+    The 'Use this server' button is gone: a detected server is the provider
+    list's first row ('Ready on this machine'), and Enter on it uses it.
+    """
+    choices = step.query_one("#setup-provider-choice", OptionList)
+    wanted = f"found-{index}"
+    for _ in range(150):
+        ids = [str(choices.get_option_at_index(i).id) for i in range(choices.option_count)]
+        if wanted in ids:
+            break
+        await pilot.pause(0.02)
+    choices.focus()
+    choices.highlighted = choices.get_option_index(wanted)
+    await pilot.pause()
+    await pilot.press("enter")
+    await pilot.pause()
+
+
 def _staged_provider_draft(wizard):
     wizard.commit_config.assert_not_called()
     wizard.stage_provider_setup.assert_called_once()
@@ -2428,9 +2449,12 @@ async def test_missing_required_cloud_key_blocks_test_and_continue_with_recovery
         step._on_test_pressed(Button.Pressed(test_button))
         await pilot.pause()
         probe.assert_not_awaited()
+        # TASK-34100.6 AC#3: Next with no key is the skip Enter always was --
+        # nothing is staged, and the choice stays for Back.
         ok, error = await step.commit()
-        assert not ok
-        assert "API key" in error
+        assert ok and error == ""
+        assert step.get_step_data()["skipped"] is True
+        assert step.selected_provider_key == "openai"
 
 
 @pytest.mark.parametrize(
@@ -2639,7 +2663,10 @@ async def test_cloud_provider_test_is_enabled_only_with_compatible_probe_target(
                 step.query_one("#setup-provider-key-status", Static).renderable
             ).lower()
             if test_state == "unsupported":
-                assert "connection testing is unavailable" in copy
+                # TASK-34100.6 (provider-06): a keyed provider's check is
+                # 'Check key' beside the field, never 'testing is unavailable'.
+                assert "press check key to try it" in copy
+                assert "connection testing is unavailable" not in copy
                 assert "valid endpoint" not in copy
             else:
                 assert "valid endpoint" in copy
@@ -4048,12 +4075,10 @@ async def test_selected_duplicate_detection_candidate_restores_exactly_per_provi
 
         endpoint = step.query_one("#setup-provider-endpoint", Input)
         banner = step.query_one("#setup-provider-detected", Static)
-        use_button = step.query_one("#setup-provider-use-detected", Button)
         assert endpoint.value == selected.base_url
         assert step.detected_server is selected
         assert "duplicate-detect.test" in str(banner.renderable)
         assert not banner.has_class("hidden")
-        assert not use_button.has_class("hidden")
 
         step.select_provider("llama_cpp")
         await pilot.pause()
@@ -4069,7 +4094,6 @@ async def test_selected_duplicate_detection_candidate_restores_exactly_per_provi
         assert endpoint.value == selected.base_url
         assert "duplicate-detect.test" in str(banner.renderable)
         assert not banner.has_class("hidden")
-        assert not use_button.has_class("hidden")
         assert getattr(restored_results.highlighted_option, "server", None) is selected
 
 
@@ -4157,16 +4181,8 @@ async def test_keyboard_candidate_selection_updates_exact_draft_identity():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        results = step.query_one("#setup-provider-detection-results", OptionList)
-        candidate_index = next(
-            index
-            for index in range(results.option_count)
-            if getattr(results.get_option_at_index(index), "server", None) is not None
-        )
-        results.highlighted = candidate_index
-        results.focus()
-        await pilot.press("enter")
-        await pilot.pause()
+        # TASK-34100.6: the scan's server is the list's found row.
+        await _pick_found_row(pilot, step)
 
         endpoint = step.query_one("#setup-provider-endpoint", Input)
         effective = str(
@@ -4322,6 +4338,9 @@ async def test_zero_detection_results_render_disabled_bounded_status():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
+        # 'Find local servers' is on a selected local row (TASK-34100.6).
+        step.select_provider("llama_cpp")
+        await pilot.pause()
         step.query_one("#setup-provider-detect", Button).press()
         await pilot.pause(0.1)
 
@@ -4357,9 +4376,14 @@ async def test_detection_never_renders_hostile_provider_or_endpoint_strings():
         screenshot = app.export_screenshot()
         assert provider_secret not in screenshot
         assert endpoint_secret not in screenshot
-        assert step.query_one("#setup-provider-use-detected", Button).has_class(
-            "hidden"
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        assert all(  # TASK-34100.6: a hostile server never becomes a found row
+            not str(choices.get_option_at_index(i).id).startswith("found-")
+            for i in range(choices.option_count)
         )
+        step.select_provider("llama_cpp")  # its panel lists the candidate
+        step._render_detection_results((server,))
+        await pilot.pause()
         results = step.query_one("#setup-provider-detection-results", OptionList)
         candidate = next(
             results.get_option_at_index(index)
@@ -4378,9 +4402,6 @@ async def test_detection_never_renders_hostile_provider_or_endpoint_strings():
         step.select_provider("llama_cpp")
         await pilot.pause()
         assert not hasattr(step, "detected_server")
-        assert step.query_one("#setup-provider-use-detected", Button).has_class(
-            "hidden"
-        )
 
 
 @pytest.mark.parametrize(
@@ -7329,8 +7350,7 @@ async def test_provider_switch_clears_adopted_llama_endpoint_before_custom_commi
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
-        await pilot.click("#setup-provider-use-detected")
-        await pilot.pause()
+        await _pick_found_row(pilot, step)
         assert step.detected_base_url == "http://127.0.0.1:8080"
 
         step.select_provider("custom")
@@ -7366,10 +7386,13 @@ async def test_provider_step_blocks_unset_declared_environment_source():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.select_provider("openai")
+        key_status = str(step.query_one("#setup-provider-key-status", Static).render())
         ok, error = await step.commit()
 
-        assert not ok
-        assert "PRIVATE_OPENAI_KEY" in error
+        # TASK-34100.6 review round 1, F4: a variable the user declared is
+        # configuration, not "no key yet" -- Next names it rather than skip.
+        assert not ok and step.get_step_data()["skipped"] is False
+        assert "PRIVATE_OPENAI_KEY" in error and "PRIVATE_OPENAI_KEY" in key_status
         wizard.stage_provider_setup.assert_not_called()
 
 
@@ -7407,11 +7430,12 @@ async def test_provider_credential_precedence_matches_first_chat_readiness(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.select_provider("openai")
+        key_status = str(step.query_one("#setup-provider-key-status", Static).render())
         ok, error = await step.commit()
 
         assert ok is expected_ready, error
-        if not expected_ready:
-            assert "PRIVATE_OPENAI_KEY" in error
+        if not expected_ready:  # review round 1, F4: a declared variable is named
+            assert "PRIVATE_OPENAI_KEY" in error and "PRIVATE_OPENAI_KEY" in key_status
             wizard.stage_provider_setup.assert_not_called()
             return
         draft = _staged_provider_draft(wizard)
@@ -7643,8 +7667,11 @@ async def test_provider_explicit_test_feedback_is_preserved():
         probe.assert_awaited_once()
         assert probe.await_args.kwargs["provider"] == "openai"
         status = str(step.query_one("#setup-provider-probe-status", Static).renderable)
-        assert status.startswith("✓ ")
-        assert "reached" in status.casefold()
+        # provider-21 (a), AC#24 -- the whole line (review round 1, TE-05: a
+        # mutant dropping ' Pick one on the next step.' survived 'connected').
+        assert status == (
+            "✓ Connected — OpenAI returned 1 model. Pick one on the next step."
+        )
 
 
 @pytest.mark.asyncio
@@ -7998,13 +8025,9 @@ async def test_provider_step_one_click_connect_adopts_discovered_server():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
+        await _pick_found_row(pilot, step)
         detected = step.query_one("#setup-provider-detected", Static)
         assert "127.0.0.1:8080" in str(detected.render())
-        use_button = step.query_one("#setup-provider-use-detected", Button)
-        assert "hidden" not in use_button.classes
-
-        await pilot.click("#setup-provider-use-detected")
-        await pilot.pause()
         assert step.selected_provider_key == "llama_cpp"
         assert step.detected_base_url == "http://127.0.0.1:8080"
 
@@ -8029,8 +8052,8 @@ async def test_provider_step_tab_from_list_reaches_endpoint_before_detection():
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
-        use_button = step.query_one("#setup-provider-use-detected", Button)
-        assert "hidden" not in use_button.classes  # sanity: discovery landed
+        choices = step.query_one("#setup-provider-choice", OptionList)
+        assert choices.get_option_index("found-0") == 1  # sanity: discovery landed
 
         choices = step.query_one("#setup-provider-choice", OptionList)
         choices.focus()
@@ -8160,9 +8183,8 @@ async def test_provider_step_switching_provider_isolates_and_restores_key_input(
         key_input = step.query_one("#setup-provider-api-key", Input)
         assert key_input.value == ""
 
-        ok, error = await step.commit()
-        assert not ok
-        assert "API key" in error
+        ok, error = await step.commit()  # TASK-34100.6 AC#3: a keyless skip
+        assert ok and step.get_step_data()["skipped"] is True
         wizard.stage_provider_setup.assert_not_called()
 
         step.select_provider("openai")
@@ -9323,11 +9345,16 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
             "#setup-model-listing-unavailable",
             "Model listing unavailable; enter the model ID used by this endpoint.",
         ),
+        # TASK-34100.6 review round 1 (live F7): a server that answered HTTP
+        # 500 was reached -- "Check it's running" was false. Review round 2
+        # (R2-02): it is still a failure, so Retry and the gate stay, and the
+        # row names the status instead of 'listing unavailable'.
         (
             "500",
             "request_failed",
             "#setup-model-connection-failed",
-            "Couldn't reach the server (request failed). Check it's running, then Retry — or enter a model ID below.",
+            "https://transport.example.test answered HTTP 500 — the server hit "
+            "an error. Retry, or enter a model ID below.",
         ),
         (
             "malformed",
@@ -12344,7 +12371,9 @@ async def test_first_run_provider_layout_stays_ordered_across_sizes_and_themes(
                 f"steps={steps.region}"
             )
 
-        assert 5 <= choices.region.height <= 7
+        # TASK-34100.6 (review provider-11): the list grows into free height,
+        # up to 40% of the terminal (the old cap was 7 rows).
+        assert 5 <= choices.region.height <= max(7, int(size[1] * 0.4))
         assert choices.region.right <= size[0]
         if size[0] >= 120:
             assert choices.region.bottom <= size[1]
@@ -12560,11 +12589,9 @@ async def test_provider_reentry_with_visible_discovery_button_focuses_list():
         await pilot.pause(0.1)
         await _press_next(pilot, container)  # Welcome -> Provider
         provider_step = container.steps[container.current_step]
-        # Simulate discovery having found a server: banner + button visible.
+        # Simulate discovery having found a server: the banner is visible
+        # (TASK-34100.6: the found server is a list row, no extra button).
         provider_step.query_one("#setup-provider-detected").remove_class("hidden")
-        provider_step.query_one("#setup-provider-use-detected", Button).remove_class(
-            "hidden"
-        )
         await pilot.pause(0.1)
         await _press_next(pilot, container)  # Provider -> Model
         await pilot.press("ctrl+b")  # back to Provider (re-entry)
@@ -13612,8 +13639,9 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
             if provider_step._selected_discovery_state == "failed":
                 break
         status = provider_step.query_one("#setup-provider-probe-status", Static)
+        # TASK-34100.6 (review provider-16): a failed check's line leads with ✗.
         assert str(status.render()) == (
-            "llama.cpp needs an API key and none was set. Add one under "
+            "✗ llama.cpp needs an API key and none was set. Add one under "
             "Authentication, or continue anyway."
         )
         # Capture 06b: the section that line points at is not optional now.
@@ -13646,8 +13674,9 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
         # times out (Textual drops its call_later; the app is idle).
         container.show_step(provider_index)
         strip = wizard.query_one("#setup-step-error-pinned", Static)
+        # TASK-34100.6 (review provider-16): the pinned strip is prefixed '✗ '.
         assert str(strip.render()) == (
-            "The last connection check failed: the server needs an API key and "
+            "✗ The last connection check failed: the server needs an API key and "
             "none was set. Add one under Authentication, or continue anyway."
         )
         assert str(auth.title) == "Authentication"
@@ -13888,8 +13917,9 @@ async def test_a_listing_that_refused_a_sent_key_makes_the_key_required() -> Non
         assert step._test_evidence_for_discovery_key(
             step._model_discovery_key(step._effective_provider_draft())
         ) is None  # no Test ran
+        # TASK-34100.6 (review provider-16): a failed check's line leads with ✗.
         assert str(status.render()) == (
-            "llama.cpp rejected this API key. Update it, or continue anyway."
+            "✗ llama.cpp rejected this API key. Update it, or continue anyway."
         )
         assert str(auth.title) == "Authentication"
 
@@ -14055,7 +14085,8 @@ async def test_a_401_to_a_test_reads_as_a_key_problem_after_next(
 
         container.show_step(provider_index)
         strip = wizard.query_one("#setup-step-error-pinned", Static)
-        assert str(strip.render()) == copy.provider_notice
+        # TASK-34100.6 (review provider-16): the pinned strip is prefixed '✗ '.
+        assert str(strip.render()) == "✗ " + copy.provider_notice
 
 
 @pytest.mark.asyncio
@@ -14283,8 +14314,9 @@ async def test_a_check_that_asks_for_a_key_brings_authentication_into_view(check
 @pytest.mark.parametrize(
     ("model_ids", "line"),
     [
-        (("m",), "Found 1 model(s) for"),
-        ((), "no models were reported."),
+        # TASK-34100.6 (review provider-16/21): outcome glyphs, plural counts.
+        (("m",), "✓ Found 1 model for"),
+        ((), "! Checked llama.cpp; it reported no models."),
     ],
     ids=["lists-a-model", "lists-none"],
 )

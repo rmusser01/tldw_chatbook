@@ -25,20 +25,17 @@ from typing import (
     Dict,
     Mapping,
     Optional,
-    Sequence,
 )
 
 from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import (
     Horizontal,
     Vertical,
 )
 from textual.css.query import NoMatches
-from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import (
     Button,
@@ -51,105 +48,34 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
+from tldw_chatbook.UI.Wizards import first_run_provider_key_entry as provider_key_entry
+from tldw_chatbook.UI.Wizards import first_run_provider_check as provider_check
+from tldw_chatbook.UI.Wizards import first_run_provider_skip as provider_skip
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+from tldw_chatbook.UI.Wizards.first_run_provider_detection import (
+    ProviderEndpointCandidateList,
+    ProviderEndpointCandidateOption,
+    QuietStatic,
+)
 from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
     _first_run_discovery_staged_settings,
     _model_ids_from_discovery_result,
 )
-from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
-    ProviderChoiceOption,
-    SetupStep,
+from tldw_chatbook.UI.Wizards.first_run_provider_check import (  # re-exported
+    CLOUD_PROBE_TIMEOUT_SECONDS,  # noqa: F401
+    _probe_first_run_provider_connection,
+)
+from tldw_chatbook.UI.Wizards.first_run_provider_list import (  # re-exported
+    ProviderChoiceList,
+    provider_group_option_id as _provider_group_option_id,  # noqa: F401
+    provider_options as _provider_options,  # noqa: F401
 )
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_provider_support import ConsoleProviderCatalogEntry
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
-
-
-CLOUD_PROBE_TIMEOUT_SECONDS = 8.0
-
-
-class ProviderChoiceList(OptionList):
-    """Provider options with Space activation and post-navigation signaling."""
-
-    BINDINGS = [Binding("space", "select", "Select", show=False)]
-
-    class Interacted(Message):
-        """A keyboard navigation action has resolved against the list."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        self._provider_interaction_ready = False
-        super().__init__(*args, **kwargs)
-        self._provider_interaction_ready = True
-
-    def _post_navigation_interaction(self) -> None:
-        if self._provider_interaction_ready:
-            self.post_message(self.Interacted())
-
-    def action_cursor_up(self) -> None:
-        super().action_cursor_up()
-        self._post_navigation_interaction()
-
-    def action_cursor_down(self) -> None:
-        super().action_cursor_down()
-        self._post_navigation_interaction()
-
-    def action_first(self) -> None:
-        super().action_first()
-        self._post_navigation_interaction()
-
-    def action_last(self) -> None:
-        super().action_last()
-        self._post_navigation_interaction()
-
-    def action_page_up(self) -> None:
-        previous_highlight = self.highlighted
-        previous_option = self.highlighted_option
-        super().action_page_up()
-        if (
-            self.highlighted is None
-            and previous_highlight is not None
-            and previous_option is not None
-            and not previous_option.disabled
-        ):
-            self.highlighted = previous_highlight
-        self._post_navigation_interaction()
-
-    def action_page_down(self) -> None:
-        previous_highlight = self.highlighted
-        previous_option = self.highlighted_option
-        super().action_page_down()
-        if (
-            self.highlighted is None
-            and previous_highlight is not None
-            and previous_option is not None
-            and not previous_option.disabled
-        ):
-            self.highlighted = previous_highlight
-        self._post_navigation_interaction()
-
-
-class ProviderEndpointCandidateOption(Option):
-    """One detected endpoint or a disabled result-list heading/status row."""
-
-    def __init__(
-        self,
-        prompt: Text,
-        *,
-        option_id: str,
-        server: object | None = None,
-    ) -> None:
-        super().__init__(prompt, id=option_id, disabled=server is None)
-        self.server = server
-
-
-class ProviderEndpointCandidateList(OptionList):
-    """Keyboard-selectable detected endpoints with nonselectable status rows."""
-
-    BINDINGS = [Binding("space", "select", "Select", show=False)]
 
 
 @dataclass(slots=True)
@@ -199,88 +125,6 @@ class _ProviderConnectionUiDraft:
         self.api_key = ""
 
 
-def _provider_group_option_id(title: str) -> str:
-    """Return the deterministic option ID for a provider group heading."""
-    return "group-" + "-".join(title.casefold().split())
-
-
-def _provider_options(
-    entries: Sequence[ConsoleProviderCatalogEntry],
-) -> list[Option]:
-    """Build grouped provider options with non-selectable heading rows."""
-    options: list[Option] = []
-    for group_title, group in ProviderStep._grouped_sections(entries):
-        options.append(
-            ProviderChoiceOption(
-                Text(group_title, style="bold"),
-                option_id=_provider_group_option_id(group_title),
-                provider_key=None,
-            )
-        )
-        options.extend(
-            ProviderChoiceOption(
-                Text(entry.display_name),
-                option_id=f"provider-{entry.readiness_key}",
-                provider_key=entry.readiness_key,
-            )
-            for entry in group
-        )
-    return options
-
-
-async def _probe_first_run_provider_connection(
-    endpoint: str,
-    *,
-    provider: str,
-    credential_source: str,
-    credential_value: str | None,
-):
-    """Send one exact draft to the shared probe without retaining its secret."""
-
-    import httpx
-
-    from tldw_chatbook.Chat.local_server_discovery import (
-        DISCOVERY_PROBE_TIMEOUT_SECONDS,
-    )
-    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
-        SettingsEndpointProbeOutcome,
-        probe_settings_endpoint,
-    )
-
-    del credential_source
-    client: httpx.AsyncClient | None = None
-    try:
-        if credential_value:
-            try:
-                client = httpx.AsyncClient(
-                    headers={"Authorization": f"Bearer {credential_value}"}
-                )
-            except Exception:  # noqa: BLE001 - return a bounded connection state.
-                return SettingsEndpointProbeOutcome(
-                    state="unreachable",
-                    category="connection_error",
-                    summary="unreachable: connection error",
-                )
-        return await probe_settings_endpoint(
-            endpoint,
-            provider=provider,
-            timeout=(
-                CLOUD_PROBE_TIMEOUT_SECONDS
-                if credential_value
-                else DISCOVERY_PROBE_TIMEOUT_SECONDS
-            ),
-            http_client=client,
-        )
-    finally:
-        if client is not None:
-            try:
-                await client.aclose()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - cleanup detail is not user-actionable.
-                pass
-
-
 def _process_environment() -> Mapping[str, str]:
     """Return the current process environment without retaining it on a widget."""
 
@@ -304,23 +148,13 @@ class _CredentialObservation:
         return self.source == source and hmac.compare_digest(self.digest, digest)
 
 
-#: TASK-21149 (UAT P-3): where a first-time user gets a key, per provider.
-_PROVIDER_KEY_URLS = {
-    "openai": "platform.openai.com/api-keys",
-    "anthropic": "console.anthropic.com",
-    "groq": "console.groq.com/keys",
-    "openrouter": "openrouter.ai/keys",
-    "mistralai": "console.mistral.ai",
-    "deepseek": "platform.deepseek.com",
-    "cohere": "dashboard.cohere.com",
-    "google": "aistudio.google.com/apikey",
-}
-
-
-class ProviderStep(SetupStep):
+class ProviderStep(provider_check.ProviderCheckStep):
     """Choose a provider, supply credentials, verify without blocking."""
 
     _MAX_PROVIDER_DRAFTS = 64
+    REFUSAL_NAMES_ITS_FIX = True  # refusals name the on-screen fix (34100.6)
+    _skip_requested = False  # one-shot: the next commit skips (TASK-34100.6)
+    _skipped = False  # the last commit skipped; Back keeps the choice
     _OPENAI_COMPATIBLE_PROBE_PROVIDERS = frozenset(
         {
             "aphrodite",
@@ -430,7 +264,6 @@ class ProviderStep(SetupStep):
             setattr(wizard, "_first_run_provider_discovery_owner", self)
 
     def compose_step(self) -> ComposeResult:
-        entries = step_guard.first_run_provider_catalog()  # TASK-33621.14
         with Vertical(classes="setup-provider"):
             yield Static("Connect a provider", classes="setup-title")
             yield Static(
@@ -438,44 +271,29 @@ class ProviderStep(SetupStep):
                 "be running — we'll look for them.",
                 classes="setup-subtitle",
             )
-            # TASK-1498: the discovery payoff is PINNED above the list — the
-            # subtitle promises "we'll look for them", so the found-server
-            # banner must appear where that promise was made, not below a
-            # scrolling list. Being before the OptionList in DOM also keeps the
-            # TASK-1496 Tab order intact (provider list → key input; the button is
-            # only reachable backwards or by click, and it is hidden until a
-            # server is actually found).
-            # Hidden until discovery finds something — an empty banner would
-            # otherwise burn two rows of the tight 120x40 budget that keeps
-            # the API-key input on screen (TASK-1495's row accounting).
+            # TASK-34100.6 (review provider-02): a found server is the list's
+            # first row; this line says which one the selection uses. Hidden
+            # until then, so it costs no rows (TASK-1495's row accounting).
             yield Static(
                 "",
                 id="setup-provider-detected",
                 classes="setup-probe-status setup-detected-banner hidden",
             )
-            yield Button(
-                "Use this server",
-                id="setup-provider-use-detected",
-                classes="hidden",
-                variant="primary",
-            )
-            yield ProviderChoiceList(
-                *_provider_options(entries),
-                id="setup-provider-choice",
-                classes="setup-choice-list",
-            )
+            yield from self.compose_provider_list()  # TASK-34100.6 slice D
             with Vertical(id="setup-provider-connection", classes="hidden"):
-                yield Label("Endpoint", classes="setup-field-label")
-                yield Input(
+                yield Label(
+                    "Endpoint", id="setup-provider-endpoint-label", classes="setup-field-label"
+                )
+                yield provider_key_entry.BurstSafeInput(
                     id="setup-provider-endpoint",
                     placeholder="http://127.0.0.1:8080 or full chat URL",
                 )
-                yield Static(
+                yield QuietStatic(
                     "",
                     id="setup-provider-effective-chat",
                     classes="setup-endpoint-value",
                 )
-                yield Static(
+                yield QuietStatic(
                     "",
                     id="setup-provider-endpoint-status",
                     classes="setup-probe-status",
@@ -507,100 +325,39 @@ class ProviderStep(SetupStep):
             # position it fell below the fold at 40-row terminals, which
             # (compounded by the F-1 focus soft-lock eating the button
             # presses) is how UAT experienced "silent" probes.
-            yield Static(
+            # provider-14: after the connection panel, so Tab from the list
+            # still reaches the endpoint first (TASK-1496).
+            yield from self.compose_no_server_block()
+            yield QuietStatic(
                 "", id="setup-provider-probe-status", classes="setup-probe-status"
             )
-            with Collapsible(
+            with provider_key_entry.AuthCollapsible(
                 title="Authentication (optional)",
                 collapsed=True,
                 id="setup-provider-auth-toggle",
                 classes="hidden",
             ):
-                yield Label("API key", classes="setup-field-label")
-                yield Input(
-                    password=True,
-                    id="setup-provider-api-key",
-                    placeholder="Paste your API key",
-                )
-                yield Static(
-                    "", id="setup-provider-key-status", classes="setup-probe-status"
-                )
-                with Horizontal(id="setup-provider-key-actions", classes="hidden"):
-                    yield Button("Keep current", id="setup-provider-key-keep")
-                    yield Button("Replace", id="setup-provider-key-replace")
-                    yield Button("Clear", id="setup-provider-key-clear")
+                yield from provider_key_entry.compose_key_entry()
 
-    # TASK-1498: providers most first-time users are actually looking for, in
-    # display order. Filtered against the live catalog, so a missing key
-    # simply doesn't render.
-    _POPULAR_PROVIDER_KEYS = ("openai", "anthropic", "ollama", "llama_cpp")
-
-    @classmethod
-    def _grouped_sections(cls, entries):
-        """Sectioned provider list: Popular, then Cloud, Local, Other.
-
-        Args:
-            entries: ConsoleProviderCatalogEntry sequence from the catalog.
-
-        Returns:
-            List of (section_title, entries) pairs, empty sections dropped.
-        """
-        from tldw_chatbook.Chat.provider_catalog import (
-            PROVIDER_CUSTOM_GROUP_KEYS,
-        )
-
-        by_key = {e.readiness_key: e for e in entries}
-        popular = [by_key[key] for key in cls._POPULAR_PROVIDER_KEYS if key in by_key]
-        popular_keys = {e.readiness_key for e in popular}
-        rest = [e for e in entries if e.readiness_key not in popular_keys]
-        alpha = lambda e: e.display_name.lower()  # noqa: E731
-        cloud = sorted(
-            (
-                e
-                for e in rest
-                if e.requires_api_key
-                and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS
-            ),
-            key=alpha,
-        )
-        local = sorted(
-            (
-                e
-                for e in rest
-                if not e.requires_api_key
-                and e.readiness_key not in PROVIDER_CUSTOM_GROUP_KEYS
-            ),
-            key=alpha,
-        )
-        other = sorted(
-            (e for e in rest if e.readiness_key in PROVIDER_CUSTOM_GROUP_KEYS),
-            key=alpha,
-        )
-        sections = [
-            ("Popular", popular),
-            ("Cloud", cloud),
-            ("Local", local),
-            ("Other", other),
-        ]
-        return [(title, group) for title, group in sections if group]
+    _grouped_sections = staticmethod(provider_check.grouped_sections)  # TASK-1498
 
     def preferred_focus(self) -> Optional[Widget]:
-        """Focus the provider list on entry, even when the pinned discovery
-        button is visible (it precedes the list in DOM order).
+        """The provider list on entry (not the pinned discovery button above
+        it), or the key field while its key stands rejected (Ctrl+U works).
 
         Returns:
-            The provider OptionList, or None if it is not queryable yet.
+            The widget to focus, or None if it is not queryable yet.
         """
-        try:
-            return self.query_one("#setup-provider-choice", OptionList)
-        except Exception:
-            return None
+        return self.entry_focus()
 
     def on_show(self) -> None:
         super().on_show()
         if self._discovery_visible:
             return
         self._discovery_visible = True
+        self._start_recheck()  # E3: a server started mid-setup appears
+        if not self._found_ever_scanned and self._local_discovery_state in {"idle", "cancelled"}:
+            self._start_discovery()  # provider-02: detection whatever is picked
         if self.selected_provider_key:
             credential_rotated = self._sync_live_credential_revision()
             if credential_rotated:
@@ -610,11 +367,10 @@ class ProviderStep(SetupStep):
             # Coming Back after a failure asks again (review round 3).
             if not model_discovery.discovery_is_reusable(self, discovery_key):
                 self._begin_selected_provider_discovery(provider_draft)
-        elif self._local_discovery_state in {"idle", "cancelled"}:
-            self._start_discovery()
 
     def on_hide(self) -> None:
         super().on_hide()
+        self._stop_recheck()
         if not self._discovery_visible:
             return
         self._discovery_visible = False
@@ -676,7 +432,7 @@ class ProviderStep(SetupStep):
                 endpoint_input.value = ""
             self.query_one("#setup-provider-effective-chat", Static).update("")
             self.query_one("#setup-provider-endpoint-status", Static).update("")
-            self.query_one("#setup-provider-probe-status", Static).update("")
+            self._set_status("")
             self.query_one("#setup-provider-detected", Static).update("")
             self.query_one(
                 "#setup-provider-detection-results",
@@ -690,6 +446,7 @@ class ProviderStep(SetupStep):
                 self._sensitive_endpoint_input = None
 
     def on_mount(self) -> None:
+        self.query_one("#setup-provider-skip", Button).display = False
         self._sensitive_key_input = self.query_one("#setup-provider-api-key", Input)
         self._sensitive_endpoint_input = self.query_one(
             "#setup-provider-endpoint", Input
@@ -739,7 +496,7 @@ class ProviderStep(SetupStep):
         )
         if selected_was_in_progress and publish_status and self.is_attached:
             try:
-                self.query_one("#setup-provider-probe-status", Static).update(
+                self._set_status(
                     "Check paused; returning will retry."
                 )
             except Exception:
@@ -769,160 +526,10 @@ class ProviderStep(SetupStep):
             self._selected_discovery_done.set()
         if self._selected_discovery_state == "in_progress":
             self._selected_discovery_state = "cancelled"
+            self._drop_checking_status()  # folded defect (a), TASK-34100.6
         self.probe_generation += 1
         self._cancel_worker_groups(*groups)
         return self.probe_generation
-
-    def _start_discovery(self, *, user_requested: bool = False) -> None:
-        self._local_discovery_generation += 1
-        generation = self._local_discovery_generation
-        provider_key = self.selected_provider_key
-        self._local_discovery_provider_key = provider_key
-        self._local_discovery_state = "in_progress"
-        if user_requested:
-            self._render_detection_results((), status="Searching local endpoints…")
-        run_wizard_worker(
-            self,
-            partial(self._discover_servers, generation, provider_key),
-            exclusive=True,
-            group="setup-provider-local-discovery",
-        )
-
-    async def _discover_servers(self, generation: int, provider_key: str) -> None:
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        state = "complete"
-        try:
-            servers = tuple(await self._local_discover(app_config) or ())
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            state = "failed"
-            logger.debug(
-                "Wizard local discovery failed (error_type={})",
-                type(exc).__name__,
-            )
-            servers = ()
-        if (
-            generation != self._local_discovery_generation
-            or provider_key != self._local_discovery_provider_key
-            or provider_key != self.selected_provider_key
-        ):
-            return
-        self._local_discovery_state = state
-        listed = self.query("#setup-provider-detection-results")  # gone in teardown
-        if not self.is_attached or not self.is_active or not listed:
-            return
-        self._detected_servers = servers
-        if servers:
-            self._render_detection_results(servers)
-            self._apply_discovered_server(servers[0])
-        else:
-            status = (
-                "Detection failed. Try again."
-                if state == "failed"
-                else "No local endpoints found."
-            )
-            self._render_detection_results((), status=status)
-        self._capture_provider_ui_draft(provider_key)
-
-    def _render_detection_results(
-        self,
-        servers: Sequence[object],
-        *,
-        status: str = "Select an endpoint to use.",
-    ) -> None:
-        """Render bounded, secret-free detection options without editing input."""
-
-        from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
-        from tldw_chatbook.Chat.provider_catalog import provider_display_name
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-
-        options: list[Option] = [
-            ProviderEndpointCandidateOption(
-                Text("Detected endpoints", style="bold"),
-                option_id="detected-endpoints-heading",
-            ),
-            ProviderEndpointCandidateOption(
-                Text(status),
-                option_id="detected-endpoints-status",
-            ),
-        ]
-        for index, server in enumerate(servers):
-            if type(server) is not DiscoveredLocalServer:
-                continue
-            try:
-                provider_key = self._canonical_provider_key(server.provider_key)
-            except (TypeError, ValueError):
-                provider_key = ""
-            resolution = resolve_provider_endpoint(provider_key, server.base_url)
-            if resolution.persisted_endpoint is None:
-                label = f"Candidate {index + 1}: invalid endpoint"
-                selectable_server = None
-            else:
-                label = (
-                    f"{provider_display_name(provider_key)} · "
-                    f"{resolution.persisted_display}"
-                )
-                selectable_server = server
-            options.append(
-                ProviderEndpointCandidateOption(
-                    Text(label),
-                    option_id=f"detected-endpoint-{index}",
-                    server=selectable_server,
-                )
-            )
-        results = self.query_one(
-            "#setup-provider-detection-results", ProviderEndpointCandidateList
-        )
-        results.clear_options()
-        results.add_options(options)
-        results.remove_class("hidden")
-
-    def _highlight_discovered_server(self, server: object) -> None:
-        """Restore the exact candidate row without equating duplicate URLs."""
-
-        try:
-            results = self.query_one(
-                "#setup-provider-detection-results",
-                ProviderEndpointCandidateList,
-            )
-        except NoMatches:
-            return
-        for index in range(results.option_count):
-            option = results.get_option_at_index(index)
-            if getattr(option, "server", None) is server:
-                results.highlighted = index
-                return
-
-    def _apply_discovered_server(self, server: Any) -> None:
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-
-        try:
-            provider_key = self._canonical_provider_key(server.provider_key)
-        except (TypeError, ValueError):
-            provider_key = ""
-        resolution = resolve_provider_endpoint(provider_key, server.base_url)
-        banner = self.query_one("#setup-provider-detected", Static)
-        use_button = self.query_one("#setup-provider-use-detected", Button)
-        if resolution.persisted_endpoint is None:
-            for attribute in ("detected_server", "detected_base_url"):
-                if hasattr(self, attribute):
-                    delattr(self, attribute)
-            self._detected_endpoint_provider_key = ""
-            banner.update("")
-            banner.add_class("hidden")
-            use_button.add_class("hidden")
-            return
-        self.detected_server = server
-        self.detected_base_url = server.base_url
-        banner.update(f"Found a local endpoint: {resolution.persisted_display}.")
-        banner.remove_class("hidden")
-        use_button.remove_class("hidden")
-        self._highlight_discovered_server(server)
 
     @staticmethod
     def _canonical_provider_key(provider_key: str) -> str:
@@ -996,10 +603,10 @@ class ProviderStep(SetupStep):
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         key_input = self.query_one("#setup-provider-api-key", Input)
         ui_draft = self._provider_drafts.get(provider_key)
-        typed = (
-            key_input.value.strip()
+        typed = provider_key_entry.usable_typed_key(
+            key_input.value
             if key_input.display
-            else (ui_draft.api_key.strip() if ui_draft is not None else "")
+            else (ui_draft.api_key if ui_draft is not None else "")
         )
         base_readiness = get_provider_readiness(
             provider_key,
@@ -1089,14 +696,18 @@ class ProviderStep(SetupStep):
         provider_key = self.selected_provider_key
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         source, value, base = self._credential_at_request_boundary()
-        if source in {"stored", "environment"}:
+        typed_base_url = self._typed_base_url()  # Azure/Databricks/Cloudflare (34100.6)
+        if source in {"stored", "environment"} and not typed_base_url:
             return base
         api_settings = app_config.get("api_settings", {})
         staged_api_settings = (
             dict(api_settings) if isinstance(api_settings, Mapping) else {}
         )
         settings = dict(self._provider_settings(provider_key))
-        settings.pop("api_key", None)
+        if source != "stored":
+            settings.pop("api_key", None)
+        if typed_base_url:
+            settings["api_base_url"] = typed_base_url
         typed_value = self.query_one("#setup-provider-api-key", Input).value.strip()
         if self._clear_requested or (typed_value and source == "none"):
             settings.pop("api_key_env_var", None)
@@ -1182,9 +793,10 @@ class ProviderStep(SetupStep):
             "setup-provider-discovery", "setup-provider-probe"
         )
         if (cancelled or invalidated or changed) and self.is_attached:
-            self.query_one("#setup-provider-probe-status", Static).update(
-                "Provider settings changed since test; test again." if changed else ""
-            )
+            # cross-cutting-07: 'test again' only beside a control that can.
+            self._set_status(self._stale_check_line() if changed else "")
+            self._stale_line_owed = changed  # G6-BV3-05: re-read once Test is synced
+        self._rejected_discovery_key = None
 
     def _credential_semantics_changed(self) -> None:
         self._credential_decision_generation += 1
@@ -1286,39 +898,30 @@ class ProviderStep(SetupStep):
             return
         readiness = self._current_provider_readiness()
         self._subscription_readiness_status = readiness.subscription_status
+        self.query_one("#setup-provider-skip", Button).display = bool(  # review F1
+            readiness.requires_api_key and (not readiness.ready or self.key_check_refusal())
+        )
+        self._sync_auth_title_focus(readiness.requires_api_key)
         auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         auth.title = model_discovery.auth_title(self, readiness.requires_api_key)
+        self._sync_check_key(readiness)
         test_button = self.query_one("#setup-provider-test", Button)
         target = self._probe_target()
         identity = self._provider_current_draft_identity() if target else None
         test_available = bool(target and identity is not None)
         test_button.disabled = not readiness.ready or not test_available
+        self.sync_stale_check_line()
+        self._refresh_endpoint_status(readiness)
         status = self.query_one("#setup-provider-key-status", Static)
         if readiness.subscription_status is not None:
             status.update(
                 readiness.reason if readiness.ready else readiness.user_message
             )
             return
-        if not readiness.ready:
-            # TASK-21149 (UAT P-3): the input right above is the primary
-            # path — lead with it and where to get a key; the env-var route
-            # is the expert aside, not the headline.
-            pointer = _PROVIDER_KEY_URLS.get(self.selected_provider_key, "")
-            parts = ["An API key is needed — paste it above."]
-            if pointer:
-                parts.append(f"New keys: {pointer}.")
-            env_var = getattr(readiness, "env_var", "") or ""
-            if env_var:
-                parts.append(
-                    f"(Already exported {env_var}? It's picked up "
-                    "automatically.)"
-                )
-            # task-32555 AC#3: the skip is visible where the key goes.
-            parts.append(
-                "No key yet? Enter skips this step — you can add a provider "
-                "later in Settings."
+        if not readiness.ready:  # TASK-21149 / TASK-34100.6: the on-screen fix first
+            status.update(
+                provider_key_entry.key_help_line(self.selected_provider_key, readiness)
             )
-            status.update(" ".join(parts))
             return
         if self._clear_requested:
             status.update(
@@ -1326,26 +929,7 @@ class ProviderStep(SetupStep):
                 "when you continue."
             )
             return
-        credential_source, _, _ = self._credential_at_request_boundary()
-        if test_available:
-            unavailable = ""
-        elif self.selected_provider_key in self._OPENAI_COMPATIBLE_PROBE_PROVIDERS:
-            unavailable = " Enter a valid endpoint to enable connection testing."
-        else:
-            unavailable = " Connection testing is unavailable for this provider."
-        if credential_source == "stored":
-            status.update(
-                f"An API key is already configured for this provider.{unavailable}"
-            )
-        elif credential_source == "environment":
-            env_var = readiness.env_var or "the configured environment variable"
-            status.update(
-                f"Found {env_var} in your environment; nothing to store.{unavailable}"
-            )
-        elif credential_source == "draft":
-            status.update(model_discovery.staged_key_line(self) + unavailable)
-        else:
-            status.update(unavailable.strip())
+        status.update(self.key_status_text(readiness, test_available))  # provider-06
 
     def _credential_draft(
         self, *, revision: int | None = None
@@ -1355,10 +939,10 @@ class ProviderStep(SetupStep):
         provider_key = self.selected_provider_key
         key_input = self.query_one("#setup-provider-api-key", Input)
         ui_draft = self._provider_drafts.get(provider_key)
-        typed_key = (
-            key_input.value.strip()
+        typed_key = provider_key_entry.usable_typed_key(
+            key_input.value
             if key_input.display and key_input.value
-            else (ui_draft.api_key.strip() if ui_draft is not None else "")
+            else (ui_draft.api_key if ui_draft is not None else "")
         )
         if typed_key:
             source, value = "draft", typed_key
@@ -1398,6 +982,9 @@ class ProviderStep(SetupStep):
         )
 
         configured = first_configured_endpoint(self._provider_settings(provider_key))
+        found = self.found_server_to_fill(provider_key)  # provider-02; review F3
+        if found is not None:
+            return str(found.base_url)
         if configured:
             return configured
         local_defaults = {
@@ -1420,32 +1007,11 @@ class ProviderStep(SetupStep):
         )
 
         settings = self._provider_settings(provider_key)
-        return provider_key in URL_BASED_PROVIDER_KEYS or provider_uses_endpoint(
-            provider_key, settings
+        return (
+            provider_key in URL_BASED_PROVIDER_KEYS
+            or provider_uses_endpoint(provider_key, settings)
+            or self._setup_facts(provider_key).base_url_required  # TASK-34100.6
         )
-
-    def _refresh_endpoint_resolution(self) -> None:
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-
-        provider_key = self.selected_provider_key
-        effective = self.query_one("#setup-provider-effective-chat", Static)
-        status = self.query_one("#setup-provider-endpoint-status", Static)
-        if not provider_key:
-            effective.update("")
-            status.update("")
-            return
-        endpoint = self.query_one("#setup-provider-endpoint", Input).value
-        resolution = resolve_provider_endpoint(provider_key, endpoint)
-        if resolution.chat_url is None:
-            effective.update("")
-            status.update(
-                resolution.errors[0] if resolution.errors else "Invalid endpoint."
-            )
-            return
-        effective.update(f"Chat URL: {resolution.chat_display}")
-        status.update(" ".join(resolution.warnings))
 
     def _effective_provider_draft(
         self, *, revision: int | None = None
@@ -1557,8 +1123,8 @@ class ProviderStep(SetupStep):
             else {}
         )
         self._selected_discovery_done = asyncio.Event()
-        self.query_one("#setup-provider-probe-status", Static).update(
-            "Checking the selected provider…"
+        self._set_status(
+            self._checking_text()
         )
         run_wizard_worker(
             self,
@@ -1643,17 +1209,11 @@ class ProviderStep(SetupStep):
             discover_models = getattr(scope_service, "discover_models", None)
             if callable(discover_models):
                 attempted = True
-                try:
-                    result = await asyncio.wait_for(
-                        discover_models(
-                            mode="local",
-                            provider=provider_key,
-                            staged_settings=self._discovery_staged_settings(
-                                provider_draft, discovery_key
-                            ),
-                            use_shared_cache=False,
-                        ),
-                        timeout=model_discovery.MODEL_DISCOVERY_TIMEOUT_SECONDS,
+                try:  # a timeout is typed, its cause named (review round 2, R2-07)
+                    result = await model_discovery.discover_within_timeout(
+                        discover_models,
+                        provider_key,
+                        self._discovery_staged_settings(provider_draft, discovery_key),
                     )
                     models = _model_ids_from_discovery_result(result)
                     model_outcome = result
@@ -1695,54 +1255,17 @@ class ProviderStep(SetupStep):
             self._listed_after_test = bool(models)
             from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
-            display = provider_display_name(provider_key)
-            status = self.query_one("#setup-provider-probe-status", Static)
-            if models:
-                status.update(f"Found {len(models)} model(s) for {display}.")
-                model_discovery.note_probe_reached(self, discovery_key)
-            elif failed:
-                line, failure = model_discovery.failed_listing(
-                    self, display, model_outcome, provider_draft
-                )
-                status.update(line)
-                model_discovery.note_probe_failure(self, failure, discovery_key)
-            elif attempted:
-                status.update(f"Checked {display}; no models were reported.")
-                if model_outcome is not None:  # the listing answered "success"
-                    model_discovery.note_probe_reached(self, discovery_key)
-            else:
-                status.update("")
+            self._sync_check_again(failed=failed and not models)
+            self._render_discovery_outcome(
+                provider_display_name(provider_key), models, failed=failed,
+                attempted=attempted, outcome=model_outcome, draft=provider_draft,
+            )
+            if callable(rebuild := getattr(self.wizard, "_rebuild_progress", None)):
+                rebuild()  # provider-03: a failure flips the tracker at once
         finally:
             done = self._selected_discovery_done
             if done is not None and generation == self.probe_generation:
                 done.set()
-
-    def _discovery_failure_status(self, display: str, failure: str = "") -> str:
-        """Failure copy that never promises what Next will refuse.
-
-        task-31820 (release UAT): a keyed cloud provider with no credential
-        said "You can continue anyway." while commit() hard-blocked Next with
-        "API key required." Continuation is promised only when the readiness
-        gate allows it; otherwise the copy names the unblock. TASK-33008:
-        ``failure`` names a refused key or a missing one, as Model does.
-        """
-        try:
-            readiness = self._current_provider_readiness()
-            ready = bool(readiness.ready)
-        except Exception:
-            return f"Couldn't discover models for {display}."
-        if ready:
-            copy = wizard_state.probe_failure_copy(failure)
-            return copy.provider_line.format(display=display)
-        # Qodo (PR #2445): name the provider's OWN unblock -- "add an API
-        # key" is wrong for auth modes that need a login instead (e.g. a
-        # Claude subscription). readiness.recovery is the same string
-        # commit()'s refusal footer shows, so both surfaces speak with one
-        # vocabulary; fall back to the key-input hint only if it is empty.
-        recovery = (getattr(readiness, "recovery", None) or "").strip()
-        if not recovery:
-            recovery = "Add an API key below to continue."
-        return f"Couldn't discover models for {display}. {recovery} Or go Back."
 
     async def _models_from_selected_discovery(
         self,
@@ -1842,6 +1365,7 @@ class ProviderStep(SetupStep):
             if hasattr(self, attribute):
                 delattr(self, attribute)
         self._detected_endpoint_provider_key = ""
+        self._endpoint_edited()  # no stale 'Using …' line or refusal (review F2)
         self._invalidate_provider_test()
         self._selected_discovery_key = None
         self._selected_provider_models.clear()
@@ -1849,137 +1373,11 @@ class ProviderStep(SetupStep):
         self._capture_provider_ui_draft()
         self._refresh_auth_readiness()
 
-    @on(Button.Pressed, "#setup-provider-detect")
-    def _on_detect_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._cancel_worker_groups("setup-provider-local-discovery")
-        self._start_discovery(user_requested=True)
-
-    @on(OptionList.OptionSelected, "#setup-provider-detection-results")
-    def _on_detected_endpoint_selected(self, event: OptionList.OptionSelected) -> None:
-        from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-
-        server = getattr(event.option, "server", None)
-        if type(server) is not DiscoveredLocalServer:
-            return
-        try:
-            provider_key = self._canonical_provider_key(server.provider_key)
-        except (TypeError, ValueError):
-            provider_key = ""
-        resolution = resolve_provider_endpoint(provider_key, server.base_url)
-        if resolution.persisted_endpoint is None:
-            self.query_one("#setup-provider-endpoint-status", Static).update(
-                "The selected endpoint is invalid."
-            )
-            return
-        detected_servers = self._detected_servers
-        self.select_provider(provider_key)
-        self._detected_servers = detected_servers
-        self._render_detection_results(detected_servers)
-        self._apply_discovered_server(server)
-        self._detected_endpoint_provider_key = provider_key
-        self._updating_connection_controls = True
-        try:
-            endpoint_input = self.query_one("#setup-provider-endpoint", Input)
-            if endpoint_input.value != server.base_url:
-                self._pending_programmatic_endpoint_changes.append(
-                    (provider_key, server.base_url)
-                )
-                endpoint_input.value = server.base_url
-        finally:
-            self._updating_connection_controls = False
-        self._refresh_endpoint_resolution()
-        self._begin_selected_provider_discovery(self._effective_provider_draft())
-        self._capture_provider_ui_draft()
-
-    @on(Button.Pressed, "#setup-provider-use-detected")
-    def _on_use_detected(self) -> None:
-        """One-click connect: adopt the discovered server as the provider."""
-        from tldw_chatbook.Chat.provider_endpoint_contract import (
-            resolve_provider_endpoint,
-        )
-
-        server = getattr(self, "detected_server", None)
-        if server is None:
-            return
-        try:
-            provider_key = self._canonical_provider_key(server.provider_key)
-        except (TypeError, ValueError):
-            provider_key = ""
-        resolution = resolve_provider_endpoint(provider_key, server.base_url)
-        if resolution.persisted_endpoint is None:
-            self.query_one("#setup-provider-endpoint-status", Static).update(
-                "The selected endpoint is invalid."
-            )
-            return
-        detected_servers = self._detected_servers or (server,)
-        self.select_provider(provider_key)
-        self._detected_servers = detected_servers
-        self._render_detection_results(detected_servers)
-        self._apply_discovered_server(server)
-        self._detected_endpoint_provider_key = self.selected_provider_key
-        self._updating_connection_controls = True
-        try:
-            endpoint_input = self.query_one("#setup-provider-endpoint", Input)
-            if endpoint_input.value != server.base_url:
-                self._pending_programmatic_endpoint_changes.append(
-                    (self.selected_provider_key, server.base_url)
-                )
-                endpoint_input.value = server.base_url
-        finally:
-            self._updating_connection_controls = False
-        self._refresh_endpoint_resolution()
-        self.query_one("#setup-provider-detected", Static).update(
-            f"✓ Using {resolution.persisted_display}."
-        )
-        self.query_one("#setup-provider-detected", Static).remove_class("hidden")
-        self.query_one("#setup-provider-use-detected", Button).remove_class("hidden")
-        self._begin_selected_provider_discovery(self._effective_provider_draft())
-        self._capture_provider_ui_draft()
-
-    def _clear_detected_provider_state(self) -> None:
-        """Drop an adopted endpoint and its provider-owned discovery results."""
-
-        for attribute in ("detected_base_url", "detected_server"):
-            if hasattr(self, attribute):
-                delattr(self, attribute)
-        self._detected_endpoint_provider_key = ""
-        self._detected_servers = ()
-        self._selected_provider_models.clear()
-        self._selected_provider_outcomes.clear()
-        try:
-            banner = self.query_one("#setup-provider-detected", Static)
-            banner.update("")
-            banner.add_class("hidden")
-            self.query_one("#setup-provider-use-detected", Button).add_class("hidden")
-            results = self.query_one(
-                "#setup-provider-detection-results", ProviderEndpointCandidateList
-            )
-            results.clear_options()
-            results.add_options(
-                [
-                    ProviderEndpointCandidateOption(
-                        Text("Detected endpoints", style="bold"),
-                        option_id="detected-endpoints-heading",
-                    ),
-                    ProviderEndpointCandidateOption(
-                        Text("Not checked yet"),
-                        option_id="detected-endpoints-status",
-                    ),
-                ]
-            )
-            results.add_class("hidden")
-        except Exception:
-            pass
-
     def select_provider(self, provider_key: str) -> None:
         provider_key = self._canonical_provider_key(provider_key)
         previous_provider = self.selected_provider_key
-        provider_changed = provider_key != previous_provider
         had_saved_draft = provider_key in self._provider_drafts
+        provider_changed = provider_key != previous_provider or not had_saved_draft  # resume
         # TASK-33621.14: the reads that can raise run before any state moves, so a
         # failed read leaves the old provider whole (never its key under this one).
         app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
@@ -1998,14 +1396,18 @@ class ProviderStep(SetupStep):
         auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
         endpoint_input = self.query_one("#setup-provider-endpoint", Input)
         if provider_changed:
+            getattr(self.wizard, "_clear_pinned_step_error", lambda: None)()  # 34100.6
+            self._skip_requested = False  # review v3r1, R1-07: asked for another form
             self._capture_provider_ui_draft(previous_provider)
+            self._note_unsaved_key(previous_provider, provider_key)  # coverage-08
             self._invalidate_provider_test(changed=False)
-            self._local_discovery_generation += 1
+            # Review round 2, G6-VR2-02: the scan keeps running (it only feeds
+            # the list's rows); an old pick's own results never render.
             self._local_discovery_provider_key = ""
-            self._cancel_worker_groups("setup-provider-local-discovery")
             self._clear_detected_provider_state()
         ui_draft = self._provider_ui_draft(provider_key)
         if not had_saved_draft:
+            ui_draft.detected_server = self.found_server_to_fill(provider_key)
             ui_draft.endpoint = initial_endpoint
             ui_draft.key_input_visible = not (
                 presence.inline_configured or presence.env_var_set
@@ -2030,38 +1432,31 @@ class ProviderStep(SetupStep):
                 auth.display = True
                 auth.remove_class("hidden")
                 auth.title = "Authentication" + (" (optional)" if optional_auth else "")
-                auth.collapsed = ui_draft.auth_collapsed
+                auth.set_collapsed_quietly(ui_draft.auth_collapsed)  # keeps the list in view
             finally:
                 self._updating_connection_controls = False
+            self._configure_endpoint_field(provider_key)
             self._refresh_endpoint_resolution()
-        if ui_draft.clear_requested:
-            status.update(
-                "No API key will be used for chat. The stored key will be removed "
-                "when you continue."
-            )
-            actions.remove_class("hidden")
-        elif ui_draft.api_key:
-            status.update("Key staged — it will be checked when you continue.")
-            actions.remove_class("hidden")
-        elif presence.inline_configured:
-            status.update("An API key is already configured for this provider.")
-            actions.remove_class("hidden")
-        elif presence.env_var_set:
-            status.update(
-                f"Found {presence.env_var} in your environment ✓ — nothing to store."
-            )
-            actions.add_class("hidden")
-        else:
-            status.update("")
-            actions.add_class("hidden")
-        self.query_one("#setup-provider-probe-status", Static).update("")
+        # Review round 1, F5: the environment choice only while the exported
+        # key is the one used; a saved key outranks it and keeps Keep/Replace.
+        env_used = presence.env_var_set and not presence.inline_configured
+        self._sync_env_source_choice(presence.env_var if env_used else "")
+        self._sync_key_hint(key_input.value)
+        self._set_key_note("", hide=provider_changed)
+        # Keep/Replace/Clear name a SAVED key (live F14: never a typed draft).
+        actions.set_class(not (ui_draft.clear_requested or presence.inline_configured), "hidden")
+        status.update("")  # _refresh_auth_readiness below writes the line
+        self._set_status("")
         self._detected_servers = ui_draft.detected_servers
         if ui_draft.detected_servers:
             self._render_detection_results(ui_draft.detected_servers)
         if ui_draft.detected_server is not None:
             self._apply_discovered_server(ui_draft.detected_server)
+            self._detected_endpoint_provider_key = provider_key
         self._refresh_auth_readiness()
         if provider_changed:
+            self._sync_check_again(failed=False)
+            self._render_no_server_state(self._found_servers)
             self._begin_selected_provider_discovery(self._effective_provider_draft())
 
     def _select_provider_option(self, option: Option) -> None:
@@ -2070,7 +1465,10 @@ class ProviderStep(SetupStep):
             return
         # TASK-33621.14: a failed pick is reported with the provider that stays.
         with step_guard.provider_switch(self, provider_key):
-            if provider_key != self.selected_provider_key:
+            server = getattr(option, "server", None)
+            if server is not None:  # a 'Ready on this machine' server row
+                self._use_found_server(server)
+            elif provider_skip.pick_configures(self, provider_key):
                 self.select_provider(provider_key)
 
     @on(OptionList.OptionHighlighted, "#setup-provider-choice")
@@ -2089,25 +1487,36 @@ class ProviderStep(SetupStep):
     @on(OptionList.OptionSelected, "#setup-provider-choice")
     def _on_provider_chosen(self, event: OptionList.OptionSelected) -> None:
         self._provider_choice_interacted = True
+        if self._handle_list_choice(event.option):  # 'Show legacy entries'
+            return
         self._select_provider_option(event.option)
+        self._focus_key_after_pick()  # Enter, Space or a click (TASK-34100.6)
 
     def skip_without_key(self) -> None:
-        """Forget the provider choice so ``commit`` takes its skip path.
+        """Make the next commit a one-shot skip that keeps the provider choice.
 
-        task-32555 AC#3: Enter in the empty key field. Nothing was staged
-        for this provider (a stage needs a ready credential), so clearing
-        the choice loses nothing; the highlighted list row re-selects on
-        the next interaction if the user comes Back.
-
-        A provider that is ALREADY ready without a typed key (an exported
-        env var, a local server) is the exception -- commit() would stage
-        it, and the key field's hint never offered the skip in that state
-        (``_refresh_auth_readiness`` adds it only under "not ready").
+        TASK-34100.6 (new-provider-01): the old skip cleared the selection, so
+        Back showed a form nothing was selected for and a key typed there was
+        dropped. Enter in the empty key field and 'Skip — connect later' now
+        set a flag commit() consumes once; a provider already ready (an
+        exported env var, a local server) is never skipped this way.
         """
         if self.selected_provider_key and self._current_provider_readiness().ready:
-            return
-        self.selected_provider_key = ""
-        self._provider_choice_interacted = False
+            if not self.key_check_refusal():  # review F1: a rejected key can skip
+                return
+        # Review v3r1, R1-07: only when the advance will run (its own fences),
+        # or the flag outlives this press and turns a later refusal into a skip.
+        wizard = self.wizard
+        fenced = getattr(wizard, "_advancing", False) or getattr(
+            wizard, "_failure_action_running", False
+        )
+        self._skip_requested = not fenced and bool(getattr(wizard, "can_proceed", True))
+
+    @on(Button.Pressed, "#setup-provider-skip")
+    def _on_skip_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.skip_without_key()
+        self.wizard.action_next()
 
     def _effective_provider_key(self) -> str:
         """Return the selected key, falling back to the highlighted option."""
@@ -2127,18 +1536,8 @@ class ProviderStep(SetupStep):
 
     @on(Button.Pressed, "#setup-provider-key-replace")
     def _on_replace(self) -> None:
-        """Reveal the masked input so the user can type a new key.
-
-        Leaving it blank after Replace is a cancel: commit() only persists a
-        typed, non-empty value, so the currently-configured secret is left
-        untouched (never re-shown).
-        """
-        key_input = self.query_one("#setup-provider-api-key", Input)
-        changed = self._clear_requested or not key_input.display
-        self._clear_requested = False
-        key_input.display = True
-        if changed:
-            self._credential_semantics_changed()
+        """Reveal the masked input for a new key (``replace_key``)."""
+        provider_key_entry.replace_key(self)
 
     @on(Button.Pressed, "#setup-provider-key-keep")
     def _on_keep(self) -> None:
@@ -2180,6 +1579,7 @@ class ProviderStep(SetupStep):
     def _on_key_changed(self, event: Input.Changed) -> None:
         if self._updating_connection_controls:
             return
+        self._skip_requested = False  # review v3r1, R1-07: a new key is a new ask
         # Review TASK-21143 follow-up (P-5): the returned-to-Provider notice
         # ("this API key was rejected") must not outlive the edit that
         # addresses it — a stale rejection over a fresh key reads as "still broken".
@@ -2199,208 +1599,31 @@ class ProviderStep(SetupStep):
         self._clear_requested = False
         self._credential_semantics_changed()
 
-    @on(Input.Submitted, "#setup-provider-api-key")
-    def _on_key_submitted(self, event: Input.Submitted) -> None:
-        """Live-but-never-blocking verification: probe on Enter in the key field."""
-        if event.value.strip():
-            self._launch_probe()
-
-    @on(Button.Pressed, "#setup-provider-test")
-    def _on_test_pressed(self, event: Button.Pressed) -> None:
-        """TASK-1506: same probe as Enter-in-field, behind a visible control."""
-        event.stop()
-        self._launch_probe()
-
-    def _launch_probe(self, *, api_key: str | None = None) -> None:
-        del api_key
-        self._sync_live_credential_revision()
-        generation = self._obsolete_provider_generation(
-            "setup-provider-discovery",
-            "setup-provider-probe",
-        )
-        provider_key = self.selected_provider_key
-        readiness = self._current_provider_readiness()
-        if not readiness.ready:
-            self.query_one("#setup-provider-probe-status", Static).update(
-                readiness.recovery or "An API key is required before testing."
-            )
-            return
-        target = self._probe_target()
-        identity = self._provider_current_draft_identity()
-        if not target or identity is None:
-            self.query_one("#setup-provider-probe-status", Static).update(
-                "Enter a valid endpoint before testing."
-            )
-            return
-        credential_source, credential_value, _ = self._credential_at_request_boundary()
-        token = self._provider_test_evidence.begin(identity)
-        self._active_probe_token = token
-        self.query_one("#setup-provider-probe-status", Static).update("Testing…")
-        run_wizard_worker(
-            self,
-            partial(
-                self._run_probe,
-                generation,
-                token,
-                identity,
-                provider_key=provider_key,
-                endpoint=target,
-                credential_source=credential_source,
-                credential_value=credential_value,
-            ),
-            exclusive=True,
-            group="setup-provider-probe",
-        )
-
-    async def _run_probe(
-        self,
-        generation: int,
-        token: object,
-        identity: object,
-        *,
-        provider_key: str,
-        endpoint: str,
-        credential_source: str,
-        credential_value: str | None,
-    ) -> None:
-        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
-            SettingsEndpointProbeOutcome,
-        )
-
-        try:
-            outcome = await self._probe(
-                endpoint,
-                provider=provider_key,
-                credential_source=credential_source,
-                credential_value=credential_value,
-            )
-            result = self._provider_probe_result_from_outcome(outcome)
-        except asyncio.CancelledError:
-            if self._provider_test_evidence.cancel_probe(token):
-                if self._active_probe_token is token:
-                    self._active_probe_token = None
-                if generation == self.probe_generation and self.is_attached:
-                    self.query_one("#setup-provider-probe-status", Static).update("")
-            raise
-        except Exception as exc:
-            logger.debug(
-                "Wizard provider probe failed (error_type={})",
-                type(exc).__name__,
-            )
-            outcome = SettingsEndpointProbeOutcome(
-                state="unreachable",
-                category="connection_error",
-                summary="Probe errored.",
-            )
-            result = self._provider_probe_result_from_outcome(outcome)
-        settled = self._provider_test_evidence.settle(token, result)
-        if not settled:
-            return
-        if self._active_probe_token is token:
-            self._active_probe_token = None
-        self._last_tested_provider_identity = identity
-        self._listed_after_test = False
-        if (
-            generation == self.probe_generation
-            and provider_key == self.selected_provider_key
-            and self.is_attached
-        ):
-            self._render_provider_evidence(identity)
-
-    @staticmethod
-    def _provider_probe_result_from_outcome(outcome: object):
-        """Convert only the exact shared Settings outcome to exact evidence."""
-
-        from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
-            SettingsEndpointProbeOutcome,
-            provider_probe_result_from_settings_outcome,
-        )
-
-        # The one mapping every listing probe uses (a 403 never blocks).
-        if type(outcome) is not SettingsEndpointProbeOutcome or str(
-            outcome.state
-        ) not in {"reachable", "model_listing_unavailable", "unreachable"}:
-            raise ValueError("Provider probe outcome is invalid.")
-        return provider_probe_result_from_settings_outcome(outcome)
-
-    def _render_provider_evidence(self, identity: object) -> None:
-        from tldw_chatbook.Chat.provider_test_evidence import (
-            ProviderDraftIdentity,
-            ProviderReadinessSnapshot,
-            provider_readiness_verdict,
-        )
-
-        if type(identity) is not ProviderDraftIdentity:
-            return
-        evidence = self._provider_test_evidence.evidence_for(identity)
-        if evidence is None:
-            return
-        snapshot = ProviderReadinessSnapshot(
-            configuration="configured",
-            endpoint=evidence.endpoint,
-            model="unconfirmed",
-            category=evidence.category,
-        )
-        detail = provider_readiness_verdict(snapshot).detail
-        detail = model_discovery.tested_evidence_detail(
-            self, identity, evidence, detail
-        )
-        prefix = {"reachable": "✓ ", "unreachable": "✗ "}.get(evidence.endpoint, "")
-        self.query_one("#setup-provider-probe-status", Static).update(prefix + detail)
-
-    @staticmethod
-    def _cloud_probe_base_url(provider_key: str) -> str:
-        """OpenAI-compatible base URLs for cloud-key verification (v1 fence:
-        only providers with a known compatible /v1/models endpoint)."""
-        return {
-            "openai": "https://api.openai.com",
-            "openrouter": "https://openrouter.ai/api",
-            "groq": "https://api.groq.com/openai",
-            "deepseek": "https://api.deepseek.com",
-            "mistral": "https://api.mistral.ai",
-            "mistralai": "https://api.mistral.ai",
-        }.get(provider_key, "")
-
-    def apply_probe_result(
-        self,
-        generation: int,
-        *,
-        reachable: bool,
-        summary: str,
-        provider_key: str | None = None,
-    ) -> None:
-        """Render a probe outcome only if it is still current (no stale ✓)."""
-        if generation != self.probe_generation or (
-            provider_key is not None and provider_key != self.selected_provider_key
-        ):
-            return
-        del summary
-        prefix = "✓ " if reachable else "✗ "
-        detail = (
-            "Model listing reached."
-            if reachable
-            else "The model listing endpoint could not be reached."
-        )
-        self.query_one("#setup-provider-probe-status", Static).update(
-            f"{prefix}{detail}"
-        )
-
     async def commit(self) -> tuple[bool, str]:
-        provider_key = self._effective_provider_key()
-        if not provider_key:
-            return True, ""  # legitimately nothing pressed -- skip is correct
+        provider_key = self._effective_provider_key() or self.adopt_highlighted_found_server()
+        skip, self._skip_requested = self._skip_requested, False
+        if not provider_key:  # nothing picked: a skip (TASK-34100.6)
+            return provider_skip.skip_provider_step(self)
         self.selected_provider_key = provider_key
+        if skip:  # review v3r1, R1-02: an explicit skip advances, whatever is typed
+            self.clear_key_echo()
+            return provider_skip.skip_provider_step(self)
+        if refusal := (provider_skip.ask_resumed_key(self, skip)  # review G6-VR2-05, R2-06
+                       or provider_key_entry.clean_key_for_commit(self)):
+            return False, refusal
         key_input = self.query_one("#setup-provider-api-key", Input)
         captured = self._provider_drafts.get(provider_key)
         if captured is None or captured.api_key != key_input.value:
             self._clear_requested = False
             self._credential_semantics_changed()
         readiness = self._current_provider_readiness()
-        if not readiness.ready:
-            if readiness.subscription_status is not None:
-                return False, readiness.user_message
-            recovery = readiness.recovery or "Add a provider credential."
-            return False, f"API key required. {recovery}"
+        if not readiness.ready:  # TASK-34100.6: an empty key skips, like Enter
+            if skip or provider_skip.empty_key_skips(self, readiness, key_input.value):
+                return provider_skip.skip_provider_step(self)
+            return False, provider_skip.provider_refusal(self, readiness)
+        if (rejected := self.rejected_key_outcome(skip)) is not None:  # provider-03
+            return rejected
+        self._skipped = False
         typed_key = bool(
             key_input.display and key_input.value and key_input.value.strip()
         )
@@ -2411,7 +1634,7 @@ class ProviderStep(SetupStep):
         revision = self._credential_revision
         provider_draft = self._effective_provider_draft(revision=revision)
         if provider_draft is None:
-            return False, "The provider settings are invalid."
+            return False, self._invalid_draft_refusal()
         stage = getattr(self.wizard, "stage_provider_setup", None)
         if not callable(stage) or not stage(provider_draft):
             return False, "Staging the provider settings failed."
@@ -2448,7 +1671,8 @@ class ProviderStep(SetupStep):
 
     def get_step_data(self) -> Dict[str, Any]:
         return {
-            "provider_key": self.selected_provider_key,
-            "provider_value": self.provider_value_for_chat_defaults,
+            "provider_key": "" if self._skipped else self.selected_provider_key,
+            "provider_value": "" if self._skipped else self.provider_value_for_chat_defaults,
             "entered_key": self._entered_key,
+            "skipped": self._skipped,
         }

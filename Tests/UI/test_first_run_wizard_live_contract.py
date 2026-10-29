@@ -2416,7 +2416,7 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
-            assert "Paste your API key" in rendered_text, (
+            assert "Paste the key" in rendered_text, (
                 "key Input's placeholder never reached the rendered frame"
             )
 

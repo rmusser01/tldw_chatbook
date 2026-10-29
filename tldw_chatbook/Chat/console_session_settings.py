@@ -2826,6 +2826,9 @@ _FAILURE_REASONS: Mapping[str, str] = MappingProxyType(
         "http_status": "server error",
         "invalid_payload": "bad response",
         "connection_error": "unreachable",
+        # TASK-34100.6 (review coverage-19, provider-15).
+        "tls_untrusted": "untrusted cert",
+        "tls_plain_http": "plain http",
     }
 )
 #: A Claude subscription has a login, not a key.
