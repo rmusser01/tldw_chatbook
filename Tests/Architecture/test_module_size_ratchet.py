@@ -587,10 +587,14 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6990,
+    # 2026-10-29, TASK-33621.18 (owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): 6990 -> 6994. A card action that
+    # sends a paused turn clears the answered prompt from the composer.
+    "tldw_chatbook/UI/Console_Modules/session.py": 6994,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    # TASK-33621.18: the card-owned refusal check moved to console_unsent_turn.
+    "tldw_chatbook/Chat/console_runtime.py": 6684,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,

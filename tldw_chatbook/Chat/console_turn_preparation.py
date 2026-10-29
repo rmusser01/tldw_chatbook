@@ -132,6 +132,19 @@ SHELF_RELEASABLE_PAUSES: frozenset[ConsolePreparationPauseKind] = frozenset(
     }
 )
 
+#: TASK-33621.18: the pauses only their own transcript card can end (Save &
+#: Send / Retry capture / Send without capture / Cancel). The runtime keeps no
+#: unsent turn on the shelf for them -- as for the compaction hold -- because a
+#: shelf entry beside the card outlived the send the card made and offered
+#: Restore for an answered prompt.
+CARD_OWNED_PAUSES: frozenset[ConsolePreparationPauseKind] = frozenset(
+    {
+        ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+        ConsolePreparationPauseKind.TRACE_CALL,
+        ConsolePreparationPauseKind.TRACE_PROVENANCE,
+    }
+)
+
 #: Why a prepared send re-paused on its way out (the card's title reason).
 RESEND_PAUSE_COPY: Mapping[ConsolePreparationPauseKind, str] = MappingProxyType(
     {

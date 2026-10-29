@@ -2961,18 +2961,16 @@ class ConsoleRuntime:
             )
         )
         held_preparation_id = getattr(result, "preparation_id", None)
+        from .console_unsent_turn import card_owns_refusal
+
         if (
             not bool(getattr(result, "accepted", False))
             and not record.inputs.durable_accepted
             and raise_on_refusal
-            # TASK-34350: a send held at the compaction threshold is waiting
-            # on the user's answer in its own card, not refused; recording it
-            # as a turn recovery too showed one send on two surfaces.
-            and not (
-                held_preparation_id is not None
-                and controller.context_compaction_hold(held_preparation_id)
-                is not None
-            )
+            # TASK-34350 / TASK-33621.18: a send held at the compaction
+            # threshold, or paused for capture/trace, waits on its own card;
+            # a turn recovery too showed one send on two surfaces.
+            and not card_owns_refusal(controller, held_preparation_id)
         ):
             raise _ConsoleTurnRefusedError(
                 "Console turn was refused before durable acceptance.",

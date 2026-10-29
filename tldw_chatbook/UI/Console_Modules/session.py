@@ -6832,6 +6832,7 @@ class ConsoleSessionController:
         from ...Chat.console_unsent_turn import (
             card_action_finished,
             card_action_started,
+            clear_answered_draft,
             own_draft_takes_it_back,
             shelf_releasable,
         )
@@ -6929,6 +6930,9 @@ class ConsoleSessionController:
         if refill:
             # Cancel puts the held message back where it came from.
             composer.load_draft(held_text)
+        elif shown and getattr(result, "accepted", False):  # TASK-33621.18
+            sent = held.executed_draft if held.preparation_id == preparation_id else ""
+            clear_answered_draft(controller.store, composer, held.session_id, sent)
         if releasable:
             await sync_ui()  # the shelf (and the staged attachments) settled
         return result
