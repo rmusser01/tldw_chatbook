@@ -242,7 +242,16 @@ async def test_back_during_import_offers_view_and_reopens_same_progress() -> Non
         await _wait_for_selector(screen, pilot, "#note-import-cancel")
 
         assert controller.snapshot is active
-        assert screen.focused is screen.query_one("#note-import-cancel")
+        # Rewritten 2026-10-29 (TASK-34000.40 fix round 1, review R0 M-7): the
+        # re-entry lands on the progress region, not on Cancel import -- a
+        # blind Enter after "View import" must not cancel a running import.
+        # Cancel import stays painted and one Tab away.
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "note-import-body",
+            message=lambda: f"re-entry focused {screen.focused!r}",
+        )
+        assert not screen.query_one("#note-import-cancel", Button).disabled
         begin_selection.assert_not_called()
         picker.assert_not_called()
 

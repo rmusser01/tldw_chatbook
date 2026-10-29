@@ -14,7 +14,11 @@ Escape = cancel, because a check that finished while the user was away would
 be lost -- Add from files ▸ Import once starts a new selection
 (``LibraryNoteImportController.begin_selection``), and a check writes
 nothing, so cancelling it loses no data. Ruling T10-e: the import tier's
-footer chip reads ``esc notes`` while importing, and F1 mirrors the footer.
+footer chip names Escape's destination while importing (fix round 1, review
+R0 M-4: ``esc back to notes``, the same words as an idle import), and F1
+mirrors the footer. Fix round 1 M-7: re-entering the running import lands
+focus on its progress region, never on Cancel import, so a blind Enter there
+cancels nothing.
 
 Two boots of the real ``LibraryScreen`` on the production stylesheet over a
 real ChaChaNotes database and the real import executor. The first note write
@@ -264,11 +268,12 @@ async def test_escape_during_an_import_keeps_it_running(
 ) -> None:
     """AC#5: Escape is ‹ Notes -- the import runs on and completes.
 
-    While the first write is held the footer reads ``esc notes`` (not
-    ``esc cancel``) and F1 lists the same row. Escape lands on the Notes
+    While the first write is held the footer reads ``esc back to notes``
+    (not ``esc cancel``) and F1 lists the same row. Escape lands on the Notes
     list with the import still IMPORTING and its cancel signal unset; the
     toolbar's "View import" re-enters the RUNNING import, Cancel import
-    painted and pressable (T10-c). Released, all five notes are written and
+    painted and pressable (T10-c) but focus on the progress region (M-7), so
+    a blind Enter cancels nothing. Released, all five notes are written and
     the "Last import" receipt says so, with no "Cancelled" caveat.
     """
     profile = _Profile(tmp_path, monkeypatch)
@@ -293,12 +298,12 @@ async def test_escape_during_an_import_keeps_it_running(
 
             await _until(
                 pilot,
-                lambda: "esc notes" in _footer(host, screen),
+                lambda: _footer(host, screen).startswith("esc back to notes |"),
                 lambda: f"the running import's footer, painted {_footer(host, screen)!r}",
             )
             assert "esc cancel" not in _footer(host, screen)
             shortcuts = await _f1_shortcuts(host, screen, pilot)
-            assert ("esc", "notes") in shortcuts, shortcuts
+            assert ("esc", "back to notes") in shortcuts, shortcuts
             assert ("esc", "cancel") not in shortcuts, shortcuts
             # F1 still lists the pane key the footer's global cluster carries.
             assert ("F6", "next pane") in shortcuts, shortcuts
@@ -341,6 +346,18 @@ async def test_escape_during_an_import_keeps_it_running(
             assert not screen.query_one("#note-import-cancel", Button).disabled
             assert screen._notes_state.view == "import"
             assert not screen.query("#notes-add-import-once"), "the chooser came back"
+            # M-7: the re-entry lands on the progress region, not on Cancel
+            # import, so a blind Enter cancels nothing (the receipt below
+            # reads completed, five notes).
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "note-import-body",
+                lambda: (
+                    "re-entry focus on the progress region, found "
+                    f"{getattr(screen.focused, 'id', None)!r}"
+                ),
+            )
+            await pilot.press("enter")
             await pilot.press("escape")
             await _until(
                 pilot,
