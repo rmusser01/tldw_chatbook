@@ -26,6 +26,7 @@ from Tests.UI.test_console_send_acknowledgement import (
     until,
 )
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
+from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 # Mounted Console tests retain the configuration admitted at collection time.
@@ -112,9 +113,9 @@ async def test_a_locked_raw_command_is_refused_and_restored_exactly_on_every_ent
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("trigger", ["enter", "button"])
+@pytest.mark.parametrize("trigger", ["enter", "button", "workbench"])
 async def test_an_unarmed_raw_command_arms_in_place_behind_the_disclosure(trigger):
-    """AC#2/#4/#6: "Arm…" (Enter or a click) opens the arm disclosure.
+    """AC#2/#4/#6: "Arm…" (Enter, a click or the Workbench's send) arms in place.
 
     Cancel changes nothing; Confirm arms this launch and leaves the draft for
     an explicit Run, and that Run clears the composer.
@@ -131,8 +132,10 @@ async def test_an_unarmed_raw_command_arms_in_place_behind_the_disclosure(trigge
             def choose_primary() -> None:
                 if trigger == "enter":
                     press(host, "enter", "\r")
-                else:
+                elif trigger == "button":
                     _send(composer).press()
+                else:
+                    console.post_message(WorkbenchActionRequested("send"))
 
             choose_primary()
             dialog = await _dialog(host)
