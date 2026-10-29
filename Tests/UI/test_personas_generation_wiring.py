@@ -27,6 +27,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget impo
 
 from Tests.UI.test_personas_dictionaries import PersonasTestApp
 from Tests.UI.test_personas_library_scale import scaled_db  # noqa: F401  (fixture)
+from Tests.UI.roleplay_frame_harness import start_new
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -76,7 +77,7 @@ async def _editor(mock_app_instance, db, monkeypatch, controller):
         screen._generation_controller_override = controller
         # Open the editor the way a user does, so the wiring under test is the
         # real one rather than a hand-built widget.
-        await pilot.click("#personas-library-new")
+        await start_new(pilot)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()

@@ -50,6 +50,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 )
 
 from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
+from Tests.UI.roleplay_frame_harness import start_new
 
 pytestmark = pytest.mark.asyncio
 
@@ -163,7 +164,7 @@ class TestCharacterSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
 
@@ -207,7 +208,7 @@ class TestCharacterSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
 
@@ -307,7 +308,7 @@ class TestPersonaSaveInPlace:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             assert screen._edit_mode == "create"
 

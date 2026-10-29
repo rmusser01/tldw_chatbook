@@ -38,16 +38,21 @@ from Tests.UI.roleplay_frame_harness import (
     roleplay_full_app,
     select_roleplay_item,
     settle,
+    start_new,
     styled_tiers,
     visible_item_ids,
     volume_db_path,
+    wait_for_chooser,
     wait_until,
 )
 from tldw_chatbook.Character_Chat import Character_Chat_Lib
 from tldw_chatbook.Character_Chat.character_events import CharacterCardChanged
 from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.confirmation_dialog import (
+    ConfirmationDialog,
+    UnsavedChangesDialog,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
     PersonasLibraryPane,
     RoleplayItemList,
@@ -689,6 +694,236 @@ async def test_personas_have_no_duplicate(mock_app_instance, volume_348):
         assert screen.state.selected_entity_kind == "persona"
         assert screen.query_one("#personas-inspector-actions").display
         assert not screen.query_one("#personas-duplicate", Button).display
+
+
+# ---- B2b: the New chooser behind + New and Ctrl+N (spec 1.4.6; AC#11) ----
+#
+# On dev + New and Ctrl+N created a blank item of the current kind at once,
+# and New Actor Pack was a second toolbar button; the chooser offers every
+# create variant, opens on the current kind's Blank, and asks the unsaved
+# guard after the pick (OQ13).
+
+
+def _portrait_db(tmp_path):
+    """A ChaChaNotes with one local character whose portrait is a real PNG."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    png = BytesIO()
+    Image.new("RGBA", (2, 2), (20, 40, 60, 255)).save(png, format="PNG")
+    db = CharactersRAGDB(tmp_path / "portraits.db", "b2b-portraits")
+    db.add_character_card({"name": "Portrait Host", "image": png.getvalue()})
+    return db
+
+
+def _editor_shown(screen, mode: str) -> bool:
+    """Whether the kind's editor is shown (it mounts on first use)."""
+    view = {
+        "characters": "#ccp-character-editor-view",
+        "personas": "#ccp-persona-editor-view",
+    }[mode]
+    return any(node.display for node in screen.query(view))
+
+
+@pytest.mark.parametrize("mode", ["characters", "personas"])
+async def test_plus_new_then_enter_starts_a_blank_draft(
+    mock_app_instance, volume_348, mode
+):
+    service, _ = _persona_service(_personas(3))
+    mock_app_instance.character_persona_scope_service = service
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        if mode == "personas":
+            assert await pilot.click("#personas-mode-personas")
+            await settle(pilot)
+        await start_new(pilot)
+        await wait_until(
+            pilot, lambda: screen._edit_mode == "create", what="the blank draft"
+        )
+        await settle(pilot)
+        assert screen.state.active_mode == mode
+        assert _editor_shown(screen, mode)
+        assert screen._actor_pack_session is None
+        assert screen.state.selected_entity_id is None
+
+
+async def test_ctrl_n_opens_the_chooser_and_creates_nothing_until_a_pick(
+    mock_app_instance, volume_348
+):
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        screen.query_one(RoleplayItemList).focus()
+        await pilot.press("ctrl+n")
+        await pilot.pause()
+        assert screen._edit_mode != "create"
+        assert not _editor_shown(screen, "characters")
+        options = await wait_for_chooser(pilot)
+        assert options.highlighted_option.id == "character:blank"
+        ids = [options.get_option_at_index(i).id for i in range(options.option_count)]
+        assert ids == [
+            "character:blank",
+            "character:concept",
+            "character:portrait",
+            "persona:blank",
+            "persona:portrait",
+            "lore",
+            "dictionary",
+        ]
+        await pilot.press("enter")
+        await wait_until(
+            pilot, lambda: screen._edit_mode == "create", what="the blank draft"
+        )
+        assert _editor_shown(screen, "characters")
+
+
+@pytest.mark.parametrize("mode", ["characters", "personas"])
+async def test_from_a_portrait_starts_actor_pack_creation(
+    mock_app_instance, tmp_path, mode
+):
+    service, _ = _persona_service(_personas(3))
+    mock_app_instance.character_persona_scope_service = service
+    db = _portrait_db(tmp_path)
+    try:
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=(160, 45), character_db=db
+        ) as pilot:
+            screen = pilot.app.screen
+            if mode == "personas":
+                assert await pilot.click("#personas-mode-personas")
+                await settle(pilot)
+            kind = frame_state.KIND_FOR_MODE[mode]
+            await start_new(pilot, f"{kind}:portrait")
+            await wait_until(
+                pilot,
+                lambda: screen._actor_pack_session is not None,
+                what="the Actor Pack session",
+            )
+            await settle(pilot)
+            assert screen._actor_pack_session.actor_kind == kind
+            assert screen._edit_mode == "create"
+            assert _editor_shown(screen, mode)
+    finally:
+        db.close_connection()
+
+
+async def test_from_a_concept_focuses_the_concept_row(mock_app_instance, volume_348):
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await start_new(pilot, "character:concept")
+        await wait_until(
+            pilot,
+            lambda: (
+                pilot.app.focused is not None
+                and pilot.app.focused.id == "personas-char-editor-concept"
+            ),
+            what="the focused concept row",
+        )
+        await settle(pilot)
+        assert screen._edit_mode == "create"
+        assert screen.query_one("#personas-char-editor-concept-row").display
+        assert pilot.app.focused.id == "personas-char-editor-concept"
+
+
+async def test_lore_book_from_characters_goes_through_the_guard(
+    mock_app_instance, volume_348
+):
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    manager = WorldBookManager(volume_348)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await start_new(pilot)
+        await wait_until(
+            pilot, lambda: screen._edit_mode == "create", what="the blank draft"
+        )
+        await settle(pilot)
+        name = screen.query_one("#personas-char-editor-name", Input)
+        name.focus()
+        await pilot.press(*"Draft Hero")
+        await wait_until(
+            pilot, lambda: screen.state.has_unsaved_changes, what="the dirty draft"
+        )
+        for answer in ("#cancel-button", "#confirm-button"):
+            await start_new(pilot, "lore")
+            await wait_until(
+                pilot,
+                lambda: (
+                    isinstance(pilot.app.screen, UnsavedChangesDialog)
+                    and bool(pilot.app.screen.query(answer))
+                ),
+                what="the unsaved guard",
+            )
+            if answer == "#cancel-button":
+                # Stay: no book, still Characters, the draft as typed.
+                await pilot.click(answer)
+                await settle(pilot)
+                assert screen.state.active_mode == "characters"
+                assert manager.list_world_books(True) == []
+                assert name.value == "Draft Hero"
+                continue
+            await pilot.click(answer)
+            await wait_until(
+                pilot,
+                lambda: (
+                    [b["name"] for b in manager.list_world_books(True)]
+                    == ["Untitled world book"]
+                ),
+                what="the new lore book",
+            )
+            await settle(pilot)
+        assert screen.state.active_mode == "lore"
+        assert screen.state.selected_entity_kind == "lore"
+
+
+async def test_escape_in_the_chooser_creates_nothing_and_returns_focus(
+    mock_app_instance, volume_348
+):
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        item_list.focus()
+        await pilot.press("ctrl+n")
+        await wait_for_chooser(pilot)
+        await pilot.press("escape")
+        await wait_until(
+            pilot, lambda: pilot.app.screen is screen, what="the chooser closed"
+        )
+        await settle(pilot)
+        assert screen._edit_mode != "create"
+        assert not _editor_shown(screen, "characters")
+        assert pilot.app.focused is item_list
+
+
+async def test_new_opens_while_a_character_import_holds_the_dialog_slot(
+    mock_app_instance, volume_348
+):
+    """A durable character import holds the screen's file-dialog slot until
+    it ends; dev's Ctrl+N still created a blank draft then (survey PROBE2), so
+    the New chooser opens too, and leaves the slot to the import."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        # As _run_durable_character_import leaves it until the import ends.
+        screen._io_dialog_active = True
+        await start_new(pilot, via="ctrl+n")
+        await wait_until(
+            pilot, lambda: screen._edit_mode == "create", what="the blank draft"
+        )
+        assert screen._io_dialog_active
 
 
 async def test_space_turns_a_lore_book_off_with_the_undo_toast_and_on_again(

@@ -19,6 +19,7 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.roleplay_frame_harness import (
     PersonasTestApp,
     select_roleplay_item,
+    start_new,
     visible_item_ids,
 )
 from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
@@ -178,7 +179,7 @@ async def _later_input(pilot, detail, field):
 
 
 async def _stay_through_guards(pilot, screen, current, expected):
-    screen.query_one("#personas-library-new", Button).press()
+    await start_new(pilot, via="press")
     await _until(lambda: isinstance(pilot.app.screen, UnsavedChangesDialog))
     await _until(lambda: bool(pilot.app.screen.query("#cancel-button")))
     pilot.app.screen.query_one("#cancel-button", Button).press()

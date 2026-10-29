@@ -10,7 +10,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from Tests.UI.roleplay_frame_harness import list_state, select_roleplay_item
+from Tests.UI.roleplay_frame_harness import list_state, select_roleplay_item, start_new
 from textual.coordinate import Coordinate
 from textual.widgets import (
     Button,
@@ -854,7 +854,7 @@ class TestLoreModeCrudRoundTrip:
         app = LorePersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_lore(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()

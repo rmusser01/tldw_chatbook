@@ -25,6 +25,7 @@ from Tests.UI.test_personas_workbench import (
     stub_characters as _stub_characters,  # noqa: F401 - registers fixture
     stub_scope_service as _stub_scope_service,  # noqa: F401 - registers fixture
 )
+from Tests.UI.roleplay_frame_harness import start_new, wait_for_chooser
 from tldw_chatbook.Actor_Packs.creation import (
     ActorPackCreationError,
     ActorPackCreationResult,
@@ -72,7 +73,7 @@ async def test_new_actor_pack_is_distinct_and_reuses_character_editor(
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
 
         assert screen.query_one("#ccp-character-editor-view").display is True
@@ -127,7 +128,7 @@ async def test_persona_actor_pack_uses_labelled_local_portrait_selector(
         screen = await _mounted(pilot)
         await pilot.click("#personas-mode-personas")
         await pilot.pause()
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "persona:portrait")
         await pilot.pause()
 
         assert "New Persona Actor Pack" in str(
@@ -197,7 +198,13 @@ async def test_server_persona_actor_pack_explains_local_copy_requirement(
         await screen.handle_runtime_backend_changed("server")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        assert screen.query_one("#personas-library-new-actor-pack", Button).display
+        # Frame slice B2b: the New chooser lists the variant, disabled with
+        # its reason; dev showed an enabled New Actor Pack button here.
+        await pilot.press("ctrl+n")
+        options = await wait_for_chooser(pilot)
+        assert options.get_option("persona:portrait").disabled
+        await pilot.press("escape")
+        await pilot.pause()
         await screen._begin_create_actor_pack()
 
         assert notifications[-1] == ("Save a local copy first", "warning", None)
@@ -211,12 +218,19 @@ async def test_actor_pack_action_is_keyboard_focusable_inside_supported_layouts(
     app = StyledPersonasTestApp(mock_app_instance)
     async with app.run_test(size=size) as pilot:
         screen = await _mounted(pilot)
-        button = screen.query_one("#personas-library-new-actor-pack", Button)
+        # Frame slice B2b: the Actor Pack create is "From a portrait" in the
+        # New chooser, reached from + New (dev had its own toolbar button).
+        button = screen.query_one("#personas-library-new", Button)
         assert button.region.width > 0 and button.region.height > 0
         assert button.region.right <= size[0]
         button.focus()
         await pilot.pause()
         assert pilot.app.focused is button
+        await pilot.press("enter")
+        options = await wait_for_chooser(pilot)
+        assert not options.get_option("character:portrait").disabled
+        await pilot.press("escape")
+        await pilot.pause()
 
 
 async def test_character_actor_pack_save_uses_atomic_creation_service_once(
@@ -240,7 +254,7 @@ async def test_character_actor_pack_save_uses_atomic_creation_service_once(
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         assert screen._actor_pack_session is not None
@@ -284,7 +298,7 @@ async def test_persona_actor_pack_save_pins_selected_portrait_identity(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-mode-personas")
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "persona:portrait")
         await pilot.pause()
         screen.query_one("#personas-editor-name", Input).value = "Pack Guide"
         await pilot.pause()
@@ -332,7 +346,7 @@ async def test_navigation_signals_and_drains_pack_creation_before_continuing(
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Cancelled"
@@ -370,7 +384,7 @@ async def test_declined_dirty_navigation_preserves_actor_pack_draft(
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         session = screen._actor_pack_session
         screen.state.has_unsaved_changes = True
@@ -403,7 +417,7 @@ async def test_stale_editor_session_is_rejected_before_pack_service_call(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.click("#personas-mode-personas")
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "persona:portrait")
         await pilot.pause()
         editor = screen.query_one("#ccp-persona-editor-view")
         editor.load_persona({}, runtime_source="local")
@@ -453,7 +467,7 @@ async def test_stale_pack_result_does_not_reconcile_into_newer_editor_authority(
         screen = await _mounted(pilot)
         refresh = AsyncMock()
         screen.character_handler.refresh_character_list = refresh
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Stale result"
@@ -531,7 +545,7 @@ async def test_cancel_signals_and_drains_owned_pack_operation(
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Cancel me"
@@ -570,7 +584,7 @@ async def test_pack_error_copy_is_plain_text_and_path_free(
     app.notify = lambda message, **_: notifications.append(str(message))
     async with app.run_test(size=(80, 24)) as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Private"
@@ -610,7 +624,7 @@ async def test_portrait_change_during_commit_signals_authority_and_skips_reconci
     app = PersonasTestApp(mock_app_instance)
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        await pilot.click("#personas-library-new-actor-pack")
+        await start_new(pilot, "character:portrait")
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         screen.query_one("#personas-char-editor-name", Input).value = "Changing"

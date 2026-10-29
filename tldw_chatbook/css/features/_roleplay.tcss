@@ -218,3 +218,27 @@
     padding: $ds-space-0;
     margin: $ds-space-0;
 }
+
+/* Frame slice B2b: the one choice modal (the New chooser, "Import as:"),
+   Widgets/Persona_Widgets/roleplay_choice_modal.py. It is pushed only from
+   Roleplay, so this lazy sheet is always loaded while it shows. */
+.roleplay-items-chooser {
+    align: center middle;
+}
+
+#roleplay-items-chooser-box {
+    width: $ds-size-50;
+    max-width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-surface-panel;
+    background: $ds-surface-raised;
+}
+
+#roleplay-items-chooser-options {
+    height: auto;
+}
+
+.roleplay-items-chooser-keys {
+    color: $ds-text-muted;
+}

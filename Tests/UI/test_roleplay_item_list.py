@@ -1260,6 +1260,28 @@ async def test_set_sort_label_and_set_tag_label():
         assert str(app.query_one("#personas-library-tag").label) == "Tag: villain"
 
 
+@pytest.mark.parametrize("mode", ["characters", "personas"])
+async def test_a_longer_label_paints_whole_on_a_one_row_bar(mode):
+    """Button.label never re-measured an auto-width button, so a label that
+    grew wrapped onto an unpainted second line while the bar was one row.
+    Exists on dev in Personas (whose bar is one row at 220); frame slice
+    B2b's New chooser makes Characters' bar one row too, and fixes it."""
+    app = _ToolbarHost()
+    async with app.run_test(size=(120, 36)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        pane.set_mode(mode)
+        await pilot.pause()
+        assert not pane.has_class("personas-library-stacked-controls")
+        pane.set_sort_label("Sort: Recent edit")
+        if mode == "characters":
+            pane.set_tag_label("Tag: villains")
+        await pilot.pause()
+        painted = "\n".join(painted_rows(app.screen))
+        assert "Sort: Recent edit" in painted
+        if mode == "characters":
+            assert "Tag: villains" in painted
+
+
 # ==== Marks by id and the marks bar (spec 1.5.5; B2a plan Task 5) ====
 
 
@@ -1472,3 +1494,148 @@ def test_a_landing_owed_on_another_list_is_dropped_when_that_list_can_never_land
     window.want("end", read=False)
     window.landed_elsewhere(_search_fence(query="newer"))
     assert window.intent is not None and window.intent.reason == "end"
+
+
+# ---- The New chooser (frame slice B2b, spec 1.4.1 "New…", 1.4.6) ----
+
+_CHOOSER_ORDER = [
+    "character:blank",
+    "character:concept",
+    "character:portrait",
+    "persona:blank",
+    "persona:portrait",
+    "lore",
+    "dictionary",
+]
+
+
+@pytest.mark.parametrize(
+    ("mode", "blank"),
+    [
+        ("characters", "character:blank"),
+        ("personas", "persona:blank"),
+        ("lore", "lore"),
+        ("dictionaries", "dictionary"),
+    ],
+)
+def test_new_chooser_lists_every_create_variant_with_the_current_blank_preselected(
+    mode, blank
+):
+    options = frame_state.new_chooser_options(
+        mode, local_characters=True, local_runtime=True
+    )
+    assert [option.choice_id for option in options] == _CHOOSER_ORDER
+    assert [option.choice_id for option in options if option.preselected] == [blank]
+    assert all(option.enabled and option.reason is None for option in options)
+    by_id = {option.choice_id: option for option in options}
+    assert (
+        by_id["character:portrait"].label == "Character · From a portrait (Actor Pack)"
+    )
+    assert by_id["persona:portrait"].mode == "personas"
+    assert (by_id["lore"].mode, by_id["dictionary"].mode) == ("lore", "dictionaries")
+
+
+def test_new_chooser_disables_local_only_variants_under_the_server_runtime_and_says_why():
+    options = frame_state.new_chooser_options(
+        "personas", local_characters=False, local_runtime=False
+    )
+    off = {option.choice_id: option.reason for option in options if not option.enabled}
+    assert off == {
+        "character:blank": frame_state.SERVER_CHARACTERS_READ_ONLY,
+        "character:concept": frame_state.SERVER_CHARACTERS_READ_ONLY,
+        "character:portrait": frame_state.SERVER_CHARACTERS_READ_ONLY,
+        "persona:portrait": frame_state.PORTRAIT_NEEDS_LOCAL,
+    }
+    assert [option.choice_id for option in options if option.preselected] == [
+        "persona:blank"
+    ]
+    # The screen's server read-only tooltip is the same words.
+    assert (
+        personas_screen_module._SERVER_READ_ONLY_TOOLTIP
+        == frame_state.SERVER_CHARACTERS_READ_ONLY
+    )
+    # Characters' own Blank is off there: the first row that runs is picked.
+    options = frame_state.new_chooser_options(
+        "characters", local_characters=False, local_runtime=False
+    )
+    assert [option.choice_id for option in options if option.preselected] == [
+        "persona:blank"
+    ]
+
+
+def test_new_chooser_rows_follow_the_ascii_glyph_mode(ascii_mode):
+    options = frame_state.new_chooser_options(
+        "characters", local_characters=True, local_runtime=True
+    )
+    assert options[0].label == "Character - Blank"
+
+
+class _ChooserHost(ConsolidatedCSSApp):
+    """Pushes one ``RoleplayChoiceModal`` and keeps what it returns."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def __init__(self, modal) -> None:
+        super().__init__()
+        self._modal = modal
+        self.results: list[str | None] = []
+
+    def on_mount(self) -> None:
+        self.push_screen(self._modal, self.results.append)
+
+
+def _chooser(title: str, name: str):
+    from tldw_chatbook.Widgets.Persona_Widgets.roleplay_choice_modal import (
+        ChoiceOption,
+        RoleplayChoiceModal,
+    )
+
+    # Each row fits the 50-cell box on one line, so a row reads back whole.
+    return RoleplayChoiceModal(
+        title,
+        [
+            ChoiceOption("card", f"Card {name}"),
+            ChoiceOption("hinted", "Hinted", hint=name),
+            ChoiceOption("lore", "Off", enabled=False, reason=name),
+            ChoiceOption("dictionary", "Chat dictionary"),
+        ],
+        preselect="dictionary",
+    )
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_choice_modal_paints_literally_and_escape_returns_none(name):
+    app = _ChooserHost(_chooser(f"Import {name} as:", name))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        rows = painted_rows(pilot.app.screen)
+        for text in (
+            f"Import {name} as:",
+            f"Card {name}",
+            f"Hinted  {name}",
+            f"Off  {name}",
+            "enter picks · esc cancels",
+        ):
+            assert any(text in row for row in rows), (text, rows)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.results == [None]
+
+
+async def test_the_choice_modal_opens_on_its_preselect_and_enter_returns_that_id():
+    app = _ChooserHost(_chooser("New", "x"))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.results == ["dictionary"]
+
+
+async def test_a_disabled_choice_cannot_be_picked():
+    app = _ChooserHost(_chooser("New", "x"))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("up", "enter")
+        await pilot.pause()
+        # Up from Chat dictionary skips the disabled row.
+        assert app.results == ["hinted"]

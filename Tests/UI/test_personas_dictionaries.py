@@ -18,6 +18,7 @@ from Tests.UI.roleplay_frame_harness import (
     list_state,
     painted_text,
     select_roleplay_item,
+    start_new,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
@@ -1372,7 +1373,7 @@ class TestDictionaryNewDuplicate:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1380,7 +1381,7 @@ class TestDictionaryNewDuplicate:
             assert "Untitled dictionary" in names
             assert screen.state.selected_entity_name == "Untitled dictionary"
             # Second New must disambiguate against the first.
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
