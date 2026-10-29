@@ -1108,6 +1108,10 @@ async def test_narrow_terminal_gets_the_center_and_unclipped_labels(
                 detail=lambda: (left.display, right.display, workspace.region, grid.content_region),
             )
         await pilot.pause()
+        if not rails_yield:
+            # At 100 columns or more the rail the user opened stays put.
+            assert right.display is True
+            assert workspace.region.width < grid.content_region.width
 
         # The user's rail preference is untouched by the yield.
         state = console._current_console_rail_state()
@@ -1147,8 +1151,14 @@ async def test_rail_toggles_still_open_a_rail_over_a_narrow_terminal(
         console.action_open_console_terminal()
         await _wait_for_selector(console, pilot, "#console-terminal-viewport")
         await _wait_until(pilot, lambda: not left.display and not right.display)
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        await _wait_until(pilot, lambda: viewport.input_focused is True)
 
-        await console.action_toggle_console_inspector_rail()
+        # A capturing viewport sends Alt keys to the shell, so the user
+        # releases first, as the User Guide says -- then the real keys work.
+        await pilot.press("ctrl+right_square_bracket")
+        await _wait_until(pilot, lambda: viewport.input_focused is False)
+        await pilot.press("alt+i")
         await _wait_until(
             pilot,
             lambda: right.display is True,
@@ -1160,10 +1170,10 @@ async def test_rail_toggles_still_open_a_rail_over_a_narrow_terminal(
         await _wait_until(pilot, lambda: workspace.region.width < 60)
         await pilot.pause()
         _assert_labels_painted_whole(console, workspace, "inspector reclaimed")
-        await console.action_toggle_console_inspector_rail()
+        await pilot.press("alt+i")
         await _wait_until(pilot, lambda: right.display is False)
 
-        console.action_toggle_console_context_rail()
+        await pilot.press("alt+c")
         await _wait_until(
             pilot,
             lambda: left.display is True,
