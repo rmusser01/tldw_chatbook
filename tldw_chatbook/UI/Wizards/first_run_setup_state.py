@@ -1045,7 +1045,31 @@ class SetupProgressItem:
 
     step_id: str
     title: str
-    state: Literal["active", "complete", "upcoming", "attention"]
+    state: Literal["active", "complete", "upcoming", "attention", "not_needed"]
+
+
+#: A visited step that had nothing to do (TASK-34100.4: Protect with no key
+#: in config.toml). It renders '–', never the ✓ users read as "done and OK".
+PROGRESS_NOT_NEEDED = "not_needed"
+#: The states of a visited step; their connector draws as travelled.
+VISITED_PROGRESS_STATES = frozenset({"complete", "attention", PROGRESS_NOT_NEEDED})
+_PROGRESS_GLYPHS = {"complete": "✓", "attention": "!", PROGRESS_NOT_NEEDED: "–"}
+
+
+def progress_glyph(state: str, index: int) -> str:
+    """The tracker's number-box text for one step.
+
+    ✓ for a completed step, ! for one that needs attention (TASK-21143), –
+    for one that had nothing to do (TASK-34100.4), else the 1-based number.
+
+    Args:
+        state: The item's progress state.
+        index: The item's 0-based position on the track.
+
+    Returns:
+        The glyph or step number to render.
+    """
+    return _PROGRESS_GLYPHS.get(state, str(index + 1))
 
 
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
@@ -1420,18 +1444,79 @@ def setup_attention_ids(
     return frozenset(flagged)
 
 
+def setup_not_needed_ids(
+    wizard_data: Mapping[str, object] | None,
+) -> frozenset[str]:
+    """Visited steps that left nothing done, so they wear '–' not ✓.
+
+    TASK-34100.4 (protect-summary-06): Protect with no key in config.toml
+    (nothing saved, keys only in environment variables, or a typed key that
+    was never saved) used to tick ✓ as if the keys were protected. Review
+    round 1 (R1-F7): so did keys kept as plain text, and a session resumed
+    past Protect, whose checkpoint keeps only ``encryption_enabled``.
+
+    Args:
+        wizard_data: Collected per-step values, keyed by step id.
+
+    Returns:
+        ``{STEP_PROTECT}`` unless its record says the keys are encrypted,
+        else an empty set.
+    """
+    from tldw_chatbook.UI.Wizards.first_run_protect_state import PROTECT_UNTICKED
+
+    values = wizard_data if isinstance(wizard_data, Mapping) else {}
+    protect = values.get(STEP_PROTECT)
+    if not isinstance(protect, Mapping):
+        return frozenset()
+    kind = protect.get("protect_state")
+    if kind in PROTECT_UNTICKED or (
+        kind is None and protect.get("encryption_enabled") is False
+    ):
+        return frozenset({STEP_PROTECT})
+    return frozenset()
+
+
+def setup_progress_items(
+    active_ids: tuple[str, ...],
+    current_index: int,
+    wizard_data: Mapping[str, object] | None,
+    *,
+    probe_failed: bool = False,
+) -> tuple[SetupProgressItem, ...]:
+    """The tracker rows the container renders, from what each step recorded.
+
+    Args:
+        active_ids: The resolved active step ids.
+        current_index: The active step's position on that track.
+        wizard_data: Collected per-step values, keyed by step id.
+        probe_failed: Whether the provider probe demonstrably failed.
+
+    Returns:
+        The rows, with attention ('!') and nothing-to-do ('–') applied.
+    """
+    return build_setup_progress(
+        active_ids,
+        current_index,
+        attention_ids=setup_attention_ids(wizard_data, probe_failed=probe_failed),
+        not_needed_ids=setup_not_needed_ids(wizard_data),
+    )
+
+
 def build_setup_progress(
     active_ids: tuple[str, ...],
     current_index: int,
     attention_ids: frozenset[str] | set[str] = frozenset(),
+    not_needed_ids: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[SetupProgressItem, ...]:
     """Project a resolved setup path into display-ready progress rows.
 
     TASK-21143 (UAT N-7): a visited step whose probe demonstrably failed
     must not wear the ✓ users read as "this part is OK" — ``attention_ids``
     downgrades those completed steps to the "attention" state (rendered as
-    an amber "!"). Only completed steps downgrade: the active step keeps
-    its position marker, upcoming steps have nothing to report on yet.
+    an amber "!"). TASK-34100.4: ``not_needed_ids`` marks completed steps
+    that had nothing to do as "not_needed" (rendered '–'); attention wins.
+    Only completed steps change: the active step keeps its position marker,
+    upcoming steps have nothing to report on yet.
     """
 
     unknown_ids = tuple(step_id for step_id in active_ids if step_id not in STEP_TITLES)
@@ -1443,7 +1528,9 @@ def build_setup_progress(
 
     def state_for(index: int, step_id: str) -> str:
         if index < active_index:
-            return "attention" if step_id in attention_ids else "complete"
+            if step_id in attention_ids:
+                return "attention"
+            return PROGRESS_NOT_NEEDED if step_id in not_needed_ids else "complete"
         return "active" if index == active_index else "upcoming"
 
     return tuple(
@@ -1983,11 +2070,39 @@ def build_summary_rows(
         prefill.default_theme and prefill.default_theme != _TEMPLATE_DEFAULT_THEME
     )
 
+    # TASK-34100.4 AC #5: a line about changing this later names the
+    # Settings Encryption card, never a bare category.
+    from tldw_chatbook.UI.Wizards.first_run_protect_state import (
+        encryption_card_path,
+        plaintext_secret_paths,
+        stranded_fix_page,
+        stranded_secret_paths,
+    )
+
+    stranded = () if encryption_on else stranded_secret_paths(app_config)
     if encryption_on:
-        encryption_row = SummaryRow("Key encryption", ROW_CONFIGURED, "")
-    elif stored_plaintext_key_present(app_config):
         encryption_row = SummaryRow(
-            "Key encryption", ROW_ATTENTION, "API keys are stored as plain text"
+            "Key encryption",
+            ROW_CONFIGURED,
+            f"on — change the password or turn it off in {encryption_card_path()}",
+        )
+    elif stranded:
+        # Review v5r1 (R1-4): "off" hid a key stuck under an earlier password;
+        # encrypting is refused until it is re-entered or cleared.
+        encryption_row = SummaryRow(
+            "Key encryption",
+            ROW_ATTENTION,
+            "off — a saved key is still encrypted with an earlier password and "
+            f"can't be read; re-enter or clear it in {stranded_fix_page(stranded)}",
+        )
+    elif plaintext_secret_paths(app_config):
+        # Review round 1 (R1-F1): the same secrets Protect offers to encrypt
+        # (a legacy `[API]` key or a custom endpoint's key included).
+        encryption_row = SummaryRow(
+            "Key encryption",
+            ROW_ATTENTION,
+            "API keys are stored as plain text — encrypt them in "
+            f"{encryption_card_path()}",
         )
     else:
         encryption_row = SummaryRow("Key encryption", ROW_DEFAULT, "off")

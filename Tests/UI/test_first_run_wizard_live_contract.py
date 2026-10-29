@@ -1178,6 +1178,10 @@ async def test_partial_appearance_restore_preserves_absent_splash_sibling(
 
 
 @pytest.mark.asyncio
+# TASK-34100.4 review v5r1: a real-app mount reading the guarded config; without
+# the bootstrap profile it stops at RecoveryRequired("raw_source_selection_changed")
+# in _build_test_app (as this file's other mounts do on dev 0923ec0ca2).
+@pytest.mark.bootstrap_profile
 async def test_resumed_target_restores_then_clears_attempt_after_mount(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -1251,9 +1255,21 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
             ]
             assert selected_splash == ["Surprise me (random)"]
 
+            # TASK-34100.4 review v5r1 (F1): the checkpoint's
+            # encryption_enabled = true is not restored as an "Encryption
+            # enabled." line; Protect re-reads config.toml, which holds no key
+            # and no [encryption] table here, and its record follows the file.
             protect_step = container.steps[container._step_index_for_id(STEP_PROTECT)]
-            assert protect_step.get_step_data() == {"encryption_enabled": True}
-            assert "Encryption enabled" in str(
+            await _wait_until(
+                pilot,
+                lambda: protect_step.get_step_data().get("protect_state") == "nothing",
+            )
+            assert protect_step.get_step_data() == {
+                "encryption_enabled": False,
+                "protect_state": "nothing",
+            }
+            assert container.wizard_data[STEP_PROTECT]["encryption_enabled"] is False
+            assert "Encryption enabled" not in str(
                 protect_step.query_one("#setup-protect-status", Static).renderable
             )
             await _wait_until(

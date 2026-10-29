@@ -51,8 +51,10 @@ from tldw_chatbook.Chat.provider_catalog import (
 from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
 from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
+    STILL_ENCRYPTED_REASON,
     ProviderReadiness,
     configured_provider_credential_source,
+    custom_endpoint_family_readiness,
     get_provider_readiness,
     provider_config_key,
     safe_provider_label,
@@ -100,6 +102,7 @@ from tldw_chatbook.Chat.sampling_params import (
 from tldw_chatbook.config import (
     DEFAULT_CONFIG_FROM_TOML,
     ProviderSettingsError,
+    is_encrypted_config_value,
     provider_settings_for_key,
     resolve_provider_api_key,
 )
@@ -1922,7 +1925,14 @@ def build_console_settings_readiness(
             settings.provider if entry is not None else provider_key,
         )
     )
-    readiness = get_provider_readiness(
+    # TASK-34100.4 review (F3): an entry rides its family's readiness with
+    # the family slot's own stranded key lifted (never the entry's key).
+    family_readiness = (
+        custom_endpoint_family_readiness
+        if entry is not None
+        else get_provider_readiness
+    )
+    readiness = family_readiness(
         provider_key,
         app_config,
         environ=environ,
@@ -2700,9 +2710,14 @@ def _custom_endpoint_missing_key_readiness(
         if entry.api_key_env
         else None
     )
-    if not entry.api_key_env and stored_key is None:
-        return None
     if env_key is not None or stored_key is not None:
+        return None
+    # TASK-34100.4 AC #10 (part 2): a stored key that is still `enc:`
+    # ciphertext is declared but unreadable. Letting it ride the keyless
+    # family read "Ready · not tested" and sent no key to a server that
+    # evidently wants one (a bare HTTP 401).
+    stranded = is_encrypted_config_value(entry.api_key)
+    if not entry.api_key_env and not stranded:
         return None
     # Lazy import: custom_endpoint_registry imports this module.
     from tldw_chatbook.Chat.custom_endpoint_registry import (
@@ -2732,12 +2747,21 @@ def _custom_endpoint_missing_key_readiness(
                 f"{ENV_VAR_NAME_RULE_COPY} Fix it under Custom endpoints."
             ),
         )
-    if entry.api_key_env:
+    if stranded:
+        reason = STILL_ENCRYPTED_REASON
+        recovery = (
+            f"Re-enter or clear the stored api_key for the '{label}' endpoint "
+            "under Custom endpoints; it was encrypted with a master password "
+            "this session does not have."
+        )
+    elif entry.api_key_env:
+        reason = "Missing API key"
         recovery = (
             f"Set {entry.api_key_env} or update the stored api_key for the "
             f"'{label}' endpoint."
         )
     else:
+        reason = "Missing API key"
         recovery = f"Update the stored api_key for the '{label}' endpoint."
     return ProviderReadiness(
         provider=label,
@@ -2747,7 +2771,7 @@ def _custom_endpoint_missing_key_readiness(
         api_key=None,
         api_key_source=None,
         env_var=entry.api_key_env,
-        reason="Missing API key",
+        reason=reason,
         recovery=recovery,
     )
 

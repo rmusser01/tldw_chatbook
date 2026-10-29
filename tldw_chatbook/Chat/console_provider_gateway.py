@@ -162,7 +162,10 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_readiness import (
+    custom_endpoint_family_readiness,
+    get_provider_readiness,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_session_settings import reasoning_effort_hint_for_model
@@ -4264,13 +4267,25 @@ class ConsoleProviderGateway:
                 or endpoint
                 or DEFAULT_LLAMACPP_BASE_URL
             )
+        from tldw_chatbook.Chat.provider_readiness import STILL_ENCRYPTED_REASON
+        from tldw_chatbook.config import is_encrypted_config_value
+
         api_key = None
+        stranded = False
         if entry:
             api_key, _ = _custom_entry_credential(entry, self._environ)
+            stranded = api_key is None and is_encrypted_config_value(entry.api_key)
         elif family in URL_BASED_PROVIDER_KEYS or family == "openrouter":
-            api_key = get_provider_readiness(
+            readiness = get_provider_readiness(
                 identity.readiness_key, config, environ=self._environ
-            ).api_key
+            )
+            api_key = readiness.api_key
+            stranded = readiness.reason == STILL_ENCRYPTED_REASON
+        if stranded:
+            # TASK-34100.4 review (F4): the server wants the key that is still
+            # `enc:`; a keyless metadata probe only earns a 401 for a target
+            # readiness already blocks. No endpoint, no probe.
+            endpoint = ""
         return ContextWindowTarget(
             settings.provider, family, endpoint or "", settings.model or "", api_key
         )
@@ -4622,7 +4637,13 @@ class ConsoleProviderGateway:
                 custom_entry, self._environ
             )
         if identity.uses_direct_llama_path:
-            readiness = get_provider_readiness(
+            # TASK-34100.4 review (F3): an entry never blocks on the family
+            # slot's own stranded key; its credential was resolved above.
+            readiness = (
+                custom_endpoint_family_readiness
+                if custom_entry is not None
+                else get_provider_readiness
+            )(
                 identity.readiness_key,
                 app_config,
                 environ=self._environ,

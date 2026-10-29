@@ -485,8 +485,11 @@ _BUDGETS: dict[str, int] = {
     # screen. TASK-34100.8: the Voice resume restore moved onto the step
     # (VoiceSetupStep.restore_checkpoint) -> 3,145; review round 1 moved the
     # refused-Next suffix onto SetupStep.refusal_message -> 3,144.
-    # TASK-33008 (Phase 8) -> 3,136.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3136,
+    # TASK-33008 (Phase 8) -> 3,136. TASK-34100.4 moved the tracker glyph and
+    # the finish-later flow into helpers (3,123); its review round 1 moved
+    # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
+    # review v5r1 dropped the resume's stale Protect status line (3,106).
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3106,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -538,7 +541,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8184,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.4 +21 (the
+    # stranded-key custom-endpoint readiness and keyless-probe guard).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8205,
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7024,
     "tldw_chatbook/UI/Console_Modules/session.py": 7000,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
@@ -562,7 +567,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
+    # Whisper never sends an enc: key).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
     "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4232,

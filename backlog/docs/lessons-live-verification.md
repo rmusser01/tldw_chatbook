@@ -286,6 +286,18 @@ only a thread that is not one is skipped. A hang that lasts exactly
 `[general] shutdown_grace_seconds` and ends with status 1 is the watchdog, and
 the pane's last line lists the threads that were still alive.
 
+## `chmod` cannot force a config-save failure; `chflags uchg` can (TASK-34100.4, 2026-10-05)
+
+To live-verify "Exit setup offers *Exit without saving progress* when the save
+fails", the first attempt made the isolated profile's `~/.config/tldw_cli`
+read-only (`chmod 500`). The save still succeeded and setup closed normally: the
+config writer re-secures its application-owned directory to `0700` before
+writing (`secure_private_directory`), undoing the chmod. Setting the macOS
+user-immutable flag on the file itself (`chflags uchg config.toml`) made the
+atomic replace fail for real, the offer appeared, and the file hash was
+unchanged afterwards (`chflags nouchg` to undo). Use a file flag the app does not
+manage, not a mode it repairs -- and only ever in an isolated profile.
+
 ## A tmux key burst loses typed text, and an empty Input shows its placeholder
 
 **TASK-34100.8, 2026-10-04.** Live-editing the Voice step's Endpoint with
