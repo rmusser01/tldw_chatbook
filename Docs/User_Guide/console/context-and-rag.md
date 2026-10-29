@@ -893,8 +893,11 @@ chip opens two independent, text-valued controls for the active conversation:
 
 New conversations ship as **Never** and **Blocked**. The choices are stored
 only on this device and are not synced or exported. A recovered remote or
-imported conversation whose local policy cannot be resolved therefore remains
-inert until you explicitly save a local policy.
+imported conversation (or one saved before these controls existed) has no
+local policy, so it runs under the same safe **Never** and **Blocked**. Its
+first send saves that default as its local policy rather than being refused;
+nothing broader is ever saved on your behalf, and you can change it from the
+chip at any time.
 
 When Assistant is Allowed, **Direct / RAG is a selector**, not a third
 permission. Direct advertises the bounded direct Library tools; RAG advertises

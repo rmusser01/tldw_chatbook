@@ -1640,3 +1640,5 @@ Tests/UI/test_console_unreserved_commit_failure.py
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_send_whose_commit_fails_before_its_reservation_never_jams[Discard]
 # TASK-33620.3 AC#1/#2: the failure reads "Send could not be saved", never provider setup, and leaves no live run (about 7-12 s).
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_failed_commit_says_not_saved_and_leaves_the_running_state
+# TASK-33620.3 AC#4: a saved chat with no Library-policy row sends, and its first commit writes the safe Never/Blocked row (about 6-15 s).
+Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_saved_chat_without_its_library_policy_row_sends_and_repairs_it
