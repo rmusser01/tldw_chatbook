@@ -192,7 +192,9 @@ _BUDGETS: dict[str, int] = {
     # four pickers; "Import as:" opens on the sniff's pick, owner decision D8;
     # an unreadable profile folder refuses only a Buddy pick): +37
     # (16,962 -> 16,999).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16999,
+    # T5, the guarded import landing (_land_import, the intent serial and its
+    # bumps, the literal landing toasts): +122 (16,999 -> 17,121).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17121,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -219,7 +221,10 @@ _BUDGETS: dict[str, int] = {
     # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
     # T2, the New chooser's rows (NewChoice, new_chooser_options): +113
     # (855 -> 968).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 968,
+    # T5, where an import lands (MODE_FOR_KIND, import_landing,
+    # import_landed_toast; ListWindowState.moves lives in
+    # roleplay_list_window_state.py since dev's ed82096930): +51 (968 -> 1,019).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1019,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision

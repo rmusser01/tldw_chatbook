@@ -2750,17 +2750,23 @@ class TestDictionaryImport:
         notifications = self._capture_notifications(app)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            # Simulate the user having navigated away while the import ran.
-            screen.state.active_mode = "characters"
-            await screen._import_dictionary_from_path(str(source))
+            # The picker opened in Dictionaries (frame slice B2b: the import
+            # carries the user's intent from then), and the user navigated
+            # away while the import ran.
+            intent = screen._import_intent_now()
+            await screen._apply_mode("characters")
+            await screen._import_dictionary_from_path(str(source), intent=intent)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Late Arrival" in names  # the import itself still succeeded
+            assert screen.state.active_mode == "characters"
             assert screen.state.selected_entity_kind != "dictionary"  # no yank-back
+            # The toast names where it went (dev: "open Dictionaries to see it").
             assert any(
-                "open Dictionaries" in message and severity == "information"
+                message == "Imported Late Arrival · in Chat dictionaries"
+                and severity == "information"
                 for message, severity in notifications
             )
 

@@ -20,13 +20,15 @@ from __future__ import annotations
 import builtins
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 from Tests.Actor_Packs.test_actor_pack_attribution import services
@@ -36,7 +38,9 @@ from Tests.UI.roleplay_frame_harness import (
     open_styled_roleplay,
     painted_rows,
     painted_text,
+    select_roleplay_item,
     settle,
+    start_new,
     wait_for_chooser,
     wait_until,
 )
@@ -48,6 +52,7 @@ from Tests.UI.roleplay_import_fixtures import (
     write_sparse,
 )
 from tldw_chatbook.Actor_Packs.import_controller import ActorPackImportController
+from tldw_chatbook.Character_Chat import Character_Chat_Lib
 from tldw_chatbook.Character_Chat.chat_dictionary_scope_service import (
     ChatDictionaryScopeService,
 )
@@ -628,3 +633,288 @@ def _painted_toasts(screen) -> str:
         " ".join(painted_text(screen, toast.content_region).split())
         for toast in screen.query(Toast)
     )
+
+
+# ---- AC#5: where an import lands (frame slice B2b, spec 1.4.6) ----
+#
+# Auto-select runs only when every draft is clean, no newer intent arrived
+# since the picker opened, and the screen still shows; otherwise the import
+# still lands and a literal toast names where.
+
+
+def _record_app_notices(app) -> list[tuple[str, dict]]:
+    """Every app notification with its keyword arguments (``_notify`` calls it)."""
+    seen: list[tuple[str, dict]] = []
+    original = app.notify
+
+    def record(message, **kwargs):
+        seen.append((str(message), kwargs))
+        return original(message, **kwargs)
+
+    app.notify = record
+    return seen
+
+
+@contextmanager
+def _slow_character_import(
+    monkeypatch,
+) -> Iterator[tuple[threading.Event, threading.Event]]:
+    """Hold every character import in its thread until ``release`` is set."""
+    entered, release = threading.Event(), threading.Event()
+    real = Character_Chat_Lib.import_and_save_character_from_file_with_outcome
+
+    def slow(*args, **kwargs):
+        entered.set()
+        release.wait(30)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        Character_Chat_Lib, "import_and_save_character_from_file_with_outcome", slow
+    )
+    try:
+        yield entered, release
+    finally:
+        release.set()
+
+
+async def _dirty_character_draft(pilot) -> Input:
+    """A new character draft with a typed name (the unsaved guard's state)."""
+    screen = pilot.app.screen
+    await start_new(pilot)
+    await wait_until(pilot, lambda: screen._edit_mode == "create", what="the draft")
+    await settle(pilot)
+    name = screen.query_one("#personas-char-editor-name", Input)
+    name.focus()
+    await pilot.press(*"Draft Hero")
+    await wait_until(
+        pilot, lambda: screen.state.has_unsaved_changes, what="the dirty draft"
+    )
+    return name
+
+
+def _draft_kept(screen, name: Input) -> bool:
+    editor = screen.query_one("#ccp-character-editor-view")
+    return bool(
+        screen._edit_mode == "create"
+        and editor.display
+        and name.value == "Draft Hero"
+        and screen.state.has_unsaved_changes
+        and screen.state.selected_entity_id is None
+    )
+
+
+async def test_an_import_with_a_dirty_draft_lands_and_a_literal_toast_names_where(
+    import_env, mock_app_instance, monkeypatch
+):
+    """D1: Import is unguarded. On dev the unsaved-changes dialog came before
+    the picker (survey PROBE1), so the import never landed beside a draft."""
+    fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        name = await _dirty_character_draft(pilot)
+        notices = _record_app_notices(pilot.app)
+        await _press_import(pilot)
+        toast = "Imported Kepler Atlas · in Lore books"
+        await wait_until(
+            pilot, lambda: any(m == toast for m, _ in notices), what="the toast"
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await settle(pilot)
+        assert import_env.lore_books() == ["Kepler Atlas"]
+        assert screen.state.active_mode == "characters"
+        # No unsaved-changes dialog either: the landing never asks.
+        assert pilot.app.screen is screen
+        assert _draft_kept(screen, name)
+        assert [kwargs["markup"] for m, kwargs in notices if m == toast] == [False]
+
+
+async def test_a_draft_started_during_a_slow_import_is_never_replaced(
+    import_env, mock_app_instance, monkeypatch
+):
+    """Survey PROBE2: on dev the import that landed swapped its card in over
+    a draft started meanwhile, with no prompt (the draft stayed dirty, out of
+    view)."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            name = await _dirty_character_draft(pilot)
+            release.set()
+            await wait_until(
+                pilot,
+                lambda: "Wren Halloway" in import_env.characters(),
+                what="the imported card",
+            )
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await settle(pilot)
+            assert pilot.app.screen is screen
+            assert _draft_kept(screen, name)
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_newer_selection_during_an_import_keeps_the_selection_and_toasts(
+    import_env, mock_app_instance, monkeypatch
+):
+    seed_id = str(import_env.db.get_character_card_by_name(SEED)["id"])
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            await select_roleplay_item(pilot, screen, f"character:{seed_id}")
+            await wait_until(
+                pilot,
+                lambda: screen.state.selected_entity_id == seed_id,
+                what="the user's selection",
+            )
+            release.set()
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await settle(pilot)
+            assert "Wren Halloway" in import_env.characters()
+            assert screen.state.selected_entity_id == seed_id
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_cursor_move_during_an_import_keeps_the_cursor_and_toasts(
+    import_env, mock_app_instance, monkeypatch
+):
+    """A cursor move that loads nothing is still a newer intent (the list's
+    user_moved): the import must not pull the cursor to its row."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            item_list = screen.query_one("#personas-library-rows")
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            loaded = screen.state.selected_entity_id
+            item_list.focus()
+            await pilot.press("end")
+            await settle(pilot)
+            moved_to = item_list.highlighted
+            release.set()
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await settle(pilot)
+            assert "Wren Halloway" in import_env.characters()
+            assert screen.state.selected_entity_id == loaded
+            assert item_list.highlighted == moved_to
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_clean_import_of_another_kind_switches_to_it_and_selects_it(
+    import_env, mock_app_instance, monkeypatch
+):
+    """Quick import across kinds: on dev a lore book imported from Characters
+    (only possible by the Lore picker) said "open Lore to see it"."""
+    fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_name == "Kepler Atlas",
+            what="the lore book selected",
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await settle(pilot)
+        assert screen.state.active_mode == "lore"
+        assert screen.state.selected_entity_kind == "lore"
+        assert notices[-1:] == ["Imported Kepler Atlas · in Lore books"]
+
+
+async def test_an_import_that_lands_after_a_kind_switch_still_toasts(
+    import_env, mock_app_instance, monkeypatch
+):
+    """Survey PROBE3: on dev a character import that landed after a switch
+    to another kind said nothing at all (the character was created)."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            assert await pilot.click("#personas-mode-personas")
+            await wait_until(
+                pilot,
+                lambda: screen.state.active_mode == "personas",
+                what="Personas",
+            )
+            release.set()
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await settle(pilot)
+            assert "Wren Halloway" in import_env.characters()
+            assert screen.state.active_mode == "personas"
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_dictionary_import_in_dictionaries_mode_toasts(
+    import_env, mock_app_instance, monkeypatch
+):
+    """On dev a dictionary imported in Dictionaries was selected with no toast."""
+    fake_file_picker(monkeypatch, import_env.files["dictionary_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        assert await pilot.click("#personas-mode-dictionaries")
+        await settle(pilot)
+        notices = _record_notices(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_name == "Medical Abbrev",
+            what="the dictionary selected",
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        assert notices[-1:] == ["Imported Medical Abbrev · in Chat dictionaries"]
+
+
+async def test_an_import_while_a_save_is_in_flight_does_not_auto_select(
+    import_env, mock_app_instance, monkeypatch
+):
+    """The landing reads R24's aggregate predicate, which counts a save still
+    in flight; _run_guarded's narrower test (form edits and visual authoring
+    only) would call this screen clean and switch kinds under the save."""
+    fake_file_picker(monkeypatch, import_env.files["lore_tldw_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        # As _handle_save_requested leaves it while the character save runs.
+        screen._character_save_inflight = True
+        assert not screen.state.has_unsaved_changes
+        await _press_import(pilot)
+        await wait_until(pilot, lambda: bool(notices), what="the toast")
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        assert import_env.lore_books() == ["Kepler Atlas"]
+        assert screen.state.active_mode == "characters"
+        assert notices == ["Imported Kepler Atlas · in Lore books"]

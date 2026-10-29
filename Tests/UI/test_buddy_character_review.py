@@ -502,11 +502,12 @@ async def test_unavailable_destination_releases_import_dialog_slot(
 
         screen.app = SimpleNamespace(push_screen_wait=no_pick)
         screen._roleplay_import_running = True
+        screen._import_intent_now = lambda: (0, 0)
         await PersonasScreen._roleplay_import_worker(screen)
         assert len(shown) == 1
         assert not screen._roleplay_import_running
         refused = await PersonasScreen._route_roleplay_import(
-            screen, Path("pack.tldw-persona-vpack"), None
+            screen, Path("pack.tldw-persona-vpack"), None, (0, 0)
         )
         assert refused is False
         screen._notify.assert_called_once_with(
