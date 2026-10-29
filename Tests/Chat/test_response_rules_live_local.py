@@ -1,4 +1,9 @@
-"""Opt-in real local-provider qualification; scripted suites cannot prove quality."""
+"""Opt-in real provider qualification; scripted suites cannot prove quality.
+
+Defaults to an explicitly owned loopback endpoint. DeepSeek requires explicit
+PR3010_LIVE_PROVIDER=deepseek, PR3010_LIVE_API_KEY and PR3010_LIVE_MODEL opt-in;
+credentials are passed to the gateway only and never written to evidence.
+"""
 
 import json
 import os
@@ -25,8 +30,44 @@ from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
 pytestmark = [
     pytest.mark.bootstrap_profile,
     pytest.mark.requires_cleanup,
-    pytest.mark.loopback_network,
+    (
+        pytest.mark.allow_network
+        if os.environ.get("PR3010_LIVE_PROVIDER") == "deepseek"
+        else pytest.mark.loopback_network
+    ),
 ]
+
+
+def _live_resolution(endpoint):
+    """Resolve only an explicit owned loopback or opted-in DeepSeek destination."""
+    provider = os.environ.get("PR3010_LIVE_PROVIDER", "llama_cpp")
+    parsed = urlparse(endpoint)
+    if provider == "deepseek":
+        assert parsed.scheme == "https" and parsed.hostname == "api.deepseek.com"
+        key = os.environ["PR3010_LIVE_API_KEY"]
+        model = os.environ["PR3010_LIVE_MODEL"]
+    else:
+        assert provider == "llama_cpp"
+        assert parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
+        assert parsed.port and parsed.port != 11434
+        key, model = None, "qwen2.5-0.5b"
+    return with_destination(
+        _auxiliary_resolution(
+            provider=provider,
+            execution_key=provider,
+            readiness_key=provider,
+            model=model,
+            base_url=endpoint,
+            api_key=key,
+            max_tokens=512,
+            temperature=0.0,
+            reasoning_effort="none" if provider == "deepseek" else None,
+            reasoning_summary=None,
+            verbosity=None,
+            thinking_effort=None,
+            thinking_budget_tokens=None,
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -34,32 +75,13 @@ async def test_actual_local_learning_and_independent_semantic_cases(tmp_path):
     endpoint = os.environ.get("PR3010_LIVE_LOCAL_URL")
     if not endpoint:
         pytest.skip("requires explicitly owned local model endpoint")
-    parsed = urlparse(endpoint)
-    assert parsed.scheme == "http" and parsed.hostname == "127.0.0.1"
-    assert parsed.port and parsed.port != 11434
     output = Path(os.environ["PR3010_LIVE_EVIDENCE"])
     assert not output.exists()
     db, app, runs, chats, session, _scripted, _bridge, controller = _controller_rig(
         tmp_path
     )
     gateway = ConsoleProviderGateway(environ={}, config_provider=dict)
-    resolution = with_destination(
-        _auxiliary_resolution(
-            provider="llama_cpp",
-            execution_key="llama_cpp",
-            readiness_key="llama_cpp",
-            model="qwen2.5-0.5b",
-            base_url=endpoint,
-            api_key=None,
-            max_tokens=512,
-            temperature=0.0,
-            reasoning_effort=None,
-            reasoning_summary=None,
-            verbosity=None,
-            thinking_effort=None,
-            thinking_budget_tokens=None,
-        )
-    )
+    resolution = _live_resolution(endpoint)
 
     async def resolve(_selection):
         return resolution
@@ -84,7 +106,7 @@ async def test_actual_local_learning_and_independent_semantic_cases(tmp_path):
         result = await complete(request, **kwargs)
         trace["helper_calls"].append(
             {
-                "messages": list(request.messages),
+                "messages": [dict(row) for row in request.messages],
                 "text": result.text,
                 "usage": repr(result.usage),
             }
@@ -180,7 +202,7 @@ async def test_actual_local_deterministic_rule_controls(tmp_path, control, monke
     endpoint = os.environ.get("PR3010_LIVE_LOCAL_URL")
     if not endpoint:
         pytest.skip("requires explicitly owned local model endpoint")
-    assert urlparse(endpoint).hostname == "127.0.0.1"
+    _live_resolution(endpoint)  # Validate before any request.
     output = Path(os.environ["PR3010_LIVE_EVIDENCE"] + "." + control + ".json")
     assert not output.exists()
     trace = {"control": control, "wire": [], "helpers": [], "answers": []}
@@ -191,7 +213,7 @@ async def test_actual_local_deterministic_rule_controls(tmp_path, control, monke
 
         async def handle_async_request(self, request):
             # Observe the bytes passed to the real transport; forward unchanged.
-            assert request.url.host == "127.0.0.1"
+            assert request.url.host == urlparse(endpoint).hostname
             payload = json.loads(request.content) if request.content else None
             trace["wire"].append(
                 {"method": request.method, "url": str(request.url), "body": payload}
@@ -201,6 +223,27 @@ async def test_actual_local_deterministic_rule_controls(tmp_path, control, monke
         async def aclose(self):
             await self.real.aclose()
 
+    # Hosted DeepSeek uses the installed synchronous adapter, while local
+    # streaming uses httpx. Observe both physical transports, forwarding exact
+    # requests unchanged and retaining no authentication headers.
+    if os.environ.get("PR3010_LIVE_PROVIDER") == "deepseek":
+        from requests import Session
+
+        original_send = Session.send
+
+        def observed_send(owner, request, **kwargs):
+            assert urlparse(request.url).hostname == urlparse(endpoint).hostname
+            trace["wire"].append(
+                {
+                    "method": request.method,
+                    "url": request.url,
+                    "body": json.loads(request.body) if request.body else None,
+                }
+            )
+            return original_send(owner, request, **kwargs)
+
+        monkeypatch.setattr(Session, "send", observed_send)
+
     client = httpx.AsyncClient(transport=ObservedTransport())
     db, app, runs, chats, session, _scripted, _bridge, controller = _controller_rig(
         tmp_path
@@ -208,23 +251,7 @@ async def test_actual_local_deterministic_rule_controls(tmp_path, control, monke
     gateway = ConsoleProviderGateway(
         http_client=client, environ={}, config_provider=dict
     )
-    resolution = with_destination(
-        _auxiliary_resolution(
-            provider="llama_cpp",
-            execution_key="llama_cpp",
-            readiness_key="llama_cpp",
-            model="qwen2.5-0.5b",
-            base_url=endpoint,
-            api_key=None,
-            max_tokens=512,
-            temperature=0.0,
-            reasoning_effort=None,
-            reasoning_summary=None,
-            verbosity=None,
-            thinking_effort=None,
-            thinking_budget_tokens=None,
-        )
-    )
+    resolution = _live_resolution(endpoint)
 
     async def resolve(_selection):
         return resolution
@@ -441,3 +468,154 @@ async def test_actual_local_deterministic_rule_controls(tmp_path, control, monke
         trace["client_closed"] = client.is_closed
         trace["physical_helpers"] = rules.helpers.unsettled_count
         output.write_text(json.dumps(trace, indent=2, default=str))
+
+
+@pytest.mark.asyncio
+async def test_actual_execution_backed_semantic_cases(tmp_path):
+    """Qualify real judgments using host self-checks, not invented agent work."""
+    import asyncio
+    import hashlib
+    import subprocess
+    import sys
+
+    from tldw_chatbook.Chat.response_rules.models import RuleEvidence
+
+    endpoint = os.environ.get("PR3010_LIVE_LOCAL_URL")
+    if not endpoint:
+        pytest.skip("requires explicitly owned local model endpoint")
+    resolution = _live_resolution(endpoint)
+    output = Path(os.environ["PR3010_LIVE_EVIDENCE"] + ".execution.json")
+    assert not output.exists()
+    gateway = ConsoleProviderGateway(environ={}, config_provider=dict)
+    trace = {
+        "model": resolution.model,
+        "executions": [],
+        "helper_calls": [],
+        "cases": [],
+    }
+    complete = gateway.complete_auxiliary
+
+    async def observed(request, **kwargs):
+        result = await complete(request, **kwargs)
+        trace["helper_calls"].append(
+            {
+                "messages": [dict(row) for row in request.messages],
+                "text": result.text,
+            }
+        )
+        return result
+
+    gateway.complete_auxiliary = observed
+    pool = RuleHelperPool(
+        usage_sink=lambda *_: None, current=lambda _: True, clock=monotonic
+    )
+    path = tmp_path / "arithmetic_self_check.py"
+
+    async def execute(program, ref):
+        path.write_text(program, encoding="utf-8")
+        revision = hashlib.sha256(path.read_bytes()).hexdigest()
+        argv = [sys.executable, str(path)]
+        result = await asyncio.to_thread(
+            subprocess.run,
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        trace["executions"].append(
+            {
+                "argv": argv,
+                "source_sha256": revision,
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            }
+        )
+        text = (
+            "Actual host qualification self-check; this is not Console agent tool work. "
+            f"exit_code={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
+        return RuleEvidence(
+            ref,
+            "settled",
+            "succeeded" if result.returncode == 0 else "failed",
+            revision,
+            text,
+        )
+
+    evaluator = ResponseRuleEvaluator(gateway)
+
+    async def judge(label, answer, evidence, expected):
+        revision = hashlib.sha256(path.read_bytes()).hexdigest()
+        origin = source(operation_id=str(uuid4()))
+        lease = pool.try_acquire(origin, purpose="checking", deadline=monotonic() + 30)
+        value = inputs(
+            answer,
+            request_text="Report the current arithmetic self-check result.",
+            evidence=(evidence,),
+            work_revision=revision,
+        )
+        assessment = await evaluator.assess(
+            origin,
+            value,
+            (semantic(),),
+            resolution=resolution,
+            lease=lease,
+        )
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == revision
+        trace["cases"].append(
+            {
+                "label": label,
+                "expected": expected,
+                "actual": assessment.outcome,
+                "work_revision": revision,
+                "evidence_work_revision": evidence.work_revision,
+                "checks": [asdict(c) for c in assessment.checks],
+            }
+        )
+
+    try:
+        success = await execute(
+            'assert 6 * 7 == 42\nprint("arithmetic self-check passed")\n',
+            "self-check:success",
+        )
+        assert trace["executions"][0]["exit_code"] == 0
+        await judge(
+            "current_success", "The arithmetic self-check passed.", success, "pass"
+        )
+        failure = await execute("assert 6 * 7 == 41\n", "self-check:failure")
+        assert trace["executions"][1]["exit_code"] != 0
+        await judge(
+            "contradicted_success",
+            "The arithmetic self-check passed.",
+            failure,
+            "violation",
+        )
+        # A real edit with no new execution makes the earlier result historical.
+        path.write_text("assert 6 * 7 == 43\n", encoding="utf-8")
+        assert hashlib.sha256(path.read_bytes()).hexdigest() not in {
+            success.work_revision,
+            failure.work_revision,
+        }
+        await judge(
+            "stale_success",
+            "The current arithmetic self-check passed.",
+            success,
+            "couldnt_verify",
+        )
+        await judge(
+            "qualified_history",
+            "The earlier arithmetic self-check passed before the edit; the current file is unverified.",
+            success,
+            "pass",
+        )
+    finally:
+        pool.close_admission()
+        await pool.wait_for_cleanup()
+        trace["unsettled_helpers"] = pool.unsettled_count
+        await gateway.http_client.aclose()
+        output.write_text(json.dumps(trace, indent=2))
+    assert len(trace["helper_calls"]) == 4
+    assert all(c["actual"] == c["expected"] for c in trace["cases"]), trace["cases"]
+    assert trace["unsettled_helpers"] == 0

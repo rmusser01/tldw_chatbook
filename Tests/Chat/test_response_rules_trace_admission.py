@@ -2,6 +2,8 @@
 
 from dataclasses import replace
 
+import asyncio
+
 import pytest
 
 from Tests.ChaChaNotesDB.test_console_dispatch_checkpoint_repository import (
@@ -105,17 +107,25 @@ def prepared(db, checkpoint):
 
 
 def assert_payload_root(db, request_id, revision, *, retained):
-    mark = db.get_connection().execute(
-        "SELECT 1 FROM console_trace_gc_marks WHERE request_id=? "
-        "AND entity_kind='console_trace_payload_revisions' AND entity_id=?",
-        (request_id, revision),
-    ).fetchone()
+    mark = (
+        db.get_connection()
+        .execute(
+            "SELECT 1 FROM console_trace_gc_marks WHERE request_id=? "
+            "AND entity_kind='console_trace_payload_revisions' AND entity_id=?",
+            (request_id, revision),
+        )
+        .fetchone()
+    )
     assert (mark is not None) is retained
     # A still-live canonical message keeps metadata independently of admission.
-    assert db.get_connection().execute(
-        "SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=?",
-        (revision,),
-    ).fetchone()
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT 1 FROM console_trace_semantic_revisions WHERE revision_id=?",
+            (revision,),
+        )
+        .fetchone()
+    )
 
 
 def settle(repository, checkpoint):
@@ -251,7 +261,7 @@ def test_admission_after_mark_invalidates_sweep_and_new_mark_retains_it(tmp_path
 async def test_automatic_collector_revisits_settled_checkpoint_epoch(
     admitted, monkeypatch
 ):
-    from Tests.Chat.test_console_trace_maintenance_parking import _fast_runtime, _until
+    from Tests.Chat.test_console_trace_maintenance_parking import _fast_runtime
     from tldw_chatbook.Chat import console_runtime as runtime_module
     from tldw_chatbook.Chat.console_trace_legacy import LegacyTraceNormalizer
 
@@ -279,11 +289,16 @@ async def test_automatic_collector_revisits_settled_checkpoint_epoch(
 
     def mark(self, **kwargs):
         result = original_mark(self, **kwargs)
-        marked_roots[result.request_id] = self.db.get_connection().execute(
-            "SELECT 1 FROM console_trace_gc_marks WHERE request_id=? "
-            "AND entity_kind='console_trace_payload_revisions' AND entity_id=?",
-            (result.request_id, revision),
-        ).fetchone() is not None
+        marked_roots[result.request_id] = (
+            self.db.get_connection()
+            .execute(
+                "SELECT 1 FROM console_trace_gc_marks WHERE request_id=? "
+                "AND entity_kind='console_trace_payload_revisions' AND entity_id=?",
+                (result.request_id, revision),
+            )
+            .fetchone()
+            is not None
+        )
         return result
 
     monkeypatch.setattr(TraceGarbageCollector, "mark", mark)
@@ -298,7 +313,10 @@ async def test_automatic_collector_revisits_settled_checkpoint_epoch(
     monkeypatch.setattr(TraceGarbageCollector, "collect", collect)
     runtime._schedule_legacy_trace_maintenance(db, lambda: LegacyTraceNormalizer(db))
     try:
-        await _until(lambda: len(physical) >= 3)
+        # Poll a real deadline: short asyncio sleeps may resume early on Windows.
+        async with asyncio.timeout(5):
+            while len(physical) < 3:
+                await asyncio.sleep(0.01)
         assert len(collected) == 1
         assert all(row.reason_code == "database_threshold" for row in physical)
         assert (
@@ -312,7 +330,9 @@ async def test_automatic_collector_revisits_settled_checkpoint_epoch(
         assert marked_roots[collected[-1].request_id]
         first_epoch = collected[-1].marked_epoch
         settle(repository, checkpoint)
-        await _until(lambda: any(row.marked_epoch > first_epoch for row in collected))
+        async with asyncio.timeout(5):
+            while not any(row.marked_epoch > first_epoch for row in collected):
+                await asyncio.sleep(0.01)
         assert not marked_roots[collected[-1].request_id]
     finally:
         await runtime.dispose()

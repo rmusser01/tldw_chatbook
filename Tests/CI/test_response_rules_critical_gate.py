@@ -15,6 +15,9 @@ SELECTION = {
         "Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics",
         "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant",
         "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_historical_restore_migrates_only_disposable_copy[76]",
+        "Tests/Backup_Recovery/test_canvas_recovery_validation.py",
+        "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_shipped76_staged_failure_rolls_back_checkpoint_rebuild",
         "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation",
         "Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated",
     ],
@@ -172,9 +175,11 @@ def validate(document):
         label = (
             "sandboxed"
             if "sandboxed Console P0" in name
-            else "admission-sensitive"
-            if "admission-sensitive Console P0" in name
-            else None
+            else (
+                "admission-sensitive"
+                if "admission-sensitive Console P0" in name
+                else None
+            )
         )
         added = SELECTION[label] if label else []
         for target in added:
@@ -255,6 +260,7 @@ def test_suppressed_or_weakened_critical_process_is_rejected(damage):
 
 
 UI_PHASE_SELECTION = (
+    "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console",
     "Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper",
     "Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session",
 )
@@ -265,7 +271,11 @@ def _validate_ui_phase_membership(census_path):
 
     entries = read_census(census_path)
     # The UI lane's own shard count (TASK-34917 took it from four to six).
-    total = len(yaml.safe_load(WORKFLOW.read_text())["jobs"]["ui-fast-lane"]["strategy"]["matrix"]["shard"])
+    total = len(
+        yaml.safe_load(WORKFLOW.read_text())["jobs"]["ui-fast-lane"]["strategy"][
+            "matrix"
+        ]["shard"]
+    )
     shards = [shard(entries, index, total) for index in range(total)]
     for target in UI_PHASE_SELECTION:
         assert sum(part.count(target) for part in shards) == 1

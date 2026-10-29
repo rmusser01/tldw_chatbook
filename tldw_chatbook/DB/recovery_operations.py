@@ -1467,6 +1467,10 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_CANVAS_V84_SCHEMAS:
+        return ((84,),)
+    if schema in _SUBSCRIPTIONS_CANVAS_V83_SCHEMAS:
+        return ((83,),)
     if schema in _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS:
         return ((82,),)
     if schema in _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS:
@@ -1625,14 +1629,22 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 )
 
 # ADR-239: compose only immutable installed declarations for the shared file.
-# Keep the v81 predecessor as well as v82, with both shipped subscription indexes.
+# Preserve every Canvas predecessor and current portrait catalog, with both
+# shipped subscription indexes and exact embedded ChaChaNotes stamps.
 from .recovery_core_schema import (
     CHACHANOTES_V81_SCHEMAS,
     CHACHANOTES_V82_SCHEMAS,
+    CHACHANOTES_V83_SCHEMAS,
+    CHACHANOTES_V84_SCHEMAS,
     _installed_schema_order,
 )
 
-_SUBSCRIPTIONS_CANVAS_V81_SCHEMAS, _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS = (
+(
+    _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS,
+    _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS,
+    _SUBSCRIPTIONS_CANVAS_V83_SCHEMAS,
+    _SUBSCRIPTIONS_CANVAS_V84_SCHEMAS,
+) = (
     tuple(
         tuple(
             sorted(
@@ -1651,11 +1663,21 @@ _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS, _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS = (
             tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA),
         )
     )
-    for chat_schemas in (CHACHANOTES_V81_SCHEMAS, CHACHANOTES_V82_SCHEMAS)
+    for chat_schemas in (
+        CHACHANOTES_V81_SCHEMAS,
+        CHACHANOTES_V82_SCHEMAS,
+        CHACHANOTES_V83_SCHEMAS,
+        CHACHANOTES_V84_SCHEMAS,
+    )
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema)
-    for schema in _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS + _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS
+    for schema in (
+        _SUBSCRIPTIONS_CANVAS_V81_SCHEMAS
+        + _SUBSCRIPTIONS_CANVAS_V82_SCHEMAS
+        + _SUBSCRIPTIONS_CANVAS_V83_SCHEMAS
+        + _SUBSCRIPTIONS_CANVAS_V84_SCHEMAS
+    )
 )
 
 
