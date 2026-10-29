@@ -6,13 +6,14 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-29 15:48'
+updated_date: '2026-10-29 17:10'
 labels:
   - console
   - streaming
   - openai
-  - p2
+  - p1
 dependencies: []
-priority: medium
+priority: high
 ---
 
 ## Description
@@ -28,4 +29,11 @@ Measured 2026-10-29 (TASK-37421, loopback OpenAI-compatible server that answers 
 - [ ] #1 A streamed OpenAI request refused with a client error before any text fails once, with the provider's status and its own message, as the non-streamed path does
 - [ ] #2 When the refusal is a refused stream (TASK-37180's classification), the failure copy names the Streaming setting
 - [ ] #3 A test drives a refused streamed request through the real chat_with_openai against a loopback server and asserts one request and the copy; it fails before the change
+- [ ] #4 The User Guide's chat-basics Streaming section and the CHANGELOG no longer carve OpenAI out of the refused-stream advice
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Priority raised 2026-10-29 (TASK-37421 review): TASK-33620.10 makes OpenAI, the shipped default provider, stream by default, so every streamed OpenAI 4xx (a rejected parameter, a model the key cannot stream) now reaches Console as a status-less 502 that is sent three times with no usable copy; with streaming off by default those users saw the status and OpenAI's message once. Land before the next release. Re-measured on the review-fix head: the loopback server saw [True, True, True] and the System row read "Agent run failed: provider returned HTTP 502 (Provider error from OpenAI: unexpected provider error)." Until this lands, the User Guide (console/chat-basics, Turning streaming off) and the CHANGELOG Unreleased entry say OpenAI is the exception; AC#4 removes that.
+<!-- SECTION:NOTES:END -->
