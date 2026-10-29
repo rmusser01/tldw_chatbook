@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
+
+**Incident.** The Hands-free consent keeps a live one-shot capture alive under its
+modal so Enable can adopt it as the loop's first turn (`keep_capture` in
+`ChatScreen.on_screen_suspend`). The adoption test asserted the loop was
+`listening`, the fake service saw no `stop_dictation`, and the mic read
+"Dictating". Forcing `keep_capture = False` still passed: the suspend discarded the
+capture under the modal and Enable opened a second session, and every one of those
+outputs looks the same after a discard-and-restart. The comment above the asserts
+said "adopted, not restarted"; nothing checked it.
+
+**What to do.** For a claim that something survives, assert the thing itself: keep
+a reference before the event and assert `is` afterwards, assert the factory's
+creation count did not move, and assert the state at the moment it could have been
+lost (here: `recording` while the modal is open, after the suspend's own cleanup
+tasks finish). Then break the seam once and watch the test go red.
+
 ## A state pushed through a presentation edge is overwritten by the next real sync (TASK-33626.1, 2026-10-29)
 
 **Incident.** The header test for "Speak replies: Paused" pushed the state straight
