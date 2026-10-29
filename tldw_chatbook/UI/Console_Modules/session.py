@@ -3457,7 +3457,8 @@ class ConsoleSessionController:
             )
 
     def _session_close_display_title(self, session_id: str) -> str:
-        """The tab's title as a close-failure toast names it."""
+        """The tab's label as the close dialog, its toasts and quit name it."""
+        from .loss_inventory import tab_display_title
 
         try:
             store = self._ensure_console_chat_store()
@@ -3467,12 +3468,7 @@ class ConsoleSessionController:
             )
         except Exception:  # noqa: BLE001 -- a label must never block a close
             title = ""
-        return (
-            sanitize_character_display_label(
-                title, max_characters=_SESSION_CLOSE_TITLE_MAX_CHARACTERS
-            )
-            or "Untitled"
-        )
+        return tab_display_title(title)
 
     async def _report_session_close_failure(
         self, session_id: str, title: str, exc: Exception

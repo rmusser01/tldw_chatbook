@@ -582,6 +582,8 @@ _BUDGETS: dict[str, int] = {
     # historical extraction call counts, retaining activation notifications.
     # TASK-33628.1: the tab-close loss projection and its dialog copy moved to
     # UI/Console_Modules/loss_inventory.py, shared with app quit: 7,000 -> 6,921.
+    # UI/Console_Modules/loss_inventory.py, shared with app quit, and the close
+    # title reuses its tab label: 7,000 -> 6,917.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,

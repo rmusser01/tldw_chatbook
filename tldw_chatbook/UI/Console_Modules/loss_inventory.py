@@ -112,7 +112,7 @@ class ConsoleQuitImpact:
 
 
 def tab_display_title(title: str) -> str:
-    """A tab's label as the close dialog names it."""
+    """A tab's label in the close and quit dialogs and close toasts."""
     return (
         sanitize_character_display_label(
             title, max_characters=_SESSION_CLOSE_TITLE_MAX_CHARACTERS
