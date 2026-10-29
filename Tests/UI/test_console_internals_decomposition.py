@@ -102,14 +102,23 @@ def _paste_confirm(text: str) -> str:
     return f"Expand pasted text ({len(text)} characters)? Enter: yes · Esc: no"
 
 
-def _flat_visible(plain: str) -> str:
-    """The visible draft with its soft-wrap row breaks removed.
+def _assert_visible(plain: str, expected: str) -> None:
+    """Assert the visible draft reads ``expected`` once soft wraps are joined.
 
     TASK-33622.1: the named confirm is long enough to wrap where the old bare
-    "Expand?" never did; wrapping keeps every character, so joining the rows
-    gives the unwrapped display text back.
+    "Expand?" never did. Wrapping keeps every character, so each of
+    ``expected``'s lines is rebuilt from as many rendered rows as it needs;
+    a literal line break must still fall between rows (a blanket newline
+    strip would hide a lost one).
     """
-    return _without_trailing_cursor(plain).replace("\n", "")
+    rows = _without_trailing_cursor(plain).split("\n")
+    lines: list[str] = []
+    for line in expected.split("\n"):
+        joined = rows.pop(0) if rows else ""
+        while rows and len(joined) < len(line):
+            joined += rows.pop(0)
+        lines.append(joined)
+    assert "\n".join(lines + rows) == expected
 
 
 def _without_trailing_cursor(text: str) -> str:
@@ -1402,9 +1411,7 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
 
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
         assert composer.draft_text() == pasted_text
         assert isinstance(visible_draft.renderable, Text)
         confirm_spans = [
@@ -1442,9 +1449,7 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         )
         await pilot.pause(0.1)
 
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
         assert composer.draft_text() == pasted_text
 
 
@@ -1481,9 +1486,7 @@ async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
             visible_region.y,
         )
 
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
         assert composer.draft_text() == pasted_text
 
 
@@ -1519,9 +1522,7 @@ async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor
             visible_region.y + visible_draft.size.height - 1,
         )
 
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
         assert composer.draft_text() == pasted_text
 
 
@@ -1550,9 +1551,7 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
             visible_region.y + visible_draft.size.height - 1,
         )
 
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
         assert console.app.focused is composer
         assert composer.draft_text() == pasted_text
 
@@ -1631,9 +1630,7 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
@@ -1666,9 +1663,8 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
         await pilot.click("#console-command-visible-text", offset=(0, 1))
         await pilot.pause(0.1)
 
-        assert (
-            _flat_visible(visible_draft.renderable.plain)
-            == f"prefix{_paste_confirm(pasted_text)}"
+        _assert_visible(
+            visible_draft.renderable.plain, f"prefix\n{_paste_confirm(pasted_text)}"
         )
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
@@ -1702,9 +1698,9 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
             offset=(2, 1),
         )
         await pilot.pause(0.1)
-        assert (
-            _flat_visible(visible_draft.renderable.plain)
-            == f"{first_token}{_paste_confirm(second_paste)}"
+        _assert_visible(
+            visible_draft.renderable.plain,
+            f"{first_token}\n{_paste_confirm(second_paste)}",
         )
 
         await pilot.click(
@@ -1739,9 +1735,7 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
 
         await pilot.press("x")
         await pilot.pause(0.1)
@@ -1837,9 +1831,7 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
 
         await pilot.click("#console-workspace-grid")
         await pilot.pause(0.1)
@@ -1867,9 +1859,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
         await pilot.pause(0.1)
-        assert _flat_visible(visible_draft.renderable.plain) == _paste_confirm(
-            pasted_text
-        )
+        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
 
         composer.suppress_next_draft_click()
         await pilot.click("#console-workspace-grid")
