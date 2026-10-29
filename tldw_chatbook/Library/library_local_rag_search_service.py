@@ -930,7 +930,7 @@ class LibraryLocalRagSearchService:
                 metadata_allowlist=allowlists,
             )
 
-        rows = _filtered_semantic_rows(raw_results, source_types)
+        rows = await self._live_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
             return _with_route_notes(
                 LibraryRagSearchOutcome(
@@ -1041,7 +1041,7 @@ class LibraryLocalRagSearchService:
             keyword_source_types=keyword_source_types,
             **allowlist_kwargs,
         )
-        rows = _filtered_semantic_rows(raw_results, source_types)
+        rows = await self._live_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
             return LibraryRagSearchOutcome(
                 status="empty",
@@ -1164,6 +1164,49 @@ class LibraryLocalRagSearchService:
     @staticmethod
     async def _build_shared_runtime(generation: int) -> tuple[Any, Any]:
         return await asyncio.to_thread(get_shared_rag_service), generation
+
+    async def _live_semantic_rows(
+        self, raw_results: Any, source_types: tuple[str, ...]
+    ) -> list[dict[str, Any]]:
+        """`_filtered_semantic_rows`, minus note hits whose note is gone.
+
+        TASK-34000.29 (review R0, I-1). The vector store is a projection: it
+        keeps a note's chunks until something removes them, and a removal can
+        fail or never run (the app quit first). So the read checks the source
+        of truth, with ONE batched lookup per result page: a note hit whose
+        note was deleted for good, or sits in Recently deleted, is dropped.
+        The second case closes the older leak where a soft-deleted note's
+        vectors stayed searchable.
+
+        An app with no local Notes seam able to answer (test doubles, a
+        build without the scope service) keeps its rows: it holds no notes
+        this device could have deleted. A lookup that fails drops every note
+        hit on the page instead -- a deleted note is never shown on a guess.
+        """
+        rows = _filtered_semantic_rows(raw_results, source_types)
+        candidates = {
+            note_id for row in rows if (note_id := _semantic_note_id(row)) is not None
+        }
+        if not candidates:
+            return rows
+        service = getattr(self._app, "notes_scope_service", None)
+        lookup = getattr(service, "live_local_note_ids", None)
+        if not callable(lookup):
+            return rows
+        user_id = getattr(self._app, "notes_user_id", None) or "default_user"
+        try:
+            live = set(await lookup(sorted(candidates), user_id=user_id))
+        except Exception as error:
+            logger.warning(
+                "Library semantic search could not check its note hits: {}",
+                type(error).__name__,
+            )
+            live = set()
+        return [
+            row
+            for row in rows
+            if (note_id := _semantic_note_id(row)) is None or note_id in live
+        ]
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
         """True only when the runtime's vector store verifiably has 0 documents.
@@ -1299,6 +1342,23 @@ def _filtered_semantic_rows(
     if not source_types:
         return rows
     return [row for row in rows if _semantic_row_matches_scope(row, source_types)]
+
+
+def _semantic_note_id(row: Mapping[str, Any]) -> Optional[str]:
+    """The note a semantic row comes from, or ``None`` for any other source.
+
+    Both legs stamp the BARE note id as ``source_id`` (the indexer's
+    ``note_document`` and the keyword leg's ``_keyword_row_metadata``).
+    """
+    provenance = row.get("provenance")
+    raw_source_type = (
+        provenance.get("source_type") if isinstance(provenance, Mapping) else None
+    )
+    if _SEMANTIC_SOURCE_TYPE_MAP.get(str(raw_source_type or "").strip().lower()) != (
+        "notes"
+    ):
+        return None
+    return str(row.get("source_id") or "") or None
 
 
 def _row_is_keyword_only(row: Mapping[str, Any]) -> bool:

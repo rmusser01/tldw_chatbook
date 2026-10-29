@@ -10,8 +10,10 @@ ruled "yes with confimration" on 2026-10-29.
   ``CharactersRAGDB.hard_delete_note`` -- a real database here.
 - ``NotesSyncRuntimeOwner.note_sync_bound`` reads the device store: every
   binding state except ``disconnected`` (terminal) keeps the note in sync.
-- ``submit_note_index_removal`` queues the purged note's semantic-index
-  projection for removal, the Media delete hook's own guard.
+- ``remove_purged_note_projection`` takes the purged note's semantic-index
+  projection, in the purge's worker, without ever building the RAG runtime
+  (review R0, I-1; the real stores are pinned in
+  ``test_notes_purge_semantic_projection.py``).
 
 Base (71f8d8a487): none of the three exists.
 """
@@ -90,16 +92,25 @@ class _Profile:
 
 
 @pytest.fixture
-def removals(monkeypatch) -> list[tuple[str, object]]:
-    """Record the semantic-index removals a purge submits."""
-    submitted: list[tuple[str, object]] = []
-    monkeypatch.setattr(
-        ingestion_indexing,
-        "submit_note_index_removal",
-        lambda note_id, *, source_path=None: submitted.append((note_id, source_path))
-        or True,
-    )
-    return submitted
+def removals(monkeypatch) -> list[str]:
+    """Record the semantic-index removals a purge runs (and on which thread).
+
+    The real removal is pinned against real stores in
+    ``test_notes_purge_semantic_projection.py``.
+    """
+    import threading
+
+    ran: list[str] = []
+
+    def remove(note_id: str) -> int:
+        assert threading.current_thread() is not threading.main_thread(), (
+            "the removal runs in the purge's worker, never on the event loop"
+        )
+        ran.append(note_id)
+        return 1
+
+    monkeypatch.setattr(ingestion_indexing, "remove_purged_note_projection", remove)
+    return ran
 
 
 async def _purge(profile: _Profile, runtime, note_id: str | None = None, **kwargs):
@@ -127,7 +138,7 @@ async def test_purge_note_deletes_an_unbound_tombstone_for_good(
     assert runtime.asked == [profile.note_id]
     # The delete authority, not a new one the policy registry lacks.
     assert profile.policy.actions == ["notes.delete.local"]
-    assert [note_id for note_id, _path in removals] == [profile.note_id]
+    assert removals == [profile.note_id]
 
 
 @pytest.mark.asyncio
@@ -270,38 +281,21 @@ async def test_a_closing_runtime_refuses_to_say_a_note_is_unbound(tmp_path) -> N
 # -- the semantic index -----------------------------------------------------
 
 
-class _Indexer:
-    def __init__(self) -> None:
-        self.removals: list[object] = []
+def test_removing_a_purged_note_never_builds_the_runtime_or_a_store(
+    tmp_path, monkeypatch
+) -> None:
+    """No runtime this session and no store on disk: nothing to remove.
 
-    def submit_removal(self, removal) -> bool:
-        self.removals.append(removal)
-        return True
+    The removal never builds the RAG runtime (an embedding model) just to
+    delete, and never creates the store it would delete from.
+    """
 
+    def build(*_args, **_kwargs):
+        raise AssertionError("a purge must never build the RAG runtime")
 
-def test_a_purged_note_is_queued_out_of_the_semantic_index(monkeypatch) -> None:
-    indexer = _Indexer()
     monkeypatch.setattr(ingestion_indexing, "peek_shared_rag_service", lambda: None)
-    monkeypatch.setattr(ingestion_indexing, "semantic_indexing_available", lambda: True)
-    monkeypatch.setattr(ingestion_indexing, "get_ingestion_indexer", lambda: indexer)
+    monkeypatch.setattr(ingestion_indexing, "get_shared_rag_service", build)
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(tmp_path / "chromadb"))
 
-    assert ingestion_indexing.submit_note_index_removal(
-        "note-9", source_path=Path("/profile/notes.sqlite3")
-    )
-
-    (removal,) = indexer.removals
-    assert removal.item_id == "note-9"
-    assert removal.item_type == ingestion_indexing.ITEM_TYPE_NOTE
-    assert removal.document_id == "note_note-9"
-    assert removal.source_path == Path("/profile/notes.sqlite3")
-
-
-def test_no_semantic_runtime_and_none_available_queues_nothing(monkeypatch) -> None:
-    """The Media hook's guard: never initialize RAG just to delete."""
-    indexer = _Indexer()
-    monkeypatch.setattr(ingestion_indexing, "peek_shared_rag_service", lambda: None)
-    monkeypatch.setattr(ingestion_indexing, "semantic_indexing_available", lambda: False)
-    monkeypatch.setattr(ingestion_indexing, "get_ingestion_indexer", lambda: indexer)
-
-    assert ingestion_indexing.submit_note_index_removal("note-9") is False
-    assert indexer.removals == []
+    assert ingestion_indexing.remove_purged_note_projection("note-9") == 0
+    assert not (tmp_path / "chromadb").exists()

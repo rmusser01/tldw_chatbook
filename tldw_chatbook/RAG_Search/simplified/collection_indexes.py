@@ -222,6 +222,46 @@ def delete_index(persist_directory, name: str) -> bool:
         _close_client(client)
 
 
+@participant.sync_operation
+def delete_document_from_every_index(persist_directory, document_id: str) -> int:
+    """Delete one document's chunks from every collection on disk.
+
+    TASK-34000.29 (review R0, I-1): a note deleted for good leaves no
+    ``note_<id>`` chunk in ANY collection -- each embedding fingerprint keeps
+    its own, and a profile switch makes an older one searchable again. Never
+    creates a store: when ``chroma.sqlite3`` is absent there are no vectors
+    to delete. Nothing is embedded, so no embedding model is loaded.
+
+    Args:
+        persist_directory: The Chroma persist directory.
+        document_id: The ``doc_id`` metadata every chunk of the document
+            carries (``note_<id>`` for a note).
+
+    Returns:
+        The number of collections the delete ran in (0 when no store).
+
+    Raises:
+        Exception: Whatever Chroma raises; the caller decides what a failed
+            removal means.
+    """
+    validated = validate_chroma_persist_directory(persist_directory)
+    if not (validated / "chroma.sqlite3").is_file():
+        return 0
+    client = None
+    try:
+        client = _client(validated)
+        swept = 0
+        for listed in client.list_collections():
+            collection = client.get_collection(
+                listed.name, embedding_function=None, data_loader=None
+            )
+            collection.delete(where={"doc_id": document_id})
+            swept += 1
+        return swept
+    finally:
+        _close_client(client)
+
+
 def index_status(config: RAGConfig) -> dict:
     """Resolved-collection state for ``config``: absent | empty | built."""
     if not (

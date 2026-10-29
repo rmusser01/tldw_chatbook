@@ -194,12 +194,16 @@ def _mounted(tmp_path: Path, monkeypatch, *, special: bool):
 
 @pytest.fixture
 def index_removals(monkeypatch) -> list[str]:
-    """The semantic-index removals purges queue (no RAG runtime in a test)."""
+    """The semantic-index removals purges run (no RAG store in a test).
+
+    The real removal is pinned against real stores in
+    ``Tests/Notes/test_notes_purge_semantic_projection.py``.
+    """
     queued: list[str] = []
     monkeypatch.setattr(
         ingestion_indexing,
-        "submit_note_index_removal",
-        lambda note_id, *, source_path=None: queued.append(note_id) or True,
+        "remove_purged_note_projection",
+        lambda note_id: queued.append(note_id) or 1,
         # The base has no such hook; its RED is the missing confirm instead.
         raising=False,
     )

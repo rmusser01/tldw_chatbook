@@ -19936,6 +19936,40 @@ DELETE FROM keywords
             )
             raise
 
+    def live_note_ids(self, note_ids: Iterable[str]) -> Set[str]:
+        """Return which of ``note_ids`` name a note that is not deleted.
+
+        TASK-34000.29 (review R0, I-1): Library semantic search asks this once
+        per result page, so a hit whose note was deleted for good, or sits in
+        Recently deleted, is never shown. One statement whatever the page
+        size: the ids travel as one JSON array, so no bound-variable limit
+        applies.
+
+        Args:
+            note_ids: Candidate note ids (strings; blanks are ignored).
+
+        Returns:
+            The subset of ``note_ids`` whose note exists with ``deleted = 0``.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        ids = sorted({str(note_id) for note_id in note_ids if str(note_id or "")})
+        if not ids:
+            return set()
+        query = (
+            "SELECT id FROM notes WHERE deleted = 0 "
+            "AND id IN (SELECT value FROM json_each(?))"
+        )
+        try:
+            cursor = self.execute_query(query, (json.dumps(ids),), redact_params=True)
+            return {row["id"] for row in cursor.fetchall()}
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error checking live note ids: exception_type={type(e).__name__}"
+            )
+            raise
+
     @staticmethod
     def normal_note_dispatch_predicate(note_id_sql: str) -> str:
         """Return the shared SQL guard for every ordinary Notes dispatcher.
