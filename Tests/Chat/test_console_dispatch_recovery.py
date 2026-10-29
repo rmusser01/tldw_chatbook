@@ -306,9 +306,8 @@ def test_loader_hydrates_dispatch_started_without_auto_replay(
 
     assert recovery.kind is kind.DISPATCH_STARTED
     assert recovery.checkpoint == started
-    assert recovery.visible_copy == (
-        "Response delivery status is unknown on the source device."
-    )
+    # TASK-33621.6 AC#3: a local owner never says "on the source device".
+    assert recovery.visible_copy == "Response delivery status is unknown."
     assert recovery.warning == (
         "Retry anyway may send a duplicate request because delivery status is unknown."
     )

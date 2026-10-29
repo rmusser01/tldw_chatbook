@@ -43,6 +43,9 @@ from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     TraceCallRecoveryCallout,
 )
+from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+    project_console_send_authority,
+)
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -245,3 +248,43 @@ async def test_cancel_send_discards_the_turn_and_returns_the_draft(
         assert h.store.dispatch_recovery_for_presentation(h.session.id) is None
         assert h.controller.run_state.status is ConsoleRunStatus.STOPPED
         assert header_label(h) != "Blocked"
+
+@pytest.mark.asyncio
+async def test_an_unknown_delivery_reads_as_local_and_blocks_the_header(
+    tmp_path, monkeypatch
+):
+    """.6 AC#3/#4: a genuine unknown delivery after a 429.
+
+    The retry's dispatch read-back failed, so it may have gone out: this is
+    the one case the duplicate-request warning is for. The session is local,
+    so the panel never says "on the source device", and the header chip
+    says Blocked with the composer, rail and Inspect handle. (Its Retry
+    anyway's busy state is pinned in ``test_console_dispatch_recovery.py``;
+    here Retry anyway is unavailable because the send's Library evidence was
+    frozen, which is not this task's subject.)
+    """
+    async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        posts: list[str] = []
+        real_provider_adapter(h, monkeypatch)
+        answer_http(monkeypatch, [429, 200], posts)
+        fail_the_retry_reservation(h, monkeypatch, "dispatch_unknown")
+        await _send(h, DRAFT)
+        await _until(
+            h.pilot,
+            lambda: h.store.dispatch_recovery_for_presentation(h.session.id)
+            is not None,
+            timeout=30.0,
+            what=f"no unknown-delivery owner: {h.controller.run_state}",
+        )
+        await h.console._sync_native_console_chat_ui()
+        await h.pilot.pause(0.3)
+
+        text = visible_text(h)
+        assert "Response delivery status is unknown." in text
+        assert "may send a duplicate request" in text
+        assert "on the source device" not in text
+        assert "Send blocked — resolve response recovery first" in text
+        assert header_label(h) == "Blocked"
+        assert project_console_send_authority(
+            h.console._build_console_inspector_state(None)
+        ).run.startswith("Blocked")
