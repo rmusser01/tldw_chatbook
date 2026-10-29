@@ -1710,3 +1710,30 @@ def test_a_landing_waits_while_a_pruning_sync_has_focus_parked() -> None:
     LibraryNotesController._keep_landed_trash_control_in_view(fake, "trash-restore:19")
     assert deferred == []
     assert fake._trash_landing_settling == ""
+
+
+@pytest.mark.asyncio
+async def test_delete_forever_leaves_a_dated_title_its_date() -> None:
+    """The danger class's 4-cell gap cost the part of the title that differs.
+
+    Live at 160x45 every journal row read "Daily log 2026-09-0…": the rows
+    could not be told apart. Delete forever keeps its muted ink with a
+    1-cell gap, which leaves the date (the age after it may still be cut).
+    In this harness a 54-cell pane is where the gap decides it: with the
+    4-cell gap the row reads "Daily log 2026-09-…" (measured).
+    """
+    app = _CanvasApp(
+        pane_width=54,
+        mode="trash",
+        trash=_trash(
+            _row("n1", "Daily log 2026-09-01", "1m"),
+            _row("n2", "Daily log 2026-09-02", "1m"),
+            total=2,
+        ),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        text = await _until_painted(pilot, app, "Delete forever")
+        assert "Daily log 2026-09-01" in text
+        assert "Daily log 2026-09-02" in text
+        delete = app.query_one("#library-notes-trash-delete-0", Button)
+        assert delete.has_class("library-media-action-danger")
