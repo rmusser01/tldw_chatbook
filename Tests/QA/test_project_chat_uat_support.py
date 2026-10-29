@@ -74,11 +74,18 @@ def request_payload(native=False):
         {
             "name": name,
             "description": name,
-            "parameters": {"type": "object", "properties": {}},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "ids": {"type": "array", "items": {"type": "string"}},
+                },
+            },
         }
         for name in ("find_tools", "load_tools")
     ]
     return {
+        "model": "uat-project-model",
         "messages": [
             {
                 "role": "system",
@@ -169,7 +176,16 @@ def test_model_cannot_use_an_earlier_message_to_fabricate_the_read_answer(read_r
         if name == "load_tools":
             payload["messages"][0]["content"] += "\n" + "\n".join(
                 json.dumps(
-                    {"name": tool, "parameters": {"type": "object", "properties": {}}}
+                    {
+                        "name": tool,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "root_alias": {"type": "string"},
+                            },
+                        },
+                    }
                 )
                 for tool in ("fs_list", "fs_read")
             )
@@ -193,3 +209,67 @@ def test_rejected_provider_request_is_retained_for_failure_diagnostics():
         model.reply(payload)
     assert model.received == [payload]
     assert model.requests == []
+
+
+@pytest.mark.parametrize("model_id", [None, "wrong-model"])
+def test_script_rejects_wrong_or_omitted_model(model_id):
+    from Tests.uat_project_chat_support import ProjectChatModel
+
+    payload = request_payload()
+    if model_id is None:
+        payload.pop("model", None)
+    else:
+        payload["model"] = model_id
+    with pytest.raises(AssertionError, match="model identity"):
+        ProjectChatModel("fenced").reply(payload)
+
+
+@pytest.mark.parametrize(
+    "stage,tool",
+    [
+        ("find", "find_tools"),
+        ("load", "load_tools"),
+        ("list", "fs_list"),
+        ("read", "fs_read"),
+    ],
+)
+def test_script_cannot_compensate_for_missing_argument_schemas(stage, tool):
+    from Tests.uat_project_chat_support import ProjectChatModel
+
+    model = ProjectChatModel("native")
+    # Isolate validation of the response about to be emitted; end-to-end cases
+    # independently verify the complete sequence and tool provenance.
+    model.sequence = [stage]
+    payload = request_payload(native=True)
+    payload["tools"] = [
+        {
+            "type": "function",
+            "function": {
+                "name": tool,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with pytest.raises(AssertionError, match="argument schema"):
+        model.reply(payload)
+
+
+@pytest.mark.parametrize(
+    "defect", ["missing-anchor", "wrong-anchor", "wrong-conversation", "wrong-message"]
+)
+def test_run_and_saved_answer_must_share_the_expected_owner(defect):
+    from Tests.uat_project_chat_support import assert_project_ownership
+
+    run = {"assistant_message_id": "answer-1", "conversation_id": "chat-1"}
+    saved = {"id": "answer-1", "conversation_id": "chat-1"}
+    assert_project_ownership(run, saved, "chat-1", "answer-1")
+    if defect == "missing-anchor":
+        run["assistant_message_id"] = None
+    elif defect == "wrong-anchor":
+        run["assistant_message_id"] = "answer-2"
+    elif defect == "wrong-conversation":
+        saved["conversation_id"] = "chat-2"
+    else:
+        saved["id"] = "answer-2"
+    with pytest.raises(AssertionError, match="owner"):
+        assert_project_ownership(run, saved, "chat-1", "answer-1")

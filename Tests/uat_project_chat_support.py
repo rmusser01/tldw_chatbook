@@ -17,6 +17,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
+from jsonschema import Draft202012Validator, SchemaError, ValidationError
+
 VARIANTS = ("fenced", "native", "compact-recovery", "wrong-family")
 MODEL = "uat-project-model"
 
@@ -48,6 +50,20 @@ def assert_project_evidence(
         ("painted_text", painted_text),
     ):
         assert code in text, f"{label} has no README verification code"
+
+
+def assert_project_ownership(run, saved, conversation_id, assistant_message_id):
+    """The inspected persisted answer must be the owning run's actual anchor."""
+    assert (
+        run.get("conversation_id") == conversation_id
+    ), "run conversation owner mismatch"
+    assert (
+        run.get("assistant_message_id") == assistant_message_id
+    ), "run answer owner mismatch"
+    assert saved.get("id") == assistant_message_id, "saved answer owner mismatch"
+    assert (
+        saved.get("conversation_id") == conversation_id
+    ), "saved conversation owner mismatch"
 
 
 def disclosed_schemas(payload):
@@ -118,6 +134,7 @@ class ProjectChatModel:
             return self._reply(payload)
 
     def _reply(self, payload):
+        assert payload.get("model") == MODEL, "unexpected model identity"
         index = len(self.requests)
         assert index < len(self.sequence), "unexpected generation after final answer"
         schemas = disclosed_schemas(payload)
@@ -202,6 +219,18 @@ class ProjectChatModel:
                 "root_alias": self.alias,
                 "path": "README.md" if stage == "read" else ".",
             }
+        if stage not in ("guess", "wrong"):
+            parameters = schemas[name]["parameters"]
+            assert set(args) <= set(
+                parameters.get("properties", {})
+            ), f"{name}: argument schema missing"
+            try:
+                Draft202012Validator.check_schema(parameters)
+                Draft202012Validator(parameters).validate(args)
+            except (ValidationError, SchemaError) as error:
+                raise AssertionError(
+                    f"{name}: argument schema rejected the call: {error.message}"
+                ) from error
         call = {"name": name, "arguments": args}
         self.calls.append(call)
         self.requests.append(copy.deepcopy(payload))

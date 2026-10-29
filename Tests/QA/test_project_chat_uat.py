@@ -22,6 +22,7 @@ from Tests.uat_project_chat_support import (
     MODEL,
     VARIANTS,
     assert_project_evidence,
+    assert_project_ownership,
     disclosed_schemas,
     only_owned_server,
     project_chat_server,
@@ -428,6 +429,12 @@ async def test_project_chat_uat(
                     ), "expected one owning run for the one user send"
                     run = runs[0]
                     assert run["status"] == "done"
+                    assert_project_ownership(
+                        run,
+                        saved,
+                        session.persisted_conversation_id,
+                        message.persisted_message_id,
+                    )
                     assert_project_evidence(
                         code=code,
                         alias=alias,
