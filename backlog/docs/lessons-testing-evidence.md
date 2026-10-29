@@ -22035,3 +22035,29 @@ value is legal only as measured runtime geometry with a `# ds-runtime:` reason.
 When a required check is red on a pushed head, read its failed log
 (`gh run view <id> --log-failed`) before the next rebase or re-gate. A conflict
 eviction does not mean the check was green.
+
+## A delete that passes a column census can still leave the words in the index (TASK-34000.29 fix round 1, 2026-10-29)
+
+Delete forever's completeness pin (`Tests/ChaChaNotesDB/note_trace_census.py`)
+found every note-id column from the live schema, swept every text column of
+every ordinary table for the id, and checked the notes FTS index through
+`fts5vocab` instances, its integrity check, its row total and `MATCH` on the
+note's own words. All of it read clean, and review R0 accepted it. Review R0's
+m-3 asked for a byte-level token scan instead: every column of every table in
+`sqlite_master`, virtual and shadow tables included, compared with
+`instr(CAST(col AS BLOB), CAST(? AS BLOB))`. Its first run found
+`notes_fts_data.block` still holding the purged note's title and body words,
+in 4 blocks each. An FTS5 `'delete'` writes a delete marker, and the term
+bytes stay in older segments until a merge. The logical checks cannot see this
+by design: `MATCH` and `fts5vocab` both honour the marker. The fix is one
+`INSERT INTO notes_fts(notes_fts) VALUES('optimize')` inside the purge
+transaction (0.26 s on an 11 MB index). The same scan also showed that a
+column census misses ids inside JSON payloads.
+
+**What to do.** When a feature promises data is gone, scan values, not names.
+Search every column of every table, shadow tables too, as bytes, for the id in
+each form (bare and JSON-quoted) and for words only that record held. Keep an
+explicit, commented allowlist of what is kept on purpose, plus a negative
+control: a table the delete was never told about that holds the title inside
+JSON. Do not count a logical index check (`MATCH`, `fts5vocab`,
+`integrity-check`) as evidence that bytes are gone.

@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.   │
+│   a  │ Library notes · Ready · Next: Create a note or add     │  o  Recently deleted                                 │
+│   v  │ from files.                                            │  t  Deleted notes stay here until you restore them.  │
+│      │ Notes (97)                                             │  e  Restore puts a note back; Delete forever removes │
+│      │ These notes live in the Library's own database — for   │  s  it for good.                                     │
+│      │ notes that live in a folder on disk, switch to Folder  │       ‹ Notes                                        │
+│      │ files. To copy or keep a folder synced, choose Add     │     Daily log 2026-09-01 · 5m            Restore     │
+│      │ from files.                                            │     Daily log 2026-09-02 · 5m            Restore     │
+│      │                                                        │     Daily log 2026-09-03 · 5m            Restore     │
+│ ---> │ Filter                                                 │     Daily log 2026-09-04 · 5m            Restore     │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Daily log 2026-… ┃ Restore ┃   Delete forever    │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     Daily log 2026-09-06 · 5m            Restore     │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     Daily log 2026-09-07 · 5m            Restore     │
+│      │                                                        │<--- Daily log 2026-09-08 · 5m            Restore     │
+│      │    New     Sort: Newest     Select                     │     Daily log 2026-09-09 · 5m            Restore     │
+│      │    Add from files…     Export                          │     Daily log 2026-09-10 · 5m            Restore     │
+│      │ Folders & placement                                    │     Daily log 2026-09-11 · 5m            Restore     │
+│      │    New folder     ○ Add to folder     ○ Move note      │     Daily log 2026-09-12 · 5m            Restore     │
+│ ---> │    ○ Remove placement                                  │     Daily log 2026-09-13 · 5m            Restore     │
+│      │ Note actions unavailable — select a note in the list   │     Daily log 2026-09-14 · 5m            Restore     │
+│      │                                                        │     Daily log 2026-09-15 · 5m            Restore     │
+│      │                                                        │     Daily log 2026-09-16 · 5m            Restore     │
+│      │  ▸ Agent_Lessons                                       │     Daily log 2026-09-17 · 5m            Restore     │
+│      │  ▸ Journal                                           ▅ │     Daily log 2026-09-18 · 5m            Restore     │
+│      │  ▸ Meetings                                            │     Daily log 2026-09-19 · 5m            Restore     │
+│      │  ▸ Projects                                            │     Daily log 2026-09-20 · 5m            Restore     │
+│      │  ▸ Recipes                                             │     1–20 of 25 · Page 1 of 2                         │
+│      └────────────────────────────────────────────────────────┘       ○ Previous   Next                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  r restore note | x delete forever | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
