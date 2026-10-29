@@ -1,6 +1,6 @@
 # Dated task notes retain insertion-time counts and grouping claims.
 # Current UI lane: 32 shards; evidence: 2026-10-28-textual-followups-implementation.md.
-# TASK-37266..37268 full-census replay checkpoint: the 1189
+# TASK-37266..37268 full-census replay checkpoint: the 1184
 # Complete selectors retain their attached historical notes; all are now
 # placed from worst-observed full-phase replay. The next blank ends this header.
 
