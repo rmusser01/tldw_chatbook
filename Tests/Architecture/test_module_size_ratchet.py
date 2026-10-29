@@ -578,9 +578,14 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
+    # 2026-10-29, TASK-33620.15.26 (same owner decision): 7043 -> 7071 (+28).
+    # The composer records the draft a visible send took
+    # (`note_draft_sending`) and keeps the Send reason strip's queue copy off
+    # the row while it still shows that text, so a one-row draft no longer
+    # wraps to two and back mid-send.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,

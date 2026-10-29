@@ -576,6 +576,12 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
     if request.guard is not None and not request.guard():
         screen._console_pending_send = None
         return
+    # TASK-33620.15.26: the composer keeps showing this draft until the send
+    # takes it out; meanwhile its reason strip must not narrow it. Marked
+    # before admission, which can already sync the composer to Preparing.
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        composer.note_draft_sending(request.stash)
     # A stock plain send can acquire runtime custody immediately. Its resident
     # Preparing projection then owns feedback; the existing acknowledgement is
     # still needed by custom, command and queue dispatch below.
@@ -593,6 +599,8 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
             )
             received = ""
         if received is not None:
+            if not received and composer is not None:
+                composer.note_draft_sending(None)  # Refused: the draft stays.
             if screen._console_pending_send is pending_send:
                 screen._console_pending_send = None
             return

@@ -630,7 +630,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-33620.15.26 (2026-10-29) appends 3 node ids at the tail: a later send
+# keeps the composer one row tall and moves the transcript at most twice (a
+# stock send and an acknowledged-path send, one private-profile app run each)
+# and the composer's queue-copy rule (one widget case), so no existing entry
+# changes shard: dev's 1145 entries + 3 = 1148.
+MINIMUM_FILES = 1166
 
 
 def read_census(path: Path) -> list[str]:

@@ -405,11 +405,14 @@ statistics tools.
   same way. Your message appears in the transcript at once,
   marked **Sending…**, while Console prepares the turn: the header reads
   **Running**, the tab shows **●**, the status row shows **Run: Sending…** and
-  Send reads **Sending...** (its strip: "Queue opens once this turn is
-  accepted"). The draft stays in the composer until the turn is accepted, then
-  clears; if the turn is refused before that, the **Sending…** row disappears
-  and the draft is kept, or offered back on the shelf as `Not sent: <reason>`
-  with **Restore**.
+  Send reads **Sending...**. The message keeps its **Sending…** mark until the
+  reply's row (or a notice) appears beneath it, so the two arrive together.
+  The draft stays in the composer, at its height, until Console takes the
+  turn, then clears, and the strip beside Send reads "Queue opens once this
+  turn is accepted" (while the sent text is still in the composer, Send's
+  tooltip carries that copy). If the turn is refused before that, the
+  **Sending…** row disappears and the draft is kept, or offered back on the
+  shelf as `Not sent: <reason>` with **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
 - Console stays responsive while it prepares the turn. Enter sends exactly
@@ -532,9 +535,10 @@ of the next prompt, and **Manage** plus a state-specific action such as
 
 - **Sending...** and then **Preparing...** mean the turn has not crossed the
   accepted boundary yet;
-  the draft stays in the composer and the strip beside the button reads
-  "Queue opens once this turn is accepted". Once the turn is accepted, an
-  empty draft reads "Type to queue". A regenerate or continue never opens the
+  once the sent draft has left the composer, the strip beside the button
+  reads "Queue opens once this turn is accepted" (until then the strip stays
+  off so the draft keeps its row). Once the turn is accepted, an empty draft
+  reads "Type to queue". A regenerate or continue never opens the
   queue, so from the moment one starts (provider validation included) the
   strip reads "Wait for the current run to finish" instead.
 - **Queue full** preserves the draft and asks you to manage the existing 10;
