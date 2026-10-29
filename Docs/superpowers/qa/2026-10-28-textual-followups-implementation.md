@@ -74,6 +74,17 @@ aggregation remain unchanged. The official replay's algorithm is unchanged.
 
 ## Qualifications and follow-up
 
+- The [integration map](2026-10-28-textual-followups-implementation/integration-local-evidence.json)
+  and [raw archive](2026-10-28-textual-followups-implementation/integration-local-receipts.tar.gz)
+  retain 262 distinct contract cases with passing latest observations across
+  successive targeted runs, plus nine backlog/diagnostic-engine/Evals-size
+  passes. This is not one all-green batch: the first run exposed the two
+  whitespace IDs and old checkpoint expectation; the next fixed those but two
+  partition reads overlapped the root's rebase. Their frozen exact retry passed.
+  Original failed results and the source transitions remain in the evidence.
+- Rebase onto `3efe8476cebf70eceafa605d1abed76a4aad4e0e` changed none of the
+  owned committed product, test, workflow or evidence blobs. Only the appended
+  testing-lessons conflict needed resolution; both branches' entries survive.
 - Task-scoped reviews approve all three changes; final whole-branch review and
   actual final-head CI remain root-owned closure gates.
 - The old `test_note_export_onto_an_existing_file_asks_escape_keeps_it_replace_writes`

@@ -14,7 +14,7 @@ references:
 - tldw_chatbook/UI/Screens/library_screen.py
 assignee:
 - '@codex'
-updated_date: 2026-10-28 23:03
+updated_date: 2026-10-29 02:58
 ---
 
 ## Description
@@ -56,9 +56,14 @@ Full plan: Docs/superpowers/plans/2026-10-28-textual-37266-37268.md.
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Notes FileSave/Replace callbacks admit a grouped native non-exclusive screen worker, preserving existing operation admission. Rendered content, validated destination and operation are captured before admission; only the synchronous atomic writer crosses asyncio.to_thread. Late collisions, metadata rechecks, sanitized errors, completion and remembered-directory publication remain on the App loop. Existing no-clobber, cancellation and accepted-write retirement rules are preserved.
 
+Files: UI/Library_Modules/library_file_export.py, new native responsiveness tests, only two existing synchronous-completion test assumptions, and Docs/Architecture/library-shell.md. One intended same-thread blocked-dispatch RED; ten final parent/actual child passes covering ordinary/held new/Replace, late Cancel/Replace/recheck error, changed/retired view and failed Replace/text retry. Source preservation uses the established seeded service stand-in, not real Notes SQLite. Existing compatibility18pass/one source-readiness failure; exact retry fails before export and remains locally unqualified. The unchanged enrolled Escape/Replace case must pass hosted CI. Scoped lint/format pass; exact inherited shell E721/format debt retained. Diagnostic calls stay4 and only the nested Notes owner moves from _write to _fail; root refreshes/conserves latest-dev inventory.
+
+ADR required:no; existing ADR-033/036/031 retained, with shared CI amendment ADR-103. Independent task review approved with no Critical/Important; root-owned hosted/inventory gates remain explicit.
+
+Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final whole-branch review and current-head hosted CI remain pending; status stays In Progress until closure.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

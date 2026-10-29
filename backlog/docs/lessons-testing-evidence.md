@@ -23332,3 +23332,8 @@ shrink their payloads or suppress pytest's environment handling to hide the fail
 ## Prepare editing context before holding the parent message pump (TASK-37266, 2026-10-28)
 
 The first Character Bench Save-publication regression run sent special keys while the Screen pump was deliberately held. Binding dispatch reached that held pump and timed out before the intended assertion; shutdown then obscured it as `No screens`. Preparing focus and selection through Pilot before the hold, then posting printable native keys to the focused child, reached the actual draft-replacement assertion. The invalid run was retained separately from intended RED evidence. A later GREEN observer also needed to tolerate zero editor matches during the subsequent explicit Save's legitimate remove/mount gap; its final persistence assertion stayed unchanged. Do not turn harness dispatch or intermediate DOM failures into evidence of the product defect.
+
+
+## Freeze the checkout while partition controls read the live census (TASK-37266..37268, 2026-10-28)
+
+The root rebased after starting the corrected UI partition controls. Two cases captured one census then invoked shard subprocesses while Git temporarily restored the inherited census; they reported missing/extra selectors even though the final ordering conserved all1184. The frozen exact22/23 retries passed without changing product, checker or assertions. Do not rebase or mutate census/workflow sources while controls partition the live checkout; preserve mixed-checkpoint runs as invalid evidence rather than repairing a correct partition.
