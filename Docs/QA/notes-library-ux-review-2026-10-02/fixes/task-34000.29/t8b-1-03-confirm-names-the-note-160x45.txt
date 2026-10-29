@@ -5,41 +5,41 @@
   Library notes  |  Folder files
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.          │
-│ │ Navigation                     │  a  │ Library notes · ⚠ A sync folder needs attention ·     │  o  Recently deleted                                        │
-│ │     Import…                    │  v  │ Next: Open Manage sync folders.                       │  t  Deleted notes stay here until you restore them. Restore │
+│ │ Navigation                     │  a  │ Library notes · Ready · Next: Create a note or add    │  o  Recently deleted                                        │
+│ │     Import…                    │  v  │ from files.                                           │  t  Deleted notes stay here until you restore them. Restore │
 │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (97)                                            │  e  puts a note back; Delete forever removes it for good.   │
 │ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for  │  s    ‹ Notes                                               │
-│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ notes that live in a folder on disk, switch to Folder │     quotes · 3m               Restore     Delete forever    │
-│ │                                │     │ files. To copy or keep a folder synced, choose Add    │     Daily log 2026-09-01 ·…   Restore     Delete forever    │
-│ │ ─────────────────────────────  │     │ from files.                                           │     Daily log 2026-09-02 ·… ┃ Restore ┃   Delete forever    │
-│ │ Browse                    ▾    │     │                                                       │     Daily log 2026-09-03 ·…   Restore     Delete forever    │
-│ │    Media (23) — your files     │     │ Filter                                                │     Daily log 2026-09-04 ·…   Restore     Delete forever    │
-│ │    Conversations (0)           │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Daily log 2026-09-05 ·…   Restore     Delete forever    │
-│ │  ▸ Notes (97)                  │     │ ▊ Filte█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█og 2026-09-06 ·…   Restore     Delete forever    │
-│ │    Prompts (0) — reuse         │     │ ▊▁▁▁▁▁▁█                                                          █og 2026-09-07 ·…   Restore     Delete forever    │
-│ │    Skills (1) — AI add-ons     │<--- │        █                Delete this note forever?                 █og 2026-09-08 ·…   Restore     Delete forever    │
-│ │    Collections (0)             │     │    New █                                                          █og 2026-09-09 ·…   Restore     Delete forever    │
-│ │    Search / RAG — find all     │     │    Add █  “Daily log 2026-09-02” will be deleted for good. This   █og 2026-09-10 ·…   Restore     Delete forever    │
-│ │ ─────────────────────────────  │     │ Folders█                    cannot be undone.                     █og 2026-09-11 ·…   Restore     Delete forever    │
-│ │ Artifacts                 ▾    │     │    New █                                                          █og 2026-09-12 ·…   Restore     Delete forever    │
-│ │    All artifacts               │     │    ○ Re█                                                          █og 2026-09-13 ·…   Restore     Delete forever    │
-│ │    Chatbooks                   │     │ Note ac█                 Cancel     Delete forever                █og 2026-09-14 ·…   Restore     Delete forever    │
-│ │    Reports                     │     │        █                                                          █og 2026-09-15 ·…   Restore     Delete forever    │
-│ │    Dreams                      │     │        █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█og 2026-09-16 ·…   Restore     Delete forever    │
-│ │ ─────────────────────────────  │     │  ▸ Agent_Lessons                                      │     Daily log 2026-09-17 ·…   Restore     Delete forever    │
-│ │ Create                    ▾    │<--- │  ▸ Journal                                            │     Daily log 2026-09-18 ·…   Restore     Delete forever    │
-│ │    New note                    │     │  ▸ Meetings                                           │     Daily log 2026-09-19 ·…   Restore     Delete forever    │
-│ │    New prompt                  │     │  ▸ Projects                                           │     1–20 of 26 · Page 1 of 2                                │
-│ │    New skill                   │     │  ▸ Recipes                                            │       ○ Previous   Next                                     │
-│ │ ─────────────────────────────  │     │  ▸ Research                                           │                                                             │
-│ │ Study                     ▾    │     │  ▸ Study                                              │                                                             │
-│ │    Study decks (0)             │     │  ▸ VSync  ⚠ Needs attention                           │                                                             │
-│ │    Flashcards due: 0           │     │  ▾ Unfiled                                            │                                                             │
-│ │    Quizzes (0)                 │     │    Quotes · 3m                                      ▁ │                                                             │
-│ │ ─────────────────────────────  │     │    Scratch · 3m                                       │                                                             │
-│ │ Import / Export           ▾  ▆ │     │    Untitled · 3m                                      │                                                             │
-│ │    Import…                     │     │    A very long note title that keeps going so we c…   │                                                             │
-│ │  ▾ scroll for more             │     │    📚 Reading queue 2026 ✨ · 3m                      │                                                             │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ notes that live in a folder on disk, switch to Folder │     Harbour lighthouse log… ┃ Restore ┃   Delete forever    │
+│ │                                │     │ files. To copy or keep a folder synced, choose Add    │     Daily log 2026-09-01 · 4m                   Restore     │
+│ │ ─────────────────────────────  │     │ from files.                                           │     Daily log 2026-09-02 · 4m                   Restore     │
+│ │ Browse                    ▾    │     │                                                       │     Daily log 2026-09-03 · 4m                   Restore     │
+│ │    Media (23) — your files     │     │ Filter                                                │     Daily log 2026-09-04 · 4m                   Restore     │
+│ │    Conversations (0)           │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Daily log 2026-09-05 · 4m                   Restore     │
+│ │  ▸ Notes (97)                  │     │ ▊ Filte█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█og 2026-09-06 · 4m                   Restore     │
+│ │    Prompts (0) — reuse         │     │ ▊▁▁▁▁▁▁█                                                          █og 2026-09-07 · 4m                   Restore     │
+│ │    Skills (1) — AI add-ons     │<--- │        █                Delete this note forever?                 █og 2026-09-08 · 4m                   Restore     │
+│ │    Collections (0)             │     │    New █                                                          █og 2026-09-09 · 4m                   Restore     │
+│ │    Search / RAG — find all     │     │    Add █    “Harbour lighthouse log” will be deleted for good.    █og 2026-09-10 · 4m                   Restore     │
+│ │ ─────────────────────────────  │     │ Folders█                  This cannot be undone.                  █og 2026-09-11 · 4m                   Restore     │
+│ │ Artifacts                 ▾    │     │    New █                                                          █og 2026-09-12 · 4m                   Restore     │
+│ │    All artifacts               │     │    ○ Re█                                                          █og 2026-09-13 · 4m                   Restore     │
+│ │    Chatbooks                   │     │ Note ac█                Cancel       Delete forever               █og 2026-09-14 · 4m                   Restore     │
+│ │    Reports                     │     │        █                                                          █og 2026-09-15 · 4m                   Restore     │
+│ │    Dreams                      │     │        █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█og 2026-09-16 · 4m                   Restore     │
+│ │ ─────────────────────────────  │     │  ✓ deleted · Harbour lighthouse log                   │     Daily log 2026-09-17 · 4m                   Restore     │
+│ │ Create                    ▾    │<--- │    Undo     Dismiss                                   │     Daily log 2026-09-18 · 4m                   Restore     │
+│ │    New note                    │     │  ▸ Agent_Lessons                                      │     Daily log 2026-09-19 · 4m                   Restore     │
+│ │    New prompt                  │     │  ▸ Journal                                            │     1–20 of 26 · Page 1 of 2                                │
+│ │    New skill                   │     │  ▸ Meetings                                           │       ○ Previous   Next                                     │
+│ │ ─────────────────────────────  │     │  ▸ Projects                                           │                                                             │
+│ │ Study                     ▾    │     │  ▸ Recipes                                            │                                                             │
+│ │    Study decks (0)             │     │  ▸ Research                                           │                                                             │
+│ │    Flashcards due: 0           │     │  ▸ Study                                              │                                                             │
+│ │    Quizzes (0)                 │     │  ▾ Unfiled                                          ▃ │                                                             │
+│ │ ─────────────────────────────  │     │    Quotes · 4m                                        │                                                             │
+│ │ Import / Export           ▾  ▆ │     │    Untitled · 4m                                      │                                                             │
+│ │    Import…                     │     │    Scratch · 4m                                       │                                                             │
+│ │  ▾ scroll for more             │     │    A very long note title that keeps going so we c…   │                                                             │
 │ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                                             │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   r restore note | x delete forever | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

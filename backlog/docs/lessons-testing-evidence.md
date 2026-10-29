@@ -26084,3 +26084,29 @@ and keep the first run and repeat beside the instrumented comparison.
 **Incident.** AC #5 asked that every "load-independent" count column of the rail-switch probes be identical row for row, base against head, at n=6. The mount, unmount and full-update counts vary from run to run on every arm (mostly between two shapes; one full-update count took 2, 3 or 4), so the rule failed base against base. I then ticked the AC by swapping the base and judging varying columns "by the shapes seen". Review called it what it was, a criterion narrowed after the result was known, and the tick was withdrawn. The owner chose a dated amendment, written down before any new run: a new base (dev `45b1949ca3`, the chain's base after a rebase), n=12, and the modal tuple for varying columns. That run failed on two rows. In each, the head's mode was the base's second shape (8:4 against 4:8; 7:5 against 4:8; a post-hoc Fisher test gave p 0.22 and 0.41). The owner waived the AC.
 
 **What to do.** Before a timing or count comparison runs, run an uncounted pilot of the base arm at the planned n, and see which columns vary base against base. Two runs are not enough: a row that splits 10:2 shows the same shape on both runs 72% of the time. Then write the judging rule, with the n it needs, into the AC, and judge with that rule unchanged. Count how many rows the rule judges. A modal rule at n=12 passes a near-50:50 row with no change only about 70% of the time, and over this probe's nine varying rows an unchanged head would pass all nine only about 17% of the time. To tell a real change in shape frequency from noise, use a frequency test (Fisher) sized for the change that matters: against a 2:1 -> 1:2 swap it has about 26% power at n=12, 66% at n=30 and 90% at about n=50 per arm, before any correction for testing several rows. Either way, fix the rule before the data exists. If a result fails, record it as failed and let the owner decide; never re-read the rule until it passes.
+
+## A delete that passes a column census can still leave the words in the index (TASK-34000.29 fix round 1, 2026-10-29)
+
+Delete forever's completeness pin (`Tests/ChaChaNotesDB/note_trace_census.py`)
+found every note-id column from the live schema, swept every text column of
+every ordinary table for the id, and checked the notes FTS index through
+`fts5vocab` instances, its integrity check, its row total and `MATCH` on the
+note's own words. All of it read clean, and review R0 accepted it. Review R0's
+m-3 asked for a byte-level token scan instead: every column of every table in
+`sqlite_master`, virtual and shadow tables included, compared with
+`instr(CAST(col AS BLOB), CAST(? AS BLOB))`. Its first run found
+`notes_fts_data.block` still holding the purged note's title and body words,
+in 4 blocks each. An FTS5 `'delete'` writes a delete marker, and the term
+bytes stay in older segments until a merge. The logical checks cannot see this
+by design: `MATCH` and `fts5vocab` both honour the marker. The fix is one
+`INSERT INTO notes_fts(notes_fts) VALUES('optimize')` inside the purge
+transaction (0.26 s on an 11 MB index). The same scan also showed that a
+column census misses ids inside JSON payloads.
+
+**What to do.** When a feature promises data is gone, scan values, not names.
+Search every column of every table, shadow tables too, as bytes, for the id in
+each form (bare and JSON-quoted) and for words only that record held. Keep an
+explicit, commented allowlist of what is kept on purpose, plus a negative
+control: a table the delete was never told about that holds the title inside
+JSON. Do not count a logical index check (`MATCH`, `fts5vocab`,
+`integrity-check`) as evidence that bytes are gone.
