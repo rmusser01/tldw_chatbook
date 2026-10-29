@@ -3253,6 +3253,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # One Tab stop per row (the docstring above); ``x`` is
                     # its key, gated to the focused row's Restore.
                     purge.can_focus = False
+                    # The danger class's muted ink, not its 4-cell gap: at
+                    # 160x45 that gap cut "Daily log 2026-09-02" to
+                    # "Daily log 2026-09-0…" (measured live), losing the
+                    # one part of the title that tells the rows apart.
+                    purge.styles.margin = (0, 0, 0, 1)
                     purge.note_id = row.note_id
                     purge.note_title = row.title
                     purge.note_version = row.version
