@@ -136,6 +136,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     CapturePolicyResolution,
     resolve_capture_policy,
     resolve_scoped_boolean,
+    temporary_chat_capture,
 )
 from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyReadStatus,
@@ -5009,7 +5010,9 @@ class ConsoleChatController:
         )
         effective_capture_enabled = resolve_scoped_boolean(
             global_default=runtime.enabled,
-            conversation=state.conversation_capture_enabled,
+            conversation=temporary_chat_capture(
+                state.conversation_capture_enabled, ephemeral=session.ephemeral
+            ),
             next_send=state.next_capture_enabled,
         )
         effective_pii_redaction_enabled = resolve_scoped_boolean(
@@ -5795,7 +5798,10 @@ class ConsoleChatController:
                     if frozen_capture_enabled is not None
                     else resolve_scoped_boolean(
                         global_default=runtime.enabled,
-                        conversation=state.conversation_capture_enabled,
+                        conversation=temporary_chat_capture(
+                            state.conversation_capture_enabled,
+                            ephemeral=session.ephemeral,
+                        ),
                         next_send=state.next_capture_enabled,
                         allow_next_send=eligible,
                     )

@@ -17,7 +17,11 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
+from tldw_chatbook.Chat.console_ephemeral import (
+    ACTION_SAVE_CHAT,
+    SAVE_CHAT_LABEL,
+    blocked_reason,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: Action ids returned by the menu. Stable strings, not indexes: the
@@ -72,7 +76,7 @@ def build_composer_menu_entries(
     the row says which case applies: nothing staged, or a staged file that
     is not an image. Explicit unavailable states beat vanishing entries.
 
-    "Save this chat" is the exception: it is ABSENT outside a temporary
+    The Save chat row is the exception: it is ABSENT outside a temporary
     chat rather than disabled, because a disabled save on an already-saved
     conversation reads as a failure rather than as "already done".
 
@@ -194,8 +198,8 @@ def build_composer_menu_entries(
     return (
         ComposerMenuEntry(
             ACTION_SAVE_CHAT,
-            "Save this chat",
-            "This chat is not saved locally — save it now",
+            SAVE_CHAT_LABEL,
+            "Not saved locally; records no traces until saved",
         ),
         *entries,
     )
@@ -261,7 +265,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
                 decides whether Generate Caption is actionable and what its
                 disabled row explains.
             ephemeral: Whether the active session is temporary, which
-                decides whether "Save this chat" is offered at all.
+                decides whether the Save chat row is offered at all.
             can_save_chatbook: Whether a Chatbook artifact is available,
                 which decides whether the Save as Chatbook row is actionable.
             draft_available: Whether the active composer has a nonblank draft.

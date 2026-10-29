@@ -15215,18 +15215,15 @@ def test_temporary_tab_marker_is_presentation_only():
     assert GLYPH_TEMPORARY not in plain
 
     tooltip = _session_tab_tooltip(session, active=False)
-    assert "not saved" in tooltip.lower()
     # CN-02 (TASK-2154.13): the tab tooltip's ◌ decode is byte-for-byte the
     # status chip's TEMPORARY_LABEL -- one short name for the concept, no
-    # third wording.
+    # third wording. TASK-33621.17 renamed it "Temporary · traces off".
     from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
 
     assert tooltip.endswith(f"{TEMPORARY_LABEL}.")
-    assert (
-        "not saved"
-        not in _session_tab_tooltip(
-            ConsoleChatSession(title="Normal"), active=False
-        ).lower()
+    assert "temporary" in tooltip.lower()
+    assert TEMPORARY_LABEL not in _session_tab_tooltip(
+        ConsoleChatSession(title="Normal"), active=False
     )
 
 

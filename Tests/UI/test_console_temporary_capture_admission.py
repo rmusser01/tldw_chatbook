@@ -164,3 +164,5 @@ async def test_capture_policy_explains_temporary_save_and_send_boundary() -> Non
 
         assert "Save & Send" in str(guidance.render())
         assert "Send without capture" in str(guidance.render())
+        # TASK-33621.17: the pause is now opt-in; the default is said first.
+        assert "traces are off until you save it" in str(guidance.render())
