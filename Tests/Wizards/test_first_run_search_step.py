@@ -423,6 +423,28 @@ async def test_without_the_extras_a_saved_automatic_reads_unavailable_and_can_be
 
 
 @pytest.mark.asyncio
+async def test_the_unavailable_reason_follows_a_saved_change_back_to_the_step() -> None:
+    """Review R8 (TASK-34100.13): the reason line was chosen once, at compose.
+    After Next saved "only when I ask", Back showed the step still saying
+    automatic search is on and every message stops at "Library search failed"."""
+    from tldw_chatbook.UI.Wizards import first_run_rag_state as rag_state
+
+    _wizard, step = _rag_step(
+        {"chat_defaults": {"rag_auto_retrieve_on_send": True}}, deps=False
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        step.query_one("#setup-rag-auto-retrieve-on-request", RadioButton).value = True
+        await pilot.pause()
+        ok, _ = await step.commit()
+        await pilot.pause()
+        why = str(step.query_one("#setup-rag-unavailable", Static).render())
+    assert ok
+    assert why == rag_state.search_unavailable_copy(saved_automatic=False)
+    assert '"Library search failed"' not in why
+
+
+@pytest.mark.asyncio
 async def test_with_the_extras_automatic_search_is_offered_plainly() -> None:
     _wizard, step = _rag_step({}, deps=True)
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
