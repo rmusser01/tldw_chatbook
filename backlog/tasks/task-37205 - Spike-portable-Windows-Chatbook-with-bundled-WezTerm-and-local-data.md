@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-28T18:27:00Z'
-updated_date: '2026-10-28T22:16:00Z'
+updated_date: '2026-10-29T00:18:00Z'
 labels:
   - packaging
   - windows
@@ -64,4 +64,6 @@ Targeted verification: combined new recovery run 131 passed; subsequent source g
 Wider legacy runs are not green: recovery-regressions.log records 95 passed/five failed (Windows POSIX-mode expectation, encrypted helper unavailable, two symlink fixtures needing privilege, stale schema 77 vs installed 84). recovery-isolated-regressions.log records seven passed/five failed (three encrypted-helper cases, symlink privilege, fresh-launch fixture isolated_activation_required). A later single fixture rerun stopped at its shared-parent posture. These harness/unsupported-encrypted-path results are retained; equivalent new native unencrypted publication/reopen journeys pass. No full test sweep was run, per repository opt-in policy.
 
 Qualification is local NTFS/same Windows account, not a signed production release or a clean-machine/all-features claim. Unsupported optional layouts refuse; ML models, optional feature extras and external programs are not included. Copied raw state cannot prove historical multi-store coherence, so import remains explicitly partial. Retained source may still contain old credentials; protect all Data. Clipboard/images/graphics variants and cross-account/filesystem moves are not qualified. No commit, push or PR was requested; the managed worktree is preserved.
+
+Follow-up TASK-37269 resolves the earlier recorded Windows/helper failures: fully installed isolated-worker dependencies, native ACL/junction/named-pipe fixtures, installed-schema expectations, private test temporary storage and correct fresh-child home/profile selection. Frozen combined verification:361 passed; packaging18+5 subtests; full post-rebase isolated/model cohort20 passed; final real CLI selection/data case passed after an observer negative-control RED/GREEN proof. Independent review found no actionable issues. Existing runtime guard/crypto bytes are unchanged; the ZIP qualification above remains historical to its recorded source base and hash. Portable decisions now use canonical ADR-254/255/256 after resolving dev numbering collisions. Details and remaining prototype limits are in TASK-37269 and Docs/superpowers/plans/2026-10-28-windows-recovery-test-fixes.md.
 <!-- SECTION:NOTES:END -->
