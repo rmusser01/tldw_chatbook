@@ -1098,21 +1098,23 @@ def build_first_request_schema_plan(
             agent_definitions=agent_definitions,
             fleet_max_live=fleet_max_live,
         )
-        compact = build_compact_schema_plan(
-            no_tools, discovery, context_limit=context_limit,
-            response_reserve_tokens=config.response_reserve_tokens,
-            progress_available=progress_available,
-            reporting_available=reporting_available, peers_available=peers_available,
-            agent_kind=agent_kind,
-        )
-        if _first_request_plan_fits(
-            compact,
-            config=config,
-            api_endpoint=api_endpoint,
-            messages=messages,
-            context_limit=context_limit,
-        ):
-            return compact
+        # Compact discovery offers find/load: never once discovery is off.
+        if allow_discovery:
+            compact = build_compact_schema_plan(
+                no_tools, discovery, context_limit=context_limit,
+                response_reserve_tokens=config.response_reserve_tokens,
+                progress_available=progress_available,
+                reporting_available=reporting_available, peers_available=peers_available,
+                agent_kind=agent_kind,
+            )
+            if _first_request_plan_fits(
+                compact,
+                config=config,
+                api_endpoint=api_endpoint,
+                messages=messages,
+                context_limit=context_limit,
+            ):
+                return compact
         return dataclasses.replace(
             no_tools,
             request_fits=_first_request_plan_fits(

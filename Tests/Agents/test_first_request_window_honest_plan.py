@@ -551,3 +551,53 @@ def test_a_window_planned_as_is_leaves_the_gateways_safety_margin(
     ).effective_input_ceiling_tokens
     assert limit == tokens
     assert limit - reserve == ceiling
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        {"fork_chat_enabled": True, "new_chat_enabled": True},
+        {"run_log_active": True},
+        {"run_log_active": True, "progress_available": True},
+    ],
+    ids=["chat-tools", "run-log", "run-log-and-progress"],
+)
+def test_a_plan_without_discovery_never_carries_find_load_guidance(flags) -> None:
+    """TASK-34100.5.3 pre-merge review: with ``allow_discovery=False`` (the
+    light surface) the fallback still built the compact discovery plan, which
+    sets ``offer_find_load`` and appends "Use find_tools ... load_tools" to
+    the prompt -- guidance for tools that request never carries. The bridge's
+    own light plans turn these runtime flags off, so it was latent there;
+    swept here over windows from too small for anything to roomy."""
+    from tldw_chatbook.Agents.agent_models import AgentConfig
+    from tldw_chatbook.Agents.agent_service import build_first_request_schema_plan
+
+    registry = ToolCatalogRegistry()
+    registry.register_provider(_BuiltinLikeProvider())
+    allowed = tuple(entry.name for entry in registry.list_catalog())
+    config = AgentConfig(
+        model=_MODEL,
+        system_prompt="direct",
+        allowed_tools=allowed,
+        response_reserve_tokens=512,
+    )
+    for tokens in range(1_500, 12_001, 500):
+        plan = build_first_request_schema_plan(
+            registry,
+            allowed,
+            config,
+            "llama_cpp",
+            [{"role": "user", "content": "Reply with just: hi"}],
+            skill_file_enabled=False,
+            install_skill_enabled=False,
+            run_skill_script_enabled=False,
+            **{"run_log_active": False, **flags},
+            plain_system_prompt=_SESSION_PROMPT,
+            direct_system_prompt="direct",
+            discovery_system_prompt="discovery",
+            context_window=ContextWindowResolution(tokens, "server metadata", True),
+            allow_discovery=False,
+        )
+        assert not plan.offer_find_load, tokens
+        assert "find_tools" not in plan.system_prompt, (tokens, plan.system_prompt)
+        assert "load_tools" not in plan.system_prompt, (tokens, plan.system_prompt)
