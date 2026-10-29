@@ -51,6 +51,7 @@ class _GatedScreen(EvalsScreen):
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.publication_consumed = asyncio.Event()
+        self.publication_count = 0
         self.hold_rail = False
         self.rail_entered = asyncio.Event()
         self.rail_release = asyncio.Event()
@@ -64,6 +65,7 @@ class _GatedScreen(EvalsScreen):
     @on(CharacterBenchEditor.Saved)
     def observe_publication(self):
         # Observe native dispatch; the production handler still runs.
+        self.publication_count += 1
         self.publication_consumed.set()
 
     async def _replace_region(self, region_id, content):
@@ -165,10 +167,10 @@ async def _submit_held_save(
         await _until(ctx.screen.rail_entered.is_set)
 
 
-async def _publish(ctx):
+async def _publish(ctx, *, count=1):
     ctx.screen.release.set()
     ctx.screen.rail_release.set()
-    await _until(ctx.screen.publication_consumed.is_set)
+    await _until(lambda: ctx.screen.publication_count >= count)
     await ctx.app.workers.wait_for_complete()
     await ctx.pilot.pause()
 
@@ -331,6 +333,15 @@ async def test_character_save_reloads_canonical_values(request):
         )
         assert not ctx.screen.query_one(CharacterBenchEditor).is_dirty()
 
+        # The external Screen watch belongs to the retired editor. Textual
+        # prunes a closing owner on the next focus change without an unwatch hack.
+        retired_revision = ctx.editor._publication_revision
+        assert ctx.editor._closing
+        ctx.screen.set_focus(None)
+        current.focus()
+        await _until(lambda: current.has_focus)
+        assert ctx.editor._publication_revision == retired_revision
+
 
 @pytest.mark.asyncio
 @private_profile_test
@@ -380,4 +391,70 @@ async def test_character_older_save_preserves_a_later_returned_draft(request):
         await ctx.app.workers.wait_for_complete()
         await ctx.pilot.pause()
         assert ctx.screen.query_one("#evals-cb-name", Input).value == "Saved"
+        assert not ctx.screen.query_one(CharacterBenchEditor).is_dirty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["before-publication", "during-refresh"])
+@pytest.mark.parametrize(
+    "case", ["equal-valued-save", "single-save-roundtrip", "focus-only"]
+)
+@private_profile_test
+async def test_character_save_retains_returned_text_and_context(request, phase, case):
+    """Equal final values do not make later native editing context disposable."""
+    async with _mounted_bench() as ctx:
+        await _submit_held_save(
+            ctx,
+            during_refresh=phase == "during-refresh",
+            focus_selector="#evals-cb-samples",
+        )
+        field = ctx.editor.query_one("#evals-cb-samples", Input)
+        first_baseline = ctx.editor._loaded_config
+        if case == "focus-only":
+            focused = ctx.editor.query_one("#evals-cb-revert", Button)
+            focused.focus()
+            await _until(lambda: focused.has_focus)
+        else:
+            for char in "01":
+                field.post_message(Key(char, char))
+            await _until(lambda: field.value == "01" and field.cursor_position == 2)
+            if case == "equal-valued-save":
+                ctx.editor.query_one("#evals-cb-save", Button).press()
+                await _until(lambda: ctx.editor._loaded_config is not first_baseline)
+                # Witness the review's distinct successful, value-equal Save B.
+                assert ctx.editor._loaded_config == first_baseline
+                assert load_character_bench(ctx.db, ctx.bench_id).samples_per_cell == 1
+            ctx.screen.set_focus(None)
+            field.focus()
+            await _until(lambda: (field.selection.start, field.selection.end) == (0, 2))
+            field.post_message(Key("1", "1"))
+            await _until(lambda: field.value == "1" and field.cursor_position == 1)
+            assert (field.selection.start, field.selection.end) == (1, 1)
+            focused = field
+        before = (field.value, field.cursor_position, field.selection)
+        assert not ctx.editor.is_dirty()
+        assert focused.has_focus
+        await _publish(ctx, count=2 if case == "equal-valued-save" else 1)
+        _assert_submitted_metadata(ctx)
+        assert (
+            str(ctx.screen.query_one("#evals-primary-action", Button).label)
+            == "Run Saved"
+        )
+        assert (
+            ctx.screen.query_one(CharacterBenchEditor) is ctx.editor
+        ), "Save publication replaced later native roundtrip or focus context"
+        assert ctx.screen.query_one("#evals-cb-samples", Input) is field
+        assert (field.value, field.cursor_position, field.selection) == before
+        assert ctx.app.focused is focused
+        assert not ctx.editor.is_dirty()
+
+        # An explicit Save of this unchanged semantic value still reloads cleanly.
+        ctx.editor.query_one("#evals-cb-save", Button).press()
+        await _until(
+            lambda: bool(ctx.screen.query(CharacterBenchEditor))
+            and ctx.screen.query_one(CharacterBenchEditor) is not ctx.editor
+        )
+        await ctx.app.workers.wait_for_complete()
+        await ctx.pilot.pause()
+        assert ctx.screen.query_one("#evals-cb-samples", Input).value == "1"
         assert not ctx.screen.query_one(CharacterBenchEditor).is_dirty()

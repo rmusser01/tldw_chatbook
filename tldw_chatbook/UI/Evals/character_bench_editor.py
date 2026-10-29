@@ -201,6 +201,7 @@ class CharacterBenchEditor(Vertical):
         #: this task. `None` only when `compose()` bailed out before
         #: reaching the form (no db, or an unreadable row).
         self._loaded_config: Optional[CharacterProbeConfig] = None
+        self._publication_revision = 0
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -282,6 +283,20 @@ class CharacterBenchEditor(Vertical):
                 classes="console-action-secondary",
                 tooltip="Discard unsaved changes and reload this bench.",
             )
+
+    def on_mount(self) -> None:
+        # Synchronous reactive watches see accepted changes before queued messages.
+        for field in self.query(Input):
+            self.watch(field, "value", self._advance_publication_revision, init=False)
+            self.watch(
+                field, "selection", self._advance_publication_revision, init=False
+            )
+        self.watch(
+            self.screen, "focused", self._advance_publication_revision, init=False
+        )
+
+    def _advance_publication_revision(self) -> None:
+        self._publication_revision += 1
 
     def is_dirty(self) -> bool:
         """True when the mounted form differs from ``self._loaded_config``
@@ -402,9 +417,9 @@ class CharacterBenchEditor(Vertical):
         return False
 
     def save_publication_state(self) -> tuple[Any, ...]:
-        """Capture the successful baseline and raw form for conditional reload."""
+        """Fence later Saves, input and editing context as well as raw values."""
         return (
-            self._loaded_config,
+            self._publication_revision,
             tuple((field.id, field.value) for field in self.query(Input)),
             self.query_one(CardPicker).selected_ids(),
         )
@@ -682,6 +697,7 @@ class CharacterBenchEditor(Vertical):
 
         # Later edits compare against this submitted config even without a reload.
         self._loaded_config = config
+        self._advance_publication_revision()
         self.post_message(self.Saved(self))
 
     @on(Button.Pressed, "#evals-cb-revert")

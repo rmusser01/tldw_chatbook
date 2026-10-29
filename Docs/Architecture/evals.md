@@ -76,8 +76,13 @@ replacement, immediately before detail replacement. Save refresh shares the
 current selection revision so it cannot supersede a pending user selection
 whose detail has not mounted yet.
 
-The character snapshot also pins the successful-write baseline: an older queued
-Save cannot match a draft returned to its earlier raw text after a newer Save.
+The character snapshot also pins an editor-local publication revision. Each
+successful Save advances it, as do synchronous reactive watches of Input text,
+caret/selection and screen focus. Equal-valued later Saves and input returning
+to its submitted spelling therefore cannot make an older publication apply.
+An unchanged ordinary Save still reloads canonically. The external focus watch
+uses Textual's owner lifecycle: closing editor owners are pruned on the next
+focus change; no private watcher list is edited directly by the editor.
 
 Later accepted input therefore retains the actual child widgets, focus, caret
 and selection; it stays unsaved until another Save. The editor advances its
