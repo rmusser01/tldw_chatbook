@@ -3015,7 +3015,11 @@ class ConsoleTraceService:
                 and route_identity in {"agent_first", "fresh"}
                 and suffix == 0
                 and incoming_changed >= 2
-                and 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN
+                # Bound the stored range: an earlier replacement leaves dead
+                # sequences inside it, so live rows undercount its span.
+                and max(sequence for _, sequence, _ in active[prefix:])
+                - min(sequence for _, sequence, _ in active[prefix:])
+                < MAX_SURFACE_REPLACEMENT_SPAN
                 and current_policy_id is not None
                 and domains[prefix:] == ("messages_payload",) * incoming_changed
                 and all(
