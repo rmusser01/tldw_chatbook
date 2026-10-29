@@ -18121,6 +18121,8 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
+        if self._console_emergency_stop_copy:  # TASK-33620.1: before queueing too
+            return self._console_emergency_stop_copy
         conversation_id = self._current_console_conversation_id()
         if conversation_id in getattr(
             self.app_instance, "_conversation_archive_inflight", ()
@@ -18521,7 +18523,9 @@ class ChatScreen(BaseAppScreen):
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
             STEER_COMMAND_HANDLER_ID: self._console_command_steer,
             REDIRECT_COMMAND_HANDLER_ID: self._console_command_redirect,
-            EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
+            EMERGENCY_STOP_COMMAND_HANDLER_ID: partial(
+                run_controls.emergency_stop_command, self
+            ),
             STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
@@ -19112,35 +19116,6 @@ class ChatScreen(BaseAppScreen):
         # one habitual extra Enter would redirect the run twice.
         self._clear_console_composer_draft()
         self.app_instance.notify("Redirect sent — correcting the running turn.")
-        return True
-
-    async def _console_command_emergency_stop(self, parse: CommandParse) -> bool:
-        """`/emergency-stop [clear|<reason>]`: the global stop (TASK-26004).
-
-        Holds all NEW agent runs and scheduled dispatches; in-flight work is
-        untouched, and the state survives a restart. `clear`/`off`/`resume`
-        lifts it. A stopped state is reported plainly on the next send/dispatch.
-        """
-        from tldw_chatbook.emergency_stop import (
-            clear_emergency_stop,
-            default_emergency_stop_path,
-            set_emergency_stop,
-        )
-
-        arg = (parse.args or "").strip()
-        path = default_emergency_stop_path()
-        if arg.lower() in {"clear", "off", "resume"}:
-            clear_emergency_stop(path)
-            self._clear_console_composer_draft()
-            self.app_instance.notify("Emergency stop cleared — new work may start.")
-            return True
-        set_emergency_stop(path, reason=arg)
-        self._clear_console_composer_draft()
-        self.app_instance.notify(
-            "Emergency stop ACTIVE — new runs and scheduled dispatches are held. "
-            "Run /emergency-stop clear to resume.",
-            severity="warning",
-        )
         return True
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
@@ -21129,6 +21104,10 @@ class ChatScreen(BaseAppScreen):
     #: and this programme has shipped one fixture AttributeError per wave.
     _console_popup_synced_draft: str | None = None
 
+    #: TASK-33620.1: the emergency stop's copy while it holds new runs, else
+    #: "" (`Console_Modules/emergency_stop_hold.py` is its only writer).
+    _console_emergency_stop_copy: str = ""
+
     #: Completion context the popup was Escape-dismissed in, or None when
     #: the trigger is armed (TASK-24416). A CLASS attribute for the same
     #: fixture reason as `_console_popup_synced_draft` above. Sticky within
@@ -22929,6 +22908,7 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
             )
         )
+        run_controls.schedule_emergency_stop_refresh(self)  # TASK-33620.1
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)
