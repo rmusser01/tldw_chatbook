@@ -3842,6 +3842,8 @@ class ConsoleChatController:
             str, _DurablePostcommitContinuation
         ] = {}
         self._trace_call_boundaries_by_preparation: dict[str, object] = {}
+        #: TASK-33621.5: whether each trace-paused send reached the provider.
+        self._trace_call_provider_contacts: dict[str, object] = {}
         self._provider_config = provider_config
         #: Task 4 (D2 fix wave, "bonus race"): screen-owned callable that
         #: builds a fresh default `ConsoleSessionSettings` snapshot (mirrors
@@ -7510,6 +7512,11 @@ class ConsoleChatController:
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
+    def trace_call_provider_contact(self, preparation_id: str) -> object | None:
+        """Return whether a trace-paused send reached the provider (TASK-33621.5)."""
+
+        return self._trace_call_provider_contacts.get(preparation_id)
+
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
         """Return only the active preparation offering a pre-dispatch card."""
 
@@ -8385,6 +8392,7 @@ class ConsoleChatController:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
             self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
+            self._trace_call_provider_contacts.pop(preparation_id, None)
             self._context_compaction_holds.pop(preparation_id, None)
             self._compaction_hold_after_effects.discard(preparation_id)
             if ConsoleTurnPreparationState.CANCELLED in expected_states:
@@ -12916,6 +12924,15 @@ class ConsoleChatController:
                 ):
                     self._trace_call_boundaries_by_preparation[preparation_id] = (
                         exc.boundary if exc.boundary is not None else exc
+                    )
+                    from .console_trace_call_recovery import provider_contact_for_pause
+
+                    self._trace_call_provider_contacts[preparation_id] = (
+                        provider_contact_for_pause(
+                            self.provider_gateway,
+                            continuation.stream_signals,
+                            dispatch_started=any_provider_started,
+                        )
                     )
                     current = self._preparation_by_id(preparation_id)
                     if current is not None and current.state in {

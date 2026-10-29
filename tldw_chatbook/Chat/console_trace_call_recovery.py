@@ -12,7 +12,8 @@ Loaded on first use, never at UI-ready (ADR-097 boot ratchet).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState
 from tldw_chatbook.Chat.console_turn_preparation import (
@@ -26,6 +27,45 @@ if TYPE_CHECKING:
         ConsoleChatController,
         ConsoleSubmitResult,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class TraceCallProviderContact:
+    """Whether a paused send reached the provider, for the card (TASK-33621.5).
+
+    Attributes:
+        contacted: "yes" when a call of this send got a provider outcome,
+            "no" when none crossed the dispatch checkpoint, else "unknown".
+        rejection: The provider's last definitive HTTP refusal, if any (a
+            ``TraceProviderRejection``: provider, status_code, meaning).
+    """
+
+    contacted: Literal["yes", "no", "unknown"]
+    rejection: object | None = None
+
+
+def provider_contact_for_pause(
+    gateway: object, signals: object, *, dispatch_started: bool
+) -> TraceCallProviderContact:
+    """Derive the card's provider-contacted fact for a send that just paused.
+
+    Args:
+        gateway: The provider gateway that ran the send.
+        signals: The send's stream signals.
+        dispatch_started: Whether a call of this send crossed the durable
+            dispatch checkpoint, which immediately precedes adapter entry.
+
+    Returns:
+        The recorded fact; never "yes" without a provider outcome.
+    """
+    if not dispatch_started:
+        return TraceCallProviderContact("no")
+    contact_for = getattr(gateway, "trace_provider_contact", None)
+    contact = contact_for(signals) if callable(contact_for) else None
+    if contact is None or not contact[0]:
+        return TraceCallProviderContact("unknown")
+    return TraceCallProviderContact("yes", contact[1])
+
 
 #: The card's status line when Capture On cannot be retried.
 UNCONFIRMED_RESERVATION_COPY = (
@@ -70,4 +110,9 @@ def repause_unconfirmed_trace_call(
     return controller._prepared_action_refusal(paused, UNCONFIRMED_RESERVATION_COPY)
 
 
-__all__ = ["UNCONFIRMED_RESERVATION_COPY", "repause_unconfirmed_trace_call"]
+__all__ = [
+    "UNCONFIRMED_RESERVATION_COPY",
+    "TraceCallProviderContact",
+    "provider_contact_for_pause",
+    "repause_unconfirmed_trace_call",
+]
