@@ -33,7 +33,6 @@ from textual.widgets.option_list import Option
 
 from ...UI.Persona_Modules import roleplay_frame_state as frame_state
 from .personas_messages import (
-    ActorPackImportRequested,
     PersonaActionRequested,
     PersonaEntityKind,
     PersonaEntitySelected,
@@ -706,7 +705,6 @@ class PersonasLibraryPane(Vertical):
     ) -> None:
         super().__init__(**kwargs)
         self._window_state = window_state
-        self._import_visible: bool = True
         self._sort_visible: bool = True
         self._status_key: tuple[str, str] | None = None
         # The list's COUNT total (the M of "#N of M") and whether a search or
@@ -810,16 +808,15 @@ class PersonasLibraryPane(Vertical):
                 tooltip="Create something new: pick a kind and a starting point.",
                 classes="console-action-secondary",
             )
+            # One Import picker for every kind (frame slice B2b, spec 1.4.6);
+            # dev had Import (by kind) and Import Actor Pack.
             yield Button(
                 "Import",
                 id="personas-library-import",
-                tooltip="Import a character card or create a character from a Buddy archive.",
-                classes="console-action-secondary",
-            )
-            yield Button(
-                "Import Actor Pack",
-                id="personas-library-import-actor-pack",
-                tooltip="Review and activate a portable .tldw-actor-pack archive.",
+                tooltip=(
+                    "Import a character card, lore book, chat dictionary, "
+                    "Actor Pack or Buddy from a file."
+                ),
                 classes="console-action-secondary",
             )
         with Horizontal(id="personas-library-filterbar", classes="ds-toolbar"):
@@ -869,9 +866,9 @@ class PersonasLibraryPane(Vertical):
     def set_mode(self, mode: str) -> None:
         """Gate the library toolbar's buttons for the active workbench mode.
 
-        Import renders for characters/dictionaries/lore (with a
-        mode-appropriate Import tooltip); personas mode hides it (task-443).
-        Duplicate is the Inspector's (frame slice B2b, spec 5.3).
+        Import shows in every kind: one picker takes every Roleplay format
+        (frame slice B2b; dev hid it in Personas, task-443). Duplicate is the
+        Inspector's (frame slice B2b, spec 5.3).
         Marks are kept per kind for the visit (spec R16): a kind switch shows
         that kind's marks and never drops another kind's.
 
@@ -879,24 +876,6 @@ class PersonasLibraryPane(Vertical):
             mode: The active workbench mode id (``characters``/``personas``/
                 ``dictionaries``/``lore``).
         """
-        self._import_visible = mode in ("characters", "dictionaries", "lore")
-        import_button = self.query_one("#personas-library-import", Button)
-        import_button.display = self._import_visible
-        if mode == "dictionaries":
-            import_button.tooltip = "Import a dictionary (JSON or Markdown)."
-        elif mode == "lore":
-            import_button.tooltip = "Import a world book (JSON)."
-        else:
-            import_button.tooltip = (
-                "Import a character card or create a character from a Buddy archive."
-            )
-        self.query_one("#personas-library-import-actor-pack", Button).display = (
-            mode
-            in (
-                "characters",
-                "personas",
-            )
-        )
         sort_visible = mode in ("characters", "personas")
         self._sort_visible = sort_visible
         self.query_one("#personas-library-sort", Button).display = sort_visible
@@ -961,8 +940,10 @@ class PersonasLibraryPane(Vertical):
         if recovery_copy:
             status: tuple[str, str] | None = (recovery_id, recovery_copy)
         elif not visible_rows:
-            hint = "use New or Import" if self._import_visible else "use New"
-            status = ("personas-library-empty", f"No {noun} yet - {hint} to add one.")
+            status = (
+                "personas-library-empty",
+                f"No {noun} yet - use New or Import to add one.",
+            )
         else:
             status = None
         await self._sync_status(status)
@@ -1245,11 +1226,6 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
-
-    @on(Button.Pressed, "#personas-library-import-actor-pack")
-    def _import_actor_pack_pressed(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.post_message(ActorPackImportRequested())
 
     @on(Button.Pressed, "#personas-library-sort")
     def _sort_pressed(self, event: Button.Pressed) -> None:

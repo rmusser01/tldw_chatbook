@@ -188,7 +188,11 @@ _BUDGETS: dict[str, int] = {
     # (16,869 -> 16,959).
     # T2 fix round 1, the chooser holds its slot until its create ends: +3
     # (16,959 -> 16,962).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16962,
+    # T4, the one Import picker (its worker, router and "Import as:" replace
+    # four pickers; "Import as:" opens on the sniff's pick, owner decision D8;
+    # an unreadable profile folder refuses only a Buddy pick): +37
+    # (16,962 -> 16,999).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16999,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -230,7 +234,10 @@ _BUDGETS: dict[str, int] = {
     # inert while the first-match landing is owed, and the pane takes the
     # landing (land_on_first); +12 (1,295 -> 1,307). Fix round 1 (same day)
     # deletes the unused focus_first_result helper: -8 (1,307 -> 1,299).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1297,
+    # Roleplay frame B2b (TASK-33910.4): Duplicate (T1), New Actor Pack (T2)
+    # and Import Actor Pack (T4) leave the toolbar; T4 lowers the row to the
+    # measurement (1,297 -> 1,246).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1246,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

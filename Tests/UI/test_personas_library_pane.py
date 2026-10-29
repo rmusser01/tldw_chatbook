@@ -250,22 +250,28 @@ async def test_active_row_keeps_subdued_and_is_active_markers():
         assert not item_at(pilot.app.screen, "character:2").active
 
 
-async def test_set_mode_toggles_import_button_and_empty_copy():
+async def test_import_is_shown_in_every_mode_and_the_empty_copy_names_it():
+    """Frame slice B2b: one Import picker for every kind. On dev Personas hid
+    Import (task-443) and its empty copy said "use New"."""
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
         import_button = pilot.app.query_one("#personas-library-import", Button)
-        pane.set_mode("personas")
-        assert import_button.display is False
-        pane.set_mode("characters")
-        assert import_button.display is True
+        for mode in ("personas", "characters", "lore", "dictionaries"):
+            pane.set_mode(mode)
+            assert import_button.display is True, mode
+        assert not pilot.app.query("#personas-library-import-actor-pack")
+        # AC#10 and AC#11: Duplicate (Task 1) and New Actor Pack (Task 2)
+        # left the toolbar as well.
+        assert not pilot.app.query("#personas-library-duplicate")
+        assert not pilot.app.query("#personas-library-new-actor-pack")
         pane.set_mode("personas")
         await pane.update_rows((), total=0, noun="personas")
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
-        copy = str(empty.renderable)
-        assert "No personas yet" in copy
-        assert "Import" not in copy
+        assert (
+            str(empty.renderable) == "No personas yet - use New or Import to add one."
+        )
 
 
 async def test_update_rows_twice_in_same_tick_does_not_crash():

@@ -641,6 +641,10 @@ ADMISSION_2_TARGETS = (
     # own control, never the rail's subtree (the mounted Console;
     # bootstrap_profile, two tests, ~18 s).
     "Tests/UI/test_console_edge_focus_restyle_scope.py",
+    # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
+    # one Import picker, mounted on real stores (bootstrap_profile; 30 cases,
+    # 58 s serial).
+    "Tests/UI/test_roleplay_import_app.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
