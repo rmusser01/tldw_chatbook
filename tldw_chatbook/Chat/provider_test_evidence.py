@@ -103,7 +103,8 @@ PUBLIC_MODEL_LISTING_PROVIDER_KEYS = PUBLIC_MODEL_LISTING_KEYS
 #: listing never proves the key it was sent, so the record itself refuses to
 #: call it accepted. OpenRouter and Hugging Face are NOT here: discovery
 #: checks their key at /api/v1/key and whoami-v2, and a listing only
-#: accepts a key when that check passed (``key_check_probe_result``).
+#: accepts a key when that check passed (``ProviderProbeResult
+#: .key_check_passed``, read by ``_evidence_from_exact_outcome``).
 UNCHECKED_KEY_LISTING_PROVIDER_KEYS = UNCHECKED_KEY_LISTING_KEYS
 _GENERATION_FACETS = frozenset(
     {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
