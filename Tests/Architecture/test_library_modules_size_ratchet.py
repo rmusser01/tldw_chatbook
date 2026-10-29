@@ -696,6 +696,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-27, Task 9 fix round 2 (review R1 N-3; same decision): only an
     # explicit Save is answered "Saved — no changes." -- the outcome learns
     # who asked: 8432 -> 8441 (measured).
+    # 2026-10-29, TASK-34000.40 Task 10 (N-34; owner decision "expand limits,
+    # don't contort code"): Escape leaves a running import instead of
+    # cancelling it (a running check still cancels, ruling T10-c), and the
+    # lasting-sync snapshot is handed to the canvas with its back control
+    # named for the route in ("‹ Sync folders"): 8441 -> 8462 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7423,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
@@ -750,6 +755,11 @@ _BUDGETS: dict[str, int] = {
     # decision): P1-B's .17 begin_add_from_files / release-on-exit and .71
     # availability re-derive on top of P1-C's .16 activation hold, measured
     # on the rebased tree: 2415 -> 2461.
+    # 2026-10-29, TASK-34000.40 Task 10 (N-34, AC#6; owner decision "expand
+    # limits, don't contort code"): staged review choices survive leaving the
+    # review -- forgotten per root by an apply, a stale review or a root
+    # control, bounded to three observations -- and the status line is
+    # derived from the staged count: 2461 -> 2524 (measured).
     "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2468,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born

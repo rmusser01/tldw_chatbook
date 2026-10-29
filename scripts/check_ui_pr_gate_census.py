@@ -879,10 +879,13 @@ MINIMUM_FILES = 1748
 #   (~14 s alone), plus Tests/UI/test_library_ctrl_s_chip_follows_save_state.py
 #   (two boots, ~15 s) and the boot-free Tests/UI/test_library_ctrl_s_
 #   refusals.py (~2 s), all timed alone with no plugin: 926 -> 929.
+# - task 10 (2026-10-29, TASK-34000.40 N-34, ruling T10-a): Tests/UI/test_library_
+#   notes_import_escape_keeps_running.py (two production-CSS Library boots over
+#   a real import, ~24 s alone at load average ~28, no plugin): 929 -> 930.
 # Rebased 2026-11-06 onto dev 2684e5453f (1748 entries, floor 1748): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 1748 + 13 = 1761.
-MINIMUM_FILES = 1761
+# moves; the floor is the measured entry count: 1748 + 14 = 1762.
+MINIMUM_FILES = 1762
 
 
 def read_census(path: Path) -> list[str]:
