@@ -636,7 +636,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # changes shard: dev's 1140 + 2 = 1142.
 # Rebased 2026-10-29 onto dev's 1141 entries (TASK-36611 above): 1141 + 2
 # = 1143.
-MINIMUM_FILES = 1165
+# TASK-33620.2 review (2026-10-29) appends 1 more node entry at the tail:
+# with no model chosen the vision row stays hidden under the setup strip.
+# Dev's 1141 + 3 = 1144.
+MINIMUM_FILES = 1166
 
 
 def read_census(path: Path) -> list[str]:
