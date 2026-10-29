@@ -14,6 +14,7 @@ an explicit choice in the user's file -- ``streaming`` or the legacy
 default still turns streaming off for a server that refuses it.
 """
 
+import json
 import tomllib
 
 import pytest
@@ -167,3 +168,42 @@ def test_a_model_saved_default_with_streaming_off_outranks_the_new_default(
         ).streaming
         is True
     )
+
+
+def test_a_reopened_chat_keeps_the_streaming_it_was_saved_with(tmp_path, monkeypatch):
+    """The new default reaches new chats only.
+
+    A Console conversation stores its own Streaming value in its metadata when
+    it is created, and reopening it restores that value. So a chat saved with
+    Streaming Off -- for example a cloud chat started while the shipped
+    default was Off -- stays Off after the upgrade; a conversation with no
+    stored value reads the new default.
+    """
+    from tldw_chatbook.Chat.console_conversation_hydration import (
+        hydrate_console_generation_settings,
+    )
+    from tldw_chatbook.Chat.console_generation_settings_metadata import (
+        merge_console_generation_settings,
+        snapshot_from_session_settings,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    settings = _load_profile(tmp_path, monkeypatch, OLDER_TEMPLATE_PROFILE)
+    saved_off = merge_console_generation_settings(
+        {},
+        snapshot_from_session_settings(
+            ConsoleSessionSettings(
+                provider="OpenAI", model="gpt-4.1-mini", streaming=False
+            )
+        ),
+    )
+
+    reopened = hydrate_console_generation_settings(
+        settings, {"metadata": json.dumps(saved_off)}
+    )
+    assert reopened.durable_snapshot is not None
+    assert reopened.settings.streaming is False
+
+    unsaved = hydrate_console_generation_settings(settings, {"metadata": None})
+    assert unsaved.durable_snapshot is None
+    assert unsaved.settings.streaming is True
