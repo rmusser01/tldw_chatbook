@@ -1,14 +1,25 @@
 # TASK-35582 delivery evidence
 
 **Latest qualification failed; AC24 remains open and PR3286 draft.**
-The [single run after green CI](v1-final60/report.md) used26/60generation requests
+The [final handoff run after green CI](final-handoff60/report.md) used44/60
+generation requests and3/3children onffe3cfdf5a, with native[2,1]. Both reviewer
+reports sealed and were presented. Haiku accepted four dispositions, then became
+stuck after three consecutive out-of-range source reads; V1 never sealed. The
+later deadline interrupted the primary stream, leaving one usage reservation
+uncertain. Final mapping/unified reads were unavailable. Current cumulative usage
+is457requests/31children; the unused16requests retire with this consumed invocation.
+No retry, new repair cycle or merge followed, and the follow-up was deleted.
+[Independent outcome review](final-handoff60/outcome-review.md),
+[spending](final-handoff60/spending.json), [retention](final-handoff60/retention.json).
+
+The [previous run after green CI](v1-final60/report.md) used26/60generation requests
 and2/3children onb35bb489ea. R1 received an accepted but contradictory completion
 that could not seal; R2 sealed; the primary later reported an unresolved provider
 error. V1 did not launch and unified output is unavailable.
 [Independent outcome review](v1-final60/outcome-review.md),
 [spending](v1-final60/spending.json), [raw retention](v1-final60/retention.json).
 
-Actual cumulative usage is413generation requests/28children, including one
+Before the latest run, cumulative usage was413generation requests/28children, including one
 subsequent local diagnostic (zero cloud requests/children). The single
 invocation is consumed; unused34requests/one child do not permit a retry.
 The [instruction-deferral checkpoint repair](instruction-deferral-checkpoint.md)
@@ -16,7 +27,7 @@ reproduces a continuation defect against the exact saved checkpoint: deferred
 calls remained pending and invalidated the next otherwise-valid response. Eight
 new offline regressions pass after settling each deferral through existing
 persistence/acknowledgment barriers. The missing historical response still limits
-attribution; AC24 has not been rerun or completed.
+attribution. The latest run reached V1; AC24 remains incomplete.
 The [R1 offline repair and provider diagnosis](r1-completion-offline/report.md)
 now reject contradictory completion before acknowledgment, with same-ID repair
 feedback and unchanged sealing checks. The failed live result is unchanged;
@@ -33,7 +44,7 @@ The [shutdown reconciliation guard](ci-followup/shutdown.md) and earlier
 before qualification:55success/3skips. All7native Windows full-app GGUF cases
 passed; observed close time fell from142s to17s and CPU from136s to0.31s.
 The [V1 conflict repair](v1-conflict-offline/report.md) remains verified offline;
-this run never reached V1 and does not add live evidence for that repair.
+the earlier26-request run never reached V1 and added no live evidence for that repair.
 The [previous qualification](continuation-final60/report.md) and older failures
 remain historical evidence with their original spending and limitations.
 
