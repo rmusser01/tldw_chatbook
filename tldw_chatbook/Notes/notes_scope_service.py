@@ -1947,6 +1947,55 @@ class NotesScopeService:
                 type(error).__name__,
             )
 
+    async def deleted_notes_purge_scope(
+        self,
+        note_ids: Sequence[str],
+        *,
+        sync_runtime: Any = None,
+        sync_state: Any = None,
+    ) -> dict[str, tuple[bool, bool]]:
+        """What Delete forever would leave elsewhere, per note on a Trash page.
+
+        TASK-34000.29 (review R0, m-9): the confirm says so only where it is
+        known cheaply, in the page read that is already off the event loop --
+        a disconnected sync folder still has the note's file
+        (``notes_with_kept_files``), or a sync server accepted a copy
+        (``sync_v2_note_ids_on_server``, asked only while a Sync v2 profile
+        is active, so a local-only device never opens its sync store). A
+        fact that cannot be read adds no clause; the guide states both cases
+        for every note.
+
+        Args:
+            note_ids: The page's deleted note ids.
+            sync_runtime: The lasting-sync runtime, or ``None``.
+            sync_state: The Sync v2 state repository, or ``None``.
+
+        Returns:
+            ``{note_id: (kept_file, server_copy)}`` for the notes with either.
+        """
+        ids = [str(note_id) for note_id in note_ids if note_id]
+        if not ids:
+            return {}
+        kept: set[str] = set()
+        ask = getattr(sync_runtime, "notes_with_kept_files", None)
+        if callable(ask):
+            try:
+                kept = set(await ask(ids))
+            except Exception:  # noqa: BLE001 - no clause; the guide says it
+                kept = set()
+        on_server: set[str] = set()
+        read = getattr(sync_state, "sync_v2_note_ids_on_server", None)
+        if self.sync_v2_notes_producer is not None and callable(read):
+            try:
+                on_server = set(await self._run_folder_repository(read, ids))
+            except Exception:  # noqa: BLE001 - no clause; the guide says it
+                on_server = set()
+        return {
+            note_id: (note_id in kept, note_id in on_server)
+            for note_id in ids
+            if note_id in kept or note_id in on_server
+        }
+
     async def live_local_note_ids(
         self, note_ids: Sequence[str], *, user_id: Optional[str] = None
     ) -> set[str]:
