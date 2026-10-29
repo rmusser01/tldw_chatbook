@@ -606,3 +606,67 @@ def test_authority_callback_revision_change_refuses_before_publication(
         with c.store.lease(prepared.review_id) as context:
             assert not context.original_index
             assert not context.source_state.pages
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_error", [False, True])
+async def test_deferred_report_read_does_not_publish_during_modal_removal(
+    review_case, monkeypatch, read_error
+):
+    import asyncio
+    import threading
+
+    from textual.widgets import TextArea
+
+    from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from tldw_chatbook.Widgets.Console.console_code_review_modal import (
+        ConsoleCodeReviewModal,
+    )
+
+    c = review_case
+    prepared = c.prepare()
+    modal = ConsoleCodeReviewModal(service=c.primary, review_id=prepared.review_id)
+    async with ConsolidatedCSSApp().run_test(size=(80, 24)) as pilot:
+        await pilot.app.push_screen(modal)
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if modal._options_loaded:
+                break
+        await pilot.pause()
+        body = modal.query_one(TextArea)
+        before = body.text
+        entered, finish = threading.Event(), threading.Event()
+        removing, removed = asyncio.Event(), asyncio.Event()
+
+        def deferred(*args):
+            entered.set()
+            assert finish.wait(5)
+            if read_error:
+                raise ValueError("late read failure")
+            return {"body": "late read must not publish", "next_offset": None}
+
+        async def hold_unmount(self):
+            if self is modal:
+                removing.set()
+                await removed.wait()
+
+        monkeypatch.setattr(modal, "_read_page", deferred)
+        monkeypatch.setattr(
+            ConsoleCodeReviewModal, "on_unmount", hold_unmount, raising=False
+        )
+        read = asyncio.create_task(modal._read("R1", modal._generation))
+        removal = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            removal = asyncio.ensure_future(modal.remove())
+            await asyncio.wait_for(removing.wait(), 3)
+            assert modal.is_attached and modal._pruning
+            finish.set()
+            await read
+            assert body.text == before
+        finally:
+            finish.set()
+            removed.set()
+            if removal is not None:
+                await removal
+            await read

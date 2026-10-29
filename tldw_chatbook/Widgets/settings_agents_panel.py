@@ -599,8 +599,13 @@ class AgentsSettingsPanel(Vertical):
     async def _load_review_team(self) -> None:
         from tldw_chatbook.Agents.code_review_models import ReviewRefused, ReviewTeam
 
-        if self._runs_db is None:
+        if self._runs_db is None or not self.is_attached or self._pruning:
             return
+        status = self.query_one("#agents-review-team-status", Static)
+        save = self.query_one("#agents-review-save", Button)
+        preset = self.query_one("#agents-review-preset", Select)
+        focus = self.query_one("#agents-review-focus", Input)
+        controls = (status, save, preset, focus)
         try:
             team = (
                 await asyncio.to_thread(get_code_review_team)
@@ -608,21 +613,21 @@ class AgentsSettingsPanel(Vertical):
                 else ReviewTeam()
             )
         except ReviewRefused as exc:
-            self.query_one("#agents-review-team-status", Static).update(
-                f"{exc.reason}: repair [agents.code_review] before saving."
-            )
-            self.query_one("#agents-review-save", Button).disabled = True
+            if any(not control.is_attached or control._pruning for control in controls):
+                return
+            status.update(f"{exc.reason}: repair [agents.code_review] before saving.")
+            save.disabled = True
+            return
+        if any(not control.is_attached or control._pruning for control in controls):
             return
         self._review_team = team
-        self.query_one("#agents-review-save", Button).disabled = False
+        save.disabled = False
         await self._render_review_team()
+        if any(not control.is_attached or control._pruning for control in controls):
+            return
         first = team.reviewers[0] if team.reviewers else None
-        self.query_one("#agents-review-preset", Select).value = (
-            first.preset_id if first else Select.NULL
-        )
-        self.query_one("#agents-review-focus", Input).value = (
-            first.focus if first else ""
-        )
+        preset.value = first.preset_id if first else Select.NULL
+        focus.value = first.focus if first else ""
 
     def _review_preset_label(self, preset_id: str) -> str:
         row = next((row for row in self._rows if row["id"] == preset_id), None)
@@ -631,6 +636,9 @@ class AgentsSettingsPanel(Vertical):
         return row["name"] + ("" if row["enabled"] else " (disabled)")
 
     async def _render_review_team(self, index: int | None = None) -> None:
+        if not self.is_attached or self._pruning:
+            return
+        status = self.query_one("#agents-review-team-status", Static)
         referenced = [choice.preset_id for choice in self._review_team.reviewers]
         if self._review_team.verifier_preset_id:
             referenced.append(self._review_team.verifier_preset_id)
@@ -646,6 +654,8 @@ class AgentsSettingsPanel(Vertical):
         verifier.value = verifier_value or Select.NULL
         lv = self.query_one("#agents-review-team-list", ListView)
         await lv.clear()
+        if not lv.is_attached or lv._pruning:
+            return
         items = [
             ListItem(
                 Static(
@@ -658,6 +668,8 @@ class AgentsSettingsPanel(Vertical):
         ]
         if items:
             await lv.extend(items)
+            if not lv.is_attached or lv._pruning:
+                return
             lv.index = min(index if index is not None else 0, len(items) - 1)
         diagnostics = []
         destinations = []
@@ -692,7 +704,9 @@ class AgentsSettingsPanel(Vertical):
             diagnostics.append(
                 "Choose at least two reviewer presets; no destinations are selected automatically."
             )
-        self.query_one("#agents-review-team-status", Static).update(
+        if not status.is_attached or status._pruning:
+            return
+        status.update(
             " ".join(diagnostics)
             or "Team ready for preparation; routing and permissions are checked per run."
         )
@@ -743,10 +757,11 @@ class AgentsSettingsPanel(Vertical):
     async def _save_review_team(self) -> None:
         from tldw_chatbook.Agents.code_review_models import parse_review_team
 
+        if not self.is_attached or self._pruning:
+            return
+        status = self.query_one("#agents-review-team-status", Static)
         if not self._app_config():
-            self.query_one("#agents-review-team-status", Static).update(
-                "Team saving needs an app configuration."
-            )
+            status.update("Team saving needs an app configuration.")
             return
         verifier = self.query_one("#agents-review-verifier", Select).value
         team = parse_review_team(
@@ -769,7 +784,9 @@ class AgentsSettingsPanel(Vertical):
         )
         if saved:
             self._review_team = team
-        self.query_one("#agents-review-team-status", Static).update(
+        if not status.is_attached or status._pruning:
+            return
+        status.update(
             "Saved review team. Applies to the next review."
             if saved
             else "Could not save review team; edits retained."
