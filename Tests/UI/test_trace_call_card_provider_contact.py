@@ -93,3 +93,40 @@ def test_pauses_before_any_call_still_say_not_contacted(kind) -> None:
     """Both pause before dispatch; a stray record never reaches their card."""
     contact = TraceCallProviderContact("yes")
     assert _impact(kind, contact) == NOT_CONTACTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unconfirmed", [False, True])
+async def test_an_unconfirmed_capture_makes_send_without_capture_primary(
+    unconfirmed,
+) -> None:
+    """Review follow-up: after Capture-On Retry was refused as unconfirmed,
+    Retry can never succeed, yet it stayed the primary action."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        TraceCallRecoveryCallout,
+    )
+
+    contact = TraceCallProviderContact(
+        "yes",
+        TraceProviderRejection("OpenAI", 429, "rate limit exceeded"),
+        capture_unconfirmed=unconfirmed,
+    )
+    state = trace_call_recovery_state(
+        _paused(ConsolePreparationPauseKind.TRACE_CALL), provider_contact=contact
+    )
+
+    class _Host(App):
+        def compose(self):
+            yield TraceCallRecoveryCallout(state=state, on_action=lambda *_: None)
+
+    host = _Host()
+    async with host.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        retry = host.query_one("#console-trace-retry", Button)
+        send_without = host.query_one("#console-trace-send-without", Button)
+        assert retry.display and send_without.display
+        assert (retry.variant == "primary") is not unconfirmed
+        assert (send_without.variant == "primary") is unconfirmed

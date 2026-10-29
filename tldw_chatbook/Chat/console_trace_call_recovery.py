@@ -12,7 +12,7 @@ Loaded on first use, never at UI-ready (ADR-097 boot ratchet).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState
@@ -47,10 +47,14 @@ class TraceCallProviderContact:
             "no" when none crossed the dispatch checkpoint, else "unknown".
         rejection: The provider's last definitive HTTP refusal, if any (a
             ``TraceProviderRejection``: provider, status_code, meaning).
+        capture_unconfirmed: Set once a Capture-On Retry was refused because
+            the failed reservation's outcome is unknown; from then on only
+            Send without capture (or Cancel) can continue the send.
     """
 
     contacted: Literal["yes", "no", "unknown"]
     rejection: object | None = None
+    capture_unconfirmed: bool = False
 
 
 def provider_contact_for_pause(
@@ -112,6 +116,12 @@ def repause_unconfirmed_trace_call(
     )
     if paused is None:
         return None
+    contact = controller._trace_call_provider_contacts.get(preparation_id)
+    controller._trace_call_provider_contacts[preparation_id] = (
+        replace(contact, capture_unconfirmed=True)
+        if isinstance(contact, TraceCallProviderContact)
+        else TraceCallProviderContact("unknown", capture_unconfirmed=True)
+    )
     controller._set_run_state(
         ConsoleRunState.blocked(UNCONFIRMED_RESERVATION_COPY),
         session_id=current.session_id,
