@@ -1211,7 +1211,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: decision): the lasting tier's Escape chip names the folder list when
     #: Escape returns there, and the import tier has one spelling for Escape:
     #: 38812 -> 38819 lines, 1397 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38819, 1397),
+    #: 2026-10-29, TASK-34000.29 Task 8b (N-29, Delete forever; owner ruling
+    #: "yes with confimration" and owner decision "expand limits, don't
+    #: contort code"): the Notes Trash ``x`` binding, its ``check_action``
+    #: gate, the footer's ``x delete forever`` chip read through that gate,
+    #: the Delete forever delegator, the focused-row lookup
+    #: (``_focused_library_notes_trash_delete``) and action, and the
+    #: real-input withdrawal dropping the Trash settling marker (parked R4-1):
+    #: 38819 -> 38885 lines, 1397 -> 1400 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38885, 1400),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

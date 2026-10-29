@@ -693,7 +693,16 @@ _BUDGETS: dict[str, int] = {
     # one "back to Sync folders" decision read by Escape, the back control,
     # the label and the footer, a shared roots return that lands focus, and a
     # running-import re-entry focused on its progress: 8467 -> 8505 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8505,
+    # 2026-10-29, TASK-34000.29 Task 8b (N-29, Delete forever; owner ruling
+    # "yes with confimration", owner decision "expand limits, don't contort
+    # code"): the Delete forever handler and its ConfirmationDialog, the
+    # confirm and cancel answers (focus owed back to the row), the purge
+    # worker through ``NotesScopeService.purge_note`` with its refusals, its
+    # notice and its page re-read after the interlock's release, and the
+    # parked R4-1/R4-2 settling rules (every list landing raises the marker,
+    # a landing for another role drops it, keep-in-view waits out a pruning
+    # sync's framework focus): 8505 -> 8739 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8739,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
