@@ -661,7 +661,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # admission-sensitive job instead.
 # PR3295, 2026-10-31: retain all1242 dev entries plus the Tool gates node.
 # PR3299, 2026-10-31: retain all1243 dev entries and append three key-ownership nodes.
-MINIMUM_FILES = 1246
+# TASK-33620.2 (2026-10-29) appends 2 node entries at the tail: the vision
+# block's verbatim refusal through the real composer (AC#4) and the Switch
+# model focus hand-back, one mounted Console case each, so no existing entry
+# changes shard: dev's 1140 + 2 = 1142.
+# Rebased 2026-10-29 onto dev's 1141 entries (TASK-36611 above): 1141 + 2
+# = 1143.
+MINIMUM_FILES = 1248
 
 
 def read_census(path: Path) -> list[str]:
