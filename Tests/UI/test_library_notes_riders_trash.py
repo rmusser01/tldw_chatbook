@@ -4,7 +4,9 @@ Group `i-trash` of the Notes riders wave: task-32144. The delete receipt is
 a good immediate affordance and a bad only one; a "Recently deleted (N)" row
 under the folder tree opens a list of soft-deleted notes whose Restore goes
 through the SAME seam Undo does (``_undo_library_note_delete`` ->
-``NotesScopeService.restore_note``). No permanent delete anywhere.
+``NotesScopeService.restore_note``). TASK-34000.29 (8b, owner ruling
+2026-10-29 "yes with confimration"): each row also offers Delete forever,
+behind a confirm that names the note (``NotesScopeService.purge_note``).
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from Tests.UI.test_library_notes_wave_list import (
     _RestoreService,
     _list_state,
     _passthrough_service_call,
+    assert_every_action_fits,
 )
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNotesFocusIdentity,
@@ -152,20 +155,41 @@ async def test_trash_view_lists_every_deleted_note_with_its_own_restore() -> Non
 
 
 @pytest.mark.asyncio
-async def test_trash_view_offers_no_permanent_delete() -> None:
-    """AC: recovery only -- Danger stays out of this view."""
+async def test_trash_view_offers_delete_forever_behind_a_confirm() -> None:
+    """AC#9: each row's Delete forever, beside its Restore (owner, 2026-10-29).
+
+    Rewritten by name from ``test_trash_view_offers_no_permanent_delete``
+    (TASK-34000.29 8b): the owner ruled "yes with confimration". Each row
+    carries a danger-marked Delete forever bound to that row's note, painted
+    inside the pane. It is not a Tab stop -- a row is one stop, its Restore,
+    and ``x`` acts on the focused row as ``r`` does -- so the page keeps one
+    Tab per row. The press opens a confirm
+    (``test_delete_forever_asks_first_and_names_the_note``); the purpose line
+    no longer promises that nothing here removes a note for good.
+    """
     app = _CanvasApp(
         pane_width=100,
         mode="trash",
-        trash=_trash(_row("n1", "Groceries")),
+        trash=_trash(_row("n1", "Groceries"), _row("n2", "Draft"), total=2),
     )
     async with app.run_test(size=(120, 40)):
-        labels = " ".join(
-            str(button.label) for button in app.query(Button).results(Button)
-        ).lower()
-        assert "delete" not in labels
-        assert "forever" not in labels
-        assert not app.query(".library-canvas-danger")
+        deletes = list(app.query(".library-notes-trash-delete").results(Button))
+        assert [str(button.label) for button in deletes] == ["Delete forever"] * 2
+        assert [button.id for button in deletes] == [
+            "library-notes-trash-delete-0",
+            "library-notes-trash-delete-1",
+        ]
+        assert [button.note_id for button in deletes] == ["n1", "n2"]
+        assert [button.note_title for button in deletes] == ["Groceries", "Draft"]
+        assert [button.note_version for button in deletes] == [2, 2]
+        assert all(button.has_class("library-canvas-danger") for button in deletes)
+        assert not any(button.focusable for button in deletes)
+        purpose = LibraryNotesCanvas._static_text(
+            app.query_one("#library-notes-trash-purpose", Static)
+        )
+        assert "nothing is removed for good" not in purpose
+        assert "Delete forever" in purpose
+        assert_every_action_fits(app)
 
 
 @pytest.mark.asyncio
@@ -561,6 +585,9 @@ def test_trash_footer_advertises_restore_and_the_way_back() -> None:
         ),
         _library_notes_focus_region=lambda: "trash",
         _notes_footer_tier=lambda wide, _compact: wide,
+        # TASK-34000.29 8b: focus on Back here, so ``x`` is not live and the
+        # footer does not offer it (``test_the_x_chip_is_painted_only_...``).
+        check_action=lambda _action, _parameters: False,
     )
 
     shortcuts = LibraryScreen._library_notes_footer_shortcuts(fake)
@@ -1217,3 +1244,399 @@ def test_the_trash_offset_is_withheld_only_while_a_page_landing_settles() -> Non
     )
     assert pressed._trash_focus_role == "trash-next"
     assert pressed._trash_landing_settling == ""
+
+
+# -- TASK-34000.29 part 8b: Delete forever (owner, 2026-10-29) --------------
+
+
+def _press_event(button) -> SimpleNamespace:
+    return SimpleNamespace(stop=lambda: None, button=button)
+
+
+def _purge_press_fake(*, fenced: bool = False, view: str = "trash"):
+    """A controller-shaped receiver whose dialogs and workers are recorded."""
+    pushed: list[tuple] = []
+    workers: list[tuple] = []
+    notices: list[tuple] = []
+    fake = SimpleNamespace(
+        _library_notes_view=view,
+        _trash_focus_role="",
+        _trash_landing_settling="settling",
+        _library_notes_mutation_in_flight=False,
+        _library_notes_mutation_fenced=lambda: fenced,
+        app=SimpleNamespace(
+            push_screen=lambda screen, callback: pushed.append((screen, callback))
+        ),
+        app_instance=SimpleNamespace(
+            notify=lambda message, **kwargs: notices.append((message, kwargs))
+        ),
+    )
+
+    def run_worker(work, **kwargs):
+        workers.append((work, kwargs))
+        work.close()
+
+    fake.run_worker = run_worker
+    fake._purge_library_note_from_trash = MethodType(
+        LibraryNotesController._purge_library_note_from_trash, fake
+    )
+    fake._confirm_library_notes_trash_delete = MethodType(
+        LibraryNotesController._confirm_library_notes_trash_delete, fake
+    )
+    return fake, pushed, workers, notices
+
+
+def test_delete_forever_asks_first_and_names_the_note() -> None:
+    """ADR-055 Pattern B, ruling T8b-a: nothing is written before the confirm.
+
+    The confirm is the house ``ConfirmationDialog``: it renders title and
+    message with ``markup=False`` (a title like ``[b]x[/b]`` is named, not
+    styled), opens on Cancel (``AUTO_FOCUS``), and Escape is its Cancel.
+    Cancel writes nothing; only Delete forever starts the purge, under the
+    Notes interlock, with focus owed to the row that will take this one's
+    place (ruling T8b-e).
+    """
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    fake, pushed, workers, _notices = _purge_press_fake()
+    button = SimpleNamespace(
+        id="library-notes-trash-delete-3",
+        note_id="n4",
+        note_title="[b]Groceries[/b]",
+        note_version=5,
+    )
+
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+
+    ((dialog, answer),) = pushed
+    assert isinstance(dialog, ConfirmationDialog)
+    assert dialog.title == "Delete this note forever?"
+    assert dialog.message == (
+        "“[b]Groceries[/b]” will be deleted for good. This cannot be undone."
+    )
+    assert dialog.confirm_label == "Delete forever"
+    assert dialog.cancel_label == "Cancel"
+    assert ConfirmationDialog.AUTO_FOCUS == "#cancel-button"
+    assert workers == []
+
+    answer(False)  # Cancel or Escape
+    assert workers == []
+    assert fake._library_notes_mutation_in_flight is False
+
+    answer(True)
+    ((work, options),) = workers
+    assert options == {"exclusive": True, "group": "library_note_mutation"}
+    assert work.cr_code is LibraryNotesController._purge_library_note_from_trash.__code__
+    assert work.cr_frame.f_locals["note_id"] == "n4"
+    assert work.cr_frame.f_locals["version"] == 5
+    assert fake._library_notes_mutation_in_flight is True
+    assert fake._trash_focus_role == "trash-restore:3"
+    assert fake._trash_landing_settling == ""
+
+
+def test_a_confirm_that_meets_another_notes_change_deletes_nothing() -> None:
+    """The interlock is read again when the confirm returns, and says so."""
+    fake, pushed, workers, notices = _purge_press_fake()
+    button = SimpleNamespace(
+        id="library-notes-trash-delete-0", note_id="n1", note_title="A", note_version=2
+    )
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+    fake._library_notes_mutation_fenced = lambda: True
+
+    pushed[0][1](True)
+
+    assert workers == []
+    assert notices == [
+        (
+            "Nothing was deleted — another change to your notes is still running.",
+            {"severity": "warning", "markup": False},
+        )
+    ]
+
+
+def _trash_key_fake(*, view="trash", rows=True, fenced=False, delete=object()):
+    return SimpleNamespace(
+        _library_notes_workflow_active=lambda: True,
+        _notes_state=SimpleNamespace(
+            view=view, trash=_trash(_row("n1", "Groceries")) if rows else _trash()
+        ),
+        _library_notes_mutation_fenced=lambda: fenced,
+        _focused_library_notes_trash_delete=lambda: delete,
+    )
+
+
+def test_x_is_live_only_on_a_focused_trash_row() -> None:
+    """Ruling T8b-d: Delete forever's key, and nowhere else.
+
+    ``check_action`` is the one decision the binding, the footer chip and F1
+    all read.
+    """
+    check = LibraryScreen.check_action
+    assert check(_trash_key_fake(), "library_notes_trash_delete", ()) is True
+    # Focus on Back or the pager: no focused row, no key.
+    assert not check(_trash_key_fake(delete=None), "library_notes_trash_delete", ())
+    # The list view's focused note row: x does nothing there.
+    assert not check(_trash_key_fake(view="list"), "library_notes_trash_delete", ())
+    assert not check(_trash_key_fake(rows=False), "library_notes_trash_delete", ())
+    assert not check(_trash_key_fake(fenced=True), "library_notes_trash_delete", ())
+
+
+def test_the_x_chip_is_painted_only_where_x_deletes() -> None:
+    """The footer asks the binding's own gate; F1 lists the same key there."""
+    asked: list[str] = []
+
+    def footer(live: bool, compact: bool = False):
+        fake = SimpleNamespace(
+            _notes_state=SimpleNamespace(
+                view="trash",
+                compact=compact,
+                stage="notes",
+                select_mode=False,
+                sort_choices_visible=False,
+                confirming_delete=False,
+                trash=_trash(_row("n1", "Groceries")),
+            ),
+            _library_notes_workflow_active=lambda: True,
+            _library_note_session=SimpleNamespace(
+                snapshot=None, conflict_resolution_running=False
+            ),
+            _library_notes_focus_region=lambda: "trash",
+            _notes_footer_tier=lambda wide, short: short if compact else wide,
+            check_action=lambda action, _params: asked.append(action) or live,
+        )
+        return LibraryScreen._library_notes_footer_shortcuts(fake)
+
+    assert footer(True) == (
+        ("r", "restore note"),
+        ("x", "delete forever"),
+        ("esc", "back to notes"),
+    )
+    assert footer(True, compact=True) == (
+        ("r", "restore"),
+        ("x", "delete forever"),
+        ("esc", "notes"),
+    )
+    assert footer(False) == (("r", "restore note"), ("esc", "back to notes"))
+    assert set(asked) == {"library_notes_trash_delete"}
+
+    def f1_keys(live: bool) -> list[tuple[str, str]]:
+        fake = SimpleNamespace(
+            check_action=lambda action, _params: live
+            if action == "library_notes_trash_delete"
+            else False,
+            BINDINGS=LibraryScreen.BINDINGS,
+        )
+        return [
+            pair
+            for pair in LibraryScreen._active_library_binding_shortcuts(fake)
+            if pair[0] == "x"
+        ]
+
+    assert f1_keys(True) == [("x", "Delete forever")]
+    assert f1_keys(False) == []
+
+
+@pytest.mark.asyncio
+async def test_x_deletes_the_focused_rows_note_never_a_guess(monkeypatch) -> None:
+    """``x`` stands for the focused row's own Delete forever button."""
+    app = _CanvasApp(
+        pane_width=100,
+        mode="trash",
+        trash=_trash(_row("n1", "Groceries"), _row("n2", "Draft"), total=2),
+    )
+    async with app.run_test(size=(120, 40)):
+        restores = list(app.query(".library-notes-trash-restore").results(Button))
+        pressed: list[str] = []
+        monkeypatch.setattr(
+            Button, "press", lambda self: pressed.append(self.id) or self
+        )
+        fake = SimpleNamespace(focused=restores[1], query=app.query)
+        fake._focused_library_notes_trash_delete = MethodType(
+            LibraryScreen._focused_library_notes_trash_delete, fake
+        )
+        LibraryScreen.action_library_notes_trash_delete(fake)
+        assert pressed == ["library-notes-trash-delete-1"]
+
+        pressed.clear()
+        fake.focused = app.query_one("#library-notes-trash-back", Button)
+        LibraryScreen.action_library_notes_trash_delete(fake)
+        assert pressed == []
+
+
+class _PurgeService:
+    def __init__(self, outcome) -> None:
+        self.outcome = outcome
+        self.calls: list[dict] = []
+
+    async def purge_note(self, **kwargs):
+        self.calls.append(kwargs)
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+def _purge_worker_fake(outcome, *, receipt_note: str = "n4"):
+    from tldw_chatbook.Library.library_notes_state import LibraryNoteDeleteReceipt
+
+    service = _PurgeService(outcome)
+    notices: list[tuple] = []
+    refreshes: list[dict] = []
+    runtime = object()
+    fake = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            notes_scope_service=service,
+            notes_sync_runtime_owner=runtime,
+            notify=lambda message, **kwargs: notices.append((message, kwargs)),
+        ),
+        _run_library_service_call=_passthrough_service_call,
+        _library_notes_user_id=lambda: "user-1",
+        _refresh_library_notes_trash=lambda **kwargs: refreshes.append(kwargs),
+        _library_notes_mutation_in_flight=True,
+        _tree_reload_owed=False,
+        _trash_reload_owed="",
+        _trash_focus_role="trash-restore:3",
+        _library_note_delete_receipt=LibraryNoteDeleteReceipt(
+            note_id=receipt_note, title="Groceries", expected_version=4
+        ),
+        is_mounted=True,
+    )
+    return fake, service, notices, refreshes, runtime
+
+
+@pytest.mark.asyncio
+async def test_a_purge_says_so_and_lands_on_the_row_that_took_its_place() -> None:
+    """Receipt-free notice (ADR-055 B), then the same page, focus owed.
+
+    The list's own delete receipt for the same note goes too: its Undo
+    would try to restore a note that no longer exists.
+    """
+    fake, service, notices, refreshes, runtime = _purge_worker_fake(True)
+
+    await LibraryNotesController._purge_library_note_from_trash(
+        fake, "n4", "Groceries", 5, trash_focus="trash-restore:3"
+    )
+
+    assert service.calls == [
+        {
+            "scope": "local_note",
+            "note_id": "n4",
+            "version": 5,
+            "user_id": "user-1",
+            "sync_runtime": runtime,
+        }
+    ]
+    assert notices == [("Deleted forever · Groceries", {"markup": False})]
+    assert refreshes == [{"focus_role": "trash-restore:3"}]
+    assert fake._library_note_delete_receipt is None
+    assert fake._library_notes_mutation_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_a_refused_purge_keeps_the_row_and_says_why() -> None:
+    """Ruling T8b-c: a sync-bound note is refused with the guide's sentence."""
+    from tldw_chatbook.Notes.notes_scope_service import (
+        PURGE_REFUSED_SYNC_BOUND,
+        NotePurgeRefusedError,
+    )
+
+    fake, _service, notices, refreshes, _runtime = _purge_worker_fake(
+        NotePurgeRefusedError(
+            reason_code="sync_bound", user_message=PURGE_REFUSED_SYNC_BOUND
+        ),
+        receipt_note="n4",
+    )
+
+    await LibraryNotesController._purge_library_note_from_trash(
+        fake, "n4", "Groceries", 5, trash_focus="trash-restore:3"
+    )
+
+    assert notices == [
+        (PURGE_REFUSED_SYNC_BOUND, {"severity": "warning", "markup": False})
+    ]
+    assert refreshes == []
+    assert fake._library_note_delete_receipt is not None
+    assert fake._library_notes_mutation_in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_a_purge_that_finds_the_tombstone_changed_reloads_the_page() -> None:
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
+
+    fake, _service, notices, refreshes, _runtime = _purge_worker_fake(
+        ConflictError("version mismatch", entity="notes", entity_id="n4")
+    )
+
+    await LibraryNotesController._purge_library_note_from_trash(
+        fake, "n4", "Groceries", 5, trash_focus="trash-restore:3"
+    )
+
+    assert notices == [
+        (
+            "This deleted note changed elsewhere — refresh and try again.",
+            {"severity": "warning", "markup": False},
+        )
+    ]
+    assert refreshes == [{}]
+
+
+def test_every_trash_landing_withholds_the_offset_until_it_settles() -> None:
+    """Parked R4-2 (ruling T8b-e): a same-page landing settles like a page's.
+
+    A Restore -- and now a purge -- lands focus from its own canvas sync, not
+    from a page read's publish, so nothing raised the settling marker and a
+    sync captured right after the landing put the new list's pre-layout
+    offset back over it. The landing raises it itself.
+    """
+    fake = SimpleNamespace(
+        _library_notes_view="trash",
+        _trash_focus_role="trash-restore:2",
+        _trash_landing_settling="",
+        _restore_library_notes_focus_identity=lambda _identity: None,
+        call_after_refresh=lambda *_args: None,
+    )
+
+    LibraryNotesController._land_library_notes_trash_focus(fake, "trash-restore:2")
+
+    assert fake._trash_landing_settling == "trash-restore:2"
+
+
+def test_a_dropped_landing_stops_withholding_the_trash_offset() -> None:
+    """Parked R4-1 (ruling T8b-e): the marker never outlives its landing.
+
+    A page change's landing can be dropped -- a later sync's explicit
+    ``then`` (a Restore's ``finally``) replaces it -- and a wheel scroll is
+    no withdrawal, so the marker stayed up and the next sync jumped the list
+    back over the user's own scroll. Two ends now: a landing callback that
+    runs for another role (the replacing sync's) clears it, and so does the
+    real-input withdrawal.
+    """
+    listing = SimpleNamespace(trash_page=1)
+    fake = SimpleNamespace(
+        _library_layout_ref=lambda _selector: listing,
+        _library_notes_trash=SimpleNamespace(page=1),
+        _library_notes_view="trash",
+        _trash_focus_role="trash-previous",
+        _trash_landing_settling="trash-previous",
+        _restore_library_notes_focus_identity=lambda _identity: None,
+        call_after_refresh=lambda *_args: None,
+    )
+
+    def owner():
+        return LibraryNotesController._library_notes_scroll_owner(fake, "trash")
+
+    assert owner() is None
+    # The replacing sync's landing is for the Restore's role: vetoed, and
+    # the page change's landing it displaced will never run.
+    LibraryNotesController._land_library_notes_trash_focus(fake, "trash-restore:4")
+    assert fake._trash_landing_settling == ""
+    assert owner() is listing
+
+    fake._trash_landing_settling = "trash-previous"
+    screen = SimpleNamespace(
+        _library_notes_filter_row_handoff=None,
+        _notes_state=SimpleNamespace(pending_focus_identity=None),
+        _notes_controller=fake,
+    )
+    LibraryScreen._withdraw_library_notes_pending_focus_handoffs(screen)
+    assert fake._trash_focus_role == ""
+    assert fake._trash_landing_settling == ""
