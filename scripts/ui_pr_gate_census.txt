@@ -1642,3 +1642,8 @@ Tests/UI/test_console_library_outcome_lines.py
 Tests/UI/test_console_send_window_reflows.py::test_a_stock_later_send_keeps_the_composer_one_row_tall
 Tests/UI/test_console_send_window_reflows.py::test_an_acknowledged_later_send_lands_its_echo_with_the_placeholder
 Tests/UI/test_console_send_window_reflows.py::test_the_composer_keeps_its_rows_while_a_send_takes_its_text
+# TASK-33620.15.26 review fix (2026-10-29): a refused send's draft gets its
+# rows back (one widget case, a few seconds; one mounted unknown-command send
+# and resize, about 10 s locally at load 5), appended at the tail as node ids.
+Tests/UI/test_console_send_window_reflows.py::test_a_refused_send_gives_its_draft_its_rows_back
+Tests/UI/test_console_send_window_reflows.py::test_an_unknown_command_keeps_its_draft_and_its_rows
