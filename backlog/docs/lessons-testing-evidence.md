@@ -22319,3 +22319,8 @@ The first Character Bench Save-publication regression run sent special keys whil
 ## Freeze the checkout while partition controls read the live census (TASK-37266..37268, 2026-10-28)
 
 The root rebased after starting the corrected UI partition controls. Two cases captured one census then invoked shard subprocesses while Git temporarily restored the inherited census; they reported missing/extra selectors even though the final ordering conserved all1184. The frozen exact22/23 retries passed without changing product, checker or assertions. Do not rebase or mutate census/workflow sources while controls partition the live checkout; preserve mixed-checkpoint runs as invalid evidence rather than repairing a correct partition.
+
+
+## Preserve the fixture layer when probing native UI controls (PR3290 CI repair, 2026-10-29)
+
+The first held-folder probe was collected from scratch outside Tests/UI. It failed marker registration before App execution, and config import occurred before the UI fixture bootstrap. It was invalid evidence and kept private. Selecting the original Tests/UI node and installing an observation/probe plugin preserved the real UI conftest/bootstrap/profile guards; later native runs reproduced the actual folder-publication and retired-row message gap. Do not mistake a scratch test with the same code for the original collection/fixture environment, and never count its setup failure as product RED.
