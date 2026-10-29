@@ -12,11 +12,15 @@ from __future__ import annotations
 import pytest
 from loguru import logger
 
-from Tests.Chat.test_console_trace_runtime import (  # noqa: F401 - fixture
+from Tests.Chat.test_console_trace_runtime import (
     _saved_message,
     _semantic_request,
-    make_database,
-    make_gateway,
+)
+from Tests.Chat.test_console_trace_runtime import (
+    make_database as make_database,  # noqa: PLC0414 - pytest fixture re-export
+)
+from Tests.Chat.test_console_trace_runtime import (
+    make_gateway as make_gateway,  # noqa: PLC0414 - pytest fixture re-export
 )
 from tldw_chatbook.Chat.console_prepared_request import (
     prepare_provider_request,
