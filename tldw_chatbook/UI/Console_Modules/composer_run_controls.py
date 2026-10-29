@@ -40,6 +40,7 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_IMPROVE_CURRENT_DRAFT,
     build_composer_menu_entries,
 )
+from ...Widgets.Console.console_transcript import ConsoleTranscript
 
 if TYPE_CHECKING:
     from textual.events import Key
@@ -182,6 +183,88 @@ def route_composer_control_key(
         event.stop()
         event.prevent_default()
     return True
+
+
+#: TASK-33622.4: the transcript is the Console's announced list mode (the
+#: ADR-031 refinement of 2026-10-27): its single letters act on messages, so
+#: while it holds focus the footer leads with that and with the way back.
+TRANSCRIPT_KEYS_FOOTER = (
+    ("", "Transcript keys · Esc to type"),
+    ("j/k", "select"),
+    ("Y", "trace"),
+)
+#: Hints that name something the key does not do while the transcript has
+#: focus (there Enter shows the selected message's actions).
+_NOT_TRANSCRIPT_HINTS = (("Enter", "send / queue"), ("Y", "trace"))
+
+
+def focus_in_transcript(focused: Any) -> bool:
+    """Whether ``focused`` is the transcript or one of its rows' controls.
+
+    Args:
+        focused: The focused widget, or None.
+
+    Returns:
+        True inside the transcript (its list mode), False anywhere else.
+    """
+
+    return focused is not None and any(
+        isinstance(node, ConsoleTranscript)
+        for node in getattr(focused, "ancestors_with_self", ())
+    )
+
+
+def transcript_focus_shortcuts(
+    shortcuts: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Return the footer hints for focus inside the transcript (TASK-33622.4).
+
+    Args:
+        shortcuts: The footer's ``(key label, description)`` hints, in order.
+
+    Returns:
+        The transcript's announcement and keys first (the footer drops hints
+        from the end as width runs out), then ``shortcuts`` without the hints
+        that do not hold there.
+    """
+
+    rest = tuple(pair for pair in shortcuts if pair not in _NOT_TRANSCRIPT_HINTS)
+    return (*TRANSCRIPT_KEYS_FOOTER, *rest)
+
+
+def with_transcript_keys(
+    screen: Any, shortcuts: tuple[tuple[str, str], ...]
+) -> tuple[tuple[str, str], ...]:
+    """Apply `transcript_focus_shortcuts` while the transcript holds focus.
+
+    Records which variant the footer got, so `sync_transcript_keys_footer`
+    re-registers the hints only when focus crosses the transcript's edge.
+
+    Args:
+        screen: The Console screen whose footer hints are being built.
+        shortcuts: The footer's hints so far.
+
+    Returns:
+        The transcript variant inside the transcript, else ``shortcuts``.
+    """
+
+    inside = focus_in_transcript(screen.focused)
+    screen._console_transcript_keys_footer = inside
+    return transcript_focus_shortcuts(shortcuts) if inside else shortcuts
+
+
+def sync_transcript_keys_footer(screen: Any, focused: Any) -> None:
+    """Re-register the footer hints when focus enters or leaves the transcript.
+
+    Args:
+        screen: The Console screen.
+        focused: The widget focus moved to, or None.
+    """
+
+    if focus_in_transcript(focused) != getattr(
+        screen, "_console_transcript_keys_footer", False
+    ):
+        screen._register_console_footer_shortcuts()
 
 
 def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:

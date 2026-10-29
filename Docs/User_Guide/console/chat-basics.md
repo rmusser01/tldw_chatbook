@@ -592,6 +592,13 @@ the focused action, and **Esc** clears the selection. Four shortcuts act
 on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
 **r** Regenerate — or, on a row that shows **Retry** or **Resend** in that
 slot, that action.
+
+While the transcript has keyboard focus its single letters are commands,
+and the footer says so: it leads with "Transcript keys · Esc to type",
+then **j/k** select and **Y** trace. **Esc** clears one thing at a time —
+keyboard text selection first, then the selected message — and once there
+is nothing left to clear it returns you to the composer, so the next thing
+you type lands in your draft.
 While a reply is still generating, the regular row actions are disabled with
 the tooltip "Wait for response to finish before using message actions."
 **More… ▸ Copy all** remains available for its current response trace.
@@ -836,7 +843,7 @@ Transcript:
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
 | c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
-| Esc | Clear the selection |
+| Esc | Clear the selection; with nothing selected, return to the composer |
 
 ## Related settings & docs
 

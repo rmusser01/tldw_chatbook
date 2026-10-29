@@ -1280,7 +1280,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("f", "fork from the selected message"),
             ("r", "regenerate the selected message"),
             ("More…", "Save as, feedback, delete, and diagnostics"),
-            ("Escape", "clear the selection"),
+            ("Escape", "clear the selection, then return to the composer"),
         ),
     ),
     (
@@ -5041,6 +5041,7 @@ class ChatScreen(BaseAppScreen):
             shortcuts = (("n/p", "Sections"), *shortcuts)
         if self._console_rail_focus_active():  # TASK-32322: the rail's exits
             shortcuts = rail_focus_shortcuts(shortcuts)
+        shortcuts = run_controls.with_transcript_keys(self, shortcuts)  # 33622.4
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
@@ -21721,6 +21722,7 @@ class ChatScreen(BaseAppScreen):
             event.widget if isinstance(event, DescendantFocus) else self.app.focused
         )
         sync_console_focus_paint(self, focused)
+        run_controls.sync_transcript_keys_footer(self, focused)
 
     def on_key(self, event: Key) -> None:
         """Treat the Console composer as the default printable text target."""
