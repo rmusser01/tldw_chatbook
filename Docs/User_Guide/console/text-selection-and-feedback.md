@@ -33,10 +33,14 @@ point. Which buttons appear depends on what you selected:
 | Button | When it appears |
 |---|---|
 | **Copy selection** | Always |
+| **Copy all** | Assistant responses and their thinking/tool activities |
+| **Copy all messages** | Any selection in the current chat |
+| **Select full message** | User or assistant message body |
 | **Add to chat** | When the selection can be quoted into the composer |
 | **More Details** | Always |
 | **Ask in Side Chat** | Always |
-| **Create note** | Always |
+| **Create Note** | Any selection; disabled in temporary chats |
+| **Create+Go to Note** | Same as Create Note |
 | **Request changes** | Only for agent output (assistant replies, tool markers, diff rows) |
 | **LGTM** | Same as above |
 | **Comment** | Same as above |
@@ -70,6 +74,41 @@ empty, use your terminal's native selection and Copy action. In GNOME
 Terminal, hold **Shift while dragging**, then press **Ctrl+Shift+C**. Pressing
 Ctrl+Shift+C after an ordinary Chatbook drag does not copy Chatbook's selection.
 
+### Copy all and Copy all messages
+
+**Copy all** copies the enclosing assistant response as readable Markdown:
+displayable thinking, tool calls and arguments, retained full results, file
+changes, and the answer. Collapsed sections are included. You can also choose
+**Copy all** from an assistant response's **More…** menu, including while the
+response is running or after it stops or fails.
+
+**Copy all messages** copies the current chat's entire active branch, including
+user messages, earlier offscreen history, and every assistant trace. Other
+branches and other chats are excluded. Both actions preserve your draft.
+If the active branch changes while the selection menu is open, reopen the
+selection before copying; an old menu will refuse the replacement branch.
+
+The trace includes only data the chat retained. Missing historical arguments
+or results and proprietary thinking are marked unavailable; existing truncated
+previews stay visibly truncated. A running response is labelled an incomplete
+snapshot. System prompts, private provider continuation data, and attachment
+bytes are excluded; attachment names remain readable.
+
+These actions impose no character cap. The notification reports the payload
+sent to the terminal, whose clipboard support may reject large OSC 52 requests.
+It cannot confirm clipboard delivery.
+
+### Select full message
+
+Start with a small selection in a user or assistant message, then choose
+**Select full message**. The entire body is selected, including offscreen text;
+the menu stays open with **Copy selection** focused. You can copy it immediately
+or choose either note action. A shortened selection preview shows the full
+character count and does not shorten the copied or saved content.
+
+This selects the message body. Use **Copy all** to include the response's
+thinking and tool activities.
+
 ### Add to chat
 
 Inserts the selection into the composer as a `>`-quoted block, leaving your
@@ -95,13 +134,22 @@ re-sends, and Escape / clicking the backdrop / **Close** all cancel and
 dismiss. By default the side chat uses your current session's model; set
 "Side chat model" to pin a different (usually cheaper) one.
 
-### Create note
+### Create Note and Create+Go to Note
 
 Saves the selection straight into your notes. The note's title is the
 selection's first line (capped at 48 characters); its body is the full
 selection plus a provenance line naming the conversation and date. A toast
-confirms with the title. Available for any selection — your own messages
-included — and works with or without a run.
+confirms with the title. Both actions preserve the full selection without a
+4000-character cap, including whitespace and Unicode. Available for your own
+messages too, with or without a run; saving is disabled in temporary chats.
+
+**Create Note** stays in Console. **Create+Go to Note** opens the exact created
+note in Library ▸ Notes. If opening fails, a saved-note receipt lets you retry
+without creating another note. If you switch chats while saving, the note keeps
+its original provenance and Console leaves your new context alone.
+
+The 4000-character limit still applies to **Add to chat**, side-chat prompts,
+and review feedback. It does not apply to copying or either note action.
 
 ### Review feedback: Request changes, LGTM, Comment
 

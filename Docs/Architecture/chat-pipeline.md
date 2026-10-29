@@ -15,6 +15,38 @@ This document describes the Console's chat mechanics below the send lifecycle: p
 | File extraction | `Utils/file_handlers.py` | `ProcessedFile`, the `FileHandlerRegistry` (image/text/code/data/pdf/document/ebook/plaintext-db/default handlers) |
 | Tool activity | `Chat/console_tool_activity.py` | `ConsoleToolActivity` — tool chips in the transcript |
 | Message actions | `Chat/console_message_actions.py` | `ConsoleMessageActionService.dispatch()` (regenerate, variant browse, …) |
+| Trace copying | `Chat/console_response_trace.py` | `find_response_turn()`, `render_response_trace_markdown()`, `render_chat_trace_markdown()` |
+| Selection orchestration | `UI/Console_Modules/review_selection.py` | `request_trace_copy()`, `request_selection_note()` |
+
+## Trace copying and selection notes
+
+The selection menu and assistant **More… ▸ Copy all** capture session/message
+identity and emit `ConsoleTraceCopyRequested`. The review/selection controller
+reads detached active-path snapshots through
+`ConsoleChatStore.read_only_messages_for_session`, then formats off-thread.
+The pure formatter reuses response grouping/activity ordering and reads only
+displayable thinking, retained tool arguments/results/diffs and message text.
+Private provider exchanges and binary attachments never enter the projection.
+A request serial prevents an older formatter worker from publishing over a
+newer copy request. Clipboard publication uses the existing UI-thread callback
+and OSC 52 transport; notification means sent, not terminal acceptance.
+Selection-menu requests also carry the captured user/assistant message path,
+so a stale menu cannot follow a same-session branch replacement. Raw command
+traces include their retained execution metadata and truncation status.
+
+`Select full message` uses the existing selection manager on a selectable user
+or assistant body. Copy and note consumers request uncapped text; prompt quote
+consumers retain `SELECTION_QUOTE_CAP`. Both note buttons use one source-pinned
+controller path, the existing temporary-chat gate, and a per-source in-flight
+guard. `ConsoleMessageController.save_console_selection_note` runs the canonical
+local `NotesScopeService` save with the configured Notes identity off-thread and
+retires operation-owned database handles. The returned note ID is the only
+navigation target; failed handoff recovery offers that saved note without
+repeating the write. Screen handlers remain thin delegates, and wiring supplies
+late-bound callbacks.
+On a fresh Library destination, the Notes controller starts a deep-linked
+note's existing load deadline after the first paint, provided its captured
+note ID, source and editor route are still current.
 
 ## Streaming flow
 
