@@ -202,6 +202,55 @@ async def test_both_actions_are_a_shift_tab_away_and_enter_opens_the_picker():
 
 
 @pytest.mark.asyncio
+async def test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft(
+    monkeypatch,
+):
+    """Live 2026-10-29: after Switch model fixed the block, typed keys vanished.
+
+    The picker's dismissal restores focus to its opener, the Switch model
+    button, which is still shown at that moment, so it calls
+    ``opener.focus()`` -- and Textual runs that later (``call_later``). The
+    model change's sync then hides the row and hands focus to the draft,
+    and the deferred focus lands on the hidden button after it: every key
+    went nowhere. Instrumented, two of three harness runs took that order.
+    This replays it in one tick, through the real dismissal restore.
+    """
+    import weakref
+
+    from tldw_chatbook.Chat import attachment_core
+    from tldw_chatbook.Widgets.modal_dismissal import _restore_focus_after_dismissal
+
+    capable = {"on": False}
+    monkeypatch.setattr(
+        attachment_core, "is_vision_capable", lambda _p, _m: capable["on"]
+    )
+    _app, host = _ready_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer, store, session_id = await _stage_image(
+            console, pilot, draft="describe it"
+        )
+        switch = console.query_one("#console-attachment-block-switch-model", Button)
+        switch.focus()
+        await pilot.pause()
+        assert host.focused is switch
+
+        capable["on"] = True  # the picked model reads images
+        _restore_focus_after_dismissal(  # the picker's dismissal: row shown
+            host, console, weakref.ref(switch), switch.id
+        )
+        assert console._sync_console_control_bar() is True  # then the sync
+        await pilot.pause()
+
+        assert not console.query_one("#console-attachment-block").display
+        assert host.focused is composer, host.focused
+        await pilot.press("Z")
+        await pilot.pause()
+        assert composer.draft_text() == "describe itZ"
+        assert len(store.pending_attachments(session_id)) == 1
+
+
+@pytest.mark.asyncio
 async def test_enter_on_remove_image_hands_the_keyboard_back_to_the_composer():
     _app, host = _ready_host()
     async with host.run_test(size=(80, 24)) as pilot:

@@ -405,6 +405,7 @@ def attachment_block_strip() -> Horizontal:
             tooltip="Open Switch model (Alt+M). Your draft and image are kept.",
         ),
         id=ATTACHMENT_BLOCK_ID,
+        disabled=True,  # hidden, so unfocusable (see sync_attachment_block)
     )
 
 
@@ -438,6 +439,11 @@ def sync_attachment_block(screen: Any) -> ConsoleAttachmentBlock | None:
     screen._console_attachment_block_shown = block is not None
     focused = screen.focused
     row.set_class(block is not None, "-visible")
+    # A hidden row is disabled too, so no focus write can land on it: Switch
+    # model's picker restores focus to its opener with a deferred focus()
+    # that otherwise ran after this hand-back and left every key going to
+    # the hidden button (live 2026-10-29).
+    row.disabled = block is None
     if block is None and focused is not None and row in focused.ancestors_with_self:
         # A keyboard Remove image (or a Switch model that fixed it) hides the
         # focused button: hand the keyboard back to the draft, not to nowhere.
