@@ -1,6 +1,8 @@
-Current CI candidate: [UI wait repair and Windows timeout diagnostics](ci-followup/report.md).
-52 focused checks pass; next normal hosted CI remains required before the approved
-single60-request/3-child qualification. No new live spending.
+Current CI candidate: [shutdown reconciliation guard](ci-followup/shutdown.md).
+The earlier [UI wait repair and Windows diagnostics](ci-followup/report.md)
+passed their UI/eval lanes; Windows GGUF exposed a queued callback after exit.
+60 focused tests pass for the narrow guard. Native CI remains required before
+the approved single60-request/3-child qualification; no new live spending.
 
 Latest follow-up: [offline V1 conflict recovery](v1-conflict-offline/report.md)
 adds explicit same-ID withdrawal of a rejected resubmission, preserving accepted

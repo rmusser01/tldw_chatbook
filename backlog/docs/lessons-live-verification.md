@@ -52,6 +52,12 @@ are measuring is on top: look at the PNG, or grep the `.txt` for a dialog title.
 Dismiss first-run and catalog dialogs after the app renders, then capture. A uniformly
 low ratio across unrelated widgets points at a backdrop, not at your change.
 
+## Queued geometry callbacks can outlive layout during shutdown (TASK-35582, 2026-10-29)
+
+**Incident.** PR3286 Windows GGUF CI timed out in Console reconciliation. A bounded native trace showed142s closing with136s on the owning thread; the earlier suspicion of timer cancellation starvation did not explain that first boundary. `LifecycleMixin._shutdown` set Textual's exit fence before draining owners. Textual stopped layout timer callbacks, but post-refresh callbacks still ran and retried geometry that could no longer settle. Wrapped/native tests queued work while attached, then held the real owner drain: both entered geometry after exit. Guarding the shared queued consumer with public `is_attached` stopped that execution while existing layout controls passed.
+
+**What to do.** During shutdown, mounted/current widgets are not proof that layout can progress. Check the consumer's live attachment state, including callbacks queued before exit; preserve owner drain ordering. Separate native elapsed/CPU evidence from a portable reproduction of the causal callback boundary.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
