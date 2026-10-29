@@ -31,31 +31,31 @@ Reason: restore established behavior and qualify its Windows tests; introduce no
 
 Files: `Backup_Recovery/crypto.py`, `age_worker.py` only if necessary; `Tests/Backup_Recovery/test_crypto.py`, helper fixture if demonstrated.
 
-- [ ] Reproduce `helper_unavailable` in encrypted archive/isolated cases and trace the isolated child failure.
-- [ ] Apply the smallest verified correction, retaining protocol/hash/authenticated-EOF and fixed diagnostic behavior.
-- [ ] Run helper tests and encrypted caller regressions; verify wrong-password, tamper, bounds and cancellation behavior.
+- [x] Reproduce `helper_unavailable` in encrypted archive/isolated cases and trace the isolated child failure.
+- [x] Apply the smallest verified correction, retaining protocol/hash/authenticated-EOF and fixed diagnostic behavior.
+- [x] Run helper tests and encrypted caller regressions; verify wrong-password, tamper, bounds and cancellation behavior.
 
 ### 2. Windows archive/planner fixtures
 
 Files: `Tests/Backup_Recovery/test_archive_reader.py`, `test_restore_plan.py`, a shared native test alias helper only if reused.
 
-- [ ] Reproduce POSIX-mode, symlink privilege and schema-77 assumptions.
-- [ ] Use the installed native metadata view, actual Windows directory reparse aliases and installed target schema without weakening refusal assertions.
-- [ ] Run the complete affected files, including unchanged-source and no-live-destination controls.
+- [x] Reproduce POSIX-mode, symlink privilege and schema-77 assumptions.
+- [x] Use the installed native metadata view, actual Windows directory reparse aliases and installed target schema without weakening refusal assertions.
+- [x] Run the complete affected files, including unchanged-source and no-live-destination controls.
 
 ### 3. Fresh isolated startup
 
 Files: `Tests/Backup_Recovery/test_isolated_restore.py`; shared fresh-child helper only if the root cause requires it.
 
-- [ ] Reproduce the fresh child activation failure under private native directories.
-- [ ] Trace all bootstrap/home/environment selectors and test the minimal correction.
-- [ ] Exercise the directory-alias refusal with a real unprivileged NTFS alias and run isolated restore tests with the corrected helper.
+- [x] Reproduce the fresh child activation failure under private native directories.
+- [x] Trace all bootstrap/home/environment selectors and test the minimal correction.
+- [x] Exercise the directory-alias refusal with a real unprivileged NTFS alias and run isolated restore tests with the corrected helper.
 
 ### 4. Integration and PR
 
-- [ ] Run the affected recovery files and portable cohort together, then scoped lint/format/manifest/whitespace checks.
-- [ ] Rebuild/requalify the portable artifact if runtime bytes change; preserve old proof as historical evidence.
-- [ ] Review the combined diff, record exact results and update TASK-37269/37205.
+- [x] Run the affected recovery files and portable cohort together, then scoped lint/format/manifest/whitespace checks.
+- [x] Rebuild/requalify the portable artifact if runtime bytes change; preserve old proof as historical evidence.
+- [x] Review the combined diff, record exact results and update TASK-37269/37205.
 - [ ] Create a `codex/` branch, commit and open the portable-bundle PR against the repository's verified base; attach it to this chat.
 
 ## Execution ledger
@@ -88,3 +88,10 @@ Files: `Tests/Backup_Recovery/test_isolated_restore.py`; shared fresh-child help
 - Frozen combined verification: 361 passed, one intentional duplicate-ZIP warning in1210.67s. Packaging/native-builder cohort:18 passed plus5 subtests. Native ancestor mode remained0700; sandbox-owned new source files were explicitly made readable by the workspace owner before this successful run. Runtime guards were never relaxed.
 - Canonical ADR numbering: dev already contains252/253, so this feature's provisional252/253/254 decisions became254/255/256 with references updated. Content/approval unchanged; the pinned Rust patch has no ADR-number reference and its hash is unchanged.
 - Integration ruling: rebase this feature onto current dev before publishing. Upstream changes no recovery,DB,configuration or dependency files; re-run fresh CLI/profile checks after rebase. Existing ZIP remains the historical exact798f8fca75+portable qualification artifact; test-only fixes and ADR docstring renumbering do not require a new distribution build. No new-tip ZIP or clean-machine qualification is claimed.
+
+- Dev integration: rebased onto3efe8476ce; resolved the single lesson conflict by retaining both entries. Recovery/DB/config/dependency/packaging/test bytes were identical to tested bc612f30f0 across the rebase. Native patch LF/hash and packaging18+5 subtests passed again.
+- Post-rebase functional fixture correction: the old30-second cold-help and45-second restore budgets could still expire during ordinary native work. The test now runs one actual cold CLI (90s bound), selects/admit-reads through the public packaged-probe path in the parent (150s bound), and gives native seed/restore120s. This removes duplicate TUI imports without a startup SLA claim. Full isolated+model-import file20 passed in178.14s.
+- CLI routing coverage retained explicitly: private sitecustomize captures expected selectors before the parser consumes argv and verifies the child selected that exact profile/control tuple. A no-op child that consumes argv returned0 with the old observer (RED), then74 with the fixed observer (GREEN). The final genuine CLI plus real Notes/chat/media/client-identity assertions passed in64.13s. No runtime permission, admission or crypto code changed.
+- Final review gate satisfied: independent review had no actionable findings; remaining native/qualification limits stand as documented. Full suite was not requested/run. Existing binary qualification remains historical; no current-tip GUI rebuild claim.
+
+- Publication gate: automatic approval review rejected the combined commit/push request because it requires explicit human authorization to publish the source/task changes to github.com/rmusser01/tldw_chatbook. Local commit and a concrete PR draft remain permitted; no alternate push path is attempted.

@@ -1,11 +1,11 @@
 ---
 id: TASK-37269
 title: Fix Windows recovery and helper regressions before portable bundle PR
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-28T22:53:00Z'
-updated_date: '2026-10-28T23:54:00Z'
+updated_date: '2026-10-29T00:18:00Z'
 labels:
   - windows
   - recovery
@@ -24,7 +24,7 @@ Resolve the remaining Windows recovery and package-helper failures so the portab
 - [x] #1 Previously failing encrypted-helper, archive and restore cases pass under the Windows private test environment without bypassing runtime safety checks.
 - [x] #2 Native alias and private-metadata regressions exercise real Windows filesystem behavior without requiring administrator-only symlink privileges.
 - [x] #3 A fresh isolated launch reopens real persisted data with correct profile/bootstrap selection and unchanged original files.
-- [ ] #4 Affected recovery and portable checks, static checks and review evidence are recorded before opening the portable bundle PR.
+- [x] #4 Affected recovery and portable checks, static checks and review evidence are recorded before opening the portable bundle PR.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +57,10 @@ The first combined attempt was interrupted when a sandbox write grant made a wor
 ADR required:no new decision. Existing ADR-125/126/127 and accepted portable ADR-254/255/256 govern the behavior. Provisional portable ADR IDs252/253/254 were renumbered because current dev already uses252/253. Decision content and approval are unchanged; native patch bytes/provenance stay cd9196d6b7df2e620d906d9e748654ddef604b28672f5f72fcb7b4fc5112669b, now protected by LF checkout policy.
 
 Plan/evidence/rulings: Docs/superpowers/plans/2026-10-28-windows-recovery-test-fixes.md. Existing exact-ZIP/native GUI qualification remains historical to798f8fca75+portable source; these fixture fixes require no new binary. Final dev integration, fresh startup recheck and PR publication are in progress. No full sweep was run under repository opt-in policy.
+
+Final integration: rebased onto dev3efe8476ce and preserved both lesson entries in the one documentation conflict. Recovery/DB/config/dependency/packaging/test bytes were unchanged across the rebase. Packaging18 tests+5 subtests and native patch provenance passed again.
+
+Post-rebase cold startup exposed a remaining functional-fixture timing assumption. The test now performs one actual CLI launch, then the public profile-selection/admission path for data assertions instead of importing the full TUI twice. Bounds reflect actual native work (restore120s, cold CLI90s, read process150s); this is not a startup performance SLA. The complete isolated-restore/model-import run passed20 cases in178.14s. An explicit child observer captures selectors before argument parsing, asserts the exact selected profile/control pair at exit, and rejects an unselected child even after argv consumption (old observer RED rc0, fixed GREEN rc74). The final real CLI/data/client-identity case passed in64.13s. Existing privacy, source-byte, authority and activation assertions are preserved.
+
+All requested failure groups are resolved. Combined cohort361 passed with one intentional duplicate-ZIP warning; final affected-file and packaging checks, strict/fatal lint scopes, format/whitespace and independent review are recorded in the plan. No product crypto/recovery guard changed, no safety cases skipped and no full sweep run. Canonical portable ADRs254/255/256 supersede their provisional numbers. The historical171MB ZIP remains the qualified798f8fca75+portable artifact; a newly rebuilt dev-tip GUI or clean-machine release is not claimed. Ready for portable PR publication on codex/windows-portable-wezterm-bundle.
 <!-- SECTION:NOTES:END -->
