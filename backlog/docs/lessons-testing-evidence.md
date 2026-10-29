@@ -163,6 +163,16 @@ checkpoint into the next request and response parser, including skipped or
 deferred tool calls. Assert terminal state and save/acknowledgment failures before
 the next request; valid outgoing JSON alone does not prove a valid round trip.
 
+## Pre-decoded SSE fixtures hide charset corruption (TASK-37600, 2026-10-29)
+
+A user screenshot showed repeated accented characters in llama.cpp agent
+replies, also present in copied/exported text. Raw UTF-8 SSE bytes through the
+shared local adapter reproduced eight Unicode failures while 28 ASCII,
+escaped-JSON and explicit-UTF-8 controls passed. Requests inferred Latin-1 from
+charset-less `text/event-stream`; pre-decoded string fixtures bypass that step.
+Test encoding behavior with raw `ensure_ascii=False` JSON bytes and real HTTP
+response construction, including missing/misleading charsets and one-byte reads.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
