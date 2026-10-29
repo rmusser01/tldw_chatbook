@@ -179,6 +179,26 @@ def test_plain_provider_unavailable_copy_is_unchanged_without_a_body() -> None:
     )
 
 
+def test_a_trace_persistence_failure_is_not_called_a_provider_error() -> None:
+    """TASK-33621.5 AC#4: the run trace read 'unexpected provider error'.
+
+    The agent run records ``describe_stream_failure`` as its error step. A
+    trace write that failed before a call went out is a local failure, and
+    the request it guarded was not sent.
+    """
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    for exc in (
+        TraceCallPersistenceError(),
+        TraceCallPersistenceError(reservation_status="unknown"),
+    ):
+        copy = describe_stream_failure(exc)
+        assert "provider error" not in copy
+        assert copy == (
+            "trace capture could not be saved, so this request was not sent"
+        )
+
+
 @pytest.mark.parametrize(
     ("status", "meaning"),
     [
