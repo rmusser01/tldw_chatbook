@@ -22,11 +22,13 @@ composed, so nothing is built or styled off the DOM.
 
 The A/B cases below check that each delta in a patchable browser field lands
 what a fresh build of the new state shows, whether the patch takes it or
-rebuilds. All but the colour case also pass on origin/dev f9baac8706; the
-colour case fails there because a plain ``button.label =`` write drops a
-style-only change. ``test_console_tray_patch_sequence.py`` checks the same
-across structural deltas (rows added, removed, renamed or reordered) between
-patches while a run is in flight.
+rebuilds. On origin/dev 3efe8476ce every A/B case passes except "row colour"
+in ``test_browser_paint_deltas_match_a_rebuild``, which fails there because a
+plain ``button.label =`` write drops a style-only change. The no-throwaway
+pin fails there too: dev composes the tray twice to decide the patch.
+``test_console_tray_patch_sequence.py`` checks the same across structural
+deltas (rows added, removed, renamed or reordered) between patches while a
+run is in flight.
 """
 
 from __future__ import annotations

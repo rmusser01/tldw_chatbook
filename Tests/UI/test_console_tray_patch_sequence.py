@@ -6,7 +6,9 @@ that compose writes, indexed by each row's place in the browser state
 renamed or reordered while a run is in flight must rebuild, and every patch
 after one must land what a fresh build of the same state shows, in both glyph
 modes. Kept apart from ``test_console_tray_patch_styles.py`` so that each file
-stays well inside the UI PR lane's per-file budget.
+stays well inside the UI PR lane's per-file budget. On origin/dev 3efe8476ce
+it fails at the colour steps only, for the reason that file gives: a plain
+``button.label =`` write drops a style-only change.
 """
 
 from __future__ import annotations
