@@ -167,8 +167,9 @@ def preparation_stacks():
 
 
 @pytest.mark.asyncio
-# Cold Windows storage admission is substantially slower than the Linux CI lane.
-@pytest.mark.timeout(600 if os.name == "nt" else 240)
+# Windows full native admission performs thousands of uncached checks. The
+# measured journey outlived the old 180s agent budget before its README read.
+@pytest.mark.timeout(1200 if os.name == "nt" else 240)
 @pytest.mark.parametrize("variant", VARIANTS)
 @private_profile_test
 async def test_project_chat_uat(
@@ -238,7 +239,7 @@ async def test_project_chat_uat(
                 "local_tools_enabled": True,
                 "compaction_mode": "off",
                 "agent_max_model_turns": 12,
-                "agent_max_wall_seconds": 180 if os.name == "nt" else 90,
+                "agent_max_wall_seconds": 600 if os.name == "nt" else 90,
             }
             if variant == "native":
                 key = reasoning_override_key(
@@ -335,17 +336,48 @@ async def test_project_chat_uat(
                     record.update(workspace_id=workspace.workspace_id, binding_id=alias)
                     phase("new-chat")
                     console = app.screen
-                    await click(pilot, "#console-new-chat-tab", server)
                     controller = console._console_chat_controller
                     store = controller.store
-                    session = next(
-                        item
-                        for item in store.sessions()
-                        if item.id == store.active_session_id
+
+                    def active_workspace_chat():
+                        session = next(
+                            (
+                                item
+                                for item in store.sessions()
+                                if item.id == store.active_session_id
+                            ),
+                            None,
+                        )
+                        return (
+                            session
+                            if (
+                                session is not None
+                                and session.workspace_id == workspace.workspace_id
+                                and console._session._console_visible_draft_session_id
+                                == session.id
+                            )
+                            else None
+                        )
+
+                    await wait_for(
+                        pilot, active_workspace_chat, "workspace chat activated", server
                     )
-                    assert (
-                        session.workspace_id == workspace.workspace_id
-                    ), "new chat did not inherit the active workspace"
+                    prior_sessions = {item.id for item in store.sessions()}
+                    await click(pilot, "#console-new-chat-tab", server)
+
+                    def new_chat_ready():
+                        session = active_workspace_chat()
+                        return (
+                            session
+                            if (
+                                session is not None and session.id not in prior_sessions
+                            )
+                            else None
+                        )
+
+                    session = await wait_for(
+                        pilot, new_chat_ready, "new chat and composer activated", server
+                    )
                     record["session_id"] = session.id
                     if os.environ.get("TLDW_UAT_NEGATIVE_CONTROL") == "missing-readme":
                         readme.write_text(
@@ -395,7 +427,7 @@ async def test_project_chat_uat(
                         instruction_notice,
                         "project instruction disclosure",
                         server,
-                        timeout=360 if os.name == "nt" else 100,
+                        timeout=600 if os.name == "nt" else 100,
                     )
                     assert app.screen.notice.relative_source == "AGENTS.md"
                     assert app.screen.notice.session_id == session.id
@@ -420,6 +452,7 @@ async def test_project_chat_uat(
                             listing_approval,
                             "built-in listing approval",
                             server,
+                            timeout=600 if os.name == "nt" else 60,
                         )
                         assert len(rows) == 1
                         header = " ".join(
@@ -454,7 +487,7 @@ async def test_project_chat_uat(
                         final_message,
                         "completed persisted assistant answer",
                         server,
-                        timeout=360 if os.name == "nt" else 100,
+                        timeout=600 if os.name == "nt" else 100,
                     )
                     assert (
                         len(server.model.received)
