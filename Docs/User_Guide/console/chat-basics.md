@@ -76,15 +76,21 @@ of a price.
 ### Recovering an interrupted response
 
 After reopening a conversation, Console may show **Response delivery status is
-unknown on the source device**. This means the previous request needs a recovery
-decision; it does not mean a model is still running. The composer says **Send
-blocked — resolve response recovery first**.
+unknown**. This means the previous request may have reached the provider without
+a known outcome and needs a recovery decision; it does not mean a model is still
+running. The composer says **Send blocked — resolve response recovery first**,
+and the header, run chip and Inspector **Run** line read **Blocked**
+(`Blocked — recovery needed`). A conversation imported from another device says
+**Response delivery status is unknown on the source device** instead, and offers
+no actions here.
 
 Use the recovery controls above the composer. **Retry anyway** may send a
 duplicate request because the previous delivery cannot be confirmed. (If the
 request was accepted but never sent, the card reads **Response accepted;
 waiting for dispatch.** and offers **Retry response** instead.) A retry streams
-the reply into the same pending response. **Discard** keeps your user message
+the reply into the same pending response. Pressing **Retry anyway** or
+**Discard** disables both buttons at once and shows "Retrying…" (or
+"Discarding…") until the outcome arrives. **Discard** keeps your user message
 and settles the interrupted response without replaying the request. A failed
 recovery leaves the available controls usable so you can address the reported
 problem and try again or discard. Once recovery settles, the composer clears

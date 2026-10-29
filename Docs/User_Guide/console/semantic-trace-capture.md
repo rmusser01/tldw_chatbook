@@ -59,6 +59,30 @@ not ready, it says so on the callout and leaves the send paused with the same
 three choices; nothing is sent twice, and your Capture Off choice still
 applies when you choose it again once the provider is ready.
 
+When the provider answers with an error such as HTTP 429 (rate limited), 500
+or 504, Console retries the call automatically. If that retry's trace record
+cannot be saved, the retry is not sent, and the callout leads with the
+provider's error instead: for example "OpenAI returned HTTP 429 (rate limit
+exceeded)", with an Impact line saying the provider was contacted and a note
+that the automatic retry was not sent. **Retry** is the first action there.
+The Impact line always reflects what happened to this send: "The provider was
+not contacted", "The provider was contacted", or "It is not known whether the
+provider was contacted". On this callout:
+
+- **Retry** (or **Retry capture**) sends the turn again with capture on. When
+  Console cannot confirm whether the failed retry left a trace reservation
+  behind, it says so on the callout ("Trace capture could not be confirmed for
+  this send ...") and sends nothing; choose **Send without capture** or
+  **Cancel send**.
+- **Send without capture** sends the turn once with capture off.
+- **Cancel send** always ends the send and puts your message back in the
+  composer, even when the trace reservation's state is unknown. Any
+  reservation left behind is closed the next time Console starts.
+
+None of these opens the "Response delivery status is unknown" panel: that
+panel is only for a request that may have reached the provider without a
+known outcome.
+
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.
 The next question can use Capture On again when that discarded response has an
