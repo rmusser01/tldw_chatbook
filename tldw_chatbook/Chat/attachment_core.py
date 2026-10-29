@@ -449,9 +449,13 @@ def vision_block_notice(model: str | None) -> str:
         model: Selected model identifier, or None when no model is chosen.
 
     Returns:
-        The model and the cause, e.g. ``"claude-2.1 can't accept images"``.
+        The model and the cause, e.g. ``"claude-2.1 can't accept images"``;
+        with no model chosen, what to do instead -- there is no model to
+        blame, and the Console hides the row then (setup copy owns the strip).
     """
-    return f"{model or 'The selected model'} can't accept images"
+    if not model:
+        return "choose a model that accepts images"
+    return f"{model} can't accept images"
 
 
 def max_history_images(provider: str, model: str | None) -> int:
