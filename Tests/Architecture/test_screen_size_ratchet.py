@@ -268,7 +268,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: measures 24327/737 (2 under its own row); with the three Terminal
     #: fixes 24385/737, the exact measurement (dev's slack not absorbed).
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24562, 741),
+    #: Raised 24385 -> 24389 (methods unchanged) 2026-10-29 by TASK-33622.5's
+    #: review fix, same owner rule: with the composer collapsed, the rail's
+    #: Esc exit focuses the open Terminal and the rail footer hint names it
+    #: (one branch in action_focus_console_composer_home, one line in the
+    #: footer); 24389/737 measured on dev b5150753eb plus this branch.
+    #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24566, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
