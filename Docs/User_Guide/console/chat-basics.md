@@ -215,7 +215,7 @@ Each scope has its own local agent authority:
   workspace withholds global context in that workspace too, and Off on the
   global scope withholds profile context from every chat.
 - **Read only** allows eligible profile context and the `profile_search` and
-  `profile_get` tools.
+  `profile_get` tools (in plain chat the tools come with **Full agent tools**).
 - **Propose changes** also lets agents suggest creates, updates, archives, and
   workspace-to-global promotions. Suggestions do not enter agent context or
   change records. Review them under **Settings > My Profile > Proposed
