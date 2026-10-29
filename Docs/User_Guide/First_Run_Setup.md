@@ -121,8 +121,10 @@ all. A filter that matches only a server setup found says so ("1 local
 server matches “studio”"). Every row can be picked with the arrow keys and set up here, hosted
 presets included (Together, Fireworks, NVIDIA NIM, BytePlus, DeepInfra and
 the rest; see [Settings ▸ Inference clouds](settings.md#inference-clouds)).
-Azure OpenAI, Databricks and Cloudflare Workers AI ask for their resource,
-workspace or account URL above the key, with an example. Setup saves each
+Azure OpenAI and Databricks ask for their resource or workspace URL above
+the key, and Cloudflare Workers AI for its base URL, which ends in `/ai/v1`
+(a URL that stops at `/accounts/<account-id>` gets `/ai/v1` added; the Chat
+URL line under the field shows the result); each shows an example. Setup saves each
 preset's key, model and documented base URL in its own
 `[api_settings.<provider>]` table. **Custom Hosted** is not listed: it is the
 internal engine route for custom endpoints, which you set up as **Custom
