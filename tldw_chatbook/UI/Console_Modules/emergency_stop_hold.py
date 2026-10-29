@@ -14,7 +14,8 @@ here, and only here:
 * on Console arrival, from a read made off the UI loop after first paint
   (``refresh``). The scheduler's per-tick read moved off the loop in
   TASK-33620.15.24; the Console adds no per-tick read back;
-* by ``/emergency-stop`` (``run_command``);
+* by ``/emergency-stop`` and by the status strip's Clear (``run_command``,
+  ``clear_from_strip``);
 * by a send about to take the received-intent fast path
   (``received_send_held``), which reads the file itself, so a stop that
   another writer set still holds it.
@@ -146,6 +147,12 @@ async def run_command(screen: Any, parse: Any) -> bool:
     screen._clear_console_composer_draft()
     screen.app_instance.notify(ACTIVATED_NOTICE, severity="warning")
     return True
+
+
+async def clear_from_strip(screen: Any) -> None:
+    """The status strip's Clear: lift the stop (AC#2)."""
+    await _write_off_loop(screen, EmergencyStopState(active=False))
+    screen.app_instance.notify(CLEARED_NOTICE)
 
 
 async def _write_off_loop(screen: Any, state: EmergencyStopState) -> None:

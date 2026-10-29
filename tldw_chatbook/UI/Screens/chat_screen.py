@@ -346,6 +346,7 @@ from ...Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from ...Chat.console_display_state import (
+    CONSOLE_EMERGENCY_STOP_SEND_REASON,
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
@@ -596,6 +597,7 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
     ConsoleAssistantChip,
     ConsoleCostChip,
+    ConsoleEmergencyStopChip,
     ConsoleRunChip,
     ConsoleScopeChip,
     ConsoleSourcesChip,
@@ -10667,6 +10669,7 @@ class ChatScreen(BaseAppScreen):
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
+            emergency_stop_held=bool(self._console_emergency_stop_copy),
         )
 
 
@@ -10973,6 +10976,14 @@ class ChatScreen(BaseAppScreen):
         """Open the Inspector rail at the run inspector's tool rows (DS-06)."""
         event.stop()
         self._reveal_console_inspector_rail()
+
+    @on(ConsoleEmergencyStopChip.ClearRequested)
+    async def _console_emergency_stop_cleared(
+        self, event: ConsoleEmergencyStopChip.ClearRequested
+    ) -> None:
+        """The status strip's Clear lifts the emergency stop (TASK-33620.1)."""
+        event.stop()
+        await run_controls.clear_emergency_stop(self)
 
     @on(ConsoleRunChip.OpenRequested)
     async def _console_run_chip_activated(
@@ -13904,6 +13915,7 @@ class ChatScreen(BaseAppScreen):
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,
+            held_copy=self._console_emergency_stop_copy,  # TASK-33620.1
         )
 
     def _dismiss_console_guidance(self) -> None:
@@ -21329,10 +21341,17 @@ class ChatScreen(BaseAppScreen):
         send_blocked = send_blocked or image_edit_active
         setup_blocked_reason = self._console_setup_blocked_reason()
         attachment_blocked_reason = self._console_attachment_blocked_reason()
+        # TASK-33620.1: an active emergency stop holds Send (and Queue).
+        held_reason = (
+            CONSOLE_EMERGENCY_STOP_SEND_REASON
+            if self._console_emergency_stop_copy
+            else ""
+        )
         send_blocked = (
             send_blocked
             or bool(setup_blocked_reason)
             or bool(attachment_blocked_reason)
+            or bool(held_reason)
         )
 
         composer.sync_action_state(
@@ -21344,7 +21363,8 @@ class ChatScreen(BaseAppScreen):
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
             setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
-            queue_blocked_reason=(
+            queue_blocked_reason=held_reason
+            or (
                 queue_presentation.send_tooltip
                 if queue_presentation is not None
                 and not queue_presentation.send_enabled

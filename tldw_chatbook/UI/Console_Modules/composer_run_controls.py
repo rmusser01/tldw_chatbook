@@ -415,6 +415,13 @@ async def emergency_stop_command(screen: Any, parse: Any) -> bool:
     return await emergency_stop_hold.run_command(screen, parse)
 
 
+async def clear_emergency_stop(screen: Any) -> None:
+    """The status strip's Clear (``emergency_stop_hold.clear_from_strip``)."""
+    from . import emergency_stop_hold
+
+    await emergency_stop_hold.clear_from_strip(screen)
+
+
 def schedule_emergency_stop_refresh(screen: Any) -> None:
     """Re-read the stop off the UI loop once the arriving Console has painted."""
 

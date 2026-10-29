@@ -261,6 +261,16 @@ QUEUE_REASON_PREPARING = "Queue opens once this turn is accepted"
 QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
 
+#: TASK-33620.1: the global emergency stop's hold as the Console shows it: the
+#: header badge (wide, then single-pane), the status strip's segment and its
+#: Clear, and Send's reason. Send's reason rides the queue-reason slot because
+#: that slot is shown verbatim, never as setup copy or a setup-wizard link.
+CONSOLE_EMERGENCY_STOP_HEADER_LABEL = "Held · emergency stop"
+CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL = "Held"
+CONSOLE_EMERGENCY_STOP_STRIP_LABEL = "Emergency stop: runs and schedules held"
+CONSOLE_EMERGENCY_STOP_CLEAR_LABEL = "Clear"
+CONSOLE_EMERGENCY_STOP_SEND_REASON = "Send held — emergency stop is on"
+
 
 def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
     """Return the native composer's setup-specific send blocker copy.
@@ -797,6 +807,8 @@ class ConsoleControlState:
     sources_active: bool = False
     tools_active: bool = False
     approvals_active: bool = False
+    #: TASK-33620.1: the global emergency stop holds new runs (header + strip).
+    emergency_stop_held: bool = False
 
     @classmethod
     def from_values(
@@ -815,6 +827,7 @@ class ConsoleControlState:
         approval_count: int = 0,
         system_prompt_set: bool = False,
         app_config: Mapping[str, object] | None = None,
+        emergency_stop_held: bool = False,
     ) -> "ConsoleControlState":
         """Build the Console control-bar chip state from raw run values.
 
@@ -839,6 +852,8 @@ class ConsoleControlState:
                 the chip then reads ``System Prompt: set``.
             app_config: Config holding the ADR-146 endpoint registry, so a
                 ``custom-ep`` provider shows its entry's name.
+            emergency_stop_held: Whether the global emergency stop is active
+                (TASK-33620.1); the header and status strip show the hold.
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
@@ -901,6 +916,7 @@ class ConsoleControlState:
             sources_active=staged_source_count > 0,
             tools_active=effective_tool_count > 0,
             approvals_active=approval_count > 0,
+            emergency_stop_held=bool(emergency_stop_held),
         )
 
 
