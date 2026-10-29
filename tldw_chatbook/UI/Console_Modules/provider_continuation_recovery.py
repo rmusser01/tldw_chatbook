@@ -500,9 +500,17 @@ class TraceCallRecoveryCallout(Vertical):
             if provider_error
             else "Retry capture"
         )
-        # TASK-33621.5 AC#1: after a provider refusal, Retry is the way on.
-        retry.variant = "primary" if provider_error else "warning"
-        self.query_one("#console-trace-send-without", Button).display = (
+        # TASK-33621.5 AC#1: after a provider refusal, Retry is the way on --
+        # unless Capture-On Retry was already refused as unconfirmed, when
+        # only Send without capture can continue (the status line says so).
+        unconfirmed = bool(
+            call_copy is not None
+            and getattr(state.provider_contact, "capture_unconfirmed", False)
+        )
+        retry.variant = "primary" if provider_error and not unconfirmed else "warning"
+        send_without = self.query_one("#console-trace-send-without", Button)
+        send_without.variant = "primary" if unconfirmed else "warning"
+        send_without.display = (
             state is not None and hold is None and not library and not resend
         )
         self.query_one("#console-trace-send-without-library", Button).display = bool(

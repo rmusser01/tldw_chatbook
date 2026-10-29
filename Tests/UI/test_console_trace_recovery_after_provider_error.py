@@ -217,6 +217,12 @@ async def test_retry_reshows_the_capture_error_when_the_reservation_is_unknown(
         assert h.store.dispatch_recovery_for_presentation(h.session.id) is None
         assert "delivery status is unknown" not in visible_text(h)
         assert header_label(h) == "Blocked"
+        # Review follow-up: Capture-On Retry cannot succeed from here, so
+        # the action the status line names leads instead.
+        retry = callout.query_one("#console-trace-retry", Button)
+        send_without = callout.query_one("#console-trace-send-without", Button)
+        assert retry.variant != "primary"
+        assert send_without.variant == "primary"
 
         await press(h, callout, "send-without")
         await _until(
