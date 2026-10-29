@@ -298,8 +298,15 @@ def classify(suffix: str, prefix: bytes) -> SniffResult:
             if as_json.verdict != "not_roleplay":
                 return as_json
         return _classify_markdown(text)
-    if suffix in JSON_SUFFIXES or text.lstrip()[:1] in (b"{", b"["):
+    if suffix in JSON_SUFFIXES:
         return _classify_json(text)
+    if text.lstrip()[:1] in (b"{", b"["):
+        # Any other extension that starts like JSON is sniffed as JSON; text
+        # that is not readable JSON (``[Character card]`` over a json block)
+        # still gets the card-text checks, as dev's card picker reads it.
+        as_json = _classify_json(text)
+        if as_json.verdict != "not_roleplay":
+            return as_json
     return _classify_card_text(text)
 
 

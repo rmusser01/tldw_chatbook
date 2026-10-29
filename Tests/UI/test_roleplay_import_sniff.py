@@ -168,18 +168,23 @@ def test_the_sniffer_never_opens_an_archive_or_decodes_pixels(
 
 
 @pytest.mark.parametrize(
-    ("suffix", "prefix"),
+    ("suffix", "prefix", "verdict"),
     [
-        (".json", b"\xff\xfe\x00{"),
-        (".json", b"[" * 70_000),
-        (".json", b'{"a":' * 20_000),
-        (".json", b'{"name": "x", "description": '),
-        (".json", b"[1, 2, 3]"),
-        (".md", b"\xff\xfe\xfd"),
-        (".png", b"GIF89a"),
-        (".webp", b"RIFF\x00\x00\x00\x00WAVE"),
-        ("", b"plain words"),
-        (".json", b""),
+        (".json", b"\xff\xfe\x00{", "not_roleplay"),
+        (".json", b"[" * 70_000, "not_roleplay"),
+        (".json", b'{"a":' * 20_000, "not_roleplay"),
+        # A truncated object is still a JSON object: ask, never refuse.
+        (".json", b'{"name": "x", "description": ', "ask"),
+        # A non-object JSON value is not a Roleplay file.
+        (".json", b"[1, 2, 3]", "not_roleplay"),
+        (".md", b"\xff\xfe\xfd", "not_roleplay"),
+        (".png", b"GIF89a", "not_roleplay"),
+        (".webp", b"RIFF\x00\x00\x00\x00WAVE", "not_roleplay"),
+        # An image extension without its signature is refused even when the
+        # bytes are card JSON (read as JSON they would be a card).
+        (".png", b'{"spec": "chara_card_v2", "data": {"name": "x"}}', "not_roleplay"),
+        ("", b"plain words", "not_roleplay"),
+        (".json", b"", "not_roleplay"),
     ],
     # Short ids: a 70 KB prefix as a node id defeats grep-based replay tools.
     ids=[
@@ -191,20 +196,32 @@ def test_the_sniffer_never_opens_an_archive_or_decodes_pixels(
         "md-not-utf8",
         "png-gif-bytes",
         "webp-wave-bytes",
+        "png-ext-card-json",
         "no-suffix-prose",
         "json-empty",
     ],
 )
 def test_undecodable_or_recursive_prefixes_mean_unknown_never_an_exception(
-    suffix, prefix
+    suffix, prefix, verdict
 ):
     result = sniff.classify(suffix, prefix)
-    assert result.verdict in ("not_roleplay", "ask")
-    if result.verdict == "ask":
-        # A truncated object is still a JSON object: ask, never refuse.
-        assert result.kinds == sniff.TEXT_KINDS
-    else:
-        assert result.kinds == ()
+    assert result.verdict == verdict
+    # ``ask`` lists every candidate; a refusal lists none.
+    assert result.kinds == (sniff.TEXT_KINDS if verdict == "ask" else ())
+
+
+@pytest.mark.parametrize(
+    "suffix", [".txt", ".yaml", ""], ids=["txt", "yaml", "no-suffix"]
+)
+def test_a_bracket_led_text_card_still_reads_as_a_card(suffix):
+    """Dev's card picker reads any non-image file as text: a ``.txt`` that
+    starts with ``[`` (``[Character card]``) and holds a fenced json block
+    imports as a card on dev. Sent to the JSON parse it would be refused,
+    which would be a regression new with B2b."""
+    text = b'[Character card]\n\n```json\n{"name": "Tam Reyes"}\n```\n'
+    result = sniff.classify(suffix, text)
+    assert (result.verdict, result.kinds) == ("decided", ("character",))
+    assert sniff.classify(suffix, b"[1, 2, 3]").verdict == "not_roleplay"
 
 
 @pytest.mark.parametrize("kind", ["character", "dictionary"])
