@@ -69,6 +69,27 @@ def is_refused_stream(exc: BaseException) -> bool:
     return not is_context_overflow_error(exc)
 
 
+def is_unreadable_stream(exc: BaseException) -> bool:
+    """Whether a streamed reply failed because its stream could not be read.
+
+    A Custom endpoint (``custom-ep:<slug>``) streams through the hosted
+    engine, which raises a protocol error, not a status, for a stream that
+    ends with no terminal record or is not SSE at all: what a server that
+    sends no text, or ignores ``stream`` and answers whole, looks like there.
+    The caller decides the rest: the request was streamed, to a server that
+    is retried, and nothing arrived before the failure.
+
+    Args:
+        exc: The adapter's failure, before any projection.
+
+    Returns:
+        True for the hosted engine's stream protocol error.
+    """
+    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError
+
+    return isinstance(exc, HostedChatProtocolError)
+
+
 def retries_refused_stream(resolution: Any) -> bool:
     """Whether a refused or empty stream is retried once without streaming.
 
