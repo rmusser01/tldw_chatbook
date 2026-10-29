@@ -7924,6 +7924,9 @@ class PersonasScreen(BaseAppScreen):
             local_characters=self._local_character_actions_allowed(),
             local_runtime=self.persona_handler.current_mode() == "local",
         )
+        # The slot is held until the picked create ends, so a Ctrl+N during it
+        # is ignored (dev awaited the clean create inline, which queued it);
+        # the dirty path returns once the guard's own worker starts.
         try:
             picked = await self.app.push_screen_wait(
                 RoleplayChoiceModal(
@@ -7935,11 +7938,11 @@ class PersonasScreen(BaseAppScreen):
                     preselect=next(c.choice_id for c in choices if c.preselected),
                 )
             )
+            choice = next((c for c in choices if c.choice_id == picked), None)
+            if choice is not None and choice.enabled:
+                await self._run_new_choice(choice)
         finally:
             self._new_chooser_open = False
-        choice = next((c for c in choices if c.choice_id == picked), None)
-        if choice is not None and choice.enabled:
-            await self._run_new_choice(choice)
 
     async def _run_new_choice(self, choice: frame_state.NewChoice) -> None:
         """Start ``choice`` in its own kind, through one unsaved guard.

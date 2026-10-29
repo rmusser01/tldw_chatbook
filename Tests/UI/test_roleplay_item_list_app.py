@@ -28,6 +28,7 @@ import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testi
 import tldw_chatbook.UI.Persona_Modules.roleplay_frame_state as frame_state
 import tldw_chatbook.UI.Screens.personas_screen as personas_screen_module
 from Tests.UI.roleplay_frame_harness import (
+    CHOOSER_OPTIONS_ID,
     VOLUME_SIZES,
     StyledRoleplayMockApp,
     highlighted_item_id,
@@ -923,7 +924,81 @@ async def test_new_opens_while_a_character_import_holds_the_dialog_slot(
         await wait_until(
             pilot, lambda: screen._edit_mode == "create", what="the blank draft"
         )
+        # The chooser's worker ends after its create: read the slot once it has.
+        await settle(pilot)
         assert screen._io_dialog_active
+
+
+async def test_ctrl_n_while_a_picked_create_runs_opens_no_second_chooser(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The chooser holds its slot until the create it started ends.
+
+    Dev's handler awaited a clean create inline, so a second Ctrl+N waited
+    its turn. B2b Task 2's first commit released the slot when the modal
+    closed, so a Ctrl+N during the create opened a second chooser and two
+    creates ran at once ("database is locked"): never on dev, new with that
+    commit, fixed in the task's fix round.
+    """
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    manager = WorldBookManager(volume_348)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=(160, 45), character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        gate = asyncio.Event()
+        creates: list[int] = []
+        opened: list[int] = []
+        choosers: list[int] = []
+        begin_lore = screen._begin_create_lore
+        open_chooser = screen._open_new_chooser
+        chooser_worker = screen._new_chooser_worker
+
+        async def held_create() -> None:
+            creates.append(1)
+            await gate.wait()
+            await begin_lore()
+
+        def counted_open() -> None:
+            opened.append(1)
+            open_chooser()
+
+        def counted_worker():
+            choosers.append(1)
+            return chooser_worker()
+
+        monkeypatch.setattr(screen, "_begin_create_lore", held_create)
+        monkeypatch.setattr(screen, "_open_new_chooser", counted_open)
+        monkeypatch.setattr(screen, "_new_chooser_worker", counted_worker)
+        await start_new(pilot, "lore")
+        await wait_until(pilot, lambda: creates == [1], what="the held create")
+        # settle() would wait on the held worker: pause instead.
+        await pilot.press("ctrl+n")
+        await wait_until(pilot, lambda: len(opened) == 2, what="the second Ctrl+N")
+        for _ in range(5):
+            await pilot.pause()
+        assert choosers == [1]
+        assert not any(
+            stacked.query(f"#{CHOOSER_OPTIONS_ID}")
+            for stacked in pilot.app.screen_stack
+        )
+        gate.set()
+        await wait_until(
+            pilot,
+            lambda: (
+                [b["name"] for b in manager.list_world_books(True)]
+                == ["Untitled world book"]
+            ),
+            what="the one new lore book",
+        )
+        await settle(pilot)
+        assert creates == [1]
+        # The slot is free again once the create has ended.
+        await pilot.press("ctrl+n")
+        await wait_for_chooser(pilot)
+        await pilot.press("escape")
+        await pilot.pause()
 
 
 async def test_space_turns_a_lore_book_off_with_the_undo_toast_and_on_again(
