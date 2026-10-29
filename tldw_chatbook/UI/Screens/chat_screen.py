@@ -1243,7 +1243,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Alt+C", "open or close the Context rail"),
             ("Handle badges", "'N appr' = N approvals pending; 'art' = artifact ready"),
             ("Escape", "return to the composer"),
-            ("Any other key", "types into the composer unless the focused pane uses it"),
+            ("Any other key", "types into an expanded composer unless the focused pane uses it"),
         ),
     ),
     (
