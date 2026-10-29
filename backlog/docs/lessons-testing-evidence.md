@@ -22399,3 +22399,17 @@ regressions reproduced that output. Removing the unnecessary diagnostic made all
 48 Strata tests pass and restored the original inventory without changing its pin.
 Review the added statement before regenerating a census; a passing behavior test
 does not establish that its diagnostics are appropriate to persist.
+
+
+## Direct session edits can outrun a pending display read (PR #3288)
+
+The documentation-only head fc6bb555c9 failed UI lane 25 before the credential
+round-trip test opened its first modal. Windows reproduced both parameter cases.
+A temporary trace showed the session at revision 2 while readiness still awaited
+its mount-time revision 0, with no published current value; the exact owner key
+stayed unchanged during the attempted open. The existing modal guard correctly
+rejected that stale preparation. Reuse `_sync_console_control_bar_now` after a
+test directly replaces settings and before acting on them. Its existing held-read
+regression verifies old revision 1 is discarded and revision 2 renders; its bounded
+wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
+assertions, rather than retrying the action or weakening its ownership checks.

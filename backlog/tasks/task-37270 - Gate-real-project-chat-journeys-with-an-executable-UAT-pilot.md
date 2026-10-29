@@ -1,11 +1,11 @@
 ---
 id: TASK-37270
 title: Gate real project-chat journeys with an executable UAT pilot
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-28 23:58'
-updated_date: '2026-10-29 05:49'
+updated_date: '2026-10-29 06:33'
 labels: []
 dependencies: []
 priority: high
@@ -28,13 +28,15 @@ Prevent project-chat feature failures from passing component-only checks by exer
 - [x] #7 All four project-chat UAT variants pass on Windows with the original authority boundaries and bounded waits intact.
 - [x] #8 Local compatible-provider stream control frames never enter assistant prose, while genuine content, tools, reasoning and errors retain their behavior.
 - [x] #9 Strata and PolyStrata are supported through verified local-provider configuration, discovery and inference paths with focused compatibility coverage and honest live-model limitations.
-- [x] #10 Actionable PR3288 review findings are resolved and every required check passes on the final head.
+- [ ] #10 Actionable PR3288 review findings are resolved and every required check passes on the final head.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no; existing ADR-069/174/241/253 govern the original pilot, ADR-002/006/012/066/179 govern external provider support, and ADR-126 authority remains intact. Follow the linked project-chat UAT plan. Diagnose Windows timing with native evidence, remove notification polling churn, and correct the proven Windows-only 180-second agent-budget exhaustion using bounded measured test budgets; qualify all four variants and document performance limits. Preserve real native checks and evidence oracles. Fix invisible SSE control checkpoints and Stop, add independently configured Strata/PolyStrata discovery/inference with metadata-gated tools, resolve review findings and keep PR3288 open until final-head required checks pass. No merge is authorized.
+
+Final documentation-head CI exposed a credential-round-trip fixture opening settings before its checked presentation revision settled. Reproduce and trace the existing owner guard, reuse the established readiness synchronization if confirmed, and keep the original modal/unsaved-edit assertions. Rerun targeted regression tests and final-head required CI. ADR required: no; test setup repair within existing ownership contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,4 +55,6 @@ Independent code/documentation review findings are addressed. Qodo is unavailabl
 Windows native validation remains slow: this is functional qualification, not a latency claim. Live Fedora/Python 3.14, real inference engines and native-terminal paint remain untested. Other catalog journeys remain planned. ADR required: no; existing ADR-069/174/241/253 govern the pilot, ADR-002/006/012/066/179 provider integration, and ADR-126 storage authority. Commands and evidence are in the linked UAT spec/plan; testing lessons record the consent, ownership and Stop-fixture traps.
 
 Final source validation: required check and full Derived Artifacts run 40822404188 passed on 133b18c2cf3f029fc248987ca4a2108c0b4d6b13. Linux UAT rerun: 59 passed in 190.245s; its expected negative control and downloaded report verification passed. The complete local diagnostic inventory passed unchanged. No review threads are unresolved. The final documentation-only commit retains the same required CI gate.
+
+The documentation-only fc6bb555c9 CI run40825594322 exposed a pre-existing credential fixture race: settings revision2 opened while a mount-time revision0 readiness read was pending. Both parameter cases reproduced on Windows; temporary diagnostics captured the unchanged exact owner and stale pending revision. The two real-app credential setups now reuse the existing bounded _sync_console_control_bar_now helper after direct settings replacement. Production guards and original modal/unsaved-edit assertions remain intact. Targeted native Windows verification: 10 passed,25 deselected in286.39s, covering all three credential cases and seven helper controls; independent review found no actionable issues. Ruff lint and diff checks pass; formatter differences are pre-existing. Final-head required CI is pending.
 <!-- SECTION:NOTES:END -->
