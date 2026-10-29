@@ -620,6 +620,58 @@ def test_live_agent_work_keeps_the_agent_surface(tmp_path, monkeypatch):
     assert not bridge.light_surface_for((), session_id=session.id)
 
 
+def _raises(*_args, **_kwargs):
+    raise RuntimeError("unreadable")
+
+
+def test_a_send_whose_light_surface_reader_raises_plans_the_light_set(tmp_path):
+    """Pre-merge review (2026-10-29): the fail-closed branches had no test.
+    A reader that raises keeps the light surface -- never the agent surface
+    because the switch could not be read."""
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    bridge._light_tool_surface = _raises
+
+    _send(bridge, session, assistant_id, _native_resolution())
+
+    assert _native_names(gateway) == LIGHT, sorted(_native_names(gateway))
+
+
+def test_an_unreadable_config_keeps_plain_chat_light(monkeypatch):
+    """The production reader fails closed too: ``get_cli_setting`` raising
+    reads as "Full agent tools off"."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Agents.plain_chat_tool_surface import light_surface_configured
+
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    assert light_surface_configured() is False  # the switch is really on
+
+    # Undone before the autouse fixture resets the gates through config.
+    with monkeypatch.context() as patch:
+        patch.setattr(config, "get_cli_setting", _raises)
+        light = light_surface_configured()
+
+    assert light is True
+
+
+def test_a_send_whose_agent_work_detector_raises_stays_light(tmp_path):
+    """The live-work detector that keeps a running fleet's agent surface
+    (F8) fails closed: a fleet whose live count cannot be read counts as
+    "no agent work in flight", so the send stays light."""
+    import time
+
+    from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+    fleet.live_count = _raises  # the one read the detector makes
+    with bridge._fleet_admission_lock:
+        bridge._fleet_coordinators["conv-light"] = fleet
+
+    _send(bridge, session, assistant_id, _native_resolution())
+
+    assert _native_names(gateway) == LIGHT, sorted(_native_names(gateway))
+
+
 @pytest.mark.parametrize(
     ("fleet_conversation", "agent_surface"),
     [("conv-light", True), ("another-conversation", False)],
