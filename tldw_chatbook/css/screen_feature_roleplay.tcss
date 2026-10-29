@@ -558,6 +558,29 @@ $ds-portrait-review-lines: 13;
     border: none;
 }
 
+/* Frame slice B2b (RP-062): the search placeholder and typed text at AA,
+   painted on every measurable theme by Tests/UI/test_theme_contrast.py.
+   Textual paints the placeholder $text-disabled, under 4.5:1 on all 89
+   themes (2.12:1 on paradise_virtua): at rest it takes the placeholder
+   token. Focused, the dense form's translucent $ds-input-focus-bg over the
+   pane's $panel took the focus ink under 4.5:1 on five themes (4.12:1 on
+   catppuccin-frappe), so the box takes the house focus fill themes.py
+   guards for $panel, as the Workflows search does; Textual's own 5% tint
+   is dropped (with it, three themes stay under, 4.27:1 on
+   catppuccin-mocha). The left edge stays the dense form's. */
+.roleplay-items-search > .input--placeholder {
+    color: $ds-text-placeholder;
+}
+
+.roleplay-items-search:focus {
+    background: $tldw-focus-fill;
+    background-tint: transparent;
+}
+
+.roleplay-items-search:focus > .input--placeholder {
+    color: $ds-focus-fg;
+}
+
 /* Frame slice B2b: the one choice modal (the New chooser, "Import as:"),
    Widgets/Persona_Widgets/roleplay_choice_modal.py. It is pushed only from
    Roleplay, so this lazy sheet is always loaded while it shows. */
