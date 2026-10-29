@@ -1323,6 +1323,10 @@ class LibraryScreen(BaseAppScreen):
         # other two) -- disjoint contexts, and Textual tries each binding for
         # a key until one's ``check_action`` passes.
         Binding("r", "library_notes_trash_restore", "Restore note", show=False),
+        # TASK-34000.29 (N-29, 8b; ruling T8b-d): the Notes Trash's Delete
+        # forever, live only on a focused Trash row -- disjoint from the
+        # Media Trash's "x" above, which gates on the Media row.
+        Binding("x", "library_notes_trash_delete", "Delete forever", show=False),
     ]
 
     #: Footer hint set while the Search/RAG canvas is active — mirrors the
@@ -8980,9 +8984,18 @@ class LibraryScreen(BaseAppScreen):
                 return self._notes_footer_tier(
                     (("esc", "back to notes"),), (("esc", "notes"),)
                 )
+            # TASK-34000.29 (8b; ruling T8b-d): "x" only where it deletes --
+            # the binding's own gate, which F1 reads too (ruling T9-h). Both
+            # tiers keep "forever": the chip is the only warning before the
+            # confirm.
+            purge = (
+                (("x", "delete forever"),)
+                if self.check_action("library_notes_trash_delete", ())
+                else ()
+            )
             return self._notes_footer_tier(
-                (("r", "restore note"), ("esc", "back to notes")),
-                (("r", "restore"), ("esc", "notes")),
+                (("r", "restore note"), *purge, ("esc", "back to notes")),
+                (("r", "restore"), *purge, ("esc", "notes")),
             )
         if region == "import":
             phase = self._library_note_import_controller.snapshot.phase
@@ -26054,6 +26067,8 @@ class LibraryScreen(BaseAppScreen):
         controller = getattr(self, "_notes_controller", None)
         if controller is not None:
             controller._trash_focus_role = ""
+            # TASK-34000.29 8b (parked R4-1): and the offset it withheld.
+            controller._trash_landing_settling = ""
         if self._notes_state.pending_focus_identity is not None:
             self._notes_state.pending_focus_identity = None
             self._notes_state.pending_focus_waits_for_snapshot = False
@@ -27319,6 +27334,19 @@ class LibraryScreen(BaseAppScreen):
                 and trash is not None
                 and trash.rows
                 and not self._library_notes_mutation_fenced()
+            )
+        if action == "library_notes_trash_delete":
+            # TASK-34000.29 (N-29, 8b; ruling T8b-d): only where it deletes
+            # -- the Trash view, a focused Trash row, nothing in flight. The
+            # one decision the binding, the footer chip and F1 all read.
+            trash = self._notes_state.trash
+            return bool(
+                self._library_notes_workflow_active()
+                and self._notes_state.view == "trash"
+                and trash is not None
+                and trash.rows
+                and not self._library_notes_mutation_fenced()
+                and self._focused_library_notes_trash_delete() is not None
             )
         if action in {
             "library_media_trash_restore",
@@ -32997,6 +33025,44 @@ class LibraryScreen(BaseAppScreen):
         focused = getattr(self, "focused", None)
         if focused is not None and focused.has_class("library-notes-trash-restore"):
             focused.press()
+
+    @on(Button.Pressed, ".library-notes-trash-delete")
+    def handle_library_notes_trash_delete(self, event: Button.Pressed) -> None:
+        """Ask before deleting one Trash row's note forever (TASK-34000.29 8b).
+
+        Args:
+            event: Press of one Trash row's Delete forever button.
+        """
+        return self._notes_controller.handle_library_notes_trash_delete(event)
+
+    def _focused_library_notes_trash_delete(self) -> Button | None:
+        """The Delete forever of the focused Trash row, or ``None``.
+
+        A row's one focus stop is its Restore (Delete forever is not a Tab
+        stop), so the focused Restore names the row. Read by the ``x`` gate
+        in ``check_action`` and by the action, so the key, the footer chip
+        and F1 agree (ruling T8b-d).
+        """
+        focused = getattr(self, "focused", None)
+        prefix = "library-notes-trash-restore-"
+        focused_id = str(getattr(focused, "id", "") or "")
+        if focused is None or not focused_id.startswith(prefix):
+            return None
+        index = focused_id.removeprefix(prefix)
+        for button in self.query(f"#library-notes-trash-delete-{index}").results(Button):
+            return button
+        return None
+
+    def action_library_notes_trash_delete(self) -> None:
+        """Keyboard "x": Delete forever for the focused Trash row (8b).
+
+        Presses the row's own button, so the confirm opens from one place
+        and ``Button.press``'s refusal while disabled stays a second guard
+        behind ``check_action`` -- the shape ``r`` uses.
+        """
+        button = self._focused_library_notes_trash_delete()
+        if button is not None:
+            button.press()
 
     def _notify_library_note_missing_warning(self) -> None:
         return self._notes_controller._notify_library_note_missing_warning()

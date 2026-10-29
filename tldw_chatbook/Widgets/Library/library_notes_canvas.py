@@ -343,6 +343,36 @@ def delete_confirm_copy(*, synced: bool) -> str:
 
     return DELETE_CONFIRM_COPY_SYNCED if synced else DELETE_CONFIRM_COPY
 
+
+#: TASK-34000.29 (N-29, 8b): Delete forever's confirm -- ADR-055 Pattern B,
+#: the permanence stated and the note named (the house ``ConfirmationDialog``
+#: renders both with ``markup=False``, and opens on Cancel).
+PURGE_CONFIRM_TITLE = "Delete this note forever?"
+PURGE_CONFIRM_LABEL = "Delete forever"
+#: The longest title the confirm and the notice repeat in full.
+_PURGE_TITLE_LIMIT = 120
+
+
+def purge_subject(title: str) -> str:
+    """The note's title as the confirm and the notice name it, bounded."""
+
+    text = " ".join(str(title or "").split()) or "Untitled"
+    if len(text) <= _PURGE_TITLE_LIMIT:
+        return text
+    return text[: _PURGE_TITLE_LIMIT - 1].rstrip() + "…"
+
+
+def purge_confirm_copy(title: str) -> str:
+    """The confirm's sentence: which note, and that it cannot come back."""
+
+    return f"“{purge_subject(title)}” will be deleted for good. This cannot be undone."
+
+
+def purge_notice(title: str) -> str:
+    """The notice after a purge -- feedback, not a receipt (no Undo exists)."""
+
+    return f"Deleted forever · {purge_subject(title)}"
+
 #: TASK-34000.2: said right after the world when the note's sync folder is
 #: held for attention -- nothing typed here reaches the file until it is
 #: resolved, so it outranks the path and the write time for the row's cells.
@@ -3122,14 +3152,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
 
     def _compose_trash(self) -> ComposeResult:
-        """Render the soft-deleted notes with one Restore each, and no more.
+        """Render the soft-deleted notes, each with Restore and Delete forever.
 
-        Restore is the only mutation this view offers: it commits through
-        the same ``_undo_library_note_delete`` seam the receipt's Undo uses,
-        so the row returns to its folder (or Unfiled) and the rail count
-        moves exactly as an Undo would. There is deliberately no permanent
-        delete here -- ADR-055 keeps destruction behind its own receipt, and
-        this surface exists to recover.
+        Restore commits through the same ``_undo_library_note_delete`` seam
+        the receipt's Undo uses, so the row returns to its folder (or
+        Unfiled) and the rail count moves exactly as an Undo would.
+        TASK-34000.29 (N-29, 8b; owner ruling 2026-10-29): Delete forever is
+        ADR-055 Pattern B -- a confirm that names the note and says it
+        cannot be undone, and no receipt afterwards. It is not a Tab stop:
+        a row is one stop (its Restore), and ``x`` deletes the focused row
+        forever as ``r`` restores it, so a 20-row page stays 20 Tabs.
         """
         trash = self.trash or LibraryNotesTrashState()
         yield Static(
@@ -3140,7 +3172,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         yield Static(
             "Deleted notes stay here until you restore them. Restore puts a "
-            "note back where it was; nothing is removed for good from here.",
+            "note back; Delete forever removes it for good.",
             id="library-notes-trash-purpose",
             markup=False,
         )
@@ -3209,6 +3241,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     button.note_title = row.title
                     button.note_version = row.version
                     yield button
+                    purge = Button(
+                        "Delete forever",
+                        id=f"library-notes-trash-delete-{index}",
+                        classes=(
+                            "library-canvas-action library-media-action-danger "
+                            "library-canvas-danger library-notes-trash-delete"
+                        ),
+                        compact=True,
+                    )
+                    # One Tab stop per row (the docstring above); ``x`` is
+                    # its key, gated to the focused row's Restore.
+                    purge.can_focus = False
+                    purge.note_id = row.note_id
+                    purge.note_title = row.title
+                    purge.note_version = row.version
+                    yield purge
             yield from self._compose_trash_pager(trash)
 
     def _compose_trash_failure(self) -> ComposeResult:

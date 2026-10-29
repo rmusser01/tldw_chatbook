@@ -590,10 +590,14 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 )
 from ...Widgets.Library.library_notes_canvas import (
     LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
+    PURGE_CONFIRM_LABEL,
+    PURGE_CONFIRM_TITLE,
     LibraryNotePresentationState,
     NoteEditorTextArea,
     note_title_tiebreak_suffix,
     notes_sort_is_blocked,
+    purge_confirm_copy,
+    purge_notice,
     resolve_database_note_status_channels,
 )
 from ...Widgets.Library.library_note_link_picker import (
@@ -605,6 +609,7 @@ from ...Utils.fts5_match_forms import (
     NOTES_FILTER_MIN_PREFIX_CHARS as LIBRARY_NOTE_LINK_PICKER_MIN_QUERY,
 )
 from ...Notes.note_link_policy import link_kind, link_notice_text
+from ...Notes.notes_scope_service import NotePurgeRefusedError
 from ...Notes.note_import_plan_models import (
     note_link_entries,
     stored_note_link,
@@ -666,6 +671,26 @@ def _notes_noun(count: int) -> str:
     return "note" if count == 1 else "notes"
 
 
+#: TASK-34000.29 8b (ruling T8b-e): how many refreshes a Trash landing's
+#: keep-in-view waits for a pruning sync's replay to put focus back.
+_TRASH_LANDING_SETTLE_DEFERRALS = 5
+
+
+def _is_framework_focus_landing(host: Any, focused: Any) -> bool:
+    """Whether focus sits where Textual parked it, not where anyone put it.
+
+    Nothing focused, or the reset landing a Notes canvas recorded while it
+    pruned its focused child (``LibraryScreen._library_notes_reset_landing_
+    canvas``). A host without a screen (a test fake) has no such landing.
+    """
+    if focused is None:
+        return True
+    reset_landing = getattr(
+        getattr(host, "_screen", None), "_library_notes_reset_landing_canvas", None
+    )
+    return bool(callable(reset_landing) and reset_landing(focused) is not None)
+
+
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
@@ -725,7 +750,11 @@ class LibraryNotesController:
     #: The owed role whose read has published and whose keep-in-view has not
     #: run yet; honoured only while it is still the owed role, and dropped by
     #: the keep-in-view, by every press that arms a role (the open among
-    #: them) and by leaving the view.
+    #: them) and by leaving the view. TASK-34000.29 8b (ruling T8b-e): every
+    #: landing raises it too (a Restore's or a purge's same-page landing,
+    #: parked R4-2), and it is also dropped by the real-input withdrawal and
+    #: by a landing that runs for another role -- the one settling was
+    #: replaced and will never run (parked R4-1).
     _trash_landing_settling: str = ""
 
     def __init__(
@@ -7926,6 +7955,154 @@ class LibraryNotesController:
             group="library_note_mutation",
         )
 
+    @on(Button.Pressed, ".library-notes-trash-delete")
+    def handle_library_notes_trash_delete(self, event: Button.Pressed) -> None:
+        """Ask before deleting one Trash row's note for good (TASK-34000.29 8b).
+
+        The owner ruled "yes with confimration" (2026-10-29). ADR-055
+        Pattern B: the house ``ConfirmationDialog`` names the note and says
+        it cannot be undone (``markup=False``), opens on Cancel, and Escape
+        is its Cancel. Nothing is written until Delete forever is pressed in
+        it (ruling T8b-a).
+
+        Args:
+            event: Press of one row's Delete forever (or ``x`` on the row).
+        """
+        event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        button = event.button
+        note_id = str(getattr(button, "note_id", "") or "")
+        if not note_id:
+            return
+        title = str(getattr(button, "note_title", "") or "Untitled")
+        version = int(getattr(button, "note_version", 0) or 0)
+        prefix = "library-notes-trash-delete-"
+        button_id = str(getattr(button, "id", "") or "")
+        index = button_id.removeprefix(prefix) if button_id.startswith(prefix) else "0"
+        # Imported here (ADR-097), as the Notes dialogs are.
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+        self.app.push_screen(
+            ConfirmationDialog(
+                title=PURGE_CONFIRM_TITLE,
+                message=purge_confirm_copy(title),
+                confirm_label=PURGE_CONFIRM_LABEL,
+                cancel_label="Cancel",
+            ),
+            lambda confirmed: (
+                self._confirm_library_notes_trash_delete(note_id, title, version, index)
+                if confirmed
+                else None
+            ),
+        )
+
+    def _confirm_library_notes_trash_delete(
+        self, note_id: str, title: str, version: int, index: str
+    ) -> None:
+        """Start the purge the confirm approved, under the Notes interlock.
+
+        Focus is owed to the row that will take this one's place
+        (``trash-restore:<index>``, clamped; ruling T8b-e), through the same
+        record a Restore uses -- a real input since still wins.
+        """
+        if self._library_notes_view != "trash":
+            return
+        if self._library_notes_mutation_fenced():
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(
+                    "Nothing was deleted — another change to your notes is "
+                    "still running.",
+                    severity="warning",
+                    markup=False,
+                )
+            return
+        role = f"trash-restore:{index}"
+        self._trash_focus_role = role
+        self._trash_landing_settling = ""
+        self._library_notes_mutation_in_flight = True
+        self.run_worker(
+            self._purge_library_note_from_trash(
+                note_id, title, version, trash_focus=role
+            ),
+            exclusive=True,
+            group="library_note_mutation",
+        )
+
+    async def _purge_library_note_from_trash(
+        self, note_id: str, title: str, version: int, *, trash_focus: str
+    ) -> None:
+        """Delete one note forever through ``NotesScopeService.purge_note``.
+
+        Lasting sync is asked inside the purge, at this moment (ruling
+        T8b-c). On success: a notice (no receipt -- nothing can undo it),
+        the list's own delete receipt for the same note dropped (its Undo
+        would restore nothing), and the page re-read (clamped) with focus
+        landing on the row that took this one's place. A refusal keeps the
+        row and says why.
+        """
+        purged = False
+        message = ""
+        reload_page = False
+        try:
+            service = getattr(self.app_instance, "notes_scope_service", None)
+            purge_note = getattr(service, "purge_note", None)
+            if not callable(purge_note):
+                message = "Delete forever is unavailable."
+            else:
+                try:
+                    purged = bool(
+                        await self._run_library_service_call(
+                            purge_note,
+                            scope="local_note",
+                            note_id=note_id,
+                            version=version,
+                            user_id=self._library_notes_user_id(),
+                            sync_runtime=notes_sync_attention._runtime(self),
+                        )
+                    )
+                    if not purged:
+                        message = "This note is no longer in Recently deleted."
+                        reload_page = True
+                except NotePurgeRefusedError as refused:
+                    message = refused.user_message
+                    reload_page = refused.reason_code == "not_deleted"
+                except ConflictError:
+                    message = (
+                        "This deleted note changed elsewhere — refresh and try again."
+                    )
+                    reload_page = True
+                except Exception as exc:  # noqa: BLE001 - degrade to a notice
+                    # Metadata only: the frame holds the note's title.
+                    logger.warning(
+                        "Failed to delete a Library note forever; error_type={}",
+                        type(exc).__name__,
+                    )
+                    message = "Could not delete this note forever."
+        finally:
+            LibraryNotesController._release_library_notes_mutation(self)
+        # After the release, not before: the confirm's closing resumed the
+        # screen while the purge held the interlock, so the visit reload it
+        # owes runs in the release -- and its roleless Trash re-read, started
+        # after this one, cancelled it (exclusive group) and the landing with
+        # it (traced: focus arrived only through the fallback replay). Started
+        # last, this read supersedes that one instead.
+        if purged:
+            receipt = self._library_note_delete_receipt
+            if receipt is not None and receipt.note_id == note_id:
+                self._library_note_delete_receipt = None
+            self._refresh_library_notes_trash(focus_role=trash_focus)
+        elif reload_page:
+            self._refresh_library_notes_trash()
+        notify = getattr(self.app_instance, "notify", None)
+        if not callable(notify):
+            return
+        if purged:
+            notify(purge_notice(title), markup=False)
+        else:
+            notify(message, severity="warning", markup=False)
+
     @on(Button.Pressed, "#library-notes-trash-previous")
     def handle_library_notes_trash_previous(self, event: Button.Pressed) -> None:
         """Read the Trash page before this one (TASK-34000.29, N-29).
@@ -8007,9 +8184,28 @@ class LibraryNotesController:
         marked programmatic (never read as the user's move). Skipped once the
         user's own input has moved focus since the press (it cleared
         ``_trash_focus_role``) or the Trash view has closed.
+
+        TASK-34000.29 8b (ruling T8b-e, parked R4-1/R4-2). Every landing
+        withholds the list's offset until its keep-in-view has run -- a
+        Restore's (and a same-page) landing comes from its own canvas sync,
+        not a page read's publish, so nothing raised the marker and a sync
+        right after the landing replayed the new list's pre-layout offset
+        over the landed row (R4-2). And a landing that runs for another role
+        than the one settling means that one's ``then`` was replaced and will
+        never run, so its marker is dropped (R4-1): left up, the next sync
+        jumped the list back over the user's own wheel scroll.
         """
         if self._library_notes_view != "trash" or self._trash_focus_role != role:
+            settling = getattr(self, "_trash_landing_settling", "")
+            if settling and settling != role:
+                self._trash_landing_settling = ""
             return
+        if role.startswith("trash-restore:") or role in {"trash-previous", "trash-next"}:
+            # Only a control IN the list (a row, the pager that is its last
+            # row): Retry and Back sit above it, and withholding the list's
+            # offset for them dropped the scroll the user had (measured: the
+            # failed-Next Retry pin at 100x30 lost the pager below the fold).
+            self._trash_landing_settling = role
         self._restore_library_notes_focus_identity(
             LibraryNotesFocusIdentity(
                 stage="notes", region="trash", note_id=None, semantic_role=role
@@ -8026,20 +8222,43 @@ class LibraryNotesController:
             role,
         )
 
-    def _keep_landed_trash_control_in_view(self, role: str) -> None:
+    def _keep_landed_trash_control_in_view(self, role: str, deferrals: int = 0) -> None:
         """Scroll a landed Trash control into view, if it still has focus.
 
         Only while the landing still stands: the owed role unchanged (a real
         input since clears it) and its control the focused widget -- a user's
         own move is never scrolled after. Either way the landing has settled,
         so the Trash list's offset is captured again (ruling T8-j).
+
+        TASK-34000.29 8b (ruling T8b-e): one exception to "either way". A
+        sync whose recompose prunes the landed control right after it landed
+        leaves focus on Textual's reset landing (a pane grip) or on nothing,
+        and that sync's own replay puts it back on the owed control a refresh
+        later. Settling then dropped the marker under the replay, so a
+        capture read the rebuilt list at offset 0 and re-applied it over the
+        landed row below the fold (traced at 100x30: a Restore of the last
+        row, one sync injected right after its landing). So while focus sits
+        on that framework landing, the check is deferred to the next refresh
+        -- a bounded number of times -- with the offset still withheld.
         """
+        in_view = self._library_notes_view == "trash" and self._trash_focus_role == role
+        target = self._library_notes_trash_focus_target(role) if in_view else None
+        focused = self.focused
+        if (
+            target is not None
+            and focused is not target
+            and deferrals < _TRASH_LANDING_SETTLE_DEFERRALS
+            and _is_framework_focus_landing(self, focused)
+        ):
+            self.call_after_refresh(
+                partial(LibraryNotesController._keep_landed_trash_control_in_view, self),
+                role,
+                deferrals + 1,
+            )
+            return
         if getattr(self, "_trash_landing_settling", "") == role:
             self._trash_landing_settling = ""
-        if self._library_notes_view != "trash" or self._trash_focus_role != role:
-            return
-        target = self._library_notes_trash_focus_target(role)
-        if target is None or self.focused is not target:
+        if target is None or focused is not target:
             return
         target.scroll_visible(animate=False, force=True, immediate=True)
 

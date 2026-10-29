@@ -1273,7 +1273,8 @@ def _purge_press_fake(*, fenced: bool = False, view: str = "trash"):
     )
 
     def run_worker(work, **kwargs):
-        workers.append((work, kwargs))
+        # The coroutine's own arguments, read before it is closed unstarted.
+        workers.append((work.cr_code, dict(work.cr_frame.f_locals), kwargs))
         work.close()
 
     fake.run_worker = run_worker
@@ -1324,11 +1325,13 @@ def test_delete_forever_asks_first_and_names_the_note() -> None:
     assert fake._library_notes_mutation_in_flight is False
 
     answer(True)
-    ((work, options),) = workers
+    ((code, arguments, options),) = workers
     assert options == {"exclusive": True, "group": "library_note_mutation"}
-    assert work.cr_code is LibraryNotesController._purge_library_note_from_trash.__code__
-    assert work.cr_frame.f_locals["note_id"] == "n4"
-    assert work.cr_frame.f_locals["version"] == 5
+    assert code is LibraryNotesController._purge_library_note_from_trash.__code__
+    assert arguments["note_id"] == "n4"
+    assert arguments["title"] == "[b]Groceries[/b]"
+    assert arguments["version"] == 5
+    assert arguments["trash_focus"] == "trash-restore:3"
     assert fake._library_notes_mutation_in_flight is True
     assert fake._trash_focus_role == "trash-restore:3"
     assert fake._trash_landing_settling == ""

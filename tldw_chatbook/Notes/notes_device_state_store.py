@@ -1410,6 +1410,35 @@ class NotesDeviceStateStore:
             ).fetchone()
         return None if row is None else (str(row[0]), str(row[1]))
 
+    def note_has_live_binding(self, note_id: str) -> bool:
+        """Whether any binding still ties this note to a sync folder.
+
+        TASK-34000.29 (N-29, 8b): Delete forever refuses such a note. Every
+        state but ``disconnected`` counts -- a paused or held root still owns
+        the file, and a candidate is a binding a pending setup will apply;
+        ``disconnected`` is terminal (``_BINDING_TRANSITIONS``), so it can
+        never claim the note again. Same note-led scan as
+        ``active_binding_path_for_note`` (no index leads on ``note_id``).
+
+        Args:
+            note_id: The note Delete forever was asked to purge.
+
+        Returns:
+            ``True`` when a non-disconnected binding names the note.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM notes_sync_bindings WHERE note_id = ? AND state <> ? "
+                "LIMIT 1",
+                (note_id, NotesSyncBindingState.DISCONNECTED.value),
+            ).fetchone()
+        return row is not None
+
     def list_binding_summaries(
         self,
         root_id: str,

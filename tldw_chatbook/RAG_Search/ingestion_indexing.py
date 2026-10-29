@@ -1505,6 +1505,42 @@ def _media_post_delete_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         logger.warning(f"RAG post-delete hook failed for media_id={media_id}: {e}")
 
 
+def submit_note_index_removal(
+    note_id: str, *, source_path: Optional[Path] = None
+) -> bool:
+    """Queue a purged note's semantic projection for removal (TASK-34000.29 8b).
+
+    The note twin of ``_media_post_delete_hook``, and the same guard: a
+    disabled or unavailable RAG runtime is never initialized just to delete,
+    and the source purge never depends on this. A backfill indexes notes as
+    ``note_<id>`` documents carrying their text and title, which semantic
+    search returns as snippets; Delete forever must take them too.
+
+    Args:
+        note_id: The note just deleted for good.
+        source_path: The Notes database the note lived in.
+
+    Returns:
+        ``True`` when a removal was queued.
+    """
+    try:
+        if peek_shared_rag_service() is None and not semantic_indexing_available():
+            return False
+        return bool(
+            get_ingestion_indexer().submit_removal(
+                IndexRemoval(
+                    item_id=str(note_id),
+                    item_type=ITEM_TYPE_NOTE,
+                    document_id=f"note_{note_id}",
+                    source_path=source_path,
+                )
+            )
+        )
+    except Exception as e:
+        logger.warning("RAG removal of a purged note failed: {}", type(e).__name__)
+        return False
+
+
 def install_media_ingest_hook(
     failure_notifier: Optional[Callable[[str], None]] = None,
     guidance_notifier: Optional[Callable[[str], None]] = None,
