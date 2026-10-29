@@ -6,7 +6,7 @@
     "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py": "31991cd8c2631bade5635c1ab72103ae671aede4279bb92008240ce3ac652eb4",
     "Tests/Backup_Recovery/test_response_rules_restore.py": "438422a6c81ff9486ea2ba332555506f5afe7972430556258e4cbf26c77e2479",
     "Tests/CI/test_response_rules_critical_gate.py": "313527d089d4acb3b662030ea77133571aedd2d7ef2432e9deacbbf5cd8ee726",
-    "Tests/Chat/test_response_rules_live_local.py": "301406fee8b239547f65e051a4cec9e4fe0c510dbad336550db8e4c7c5495ceb",
+    "Tests/Chat/test_response_rules_live_local.py": "7f259b2161642a1938ff188ad6138179f140cadedd9026b535d42103e17ae63d",
     "Tests/Chat/test_response_rules_trace_admission.py": "d920d9e880d807bbbd183e1b163e827043a1b5d5a75e6cf8ecf372c3b9226283",
     "Tests/UI/response_rules_fixtures.py": "a648d920085e9269b3961c57bdb565088be60af50d1b92626c83314cc994af9a",
     "Tests/UI/test_response_rules_end_to_end.py": "6ea643425aee00035244187cfc40910d6eb271acb80d6922a110d47fffe53fa6",

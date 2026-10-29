@@ -1,0 +1,79 @@
+{
+  "qualified_head": "a007eae6fac618eb4fc05e33a179ad1459187486",
+  "required_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40803375472",
+  "required_conclusion": "success",
+  "jobs": [
+    {
+      "name": "Console P0 regression gate",
+      "databaseId": 123216466868,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40803375472/job/123216466868",
+      "startedAt": "2026-10-29T01:56:18Z",
+      "completedAt": "2026-10-29T02:12:15Z",
+      "conclusion": "success",
+      "summaries": [
+        "2026-10-29T02:02:21.6553904Z ======================= 195 passed in 308.14s (0:05:08) ========================",
+        "2026-10-29T02:12:09.5911120Z ======================= 238 passed in 582.79s (0:09:42) ========================"
+      ],
+      "integrated_journeys": []
+    },
+    {
+      "name": "PR Fast Lane",
+      "databaseId": 123216466718,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40803375472/job/123216466718",
+      "startedAt": "2026-10-29T01:56:18Z",
+      "completedAt": "2026-10-29T02:26:21Z",
+      "conclusion": "success",
+      "summaries": [
+        "2026-10-29T02:26:14.8665667Z =========== 3265 passed, 3 skipped, 6 warnings in 1742.65s (0:29:02) ==========="
+      ],
+      "integrated_journeys": []
+    },
+    {
+      "name": "UI Fast Lane (21)",
+      "databaseId": 123216467226,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40803375472/job/123216467226",
+      "startedAt": "2026-10-29T02:07:20Z",
+      "completedAt": "2026-10-29T02:18:42Z",
+      "conclusion": "success",
+      "summaries": [
+        "2026-10-29T02:18:36.6810782Z ================= 143 passed, 2 warnings in 626.07s (0:10:26) =================="
+      ],
+      "integrated_journeys": [
+        "2026-10-29T02:18:35.3571638Z 14.62s call     Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[ancestry-size1]",
+        "2026-10-29T02:18:35.3575929Z 14.22s call     Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[history-size1]",
+        "2026-10-29T02:18:35.3577728Z 13.57s call     Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[history-size0]",
+        "2026-10-29T02:18:35.3578629Z 13.46s call     Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console[ancestry-size0]"
+      ]
+    }
+  ],
+  "additional_workflows": [
+    {
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40803375482",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "UI latency guardrails",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40803375498",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Eval recovery (windows-2022)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Eval recovery (ubuntu-24.04)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Eval recovery (macos-15)",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
+}
