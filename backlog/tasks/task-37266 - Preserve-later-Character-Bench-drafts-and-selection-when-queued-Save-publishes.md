@@ -13,7 +13,7 @@ references:
 - tldw_chatbook/UI/Screens/evals_screen.py
 assignee:
 - '@codex'
-updated_date: 2026-10-28 23:02
+updated_date: 2026-10-29 02:56
 ---
 
 ## Description
@@ -55,9 +55,14 @@ Full plan: Docs/superpowers/plans/2026-10-28-textual-37266-37268.md.
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+CharacterBenchEditor Saved captures its originating editor and submitted applicability. An editor-local synchronous monotonic revision protects later raw fields, cards/search, focus and selection, including equal-valued Saves and returned drafts. Evals reuses its serialized selection region, persists submitted values and refreshes Catalog/Inspector while preserving newer completed or pending selection.
 
+Files: UI/Evals/character_bench_editor.py, UI/Screens/evals_screen.py, new native publication tests and Docs/Architecture/evals.md. Final native verification:31 parent passes including all26 actual new child passes; six intended repair RED children. Original editor/word/dirty-selection controls and source pins retained. Two whitespace-free explicit description IDs change collection labels only. Scoped lint/format and exact4211-line screen budget preserved. Canonical-class Windows path failure is inherited-input qualified and the unchanged guard is enrolled for Linux.
+
+ADR required:no; existing ADR-011/033/150/161 retained, with shared CI amendment ADR-103. Independent task review approved after one repair round; no Critical/Important remain. Inherited dependency/config warnings remain disclosed.
+
+Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final whole-branch review and current-head hosted CI remain pending; status stays In Progress until closure.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

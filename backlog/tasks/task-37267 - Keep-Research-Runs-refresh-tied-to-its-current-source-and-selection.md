@@ -13,7 +13,7 @@ references:
 - tldw_chatbook/UI/Research_Modules/research_controller.py
 assignee:
 - '@codex'
-updated_date: 2026-10-28 23:02
+updated_date: 2026-10-29 03:00
 ---
 
 ## Description
@@ -56,9 +56,14 @@ Full plan: Docs/superpowers/plans/2026-10-28-textual-37266-37268.md.
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+ResearchWindow now checks the captured source and selection revision after the native interval read. Newer run/source selection wins, including away-and-back changes; source clearing immediately renders empty detail even when catalogs fail or return empty. Accepted progress retains bundle/artifact/event payloads. Controller fetched-result cache remains under its existing contract because current actions use Window selection.
 
+Files: UI/Research_Window.py, new real-service/native-timer publication tests and Docs/Architecture/research-workspace.md. Three intended assertion RED children; seven final parent/actual child passes;13 legacy behavior controls pass. Static batch46pass/8fail is not green: immutable comparisons preserve existing120 timer sites/75 roots and worker findings, including existing platform/inventory gaps. Scoped lint/format pass. Payload data is arranged from real keyword scope reads; separate artifact-action signature defect is tracked separately in the implementation QA, with existing task/ADR ownership linked.
+
+ADR required:no; existing ADR-033/068/070/078 retained, with shared CI amendment ADR-103. Independent task review approved with no Critical/Important. Warnings and inherited static limitations remain disclosed.
+
+Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final whole-branch review and current-head hosted CI remain pending; status stays In Progress until closure.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
