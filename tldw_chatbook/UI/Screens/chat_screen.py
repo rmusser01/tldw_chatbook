@@ -17109,7 +17109,9 @@ class ChatScreen(BaseAppScreen):
                 session_id,
                 token,
                 projection_key,
-                getattr(self, "_console_send_ack", None) is not None,
+                # The pending row, not the ack object: a release repaints (33620.1).
+                (ack := getattr(self, "_console_send_ack", None))
+                and ack.pending_row_id(session_id),
                 run_activity,
                 delete_arm,
                 # Existing finite context publication must reopen a quiet
