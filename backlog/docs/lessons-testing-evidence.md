@@ -413,6 +413,28 @@ created. Expect `load_settings()` to merge the shipped value back in anyway
 
 **What to do.** For anything that must gate or observe a Console send, check which path the harness's Enter takes (trace `receive_console_visible_intent`'s return) and test the received-intent path with the durable received case. Count provider calls, not refusal copy: a refusal can appear on one path while the other path sends.
 
+## A controller test that builds no turn configuration cannot see the frozen ceiling (TASK-33621.17, 2026-10-29)
+
+**Incident.** Live, Save & Send saved a Temporary chat and then refused the send:
+`Durable Console Library policy no longer matches acceptance`. The send's Library
+ceiling (`configuration.library_policy_maximum`) had been frozen from the temporary
+holder, so the durable commit carried `source=temporary, revision=None` into a chat
+promotion had just given a durable row. The controller test written for exactly
+this path (`test_save_and_send_refreshes_durable_authority_before_trace_admission`)
+calls `submit_draft` with no captured configuration, so it froze no ceiling and could
+not see it. It was also red on dev under a bootstrapped profile (at its own
+`source == "durable"` assertion) without anyone noticing: no PR lane runs that file,
+and a plain local run fails earlier with `Hooks unavailable` (the hooks read hits the
+unselected profile), which reads as environment noise.
+
+**What to do.** For anything that reads the turn configuration (Library ceiling,
+scope, provider selection), drive the stock received path (`_received_console_case`
+with `durable=True`), which captures the configuration the way the app does. Run a
+Tests/Chat file that sends through the controller with the `bootstrap_profile` marker
+added (a scratch `-p` plugin, as in the `RecoveryRequired` entries) before trusting
+either colour, and check the file is in some CI lane before treating dev's green as
+evidence.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen

@@ -158,7 +158,12 @@ project-instruction bodies never enter default durable capture.
     its newly active provider call terminated by startup recovery.
 
     Temporary conversations cannot make a durable Capture On call until Save & Send
-    promotes their in-memory lineage. Before dispatch, a component sanitization or
+    promotes their in-memory lineage. (Amended 2026-10-29, TASK-33621.17, owner
+    decision 2026-10-27: a temporary conversation resolves Capture Off unless the user
+    turns Capture On for it, so its sends never pause by default and Save & Send is
+    that opt-in's choice; saving the chat hands Capture back to the global setting.
+    The default is resolved, never stored with the saved conversation.) Before
+    dispatch, a component sanitization or
     descriptor-verification failure may proceed only after a content-free
     omission/incomplete marker and the remaining boundary/header state commit durably.
     Inability to persist the boundary, header, or incomplete state blocks dispatch and
