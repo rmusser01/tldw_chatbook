@@ -1,17 +1,101 @@
 """Queued Console rebuilds must not register controls after app shutdown."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 from textual.app import App
+from textual.widgets import Static
 
+from Tests.UI.test_console_bounded_section import _Harness, _lines, _settle, _workspace
 from Tests.UI.test_console_workspace_details_tray import TrayApp, _state
 from tldw_chatbook.app_lifecycle import LifecycleMixin
+from tldw_chatbook.UI.Console_Modules.left_rail import _ContextBoundedSection
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
+from tldw_chatbook.Widgets.Console.console_workspace_tree import ConsoleWorkspaceTree
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_bounded_reconcile_retires_while_shutdown_drains_owner(
+    monkeypatch, native
+):
+    """A queued callback cannot retry geometry after shutdown freezes layout."""
+    monkeypatch.setattr(
+        "tldw_chatbook.app_lifecycle.arm_exit_watchdog", lambda **kw: None
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class ClosingApp(LifecycleMixin, _Harness):
+        _handle_exception = App._handle_exception
+
+        async def _shutdown_app_owned_lifecycles(self):
+            entered.set()
+            await release.wait()
+
+        def on_unmount(self, event):
+            event.prevent_default()
+
+    tree = None
+    if native:
+        tree = ConsoleWorkspaceTree()
+        tree.sync_projection(
+            (
+                _workspace(
+                    "w",
+                    "Workspace",
+                    *((f"c{i}", f"Conversation {i}") for i in range(29)),
+                ),
+            ),
+            expanded_workspace_ids={"w"},
+        )
+    owner = SimpleNamespace(
+        request_allocation_reconcile=lambda: None,
+        recover_section_focus=lambda _id: None,
+    )
+    section = _ContextBoundedSection(
+        Static(_lines(2 if native else 30)),
+        section_id="workspace",
+        owner=owner,
+        native_scroll_owner=tree,
+    )
+    section.set_allocation(8)
+    app = ClosingApp(section)
+    closing_reconciles = []
+    original = section._reconcile
+
+    def observe_reconcile():
+        if app._exit:
+            closing_reconciles.append(True)
+        return original()
+
+    async def check_held_shutdown():
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            assert app._exit and app.is_running
+            assert section.is_mounted and not section.is_attached
+            assert section.screen.is_current
+            await asyncio.sleep(0.05)
+            assert not release.is_set(), "the original shutdown drain must remain held"
+            assert closing_reconciles == [], "closing section retries frozen layout"
+            assert not section._reconcile_scheduled
+        finally:
+            release.set()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        monkeypatch.setattr(section, "_reconcile", observe_reconcile)
+        observer = asyncio.create_task(check_held_shutdown())
+        # Queue while attached, then enter the real shutdown before it runs.
+        assert section.is_attached
+        section.set_allocation(5)
+        assert section._reconcile_scheduled
+    await observer
+    assert app._exception is None
 
 
 class ShutdownTrayApp(LifecycleMixin, TrayApp):
