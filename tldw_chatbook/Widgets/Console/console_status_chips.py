@@ -40,6 +40,8 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_EMERGENCY_STOP_CLEAR_LABEL,
+    CONSOLE_EMERGENCY_STOP_STRIP_LABEL,
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     ConsoleControlState,
     ConsoleRetrievalScopeState,
@@ -111,6 +113,16 @@ class ConsoleToolsChip:
 
     class OpenRequested(Message):
         """Posted when the tools segment is activated from keyboard or mouse."""
+
+
+class ConsoleEmergencyStopChip:
+    """Emergency-stop segments (TASK-33620.1): the hold, then its Clear.
+
+    Only the Clear segment is actionable; it lifts the stop.
+    """
+
+    class ClearRequested(Message):
+        """Posted when the Clear segment is activated from keyboard or mouse."""
 
 
 class ConsoleRunChip:
@@ -194,6 +206,7 @@ class ConsoleStatusText(Static):
     #: Segment name -> the message class activation posts. The same classes
     #: the chip widgets used to post, so screen handlers are untouched.
     SEGMENT_MESSAGES: dict[str, Callable[[], Message]] = {
+        "estop-clear": ConsoleEmergencyStopChip.ClearRequested,
         "temporary": ConsoleTemporaryChip.SaveRequested,
         "run": ConsoleRunChip.OpenRequested,
         "provider": ConsoleModelChip.OpenRequested,
@@ -630,7 +643,24 @@ class ConsoleStatusChips(Horizontal):
     def _build_segments(self) -> list[StatusSegment]:
         """The full segment list, in the strip's order (see old compose)."""
         state = self.state
+        held = state.emergency_stop_held
         segments = [
+            # TASK-33620.1: the emergency stop sits left-most, ahead even of
+            # the run segment, so it stays on screen however the strip
+            # scrolls; it shows only while the stop holds new work.
+            StatusSegment(
+                name="estop",
+                label=CONSOLE_EMERGENCY_STOP_STRIP_LABEL,
+                visible=held,
+                actionable=False,
+                alert=True,
+            ),
+            StatusSegment(
+                name="estop-clear",
+                label=CONSOLE_EMERGENCY_STOP_CLEAR_LABEL,
+                visible=held,
+                alert=True,
+            ),
             self._temporary_segment(),
             # TASK-2154.18 (FB-08): the run segment sits left-most so it
             # stays visible when the strip scrolls horizontally.

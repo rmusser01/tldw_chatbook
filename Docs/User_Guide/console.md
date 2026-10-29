@@ -353,7 +353,9 @@ same one of four things for the same connection:
 | **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out", "untrusted cert" (the server's certificate isn't trusted — add your CA in Settings ▸ Network), "plain http" (an https address on a plain-HTTP server) or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
 
 The words carry the state; colour only repeats it (the Model section line
-turns red when Not ready). A provider whose model list is public, such as
+turns red when Not ready). While an emergency stop (see Keyboard & commands)
+is active the header badge reads **Held · emergency stop** instead, because
+no send can start until it is cleared. A provider whose model list is public, such as
 OpenRouter, stays "Ready · not tested" after its list loads, because the list
 proves nothing about your key.
 
@@ -1409,10 +1411,17 @@ new agent runs and new scheduled dispatches from starting, across the whole
 app — in-flight runs and already-dispatched scheduled tasks are left to
 finish untouched. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
-than proceeding. Any attempted send while it's active is refused with a
-plain notice and how to clear it; `/emergency-stop clear` resumes normal
-operation immediately, no restart needed. To end just this tab's in-flight
-run, use **Stop**, **Ctrl+G**, or `/stop` instead.
+than proceeding. While it is active the Console shows it until it is
+cleared, not just in the five-second toast: the header badge reads
+**Held · emergency stop** (just **Held** in a narrow window) instead of
+Ready, the status strip starts with **Emergency stop: runs and schedules
+held · Clear**, Send is disabled with the reason "Send held — emergency stop
+is on", and an empty chat says the stop is active. A send you try anyway is
+refused with a notice that names `/emergency-stop clear`. A stop still
+active from an earlier session is announced once when the Console opens.
+Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
+resume at once; no restart is needed. To end just this tab's in-flight run,
+use **Stop**, **Ctrl+G**, or `/stop` instead.
 
 ## Related settings & docs
 
