@@ -585,6 +585,10 @@ _BUDGETS: dict[str, int] = {
     # (`note_draft_sending`) and keeps the Send reason strip's queue copy off
     # the row while it still shows that text, so a one-row draft no longer
     # wraps to two and back mid-send.
+    # 2026-10-29, TASK-33620.15.26 (same owner decision): 7043 -> 7068 (+25).
+    # The composer records the draft a visible send took
+    # (`note_draft_sending`) and keeps its rows while it still shows that
+    # text, so a one-row draft no longer wraps to two and back mid-send.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
