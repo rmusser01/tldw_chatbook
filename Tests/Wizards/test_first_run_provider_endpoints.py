@@ -53,7 +53,7 @@ _BASE_URL_CASES = {
         "https://adb-1111111111111111.1.azuredatabricks.net",
     ),
     "cloudflare": (
-        "Cloudflare account URL",
+        "Workers AI base URL (ends in /ai/v1)",
         "/accounts/<account-id>/ai/v1",
         "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef/ai/v1",
     ),
@@ -157,6 +157,58 @@ async def test_a_per_account_provider_reaches_a_saved_ready_config(
     assert table["api_base_url"].startswith(entered.rstrip("/"))
     readiness = get_provider_readiness(provider_key, saved, environ={})
     assert readiness.ready, readiness.reason
+
+
+_CLOUDFLARE_ACCOUNT = "https://api.cloudflare.com/client/v4/accounts/abc123"
+
+
+@pytest.mark.parametrize(
+    "typed",
+    [
+        _CLOUDFLARE_ACCOUNT,
+        f"{_CLOUDFLARE_ACCOUNT}/",
+        f"{_CLOUDFLARE_ACCOUNT}/chat/completions",
+        f"{_CLOUDFLARE_ACCOUNT}/ai/v1",
+    ],
+)
+def test_a_cloudflare_url_that_stops_at_the_account_chats_to_workers_ai(typed):
+    """Pre-merge review (2026-10-29), important 1: the CLOUDFLARE record has no
+    base_url_suffix and Workers AI has no listing route, so an account URL
+    without ``/ai/v1`` saved as ready and chatted to
+    ``…/accounts/<id>/chat/completions`` -- a route Cloudflare doesn't have,
+    found only as a 404 on the first chat. Saved here as setup saves it."""
+    resolution = resolve_provider_endpoint("cloudflare", typed)
+    assert resolution.errors == ()
+    assert resolution.chat_url == f"{_CLOUDFLARE_ACCOUNT}/ai/v1/chat/completions"
+    mutation = build_provider_setup_mutation(
+        ProviderSetupDraft(
+            provider="cloudflare",
+            model="@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+            endpoint=typed,
+            credential_source="draft",
+            credential_value="cf-token-0000000000000000",
+            credential_revision=0,
+            draft_generation=1,
+        ),
+        {"api_settings": {}},
+    )
+    table = mutation.section_values["api_settings.cloudflare"]
+    assert table["api_base_url"] == f"{_CLOUDFLARE_ACCOUNT}/ai/v1"
+
+
+@pytest.mark.asyncio
+async def test_the_step_previews_the_workers_ai_route_for_an_account_url(monkeypatch):
+    """Important 1, on the real step: the preview names the route that is used."""
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard, "cloudflare")
+        step.query_one("#setup-provider-endpoint", Input).value = _CLOUDFLARE_ACCOUNT
+        await pilot.pause()
+        assert static_text(step, "#setup-provider-effective-chat") == (
+            f"Chat URL: {_CLOUDFLARE_ACCOUNT}/ai/v1/chat/completions"
+        )
 
 
 def _template_endpoint(provider_key: str) -> str:

@@ -88,6 +88,9 @@ KEY_URL_UNCONFIRMED: frozenset[str] = frozenset(
 
 #: Per-account base URLs (``provider_readiness.PROVIDERS_REQUIRING_BASE_URL_KEYS``):
 #: the field's label and an example, shown above the key (review provider-05).
+#: Cloudflare's is the full Workers AI base, not the account URL: its record
+#: has no suffix to append (pre-merge review 2026-10-29; the endpoint contract
+#: completes a URL that stops at ``/accounts/<id>``).
 BASE_URL_FIELDS: dict[str, tuple[str, str]] = {
     "azure": ("Azure resource URL", "https://my-resource.openai.azure.com"),
     "databricks": (
@@ -95,7 +98,7 @@ BASE_URL_FIELDS: dict[str, tuple[str, str]] = {
         "https://adb-1234567890123456.7.azuredatabricks.net",
     ),
     "cloudflare": (
-        "Cloudflare account URL",
+        "Workers AI base URL (ends in /ai/v1)",
         "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai/v1",
     ),
 }

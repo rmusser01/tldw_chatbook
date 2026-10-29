@@ -89,6 +89,12 @@ _ENGINE_PRESETS = {
 _ROUTE_OWNING_PRESETS = {
     record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
 }
+#: Cloudflare Workers AI's OpenAI-compatible base is ``…/accounts/<id>/ai/v1``
+#: (record ``CLOUDFLARE``, which carries no suffix). The account URL alone has
+#: no chat route, and Workers AI has no listing to catch it before the first
+#: chat 404s, so a URL that stops at the account gets the route (TASK-34100.6
+#: pre-merge review 2026-10-29).
+_CLOUDFLARE_ACCOUNT_ROUTE = ("ai", "v1")
 #: ``htp:/x`` or ``http:/x``: a scheme-like word and a colon not followed by a
 #: port, typed without "//" (review provider-15).
 _SCHEME_TYPO = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
@@ -347,7 +353,8 @@ def _engine_preset_resolution(
     The entered path IS the base, minus a pasted ``/chat/completions`` or
     ``/models``; a bare host gets the record's suffix (Azure/Databricks
     ``/openai/v1``), the documented path when it is the preset's own host,
-    or ``/v1``.
+    or ``/v1``; a Cloudflare URL that stops at ``/accounts/<id>`` gets
+    ``/ai/v1``.
 
     Args:
         preset: The provider's registry record.
@@ -365,6 +372,8 @@ def _engine_preset_resolution(
         segments, form = segments[:-2], "chat_url"
     elif segments[-1:] == ("models",):
         segments, form = segments[:-1], "models_url"
+    if provider_key == "cloudflare" and segments[-2:-1] == ("accounts",):
+        segments = (*segments, *_CLOUDFLARE_ACCOUNT_ROUTE)
     if not segments:
         form = "origin"
         default = urlsplit(preset.default_base_url or "")
