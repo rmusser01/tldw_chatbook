@@ -1,0 +1,16 @@
+{
+  "held": false,
+  "timeline": [
+    {
+      "event": "writer-entered",
+      "time": 608094.921,
+      "thread": 160764,
+      "main_thread": 160764
+    },
+    {
+      "event": "writer-completed",
+      "time": 608094.921
+    }
+  ],
+  "dispatched_before_release": []
+}

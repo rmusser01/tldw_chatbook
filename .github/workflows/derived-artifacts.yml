@@ -628,7 +628,7 @@ jobs:
     # one hung test's report room under the cap (~15.4 + 3.3 of 20).
     # TASK-35834 (2026-10-20) introduced thirteen shards: its measured replay
     # plus 110s setup and 15% variance projected <=1000s below the 1020s target.
-    # Current UI lane: 28 shards (TASK-37236 all-phase/checkout qualification).
+    # Current UI lane: 32 shards (TASK-37266..37268 measured full-phase enrollment).
     # At most 17 UI jobs run at once; smaller serial slices preserve the
     # setup/variance target without increasing peak runners or any timeout.
     # Complete duration rows let replay charge function selectors by node.
@@ -641,7 +641,7 @@ jobs:
       fail-fast: false
       max-parallel: 17
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
 
     steps:
       - uses: actions/checkout@v4

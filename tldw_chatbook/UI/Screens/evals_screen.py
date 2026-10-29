@@ -495,7 +495,7 @@ class EvalsScreen(LabScreen):
         kind: SelectionKind,
         id: Optional[str] = None,
         rail_dirty: bool = True,
-        saved: Optional[BenchEditor.Saved] = None,
+        saved: Optional[BenchEditor.Saved | CharacterBenchEditor.Saved] = None,
     ) -> None:
         """Set the workbench's active selection and refresh dependent panes.
 
@@ -504,15 +504,11 @@ class EvalsScreen(LabScreen):
         rail row press) routes here via ``_on_library_selection_changed``
         below, but a caller may also drive selection directly.
 
-        A plain (non-async) method: it only SCHEDULES the region swap, it
-        does not await its completion -- callers that need the panes settled
-        should ``await pilot.pause()`` afterward, exactly as they did when
-        this scheduled a ``refresh(recompose=True)``.
+        Schedules a serialized region swap without awaiting it. Callers that
+        need settled panes should ``await pilot.pause()`` afterward.
 
-        task-15475: it no longer recomposes the screen. A screen recompose
-        rebuilt the nav bar, footer, header row, mode strip and the whole
-        ``LabWorkbench`` -- 150-300 widgets by the input-latency audit's
-        count -- to repaint two regions that read the selection.
+        task-15475: region swaps keep the nav bar, footer, header row, mode
+        strip and ``LabWorkbench`` mounted.
 
         Args:
             kind: The selected object's kind (``SelectionKind`` --
@@ -522,7 +518,7 @@ class EvalsScreen(LabScreen):
             id: The selected object's id. Only meaningful for a non-
                 ``"none"`` ``kind``; may be ``None`` (e.g. for ``kind=
                 "none"``, or a caller clearing the selection).
-            saved: Successful word-bench publication; conditionally reload its form.
+            saved: Successful bench publication; conditionally reload its form.
             rail_dirty: Whether the rail's ROWS (not just which one is
                 active) may have changed. Defaults to ``True``, the safe
                 answer for every mutation caller -- a save, a finished run, a
@@ -564,7 +560,10 @@ class EvalsScreen(LabScreen):
         )
 
     async def _swap_selection_regions(
-        self, *, revision: int, saved: Optional[BenchEditor.Saved] = None
+        self,
+        *,
+        revision: int,
+        saved: Optional[BenchEditor.Saved | CharacterBenchEditor.Saved] = None,
     ) -> None:
         """Serialize region swaps; superseded revisions do no work.
 
@@ -605,9 +604,14 @@ class EvalsScreen(LabScreen):
                         # swap below is still worth doing if they are there.
                         pass
 
+                kind = (
+                    "character_bench"
+                    if isinstance(saved, CharacterBenchEditor.Saved)
+                    else "bench"
+                )
                 if saved is None or (
-                    self._selection == EvalsSelection(kind="bench", id=saved.bench_id)
-                    and saved.editor in self.query(BenchEditor)
+                    self._selection == EvalsSelection(kind=kind, id=saved.bench_id)
+                    and saved.editor in self.query(type(saved.editor))
                     and saved.editor.save_publication_state() == saved.form_state
                 ):
                     body = self.build_lab_body()
@@ -937,13 +941,9 @@ class EvalsScreen(LabScreen):
     def _on_character_bench_editor_saved(
         self, event: CharacterBenchEditor.Saved
     ) -> None:
-        """Unconditionally re-select the character bench after its Save.
-        The new form reloads what ``save_character_bench`` actually
-        persisted, refreshing the rail row and inspector alongside it.
-        This character-editor path remains separate from the conditional
-        word-bench Save publication."""
+        """Refresh persisted metadata without discarding later edits/navigation."""
         event.stop()
-        self.select(kind="character_bench", id=event.bench_id)
+        self.select(kind=self._selection.kind, id=self._selection.id, saved=event)
 
     @on(LibraryRail.NewCharacterBenchRequested)
     def _on_new_character_bench_requested(

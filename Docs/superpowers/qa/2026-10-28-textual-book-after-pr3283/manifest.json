@@ -1,0 +1,337 @@
+{
+  "self_excluded": true,
+  "files": {
+    "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md": {
+      "sha256": "129fd5ec7ffe24b9823d99b5c63cdb34ef43a584346b921752b15dd34f826005",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md": {
+      "sha256": "037076f319917793f3f8d1ad5b91e25598e2a1b2ee4f5c5e9ac9c4d5fe9c2a9d",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md": {
+      "sha256": "94b2b74d6599d8697c8e57924ade34b2eb29881cc14c54e79569ec3feb8ccd72",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/archived-receipts.json": {
+      "sha256": "a423079c9ab90af375687324b60e5405e71afdcfba4dc1acc4b21f04457243c0",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/book-reference.json": {
+      "sha256": "15ef6c561ae304194a973cff76219dff06adbcdfc3cd85c5129f3747c7569e8b",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/baseline-pins.json": {
+      "sha256": "bcfe82cc940ecf847c473b8ea552ff3e1ef2fffac9705df45efdf6328c69c3fa",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-0.xml.gz": {
+      "sha256": "a3f81af6c1eb97c50a0785ddce4c8226e904f02352b8f4fdc55388a2a5fdccd1",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-1.xml.gz": {
+      "sha256": "ca846fd0d7d6499756467effff0efb60a52fc4ee2bdb84ade0bd8d523319bec6",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-2.xml.gz": {
+      "sha256": "462a43e5c003a208ecc4322d1b18f0eb24a353b7e7a2c1150070f8e573570ea8",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-3.xml.gz": {
+      "sha256": "5f86638cd6ad27c90428ca3008007384c6e20b46f36f1711b2e7776bf3136aeb",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-4.xml.gz": {
+      "sha256": "82e0ace1f14e797b88abd658d098ca2fb257e3f3565ed67a8314c8a914d4e75a",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/conftest.py.txt": {
+      "sha256": "7045566febdc43683dcba86ce85e05f27c1940d8513ab5aa93dd1c6ffd9a1f02",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-identity.json": {
+      "sha256": "82afc87b5acdc6c08139197bbcb12babf80b5a5fc7001c2e8c3448090558f00f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-observation.json": {
+      "sha256": "fe2104c8619924bee8969f1278ec35b7326fcdb2fe4d4c451928bb554454c731",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-pending-identity.json": {
+      "sha256": "c4ee3b4346cb7bb4e2833abe63be8aafcfef00ea026e19aa5fa275022fee0ba5",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-pending-observation.json": {
+      "sha256": "57ebe6ac59b55fb153948c6eeaf5e16f8f7fd579b06deca9bb39b3fe76d9c1ba",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/during-refresh-identity.json": {
+      "sha256": "7d02bf6d910fd20d5a541bdfbd4e8d75e9600f09a96661adc04baf6a83230b5b",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/during-refresh-observation.json": {
+      "sha256": "27ead079727ec2d7cc1acb9452da18ca12196a1f240ccaf99b35ab09ea62bdf4",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/later-input-identity.json": {
+      "sha256": "698e865953d5d23490fc7c7c692643e00c777c1e0d6c2240f01d29e57d9def2f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/later-input-observation.json": {
+      "sha256": "4b4bf1350321fb1fe396fe5d8d61b4add9bffe570144d6236c161417fd4dad38",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/ordinary-identity.json": {
+      "sha256": "b575e675caaab187fd2537610e405b44198fb71e8656788ccab19a434dc763f1",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/ordinary-observation.json": {
+      "sha256": "f9d59b3982967d05a95fde6f6604d72bff9119c2303584f22b7d3213a0fec6f8",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/parent.xml.gz": {
+      "sha256": "8f88a8559ae0e5880c4524ffc8415915df8dd0f15f3151ef939313d517dedab0",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/report.md": {
+      "sha256": "e94bf0298d37c81f30105f220d32886127104ab6dffa7f63aa5dee7cd9646f6f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/test_character_save_publication.py.txt": {
+      "sha256": "f6b97591204cec3df0b54369a44b48b93b1444986e053357f2726e82f7e9c526",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/evidence.json": {
+      "sha256": "53f4b4d02167801989725b7984b147a1343f6b0179b71999ea34b7c31ed150b6",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/final-filing-check.json": {
+      "sha256": "13927a97812adab50cb5a661d360e647122eac1e5e9b5e0e5d8680395bdeb8a2",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/merge-and-ci.json": {
+      "sha256": "9ed9d2100f9b09f746ce500421a6c476e0fd037e3f87ddcb5b3b201362a11244",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/conftest.py.txt": {
+      "sha256": "b45cae1f3090a4940013116092a83ddbf97b040b19af587dc42ab0d0587bbde8",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/0-result.xml.gz": {
+      "sha256": "bcc7ebd5271733b2ba79695b5e2cfaf039f505822e33242813e0bca1ba494d32",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/1-pytest.xml.gz": {
+      "sha256": "440d4a3a6ea8e9dacb0d75dded9851ed2e6a27abe851ca2850519b94bc6224e7",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/2-pytest.xml.gz": {
+      "sha256": "d1cc4b40d0db38023aa3ca4b43d44a152b5ab670ccced8e3c3dcd2d0e0351486",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/command.json": {
+      "sha256": "2d35bb7c1622fce1d9d01093f72de640fd984ae8b866db1b5c4367b3bafaa750",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/verification.json": {
+      "sha256": "b2eaca10511ffca2c1a23ef8c91e7adaf658adff544ee2c97f07ec338dc984cf",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/0-result.xml.gz": {
+      "sha256": "eb30affdac510bfbe67e36abe27d70f3881c4ed0c6fad8daa91e6d87c1fe1ff9",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/1-pytest.xml.gz": {
+      "sha256": "d3438ec82ea224c19baaaba2125b9aa0327e8f18a5c779c35ed5a8f82f8e204f",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/2-pytest.xml.gz": {
+      "sha256": "cc59a872e56bf5cd8e806e78bb993a793e22b41f2e29e50eccd2abe16fa83e07",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/command.json": {
+      "sha256": "54e7ec96dfc0c670cea07fc3e6f8fb0c691550ecb2e30ef43687c53d8f0fe897",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/executed-source.py.txt": {
+      "sha256": "20a794f06bc63a6ea15aae2bc20d1b677261818376dcb81c97c5e9e3802d9aed",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/verification.json": {
+      "sha256": "a9e3ce61156ca085756811c125d82170a304d9f08374c9d4a8cfce31a814deec",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/0-result.xml.gz": {
+      "sha256": "d005a6c2ba57345548b4ac2f5de6c958285176b35d9ced7eb49fc906cfc835c1",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/1-pytest.xml.gz": {
+      "sha256": "33e78e109c354f91213b0eff53e1196d4287a0619d8662109935443bd4edf2c5",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/2-pytest.xml.gz": {
+      "sha256": "addb8d9206aa998c11cfa74244e52fe2781d1e1667412d180753ca9158da0936",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/command.json": {
+      "sha256": "136eedef53dbfbc6703bde5bdb9ea83598ad0dbe45f2dfd5325f34869d5ff9fc",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/held-observation.json": {
+      "sha256": "26441c92c8eb8353e19d2565b3d30a5d898fc30154b5994a92bd7b390d7f8b88",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/ordinary-observation.json": {
+      "sha256": "4bc1a699ce1ebd65ffd5acea27fd12b111fc7923f6c70a07a8df09b42540df43",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/verification.json": {
+      "sha256": "029def386f9a8b6a395fe903330ddc7ea7fbfb56db22cb897113b28f51296386",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/report.md": {
+      "sha256": "dada8bbf6dcabe28d8fdc2b311bac3cbb5c18f50d074bf8f30aa3d5d5cb2b892",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/test_note_export.py.txt": {
+      "sha256": "f49aa84208692f539227df10e2a49142c2c5759dfd84ace6b7c2d4a0ac285fb9",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/ownership.json": {
+      "sha256": "e2d9b5f91d5cd74182b98b85bcc16ea01df1ab113b70e49c587318184cf9aabd",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/premerge-review.md": {
+      "sha256": "9297bada5adff310e6fddb8f1e171af4594d5a2edd51b52841cdd39b92fbd914",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/publication-review.md": {
+      "sha256": "716c2666046ac07d98bf46acc6879eeb731a1505b489e47ed8dc00e3cdc37aef",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/publication-verification.json": {
+      "sha256": "c1639cef5dcfa891859fd894f8aba94141f0fa0267db2c74b2bb533e0a9702e7",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/README.md": {
+      "sha256": "0c54473db50690117f240abdc3692158bb9dd9ba8a596c901725ee193e5c354e",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/child-0.xml.gz": {
+      "sha256": "ebd587bdb4b1f7c4f0aeca831133e6c01579c566cd339f8d97e361eb2c88c0fe",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/child-1.xml.gz": {
+      "sha256": "83b374f3bb507b883daaff20141b9dd47e8a32e2bc2ecfc2282662c4f41b3113",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/child-2.xml.gz": {
+      "sha256": "8a18d93be7a2656ff8fb4d222d2d62ca37952646bafbb239390e260df3735b70",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/result.xml.gz": {
+      "sha256": "49ee5cfcc3496bf07c69c2eee17c67da057cde3d6adab32207955bf048e52a67",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/test_runs_observation.py.txt": {
+      "sha256": "abee8e28b317fb10f0b0e07a7ab2cbb64f5abed5cc1abef617e624ac53991b68",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/child-0.xml.gz": {
+      "sha256": "f2bd0ec4f901ccf753e76c285806f1c91364e9cee7c503deb505834eb448e254",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/child-1.xml.gz": {
+      "sha256": "dc7fddd491c08fa2e3987e8cf9f22943bd02715e82900ccd282c1ca5ed725352",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/child-2.xml.gz": {
+      "sha256": "a15f6a795a2c5752fd71786fc8aa339842f42d14afbec8209805c8b830239985",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/command.json": {
+      "sha256": "1a817a3c0f3054d9d3535189ee2fc64fab41033e8184217c9b33b91d2a2c71bf",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_selection.json": {
+      "sha256": "92e9779cc664deec7a39cbfbdc23ac9e0cd471ddd1b1e8d121268630cf422577",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_selection.svg.gz": {
+      "sha256": "cc3d9639c08bc97489c27eaa2f7d345ce4a92ba2aef9f23bc16febb5e1e85b86",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_source.json": {
+      "sha256": "a7c7df3e7526c319266bf05a6372f533dcf1e56ae48e7e1dedea9b80d84b139f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_source.svg.gz": {
+      "sha256": "04a0816ca489b81ce7ee5fb65dddebcccff27f65a32995e0a75f72ae47e6c16f",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/ordinary.json": {
+      "sha256": "535bf21363d43a22083fc21c53a7a4fff55bf49bdd8022c853addad7113571e6",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/ordinary.svg.gz": {
+      "sha256": "5599e5f012b00756503c0ce6c69a1ca23b5dda03d00139cb34eae96a1ed42ff7",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/result.xml.gz": {
+      "sha256": "53a35e0babf6d9572d392bf75f4b392cb75666e108168f3552d7929e7b9448b9",
+      "hash_mode": "raw_binary"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/test_runs_observation.py.txt": {
+      "sha256": "84d6ff170a5c0f1316a1c96b30652c82127620dfff5cd519159665a8f50d255f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/verification.json": {
+      "sha256": "62f681d082edec8de7e80818a0e2ee29d4c72cc33cc283aa2e48d8f98a03bc66",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/conftest.py.txt": {
+      "sha256": "3ef73476feb5dbf0a037b209f70edc2221f364a3e16c3924f34de1f8a9264139",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/held_selection.json": {
+      "sha256": "92e9779cc664deec7a39cbfbdc23ac9e0cd471ddd1b1e8d121268630cf422577",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/held_source.json": {
+      "sha256": "a7c7df3e7526c319266bf05a6372f533dcf1e56ae48e7e1dedea9b80d84b139f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/ordinary.json": {
+      "sha256": "535bf21363d43a22083fc21c53a7a4fff55bf49bdd8022c853addad7113571e6",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/report.md": {
+      "sha256": "5b7077266c0e5d118a2d7ebe585806164875fd2b191786cdab0fbccda000faa4",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/source-pins-after.json": {
+      "sha256": "28dc19e75cd715db605d2126a7369202db5d798f00c3c6c205eccd3c1124378c",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/test_runs_observation.py.txt": {
+      "sha256": "84d6ff170a5c0f1316a1c96b30652c82127620dfff5cd519159665a8f50d255f",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/run-targeted-external-profile.py.txt": {
+      "sha256": "eddefb7ae18e155ad149106857ae9fb3414a2f2feeb1b4abd50d906a1e819d68",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/source-pins.json": {
+      "sha256": "1b070caca0be0a79b68faac6bd3a02beee0805c5a25c02da5466f9ab367ca185",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/task-creation.json": {
+      "sha256": "8a986c2f46a81e3a1470f1df0ad7fe72baaa190825b7c0fd84d7fbd62c38c1c0",
+      "hash_mode": "crlf_to_lf_text"
+    },
+    "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md": {
+      "sha256": "954b6f319d1160cc9da05a0b779b2610b0b55837bf129bed0a4b8211de0187cc",
+      "hash_mode": "crlf_to_lf_text"
+    }
+  }
+}

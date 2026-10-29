@@ -188,7 +188,9 @@ def test_the_census_tail_block_keeps_the_shape_write_relies_on():
         (
             i
             for i, line in enumerate(lines)
-            if line.startswith("# TASK-37236 full-census replay checkpoint: the ")
+            if line.startswith(
+                "# TASK-37266..37268 full-census replay checkpoint: the "
+            )
         ),
         None,
     )

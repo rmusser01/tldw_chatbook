@@ -1454,3 +1454,8 @@ hold had also loosened AC#5's "one poll interval" freshness, and nothing said so
 ## Fetch the live target before diagnosing stale PR mergeability
 
 PR #3251 (2026-10-26): its REST/GraphQL base snapshot still showed `7a5e2513c5` after dev had merged PR #3234 as `e554f25812`. Comparing the feature branch against that old snapshot correctly said zero behind, but did not establish that it was current with live dev. A documentation push did not fix the reported conflict; reopening refreshed the base snapshot, and fetching the actual dev ref exposed shared census conflicts. Rebase preserved every reviewed product/test blob while retaining both census tails. Before treating a dirty PR as a GitHub calculation bug, fetch the live target and compare against that ref (or read `git/ref/heads/dev` directly); the PR base snapshot is not proof of the current target.
+
+
+## Bound catalog output by fields, not lines (PR3290 CI repair, 2026-10-29)
+
+A root investigation used Get-Content -TotalCount4 on its single-line52MB task-catalog JSON. The line limit emitted the entire corpus and the tool truncated it, producing noisy unusable output. Load the JSON in Python and print only selected IDs/titles/counts or bounded excerpts; keep the corpus private. A line count is not a size bound for machine-generated single-line data.

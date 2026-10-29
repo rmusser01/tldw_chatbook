@@ -43,6 +43,22 @@ Local saves hold a note-write lock, reconcile receipts first, then write through
 
 The Runs screen creates a run through the scope service; the local engine executes in an exclusive worker group per run, persisting progress/events/artifacts and a budget ledger, honoring pause/cancel **between phases**, and on completion optionally inserting an assistant message via the chat handoff (which never raises — failure degrades to a notification). Outputs land in the research DB and as chat messages — not as Library media or workspace quick notes. The server side declares session CRUD and filtered run lists unsupported; see the gotcha below about run deletion.
 
+`ResearchWindow` owns the Runs selection, detail, action target, and loaded
+bundle/artifact/event payload. Its native two-second interval refreshes only a
+selected nonterminal Local run. A read captures the source and window selection
+revision before awaiting the existing scope-service executor; it may publish
+only while both remain current. Selecting another row, applying a selected-run
+update, or switching sources advances that revision, including an away-and-back
+transition to the same source/run. An accepted refresh updates progress without
+resetting payload state. Terminal and Server selections keep their skip guards.
+Switching sources clears selection and payload and immediately paints the empty
+run detail, even when the new catalog is empty or unavailable; a later valid
+selection paints its own detail. `ResearchController.get_run` retains its
+fetched-result cache contract; that cache does not select the window or supply
+the current action ID. Mounted regression coverage lives in
+`Tests/UI/test_research_run_refresh_publication.py` (TASK-37267). These rules apply
+to the separately routed **Runs** screen, not the Workspace source controller.
+
 ## Boundaries
 
 - LOCAL and SERVER catalogs are never silently blended, synchronized, or substituted — identity rules are enforced in the contracts and in the receipts' SQL CHECKs.
