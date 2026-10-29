@@ -1289,6 +1289,33 @@ class SyncStateRepository(BaseDB):
                 (str(note_id),),
             ).rowcount
 
+    def sync_v2_note_ids_on_server(self, note_ids: list[str]) -> set[str]:
+        """Which of ``note_ids`` a sync server has accepted a copy of.
+
+        TASK-34000.29 (review R0, m-9): Delete forever removes a note from
+        this device only, and its confirm says the server copy stays for
+        these notes. A remote head is recorded when the server accepts an
+        envelope for the object (``mark_sync_v2_outbox_push_results``), in
+        any source scope. One statement for a Trash page.
+
+        Args:
+            note_ids: Note ids from one Trash page.
+
+        Returns:
+            The ids with a Notes-domain remote head.
+        """
+        ids = sorted({str(note_id) for note_id in note_ids})
+        if not ids:
+            return set()
+        with self.transaction() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT object_id FROM sync_v2_remote_heads "
+                "WHERE domain IN ('notes', 'notes.note') "
+                "AND object_id IN (SELECT value FROM json_each(?))",
+                (json.dumps(ids),),
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
     def get_sync_v2_outbox_entry(
         self,
         *,

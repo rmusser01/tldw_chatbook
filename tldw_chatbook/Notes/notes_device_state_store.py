@@ -8,7 +8,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -1438,6 +1438,37 @@ class NotesDeviceStateStore:
                 (note_id, NotesSyncBindingState.DISCONNECTED.value),
             ).fetchone()
         return row is not None
+
+    def notes_with_disconnected_binding(self, note_ids: Sequence[str]) -> set[str]:
+        """Which of ``note_ids`` a disconnected sync folder still has a file for.
+
+        TASK-34000.29 (review R0, m-9): Delete forever leaves that file on
+        disk, and its confirm says so. ``disconnected`` is terminal, so the
+        folder never claims the note again -- but the file it wrote stays.
+        One statement for a Trash page; the ids travel as one JSON array.
+
+        Args:
+            note_ids: Note ids from one Trash page.
+
+        Returns:
+            The ids a ``disconnected`` binding names.
+
+        Raises:
+            ValueError: If an id is not a bounded opaque identifier.
+        """
+
+        ids = sorted({str(note_id) for note_id in note_ids})
+        for note_id in ids:
+            validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        if not ids:
+            return set()
+        with self.transaction() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT note_id FROM notes_sync_bindings WHERE state = ? "
+                "AND note_id IN (SELECT value FROM json_each(?))",
+                (NotesSyncBindingState.DISCONNECTED.value, json.dumps(ids)),
+            ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def list_binding_summaries(
         self,

@@ -30,10 +30,15 @@ from Tests.UI.test_library_notes_trash_pages_and_purges import (
     _focused_id,
     _painted,
     _settled_on,
+    _until,
 )
-from Tests.UI.test_library_notes_trash_pages_and_purges_extended import _open_trash
+from Tests.UI.test_library_notes_trash_pages_and_purges_extended import (
+    _open_trash,
+    _painted_in,
+)
 from Tests.UI.test_library_shell import LibraryProductionCSSHarness, _seed_conversations
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_notes_canvas import PURGE_BUSY_NOTICE
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -136,3 +141,25 @@ async def test_every_unfocused_title_reads_whole_and_a_title_click_restores_noth
         assert "Delete forever" in painted[3], painted[3]
         assert TITLES[0] in painted[0] and "Delete forever" not in painted[0]
         assert screen.check_action("library_notes_trash_delete", ()) is True
+
+        # Review R0, m-5: while another Notes change holds the interlock, x
+        # says why on the Trash -- no confirm, nothing written -- and the
+        # reason goes once that change releases it.
+        controller = screen._notes_controller
+        controller._library_notes_mutation_in_flight = True
+        assert screen.check_action("library_notes_trash_delete", ()) is True
+        await pilot.press("x")
+        await _until(
+            pilot,
+            lambda: _painted_in(host, "#library-notes-trash-notice")
+            == PURGE_BUSY_NOTICE,
+            lambda: f"the busy reason: {_painted(host)}",
+        )
+        assert host.screen is screen
+        assert seed.deleted() == before
+        controller._release_library_notes_mutation()
+        await _until(
+            pilot,
+            lambda: not screen.query("#library-notes-trash-notice"),
+            lambda: f"the reason cleared: {_painted(host)}",
+        )
