@@ -641,7 +641,9 @@ def _words(count: int) -> str:
         # set needs a larger window than gpt-4's.
         (True, 32_768, 0, 5, "direct"),
         (True, 8_192, 0, 5, "discovery"),
-        (True, 8_192, 0, 600, "inbox-only"),
+        # Too long beside the full discovery surface: ADR-253 sends compact
+        # discovery (find/load plus the progress reader), not plain chat.
+        (True, 8_192, 0, 600, "compact"),
         (False, 8_192, 0, 5, "light"),
         # Under the 3,584-token ceiling alone, over it beside the light set.
         (False, 8_192, 0, 3300, "none"),
@@ -708,8 +710,10 @@ def test_the_preflight_counts_what_the_send_carries_for_this_conversation(
         assert "spawn_subagent" in sent and "find_tools" not in sent, sorted(sent)
     elif shape == "discovery":
         assert "find_tools" in sent, sorted(sent)
-    elif shape == "inbox-only":
-        assert sent == {"read_agent_messages"}, sorted(sent)
+    elif shape == "compact":
+        assert sent == {"find_tools", "load_tools", "read_agent_messages"}, sorted(
+            sent
+        )
     elif shape == "light":
         assert sent == LIGHT, sorted(sent)
     else:
