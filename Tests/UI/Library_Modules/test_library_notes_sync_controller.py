@@ -1270,9 +1270,15 @@ async def test_incomplete_or_duplicate_labels_make_review_non_actionable(
     assert "unavailable" in controller.snapshot.status_line
 
 
-async def test_selection_is_keyed_by_observation_token_and_clears_on_stale_back_root_and_remount() -> (
+async def test_selection_is_keyed_by_observation_token_kept_on_back_and_cleared_on_stale() -> (
     None
 ):
+    """Rewritten 2026-10-29 (TASK-34000.40 fix round 1, review R0 M-6; was
+    ``test_selection_is_keyed_by_observation_token_and_clears_on_stale_back_root_and_remount``,
+    whose "back" arm had nothing staged): a choice is keyed by observation
+    token, survives the review's back (``abandon_setup``) for the same token,
+    is absent for a new token, and a stale apply forgets it.
+    """
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan()
     controller = LibraryNotesSyncController(
@@ -1285,26 +1291,27 @@ async def test_selection_is_keyed_by_observation_token_and_clears_on_stale_back_
         (TOKEN, "bind-1"): NotesSyncConflictChoice.KEEP_FILE
     }
 
+    # Back: kept for the same token, absent for a new one.
+    await controller.abandon_setup()
+    await controller.check_root("root-1")
+    assert controller.snapshot.review.rows[0].selected_choice is (
+        NotesSyncConflictChoice.KEEP_FILE
+    )
     runtime.check_plan = _conflict_plan(token=TOKEN_2)
     await controller.check_root("root-1")
     assert controller.snapshot.review.rows[0].selected_choice is None
 
+    # Stale apply: the folder moved on, so the root's choices are forgotten.
     controller.stage_attention_choice("root-1", TOKEN_2, "bind-1", "Keep note")
     runtime.stale = True
     await controller.apply_reviewed("root-1", TOKEN_2)
     assert controller.snapshot.review.stale is True
     assert controller.snapshot.review.rows[0].selected_choice is None
-
     runtime.stale = False
-    runtime.check_plan = _conflict_plan(root_id="root-2", token=TOKEN)
-    await controller.check_root("root-2")
-    controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep both")
-    # TASK-34000.40 (2026-10-29): leaving no longer clears staged choices
-    # (Tests/Library/test_library_notes_sync_review_selections.py). Nothing is
-    # staged here: the stage above names root-1 on root-2's review and is
-    # refused, and the stale apply already forgot root-1's choices.
-    await controller.abandon_setup()
+    runtime.check_plan = _conflict_plan()
+    await controller.check_root("root-1")
     assert controller.snapshot.review.rows[0].selected_choice is None
+    assert controller._selections == {}  # noqa: SLF001 - forgotten, not hidden
 
     remounted = LibraryNotesSyncController(
         runtime=runtime,
