@@ -1600,7 +1600,7 @@ class ProviderStep(provider_check.ProviderCheckStep):
         self._credential_semantics_changed()
 
     async def commit(self) -> tuple[bool, str]:
-        provider_key = self._effective_provider_key()
+        provider_key = self._effective_provider_key() or self.adopt_highlighted_found_server()
         skip, self._skip_requested = self._skip_requested, False
         if not provider_key:  # nothing picked: a skip (TASK-34100.6)
             return provider_skip.skip_provider_step(self)

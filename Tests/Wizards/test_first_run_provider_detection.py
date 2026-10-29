@@ -26,6 +26,7 @@ from Tests.Wizards.provider_step_harness import (
     provider_list,
     resumed_on_provider,
     static_text,
+    tracker_states,
     wait_for_step,
     wait_until,
 )
@@ -108,6 +109,37 @@ async def test_a_detected_server_is_the_first_highlighted_row_and_enter_uses_it(
             "✓ Using the llama.cpp server found at 127.0.0.1:9099 — 3 models."
         )
         assert not step.query("#setup-provider-use-detected"), "no second affordance"
+
+
+@pytest.mark.asyncio
+async def test_next_with_the_found_server_highlighted_uses_it(monkeypatch):
+    """Pre-merge review (2026-10-29), important 2: the guide says the found
+    server is 'already highlighted', but Next with nothing else touched read
+    an untouched list as 'nothing picked' and skipped: Model said 'Pick a
+    provider first' and the tracker marked Provider '–'. Highlighting alone
+    still never picks; only Next adopts the highlighted found server."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_MODEL
+
+    _scan_returns(monkeypatch, (_LLAMA,))
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard)
+        await wait_until(pilot, lambda: "found-0" in _ids(step))
+        assert provider_list(step).highlighted == 1
+        assert step.selected_provider_key == "", "highlighting never picks"
+
+        await pilot.press("ctrl+n")
+        await wait_for_step(pilot, wizard, STEP_MODEL)
+        container, model = current_step(wizard)
+        staged = container.staged_provider_draft
+        assert staged is not None
+        assert staged.provider == "llama_cpp"
+        assert staged.endpoint.startswith("http://127.0.0.1:9099")
+        assert step.get_step_data()["provider_key"] == "llama_cpp"
+        assert not step.get_step_data()["skipped"]
+        assert tracker_states(wizard)[STEP_PROVIDER] == "complete"
+        assert not model.query("#setup-model-no-provider")
 
 
 @pytest.mark.asyncio

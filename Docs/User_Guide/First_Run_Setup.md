@@ -138,7 +138,8 @@ opens: llama.cpp (127.0.0.1:8080 and :9099), Ollama (:11434), LM Studio
 address already in your config. Both `127.0.0.1` and `localhost` are checked,
 and one server shows as one row. A server it finds is the first row of the
 list, already highlighted — "llama.cpp on this computer · 127.0.0.1:9099 ·
-3 models" — so **Enter** uses it. LM Studio, Jan and KoboldCpp are set up
+3 models" — so **Enter** uses it, and so does **Next** when you haven't picked
+another row. LM Studio, Jan and KoboldCpp are set up
 through the **Custom OpenAI-compatible** row. Picking another provider never
 forgets the server, and picking that engine's own row later fills in the
 port that was found.
