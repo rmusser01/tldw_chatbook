@@ -164,6 +164,7 @@ MAX_PASS_ADDED_MODULES = 558
 #: 2026-10-27 Task 9 fix round 1 (review R0, rulings T9-g..j): 427,002 -> 427,100 (paired arms: base 67b7b485d9 427,002 + 98; library route 133,147 of 135,111; modules 558 and ui-ready 1031/1031 unchanged, both arms) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-27 Task 9 fix round 2 (review R1 N-2/N-3/N-6): 427,100 -> 427,118 (paired arms: base 2e9914f87c 427,100 + 18; library route 133,165 of 135,111; modules 558 and ui-ready 1031/1031 unchanged, both arms, 3 runs each) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 #: 2026-10-27 Task 9 fix round 3 (review R2 N2-2 and the release's line-clear skip): 427,118 -> 427,126 (paired arms: base 7c84ec20a2 427,118 + 8; library route 133,173 of 135,111; modules 558 and ui-ready 1031/1031 unchanged) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
+#: 2026-10-29 Task 10 (TASK-34000.40 N-34: Escape leaves a running import, the import footer chip and F1's painted-footer source, the lasting-sync back label): 427,126 -> 427,160 (paired arms: base 9c73c82855 427,126 + 34; library route 133,207 of 135,111; modules 558, ui-ready 1030/1031 and first-send 93/94 unchanged, both arms) -- PENDING OWNER SIGN-OFF, ADR-097 ledger.
 MAX_PASS_ADDED_LOC = 426_388
 #: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
 #: integration retains current dev 426,512 above. The old measurement at
