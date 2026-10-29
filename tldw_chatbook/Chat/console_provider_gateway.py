@@ -488,7 +488,10 @@ class _TraceAcceptedPreparation:
     )
     #: TASK-33621.5/.6: what the provider did with this run's calls so far.
     #: A rejection is an HTTP error status; anything else (a reply, or a
-    #: failure without a status) marks the run ``provider_answered``.
+    #: failure without a status) marks the run ``provider_answered``. Every
+    #: call that passed its trace admission counts as dispatched, so a call
+    #: whose outcome no adapter path recorded is never read as a refusal.
+    provider_dispatches: int = 0
     provider_rejections: int = 0
     provider_answered: bool = False
     last_rejection: object | None = None
@@ -3428,6 +3431,13 @@ class ConsoleProviderGateway:
             raise TraceCallPersistenceError()
         return scope
 
+    def _note_provider_dispatch(self, signals: object) -> None:
+        """Count one admitted provider call of a bound run (TASK-33621.6)."""
+        with contextlib.suppress(Exception):
+            scope = self._trace_preparation_scope(signals)
+            if scope is not None:
+                scope.provider_dispatches += 1
+
     def _note_provider_outcome(self, signals: object, rejection: object) -> None:
         """Record one call's outcome for trace recovery (TASK-33621.5/.6).
 
@@ -3452,8 +3462,8 @@ class ConsoleProviderGateway:
 
         self._note_provider_outcome(
             signals,
-            None
-            if status is None
+            None  # no status, or a non-error one (a stream error after a 200)
+            if status is None or not 400 <= status <= 599
             else TraceProviderRejection(
                 _sanitized_provider_diagnostic(
                     provider_display_name(resolution.provider),
@@ -3584,12 +3594,14 @@ class ConsoleProviderGateway:
         # TASK-33621.6: the agent's in-place retry after the provider refused
         # every call so far (HTTP 429/5xx) re-sends nothing the provider
         # accepted, so its failed reservation may be recovered like a first
-        # call's. A run with any other outcome keeps the unknown-delivery path.
+        # call's. A run with any other outcome -- including a dispatched call
+        # whose outcome went unrecorded -- keeps the unknown-delivery path.
         first_call = first_call or (
             scope is not None
             and scope.boundary is None
             and route is ConsoleRequestRoute.TOOL_LOOP
             and scope.provider_rejections > 0
+            and scope.provider_rejections == scope.provider_dispatches
             and not scope.provider_answered
         )
         if scope is not None:
@@ -6207,12 +6219,17 @@ class ConsoleProviderGateway:
         # here a no-op), so this flag only decides "complete" vs "stopped".
         completed = False
         provider_failed = False
+        answer_noted = False
         trace_call_boundary: object | None = None
         response_accumulator = _TraceResponseAccumulator()
 
         def observe_response(
             item: ProviderStreamItem, *, synthetic: bool = False
         ) -> None:
+            nonlocal answer_noted
+            if not answer_noted:  # every adapter path, llama.cpp direct included
+                answer_noted = True
+                self._note_provider_outcome(call_signals, None)
             aggregate = getattr(call_signals, "_aggregate", call_signals)
             provisional_observer = getattr(aggregate, "observe_trace_response", None)
             first = (
@@ -6372,6 +6389,7 @@ class ConsoleProviderGateway:
                 trace_call_boundary = fallback_boundary
                 return fallback_boundary, fallback_provenance
 
+            self._note_provider_dispatch(call_signals)
             if (
                 resolution.provider in {"llama_cpp", "local_llamacpp"}
                 and not prepared.tools
