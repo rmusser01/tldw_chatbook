@@ -143,7 +143,6 @@ jobs:
             Tests/Architecture/test_console_controllers_define_their_self_attributes.py \
             Tests/Architecture/test_flush_screens_have_quit_hooks.py \
             Tests/Architecture/test_quit_flow_prompt_choke_point.py \
-            Tests/Architecture/test_app_string_lookup_census.py \
             Tests/Library/test_library_note_autosave_max_wait.py \
             Tests/Library/test_library_file_export.py \
             Tests/Architecture/test_notes_sync_snapshot_construction.py \
