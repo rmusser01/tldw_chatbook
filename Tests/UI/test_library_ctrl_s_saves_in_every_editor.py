@@ -83,6 +83,11 @@ def _record_resolved_keys(monkeypatch, app) -> list[str]:
     bound action, so a key listed here has been handled end to end.
     """
     resolved: list[str] = []
+    # PRIVATE Textual 8.2.8 API (review R2 N2-4): ``App._check_bindings``,
+    # awaited by ``App._on_key`` after bubbling. It fails loudly on change:
+    # a rename raises AttributeError here, a new signature raises TypeError
+    # in key handling, and if it stops being called ``_press_processed``
+    # times out ("... to be fully processed").
     check_bindings = app._check_bindings
 
     async def recording(key: str, priority: bool = False) -> bool:
@@ -306,6 +311,9 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
                         "Down to move focus onto the folder tree",
                     )
                 moved_to = screen.focused
+                # Review R2 N2-3: compared by id, the sweep's rule.
+                moved_id = _focused_id(screen)
+                assert moved_id, f"focus landed on an id-less widget: {moved_to!r}"
                 # Review R1 N-1: wait until the key is fully processed, then
                 # check what it did not do (a fixed pause only false-greens).
                 await _press_processed(pilot, resolved, "ctrl+s")
@@ -313,7 +321,7 @@ async def test_ctrl_s_outside_an_editor_does_nothing_and_is_not_advertised(
                     f"Ctrl+S on {moved_to!r} wrote the note open beside it"
                 )
                 assert screen._library_note_session.snapshot.dirty
-                assert screen.focused is moved_to
+                assert _focused_id(screen) == moved_id, (moved_id, screen.focused)
                 assert toasts == toasts_before, toasts
                 footer = _footer(app)
                 assert "ctrl+s" not in footer, (step, footer)

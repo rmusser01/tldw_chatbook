@@ -194,7 +194,7 @@ def test_the_media_forms_refuse_out_loud_and_drop_the_chip():
     shown: list[tuple[str, str]] = []
     viewer = SimpleNamespace(show_form_status=lambda form, text: shown.append((form, text)))
     fake = SimpleNamespace(
-        _media_state=SimpleNamespace(bulk_delete_in_flight=True, saving_analysis=True),
+        _media_state=SimpleNamespace(bulk_delete_in_flight=True, saving_analysis=object()),
         _mounted_library_media_viewer=lambda: viewer,
     )
     LibraryScreen._save_library_media_edit_from_form(fake)
@@ -203,7 +203,7 @@ def test_the_media_forms_refuse_out_loud_and_drop_the_chip():
     assert refusal(fake, "media_edit") == "Media change in progress."
     assert refusal(fake, "media_analysis") == "Already saving."
     fake._media_state.bulk_delete_in_flight = False
-    fake._media_state.saving_analysis = False
+    fake._media_state.saving_analysis = None
     assert refusal(fake, "media_edit") == ""
     assert refusal(fake, "media_analysis") == ""
 
@@ -259,7 +259,7 @@ def test_the_media_change_refusal_line_clears_when_the_interlock_releases():
         mutation_authority=None,
         lifecycle_generation=0,
         bulk_delete_in_flight=True,
-        saving_analysis=False,
+        saving_analysis=None,
     )
     fake = SimpleNamespace(
         _media_state=state,
@@ -342,19 +342,79 @@ def test_a_reader_reset_never_strands_the_analysis_save_guard():
     too, so later analysis Saves are not all refused "Already saving."."""
     state = LibraryMediaState()
     state.editing_analysis = True
-    state.saving_analysis = True
+    state.saving_analysis = object()
     fake = SimpleNamespace(_media_state=state, _close_library_media_find=lambda: None)
     LibraryScreen._reset_library_media_reader_to_no_selection(fake)
-    assert state.saving_analysis is False
+    assert not state.saving_analysis
     assert LibraryScreen._library_editor_save_refusal(fake, "media_analysis") == ""
 
     discard = SimpleNamespace(
         _library_media_editing_analysis=True,
         _library_media_analysis_draft="draft",
-        _library_media_saving_analysis=True,
+        _library_media_saving_analysis=object(),
         _sync_library_media_viewer_or_recompose=lambda: None,
     )
     LibraryMediaController.handle_library_media_analysis_cancel(
         discard, SimpleNamespace(stop=lambda: None)
     )
-    assert discard._library_media_saving_analysis is False
+    assert not discard._library_media_saving_analysis
+
+
+async def test_an_older_analysis_save_never_clears_a_newer_saves_guard():
+    """Review R2 N2-2: the guard is the token of the save that holds it. Save
+    A starts; Discard resets the form (N-6) and its guard; save B starts. A
+    finishing must leave B's guard standing -- a third press is refused --
+    and only B finishing clears it. Drives the REAL seam, worker and Discard
+    handler over a fake that holds only what they read."""
+    released = {"A": asyncio.Event(), "B": asyncio.Event()}
+    workers: list = []
+    shown: list[tuple[str, str]] = []
+
+    async def save(_media_id, *, content, analysis_content):
+        await released[analysis_content].wait()
+
+    area = SimpleNamespace(text="A")
+    fake = SimpleNamespace(
+        _library_media_saving_analysis=None,
+        _library_media_editing_analysis=True,
+        _library_media_analysis_draft="A",
+        _library_media_detail={"content": "doc"},
+        _mounted_library_media_viewer=lambda: SimpleNamespace(
+            show_form_status=lambda form, text: shown.append((form, text))
+        ),
+        _library_media_reader_target_id=lambda: "local:media:1",
+        query_one=lambda _selector, _type=None: area,
+        _sanitize_media_field=lambda value, max_length: value,
+        _register_footer_shortcuts=lambda: None,
+        run_worker=workers.append,
+        _save_library_media_analysis=save,
+        _sync_library_media_viewer_or_recompose=lambda: None,
+    )
+    fake._run_library_media_analysis_form_save = MethodType(
+        LibraryMediaController._run_library_media_analysis_form_save, fake
+    )
+
+    def press() -> None:
+        LibraryMediaController._save_library_media_analysis_from_form(fake)
+
+    press()
+    LibraryMediaController.handle_library_media_analysis_cancel(
+        fake, SimpleNamespace(stop=lambda: None)
+    )
+    assert not fake._library_media_saving_analysis
+    area.text = "B"
+    press()
+    assert len(workers) == 2 and fake._library_media_saving_analysis
+    save_a, save_b = (asyncio.create_task(work) for work in workers)
+    await asyncio.sleep(0)
+
+    released["A"].set()
+    await save_a
+    assert fake._library_media_saving_analysis, "A cleared B's guard"
+    press()
+    assert len(workers) == 2, "a third save started while B was in flight"
+    assert shown == [("analysis", "Already saving.")], shown
+
+    released["B"].set()
+    await save_b
+    assert not fake._library_media_saving_analysis
