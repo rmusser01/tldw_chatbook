@@ -106,6 +106,7 @@ would be noise. The confirm/affordance copy must make clear it is the
 | Prompt draft / dirty edit discard | Nothing persisted destroyed (dirty veto on exit; modal names the unsaved working copy on delete-while-dirty) | Explicit | n/a | D | **Conforms** |
 | Skill draft discard ("Discard changes") | Nothing persisted destroyed (button disabled until dirty) | Explicit | n/a | D | **Conforms** |
 | Conversations | Not deletable from the Library surface | — | — | — | Out of scope |
+| Notes "Recently deleted" — Delete forever (added 2026-10-29, TASK-34000.29; owner ruling "yes with confimration") | **Hard** (`hard_delete_note`: the tombstone and every row naming it, in one transaction; publication intents kept as id-only tombstones; its semantic-index vectors and queued Sync v2 upserts removed) | Modal `ConfirmationDialog` that names the note and says it cannot be undone, opens on Cancel, Escape cancels, commit held ≥3 cells from Cancel; a note kept in sync with a folder is refused | None possible (no receipt; a notice only) | B | **Conforms** |
 
 ## Context
 

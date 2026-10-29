@@ -21,6 +21,7 @@ Base (71f8d8a487): none of the three exists.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -379,3 +380,52 @@ async def test_a_purge_drops_queued_sync_upserts_and_keeps_the_delete(
     assert left == sorted(
         [(profile.note_id, "delete", "pending"), (profile.live_id, "upsert", "pending")]
     )
+
+
+# -- what Delete forever leaves elsewhere (review R0, m-9) -------------------
+
+
+@pytest.mark.asyncio
+async def test_the_trash_page_learns_what_a_purge_would_leave_elsewhere(
+    tmp_path,
+) -> None:
+    """A disconnected folder's file, a server's copy -- read with the page.
+
+    Real stores: lasting sync's device store with a ``disconnected`` binding
+    for note-1, and a Sync v2 remote head for note-2. A local-only device
+    (no Sync v2 producer) never opens its sync store for this.
+    """
+    from Tests.Notes.test_notes_sync_note_location import _store_with_binding
+    from Tests.Notes.test_notes_sync_runtime import _Adapter, _owner
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    profile = _Profile(tmp_path)
+    store, _root = _store_with_binding(
+        tmp_path, state=NotesSyncBindingState.DISCONNECTED
+    )
+    owner, _, _ = _owner(store=store, admitted=True, adapter=_Adapter([]))
+    repository = SyncStateRepository(tmp_path / "sync_state.db")
+    repository.record_sync_v2_remote_head(
+        server_profile_id="server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        dataset_id="dataset-1",
+        domain="notes",
+        object_id="note-2",
+        server_cursor=1,
+        object_revision=1,
+        payload_hash="b" * 64,
+    )
+    try:
+        profile.service.sync_v2_notes_producer = SimpleNamespace()
+        scope = await profile.service.deleted_notes_purge_scope(
+            ["note-1", "note-2", "note-3"], sync_runtime=owner, sync_state=repository
+        )
+        assert scope == {"note-1": (True, False), "note-2": (False, True)}
+
+        profile.service.sync_v2_notes_producer = None
+        assert await profile.service.deleted_notes_purge_scope(
+            ["note-2"], sync_runtime=None, sync_state=repository
+        ) == {}
+    finally:
+        await owner.shutdown()

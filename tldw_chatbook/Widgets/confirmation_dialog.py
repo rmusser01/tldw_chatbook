@@ -79,6 +79,14 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
     ConfirmationDialog .confirm-button {
         background: $error;
     }
+
+    /* A permanent delete's confirm (``classes="destructive-confirm"``) holds
+       its commit at least 3 cells from the focused Cancel, the Media Trash
+       rule (task-31980), so a slip off Cancel lands on nothing. Other
+       confirms keep their geometry. */
+    ConfirmationDialog.destructive-confirm #confirm-button {
+        margin: 0 1 0 3;
+    }
     
     ConfirmationDialog .cancel-button {
         background: $primary;
