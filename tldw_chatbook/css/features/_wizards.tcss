@@ -1126,6 +1126,13 @@ SmartContentTree Tree > .selected-node {
     height: auto;
 }
 
+/* TASK-34100.13 review V1: the Speech step's Parakeet block, the same bug
+ * class. At 1fr it took the leftover viewport, so Advanced's controls (and at
+ * 80x24 "Review and install…") sat out of the step's scroll reach. */
+#setup-speech-parakeet {
+    height: auto;
+}
+
 /* The line under the Service radio: will this service work? */
 #setup-voice-service-status {
     height: auto;
