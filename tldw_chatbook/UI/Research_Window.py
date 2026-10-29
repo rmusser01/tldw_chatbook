@@ -161,6 +161,7 @@ class ResearchWindow(Vertical):
         self.current_source = "local"
         self.runs: list[Any] = []
         self.selected_run: Any | None = None
+        self._selection_revision = 0
         self.current_bundle: dict[str, Any] | None = None
         self.current_artifact: Any | None = None
         self.event_log_entries: list[str] = []
@@ -449,8 +450,7 @@ class ResearchWindow(Vertical):
     async def switch_source(self, source: str) -> list[Any]:
         self.current_source = self._normalize_source(source)
         self.runs = []
-        self.selected_run = None
-        self._reset_run_payload_state()
+        self._set_selected_run(None, reset_payload_state=True)
         self._set_status("")
         return await self.load_runs(self.current_source)
 
@@ -774,12 +774,16 @@ class ResearchWindow(Vertical):
 
     def _update_detail(self, run: Any) -> None:
         detail = (
-            f"{self._run_title(run)}\n"
-            f"Status: {self._record_get(run, 'status', 'unknown')}\n"
-            f"Phase: {self._record_get(run, 'phase', 'unknown')}\n"
-            f"Control: {self._record_get(run, 'control_state', 'unknown')}\n"
-            f"Latest checkpoint: {self._record_get(run, 'latest_checkpoint_id', 'none')}\n"
-            f"Progress: {self._record_get(run, 'progress_message', '') or 'n/a'}"
+            "No research run selected."
+            if run is None
+            else (
+                f"{self._run_title(run)}\n"
+                f"Status: {self._record_get(run, 'status', 'unknown')}\n"
+                f"Phase: {self._record_get(run, 'phase', 'unknown')}\n"
+                f"Control: {self._record_get(run, 'control_state', 'unknown')}\n"
+                f"Latest checkpoint: {self._record_get(run, 'latest_checkpoint_id', 'none')}\n"
+                f"Progress: {self._record_get(run, 'progress_message', '') or 'n/a'}"
+            )
         )
         if not self.is_mounted:
             return
@@ -847,16 +851,25 @@ class ResearchWindow(Vertical):
         }:
             return
         try:
+            source = self.current_source
+            # A new selection or source departure revokes this view's read,
+            # even when the operator returns to the same source and run.
+            selection_revision = self._selection_revision
             run_id = self._selected_run_id()
-            updated = await self.controller.get_run(self.current_source, run_id)
+            updated = await self.controller.get_run(source, run_id)
         except Exception:
             return  # transient controller errors must not spam the status line
-        if updated is None:
+        if (
+            updated is None
+            or self.current_source != source
+            or self._selection_revision != selection_revision
+        ):
             return
         self.selected_run = updated
         self._update_detail(updated)
 
     def _set_selected_run(self, run: Any, *, reset_payload_state: bool) -> None:
+        self._selection_revision += 1
         self.selected_run = run
         if reset_payload_state:
             self._reset_run_payload_state()
