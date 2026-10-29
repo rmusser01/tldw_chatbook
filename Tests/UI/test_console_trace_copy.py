@@ -538,6 +538,10 @@ async def test_more_menu_keeps_last_action_reachable_in_short_terminal():
         await pilot.pause()
         await pilot.wait_for_scheduled_animations()
         assert menu.region.contains_region(app.focused.region)
+        painted_text = "\n".join(
+            strip.text for strip in app.screen._compositor.render_strips()
+        )
+        assert "Save trans" in painted_text
         await pilot.click(app.focused)
         await pilot.pause()
         assert chosen == [("answer", last_action)]

@@ -172,3 +172,32 @@ Scoped Ruff reports zero new findings/changed-range drift across 22 Python
 files (188 inherited diagnostics). CSS reproduction, all active screen
 ratchets, task-ID uniqueness across 5908 files and diff whitespace checks pass.
 No full test sweep was requested or run.
+
+### PR #3291 UAT follow-up
+
+Checked CI and all review/comment pages at the user's request. No review threads
+were present; Qodo is billing-blocked and CodeRabbit skipped the `dev` target.
+An independent read-only source review found no new actionable issues. The
+current-head Qodo requirement remains subject to an actual review or explicit
+user exception before arming the enabled merge queue.
+
+Native `WindowsDriver` journeys exercised the menus and a production Console
+store/controllers/Notes SQLite path. The production journey copied and exactly
+pasted a 150927-character trace, including both full 69038-character tool results,
+and saved a 12449-character body while preserving the draft. Both note action
+paths and exact Library editor arrival were checked with the existing qualified
+Notes load; live-provider capture and OS clipboard acceptance remain unclaimed.
+
+Visual UAT found a one-row More button's heavy focus outline replacing its label.
+Removed that local override so the global canonical, non-obscuring Button focus
+style applies, and keep long captions on one line with ellipsis so their
+identifying prefix remains visible. Added a compositor-painted label assertion
+to the short-terminal regression and regenerated CSS. This implements AC#9 and ADR-150's existing focus
+contract; no new ADR, token, dependency or runtime boundary is needed.
+
+Follow-up verification: **79/79 affected copy/selection-menu checks passed** in
+90.95s after the painted-label regression first failed. The corrected More-menu
+journey also passed under native `WindowsDriver` (5.77s); the independent real
+Console/Notes copy, paste, save and exact-ID Library journey passed in 70.55s.
+Both changed Python files pass Ruff and formatting; CSS reproduction and diff
+whitespace checks pass. Existing full-suite/platform limitations remain recorded.

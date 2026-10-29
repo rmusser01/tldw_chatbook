@@ -161,3 +161,68 @@ workspace path explicitly.
 Feature commits: `60e7329419` (formatter) and `1b8a32ecc4` (UI, orchestration,
 full note capture and review fixes). No deferred minor review findings. Formal
 Backlog CLI closeout remains pending. Native clipboard acceptance is unverified.
+
+## PR #3291 UAT and merge follow-up
+
+At the user's request, checked the current PR head's CI and every review/comment
+page. At `1d748c652592f34b78e96ad96a2f47943f09e3cd`, no review threads existed;
+Qodo posted a billing-blocked notice (no credits), and CodeRabbit skipped the
+`dev` target. A fresh independent read-only review found no new actionable
+source issues. The merge queue is `on`; the repository's current-head Qodo gate
+still needs a review or an explicit user exception before auto-merge is armed.
+Before publishing the UAT fix, CI had 16 passing checks, 20 pending and one
+skipped/neutral review, with no failures reported. This is a progress snapshot,
+not a green CI claim for the updated head.
+
+Native qualification used a disposable pytest plugin that forces
+`App.run_test(headless=False)` and records the actual `WindowsDriver`, click
+acceptance, clipboard lengths/hashes and rendered SVG frames. Eleven native
+widget journeys passed for collapsed/expanded trace parity, whole-chat copy,
+full offscreen/Markdown source selection, both note button payloads, and menu
+resizing. An additional production-screen journey passed using the real Console
+store/controllers and canonical Notes service/SQLite:
+
+- Copied a 150927-character response with two retained thinking blocks, tool
+  arguments, both complete 69038-character results, and a 12449-character answer.
+- Copied the current chat including its preceding user question; preserved the
+  unsent draft through both copy actions.
+- Pasted the exact exported response through the production composer paste
+  consumer without sending a model request, then restored the draft.
+- Selected the full answer and activated **Create Note** through its real menu;
+  verified the complete body/provenance in SQLite and that Console/draft remained.
+- Completed the existing real **Create+Go to Note** controller/navigation journey
+  to the exact created record in Library's armed editor. Its documented Notes
+  snapshot qualification remains in place; cold-read latency is not measured.
+
+The extended UAT initially seeded unsupported trajectory flags and queried the
+default screen rather than the pushed Console; those probe setup errors were
+corrected using the actual store and Textual contracts. It also observed a real
+write while its controller action was still pending; waiting for the action's
+existing in-flight guard to clear made the following independent Go request
+valid. No production admission guard or timeout was changed.
+
+Visual inspection then found that the More menu's one-row buttons inherited a
+local heavy focus outline that painted over the focused action's label. The
+geometry/click assertions alone passed. A new compositor-output assertion for
+the focused **Save transcript** label failed on the old style. Removing the
+local outline override reuses the canonical global Button focus fill/ink and
+bold-underlined text (ADR-150). The follow-up paint check also caught the long
+label wrapping below its single visible row; nowrap/ellipsis now keeps its
+identifying prefix visible. CSS was regenerated. This menu readability fix is
+the only product change from this follow-up. See the task's final verification
+for its checks.
+
+After the menu fix: **79 passed** in 90.95s for
+`Tests/UI/test_console_trace_copy.py Tests/UI/test_console_selection_menu.py`.
+The short-terminal painted-label/resize journey passed again with native
+`WindowsDriver` (**1 passed**, 5.77s). The extended production Console/Notes
+journey passed in 70.55s. Ruff check and format both pass for the two changed
+Python files; CSS reproduction and diff whitespace checks pass. Rendered native
+frames were visually inspected; they confirm the approved menu labels and the
+corrected non-obscuring, single-row focus presentation.
+
+These journeys use retained synthetic traces and production screens, not a live
+model or full-app startup. Native OSC 52 payload publication is observed; OS
+clipboard acceptance is not acknowledged by that protocol. Scratch plugin,
+manifests, exported Markdown and SVG/PNG inspection frames stay under the owned,
+ignored `.superpowers/sdd/2026-10-28-console-trace-copy-pr-review/uat-evidence/`.

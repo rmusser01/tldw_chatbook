@@ -77,9 +77,8 @@ class ConsoleMessageMoreMenu(Vertical):
         border-bottom: none !important;
         padding: 0 1 !important;
         text-align: left;
-    }
-    ConsoleMessageMoreMenu Button:focus {
-        outline: heavy $accent;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     """
 

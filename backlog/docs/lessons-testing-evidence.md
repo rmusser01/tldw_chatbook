@@ -1,5 +1,21 @@
 # Lessons: what counts as evidence a change works
 
+## Reachable geometry can still paint over a focused label (TASK-37300, 2026-10-28)
+
+**Incident.** PR #3291's short-terminal More-menu test kept the last button inside
+the menu and successfully clicked it through shrink/grow cycles. Native UAT's
+rendered frame showed only a heavy border where the focused label belonged:
+the menu's local focus outline covered its one-row button. A compositor-strip
+assertion for the expected shortened label reproduced the failure. Removing the
+local outline override let the canonical Button focus fill/ink and text cue apply.
+The same paint assertion then showed long labels wrapping below the only visible
+row; single-line ellipsis preserves their identifying prefix.
+
+**What to do.** Check the painted action label as well as its region, focus and
+click outcome, especially on one-row controls. Reuse the design language's
+non-obscuring focus contract; a successful event alone does not prove a person
+can identify its target.
+
 ## A successful wrong-family tool call is not project evidence (TASK-37234, 2026-10-28)
 
 **Incident.** The Fedora follow-up to PR #3284 recorded successful directory listings,

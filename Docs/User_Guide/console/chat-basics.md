@@ -618,8 +618,8 @@ text-response **< / >** controls when applicable, **Fork**,
 **Capture as note**, **Summarize up to** (here as note) and **Save
 transcript** (up to here as note), when those actions are available; the
 diagnostic **View original** also appears there when an original attempt can
-be shown safely. The menu is 24 cells wide and cuts a long label at about
-fifteen characters, which is why the last two read short.
+be shown safely. Long labels stay on one row and end with an ellipsis when
+needed, so their identifying words remain visible even while focused.
 In a short terminal the menu scrolls; **↑/↓** bring the focused action into
 view, including after resizing.
 
