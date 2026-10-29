@@ -4213,6 +4213,31 @@ class NotesSyncRuntimeOwner:
             await self._maintenance_offload(self._store.note_has_live_binding, note_id)
         )
 
+    async def notes_with_kept_files(self, note_ids: Iterable[str]) -> set[str]:
+        """Which notes a disconnected sync folder still has a file for (m-9).
+
+        TASK-34000.29 (review R0, m-9): Delete forever leaves that file on
+        disk, and the Trash's confirm says so for these notes. Read once per
+        Trash page (``notes_with_disconnected_binding``).
+
+        Args:
+            note_ids: Note ids from one Trash page.
+
+        Returns:
+            The ids whose file a disconnected folder keeps.
+
+        Raises:
+            RuntimeError: While the runtime is closing.
+        """
+
+        if self._closing:
+            raise RuntimeError("Lasting sync is closing and cannot be asked.")
+        return set(
+            await self._maintenance_offload(
+                self._store.notes_with_disconnected_binding, tuple(note_ids)
+            )
+        )
+
     @producer_call
     async def attention_folder_ids(self) -> frozenset[str]:
         """Return the Notes folders whose sync root is held for attention.

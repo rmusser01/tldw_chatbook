@@ -702,7 +702,14 @@ _BUDGETS: dict[str, int] = {
     # parked R4-1/R4-2 settling rules (every list landing raises the marker,
     # a landing for another role drops it, keep-in-view waits out a pruning
     # sync's framework focus): 8505 -> 8739 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8739,
+    # 2026-10-29, TASK-34000.29 Task 8b fix round 1 (review R0; same owner
+    # decision): Delete forever's busy reason painted on the Trash and
+    # cleared at the interlock's release (m-5), one confirm at a time with a
+    # stale-confirm recovery (m-8), the destructive confirm's class (m-4),
+    # the page read's "what stays elsewhere" facts for the confirm (m-9), and
+    # a roleless read dropping a replaced landing's marker (R4 residual):
+    # 8739 -> 8845 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8845,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

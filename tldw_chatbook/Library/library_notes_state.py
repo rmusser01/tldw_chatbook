@@ -468,12 +468,18 @@ class LibraryNotesTrashRow:
             seam the delete receipt's Undo uses.
         age_label: Relative age of the deletion (e.g. ``"5m"``), or ``""``
             when the record carries no timestamp.
+        kept_file: A disconnected sync folder still holds the note's file,
+            which Delete forever leaves on disk (review R0, m-9).
+        server_copy: Sync v2 already put a copy on the server, which Delete
+            forever does not remove (review R0, m-9).
     """
 
     note_id: str
     title: str
     version: int
     age_label: str = ""
+    kept_file: bool = False
+    server_copy: bool = False
 
 
 @dataclass(frozen=True)
@@ -492,6 +498,9 @@ class LibraryNotesTrashState:
         retry_page: The page a failed read asked for, or ``0`` when the
             last read succeeded (review R1 N-2): the view keeps what it
             painted, says the read failed, and offers Retry for that page.
+        notice: Why the last Delete forever did nothing (another Notes
+            change held the interlock), painted under the view's purpose
+            until that change finishes (review R0, m-5); ``""`` for none.
     """
 
     rows: tuple[LibraryNotesTrashRow, ...] = ()
@@ -500,6 +509,7 @@ class LibraryNotesTrashState:
     page_size: int = LIBRARY_NOTES_TRASH_PAGE_SIZE
     loading: bool = False
     retry_page: int = 0
+    notice: str = ""
 
     @property
     def failed(self) -> bool:
@@ -539,6 +549,7 @@ def build_library_notes_trash_state(
     total: int | None = None,
     page: int = 1,
     now: datetime | None = None,
+    purge_scope: Mapping[str, tuple[bool, bool]] | None = None,
 ) -> LibraryNotesTrashState:
     """Project one repository page of soft-deleted notes into display state.
 
@@ -551,11 +562,15 @@ def build_library_notes_trash_state(
         page: The 1-based page ``records`` is; clamped to the last page the
             total has (ruling T8-d: a page is never numbered past the end).
         now: Reference time for the relative-age labels.
+        purge_scope: Per note id, ``(kept_file, server_copy)`` -- what Delete
+            forever would leave elsewhere, as the page read found it
+            (review R0, m-9); a note it does not name leaves nothing.
 
     Returns:
         The Trash view's display state.
     """
     reference_now = now if now is not None else datetime.now(timezone.utc)
+    scope = purge_scope or {}
     rows = tuple(
         LibraryNotesTrashRow(
             note_id=_text(record.get("id")),
@@ -566,6 +581,8 @@ def build_library_notes_trash_state(
                 if _updated_raw(record)
                 else ""
             ),
+            kept_file=bool(scope.get(_text(record.get("id")), (False, False))[0]),
+            server_copy=bool(scope.get(_text(record.get("id")), (False, False))[1]),
         )
         for record in (records or ())
         if isinstance(record, Mapping) and _text(record.get("id"))

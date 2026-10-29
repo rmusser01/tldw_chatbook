@@ -362,10 +362,37 @@ def purge_subject(title: str) -> str:
     return text[: _PURGE_TITLE_LIMIT - 1].rstrip() + "…"
 
 
-def purge_confirm_copy(title: str) -> str:
-    """The confirm's sentence: which note, and that it cannot come back."""
+#: Review R0, m-9: what Delete forever leaves, said only where the Trash read
+#: knew it for this note -- a disconnected sync folder still holds its file,
+#: or Sync v2 already put a copy on the server. The guide always says both.
+PURGE_KEPT_FILE_CLAUSE = "Its file in the synced folder stays on disk."
+PURGE_SERVER_COPY_CLAUSE = "Copies on your sync server are not removed."
+#: Review R0, m-5: why Delete forever did nothing, on the Trash's own line.
+PURGE_BUSY_NOTICE = "Delete forever waits: another change to your notes is still running."
+#: Review R0, m-5: the button's tooltip (static text, no markup to escape).
+PURGE_TOOLTIP = "Delete this note forever (x) — asks first"
 
-    return f"“{purge_subject(title)}” will be deleted for good. This cannot be undone."
+
+def purge_confirm_copy(
+    title: str, *, kept_file: bool = False, server_copy: bool = False
+) -> str:
+    """The confirm's sentence: which note, that it cannot come back, and
+    what stays elsewhere when this note is known to have a copy there."""
+
+    clauses = [
+        clause
+        for clause, applies in (
+            (PURGE_KEPT_FILE_CLAUSE, kept_file),
+            (PURGE_SERVER_COPY_CLAUSE, server_copy),
+        )
+        if applies
+    ]
+    return " ".join(
+        [
+            f"“{purge_subject(title)}” will be deleted for good. This cannot be undone.",
+            *clauses,
+        ]
+    )
 
 
 def purge_notice(title: str) -> str:
@@ -3185,6 +3212,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             classes="library-canvas-action",
             compact=True,
         )
+        if trash.notice:
+            # Review R0, m-5: why the last Delete forever did nothing.
+            yield Static(
+                trash.notice,
+                id="library-notes-trash-notice",
+                classes="library-disabled-reason",
+                markup=False,
+            )
         if trash.failed:
             yield from self._compose_trash_failure()
         if not trash.rows and trash.loading:
@@ -3261,9 +3296,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # "Daily log 2026-09-0…" (measured live), losing the
                     # one part of the title that tells the rows apart.
                     purge.styles.margin = (0, 0, 0, 1)
+                    purge.tooltip = PURGE_TOOLTIP
                     purge.note_id = row.note_id
                     purge.note_title = row.title
                     purge.note_version = row.version
+                    # Review R0, m-9: what the confirm adds for this note.
+                    purge.note_kept_file = row.kept_file
+                    purge.note_server_copy = row.server_copy
                     yield purge
             yield from self._compose_trash_pager(trash)
 

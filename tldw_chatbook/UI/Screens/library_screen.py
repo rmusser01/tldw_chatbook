@@ -27336,16 +27336,16 @@ class LibraryScreen(BaseAppScreen):
                 and not self._library_notes_mutation_fenced()
             )
         if action == "library_notes_trash_delete":
-            # TASK-34000.29 (N-29, 8b; ruling T8b-d): only where it deletes
-            # -- the Trash view, a focused Trash row, nothing in flight. The
-            # one decision the binding, the footer chip and F1 all read.
+            # TASK-34000.29 (8b; T8b-d, review R0 I-2/m-5): the focused Trash
+            # row, whose Delete forever shows -- the one decision the binding,
+            # the chip and F1 read. Not gated on the Notes interlock: x then
+            # reaches the handler, which paints why it waits.
             trash = self._notes_state.trash
             return bool(
                 self._library_notes_workflow_active()
                 and self._notes_state.view == "trash"
                 and trash is not None
                 and trash.rows
-                and not self._library_notes_mutation_fenced()
                 and self._focused_library_notes_trash_delete() is not None
             )
         if action in {

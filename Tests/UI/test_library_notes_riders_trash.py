@@ -1321,6 +1321,8 @@ def test_delete_forever_asks_first_and_names_the_note() -> None:
     assert dialog.confirm_label == "Delete forever"
     assert dialog.cancel_label == "Cancel"
     assert ConfirmationDialog.AUTO_FOCUS == "#cancel-button"
+    # Review R0, m-4: the commit held >=3 cells from Cancel (measured below).
+    assert dialog.has_class("destructive-confirm")
     assert workers == []
 
     answer(False)  # Cancel or Escape
@@ -1379,7 +1381,9 @@ def test_x_is_live_only_on_a_focused_trash_row() -> None:
     """Ruling T8b-d: Delete forever's key, and nowhere else.
 
     ``check_action`` is the one decision the binding, the footer chip and F1
-    all read.
+    all read. Review R0: exactly the focused row, where the button shows
+    (I-2) -- and still while another Notes change runs, so ``x`` reaches the
+    handler that says why it waits (m-5; pinned below).
     """
     check = LibraryScreen.check_action
     assert check(_trash_key_fake(), "library_notes_trash_delete", ()) is True
@@ -1388,7 +1392,7 @@ def test_x_is_live_only_on_a_focused_trash_row() -> None:
     # The list view's focused note row: x does nothing there.
     assert not check(_trash_key_fake(view="list"), "library_notes_trash_delete", ())
     assert not check(_trash_key_fake(rows=False), "library_notes_trash_delete", ())
-    assert not check(_trash_key_fake(fenced=True), "library_notes_trash_delete", ())
+    assert check(_trash_key_fake(fenced=True), "library_notes_trash_delete", ()) is True
 
 
 def test_the_x_chip_is_painted_only_where_x_deletes() -> None:
@@ -1737,3 +1741,194 @@ async def test_delete_forever_leaves_a_dated_title_its_date() -> None:
         assert "Daily log 2026-09-02" in text
         delete = app.query_one("#library-notes-trash-delete-0", Button)
         assert delete.has_class("library-media-action-danger")
+
+
+# -- TASK-34000.29 8b, review R0: m-4, m-5, m-8, m-9 and the R4 residual ----
+
+
+@pytest.mark.asyncio
+async def test_the_delete_forever_confirm_holds_its_commit_three_cells_from_cancel() -> None:
+    """m-4 (task-31980's Media rule): a slip off Cancel lands on nothing.
+
+    Only the destructive confirm moves: a plain ``ConfirmationDialog`` keeps
+    its gap (``margin: 0 1`` on each button, collapsed: 1 cell, measured).
+    Base (780fe1da8b): 1 cell either way.
+    """
+    from textual.app import App
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    gaps: dict[str, int] = {}
+    for name, extra in (("destructive", {"classes": "destructive-confirm"}), ("plain", {})):
+        app = App()
+        async with app.run_test(size=(120, 36)) as pilot:
+            await app.push_screen(
+                ConfirmationDialog(
+                    title="Delete this note forever?",
+                    message="“A” will be deleted for good.",
+                    confirm_label="Delete forever",
+                    cancel_label="Cancel",
+                    **extra,
+                )
+            )
+            await pilot.pause()
+            cancel = app.screen.query_one("#cancel-button")
+            confirm = app.screen.query_one("#confirm-button")
+            assert cancel.region.y == confirm.region.y
+            gaps[name] = confirm.region.x - cancel.region.right
+    assert gaps["destructive"] >= 3, gaps
+    assert gaps["plain"] == 1, gaps
+
+
+def test_a_press_while_another_notes_change_runs_says_why_on_the_trash() -> None:
+    """m-5: no silent no-op -- the Trash says why, and the release clears it.
+
+    Base (780fe1da8b): the press returned with nothing pushed and nothing
+    said.
+    """
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import PURGE_BUSY_NOTICE
+
+    fake, pushed, workers, notices = _purge_press_fake(fenced=True)
+    fake._library_notes_trash = _trash(_row("n1", "Groceries"))
+    fake.is_mounted = False
+    button = SimpleNamespace(
+        id="library-notes-trash-delete-0", note_id="n1", note_title="Groceries", note_version=2
+    )
+
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+
+    assert pushed == [] and workers == [] and notices == []
+    assert fake._library_notes_trash.notice == PURGE_BUSY_NOTICE
+    LibraryNotesController._clear_library_notes_trash_busy(fake)
+    assert fake._library_notes_trash.notice == ""
+
+
+@pytest.mark.asyncio
+async def test_the_trash_paints_the_busy_reason_and_delete_forever_has_a_tooltip() -> None:
+    """m-5: the reason sits under the purpose line; the button explains itself."""
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+        PURGE_BUSY_NOTICE,
+        PURGE_TOOLTIP,
+    )
+
+    trash = dataclasses.replace(_trash(_row("n1", "Groceries")), notice=PURGE_BUSY_NOTICE)
+    app = _CanvasApp(pane_width=100, mode="trash", trash=trash)
+    async with app.run_test(size=(120, 40)):
+        notice = app.query_one("#library-notes-trash-notice", Static)
+        assert LibraryNotesCanvas._static_text(notice) == PURGE_BUSY_NOTICE
+        delete = app.query_one("#library-notes-trash-delete-0", Button)
+        assert delete.tooltip == PURGE_TOOLTIP
+    quiet = _CanvasApp(pane_width=100, mode="trash", trash=_trash(_row("n1", "A")))
+    async with quiet.run_test(size=(120, 40)):
+        assert not quiet.query("#library-notes-trash-notice")
+
+
+def test_a_second_press_while_the_confirm_is_up_never_stacks_another() -> None:
+    """m-8: a fast double ``x`` reaches the handler twice; one confirm only.
+
+    Base (780fe1da8b): two dialogs were pushed.
+    """
+    fake, pushed, _workers, _notices = _purge_press_fake()
+    button = SimpleNamespace(
+        id="library-notes-trash-delete-1", note_id="n2", note_title="B", note_version=2
+    )
+
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+    assert len(pushed) == 1
+
+    pushed[0][1](False)  # Cancel: the next press may ask again.
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+    assert len(pushed) == 2
+
+    # A confirm that left without answering (popped by a quit flow) no
+    # longer blocks once it is off the screen stack.
+    fake.app.screen_stack = []
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+    assert len(pushed) == 3
+
+
+def test_the_confirm_says_what_stays_elsewhere_only_where_it_is_known() -> None:
+    """m-9: a disconnected folder's file, a server copy -- each only if so."""
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import purge_confirm_copy
+
+    assert purge_confirm_copy("A") == (
+        "“A” will be deleted for good. This cannot be undone."
+    )
+    assert purge_confirm_copy("A", kept_file=True, server_copy=True) == (
+        "“A” will be deleted for good. This cannot be undone. Its file in the "
+        "synced folder stays on disk. Copies on your sync server are not removed."
+    )
+    fake, pushed, _workers, _notices = _purge_press_fake()
+    button = SimpleNamespace(
+        id="library-notes-trash-delete-0",
+        note_id="n1",
+        note_title="A",
+        note_version=2,
+        note_kept_file=True,
+        note_server_copy=False,
+    )
+    LibraryNotesController.handle_library_notes_trash_delete(fake, _press_event(button))
+    assert pushed[0][0].message == (
+        "“A” will be deleted for good. This cannot be undone. Its file in the "
+        "synced folder stays on disk."
+    )
+    trash = build_library_notes_trash_state(
+        _deleted_records(1, 4), total=3, now=NOW, purge_scope={"d2": (False, True)}
+    )
+    assert [(row.kept_file, row.server_copy) for row in trash.rows] == [
+        (False, False),
+        (False, True),
+        (False, False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_canvas_hands_each_rows_scope_to_its_delete_forever() -> None:
+    """m-9: the press reads the page read's facts off the row's own button."""
+    rows = (
+        dataclasses.replace(_row("n1", "A"), kept_file=True),
+        dataclasses.replace(_row("n2", "B"), server_copy=True),
+    )
+    app = _CanvasApp(pane_width=100, mode="trash", trash=_trash(*rows))
+    async with app.run_test(size=(120, 40)):
+        deletes = list(app.query(".library-notes-trash-delete").results(Button))
+        assert [(b.note_kept_file, b.note_server_copy) for b in deletes] == [
+            (True, False),
+            (False, True),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_a_read_with_no_landing_drops_the_marker_of_a_landing_it_replaced(
+    monkeypatch,
+) -> None:
+    """The R4 residual: a non-landing follow-up replaces a landing's ``then``.
+
+    That landing never runs now, so its settling marker must not stay up
+    (it withheld the list's offset until the next input). Deterministic: the
+    landing read publishes, then a roleless read publishes before any
+    landing ran. Base (780fe1da8b): the marker stayed "trash-restore:3".
+    """
+    from tldw_chatbook.UI.Library_Modules import library_notes_controller as module
+
+    thens: list[object] = []
+    monkeypatch.setattr(
+        module,
+        "_sync_library_canvas",
+        lambda _screen, _kind, then=None, **_kwargs: thens.append(then) or True,
+    )
+    fake = _trash_loader_fake(_PagedTrashService(total=25))
+    fake.is_mounted = True
+    fake._land_library_notes_trash_focus = lambda _role: None
+
+    await LibraryNotesController._load_library_notes_trash(
+        fake, focus_role="trash-restore:3"
+    )
+    assert fake._trash_landing_settling == "trash-restore:3"
+    assert thens[-1] is not None
+
+    await LibraryNotesController._load_library_notes_trash(fake)
+
+    assert thens[-1] is None
+    assert fake._trash_landing_settling == ""

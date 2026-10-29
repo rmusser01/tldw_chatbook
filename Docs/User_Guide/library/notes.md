@@ -1571,6 +1571,16 @@ and **Escape** cancels it without changing anything. There is no Undo
 afterwards: the note, its keyword and folder links and its earlier versions
 are gone, and focus lands on the row now in its place.
 
+Delete forever removes the note from this device's notes only. A file that a
+synced folder wrote for it before that folder was disconnected stays on disk,
+and copies already on a sync server are not removed; the confirm adds "Its
+file in the synced folder stays on disk." or "Copies on your sync server are
+not removed." when it knows this note has either. The note's keywords stay:
+only its link to them goes. While another change to your notes is still
+running, Delete forever deletes nothing and the view says "Delete forever
+waits: another change to your notes is still running." until that change
+finishes.
+
 ## Keyboard & commands
 
 | Key | Action |
@@ -1890,7 +1900,8 @@ which taught that adapter to detect one.)*
 soft-deleted notes, newest first, with a per-row Restore and `r` on the
 focused row. Restore commits through the same seam the delete receipt's Undo
 uses, so the row returns to its folder and the rail count moves identically.
-The view offers no permanent delete.)*
+The view offers no permanent delete — superseded by TASK-34000.29, which
+added Delete forever; see "Recently deleted" above.)*
 
 *Verified against fix/library-notes-i-backlinks — 2026-09-09 (task-32145:
 Info → Properties now lists "Linked from (N)" — the notes whose bodies carry

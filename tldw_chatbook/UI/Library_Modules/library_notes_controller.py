@@ -590,6 +590,7 @@ from ...Widgets.Library.library_notes_add_from_files_canvas import (
 )
 from ...Widgets.Library.library_notes_canvas import (
     LIBRARY_NOTE_BACKLINK_DISPLAY_CAP,
+    PURGE_BUSY_NOTICE,
     PURGE_CONFIRM_LABEL,
     PURGE_CONFIRM_TITLE,
     LibraryNotePresentationState,
@@ -754,8 +755,12 @@ class LibraryNotesController:
     #: landing raises it too (a Restore's or a purge's same-page landing,
     #: parked R4-2), and it is also dropped by the real-input withdrawal and
     #: by a landing that runs for another role -- the one settling was
-    #: replaced and will never run (parked R4-1).
+    #: replaced and will never run (parked R4-1), and by a read that
+    #: publishes with no landing of its own (review R0, the R4 residual).
     _trash_landing_settling: str = ""
+    #: Review R0, m-8: a Delete forever confirm is up. A second ``x`` or
+    #: click while it is never stacks another; its answer clears this.
+    _trash_purge_confirm_open: bool = False
 
     def __init__(
         self,
@@ -1716,6 +1721,7 @@ class LibraryNotesController:
         self._library_notes_mutation_in_flight = False
         LibraryNotesController._run_owed_library_notes_tree_reload(self)
         LibraryNotesController._run_owed_library_notes_trash_reload(self)
+        LibraryNotesController._clear_library_notes_trash_busy(self)
     def _run_owed_library_notes_tree_reload(self) -> None:
         """Run the full tree reload a held-back visit refresh still owes."""
         if not getattr(self, "_tree_reload_owed", False):
@@ -7970,6 +7976,10 @@ class LibraryNotesController:
         """
         event.stop()
         if self._library_notes_mutation_fenced():
+            # Review R0, m-5: say why on the Trash's own line, not silence.
+            LibraryNotesController._say_library_notes_trash_busy(self)
+            return
+        if LibraryNotesController._library_notes_purge_confirm_open(self):
             return
         button = event.button
         note_id = str(getattr(button, "note_id", "") or "")
@@ -7983,19 +7993,75 @@ class LibraryNotesController:
         # Imported here (ADR-097), as the Notes dialogs are.
         from ...Widgets.confirmation_dialog import ConfirmationDialog
 
+        def answer(confirmed: bool | None) -> None:
+            self._trash_purge_confirm_open = False
+            if confirmed:
+                self._confirm_library_notes_trash_delete(note_id, title, version, index)
+            else:
+                self._cancel_library_notes_trash_delete(index)
+
+        self._trash_purge_confirm_open = True
         self.app.push_screen(
             ConfirmationDialog(
                 title=PURGE_CONFIRM_TITLE,
-                message=purge_confirm_copy(title),
+                message=purge_confirm_copy(
+                    title,
+                    kept_file=bool(getattr(button, "note_kept_file", False)),
+                    server_copy=bool(getattr(button, "note_server_copy", False)),
+                ),
                 confirm_label=PURGE_CONFIRM_LABEL,
                 cancel_label="Cancel",
+                # Review R0, m-4: the commit held >=3 cells from Cancel.
+                classes="destructive-confirm",
             ),
-            lambda confirmed: (
-                self._confirm_library_notes_trash_delete(note_id, title, version, index)
-                if confirmed
-                else self._cancel_library_notes_trash_delete(index)
-            ),
+            answer,
         )
+
+    def _library_notes_purge_confirm_open(self) -> bool:
+        """Whether a Delete forever confirm is still up (review R0, m-8).
+
+        A fast double ``x`` reaches the handler twice before the first
+        confirm takes the screen; the second must not stack another. A
+        confirm that left without answering (a quit flow popped it) no
+        longer counts once it is off the screen stack.
+        """
+        if not getattr(self, "_trash_purge_confirm_open", False):
+            return False
+        stack = getattr(getattr(self, "app", None), "screen_stack", None)
+        if stack is None:
+            return True
+        from ...Widgets.confirmation_dialog import ConfirmationDialog
+
+        if any(isinstance(screen, ConfirmationDialog) for screen in stack):
+            return True
+        self._trash_purge_confirm_open = False
+        return False
+
+    def _say_library_notes_trash_busy(self) -> None:
+        """Paint why Delete forever did nothing (review R0, m-5).
+
+        Another Notes change holds the single-writer interlock. The reason
+        stays under the Trash's purpose line until the interlock is released
+        (``_clear_library_notes_trash_busy``) or the page is read again.
+        """
+        trash = getattr(self, "_library_notes_trash", None)
+        if trash is None or trash.notice == PURGE_BUSY_NOTICE:
+            return
+        self._library_notes_trash = dataclasses.replace(trash, notice=PURGE_BUSY_NOTICE)
+        if getattr(self, "is_mounted", False) and self._library_notes_view == "trash":
+            _sync_library_canvas(self, "notes")
+
+    def _clear_library_notes_trash_busy(self) -> None:
+        """The interlock is free, so the busy reason no longer holds (m-5)."""
+        trash = getattr(self, "_library_notes_trash", None)
+        if trash is None or not getattr(trash, "notice", ""):
+            return
+        self._library_notes_trash = dataclasses.replace(trash, notice="")
+        if (
+            getattr(self, "is_mounted", False)
+            and getattr(self, "_library_notes_view", "") == "trash"
+        ):
+            _sync_library_canvas(self, "notes")
 
     def _cancel_library_notes_trash_delete(self, index: str) -> None:
         """Cancel or Escape: nothing written, focus owed back to the row.
@@ -8315,6 +8381,34 @@ class LibraryNotesController:
             return None
         return result if isinstance(result, Mapping) else None
 
+    async def _read_library_notes_trash_purge_scope(
+        self, items: Any
+    ) -> Mapping[str, tuple[bool, bool]]:
+        """What Delete forever would leave elsewhere, for this page (m-9).
+
+        Read with the page, off the event loop, so the confirm can say it
+        without a read of its own: ``{}`` (no clause) when it cannot be read.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        read = getattr(service, "deleted_notes_purge_scope", None)
+        if not callable(read):
+            return {}
+        note_ids = [
+            str(item.get("id"))
+            for item in items
+            if isinstance(item, Mapping) and item.get("id")
+        ]
+        try:
+            return dict(
+                await read(
+                    note_ids,
+                    sync_runtime=notes_sync_attention._runtime(self),
+                    sync_state=getattr(self.app_instance, "sync_state_repository", None),
+                )
+            )
+        except Exception:  # noqa: BLE001 - no clause; the guide says it
+            return {}
+
     async def _load_library_notes_trash(
         self,
         *,
@@ -8388,16 +8482,28 @@ class LibraryNotesController:
                     return
                 total = result.get("total")
         self._library_notes_trash_page = requested
+        items = result.get("items") or ()
+        # Class-forwarded: the loader's tests run it on a fake.
+        purge_scope = await LibraryNotesController._read_library_notes_trash_purge_scope(
+            self, items
+        )
         self._library_notes_trash = build_library_notes_trash_state(
-            result.get("items") or (),
+            items,
             total=total if isinstance(total, int) else None,
             page=requested,
+            purge_scope=purge_scope,
         )
         if self.is_mounted:
             if focus_role:
                 # Ruling T8-j: this landing settles from here until its
                 # keep-in-view has run; no capture records the list's offset.
                 self._trash_landing_settling = focus_role
+            else:
+                # Review R0 (the R4 residual): a read with no landing of its
+                # own replaces the ``then`` of any landing whose keep-in-view
+                # has not run -- that one never runs now, and its marker,
+                # left up, withheld the list's offset until the next input.
+                self._trash_landing_settling = ""
             _sync_library_canvas(
                 self,
                 "notes",
