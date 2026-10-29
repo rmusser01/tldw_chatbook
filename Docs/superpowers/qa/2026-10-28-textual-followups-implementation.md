@@ -4,10 +4,11 @@ This implements TASK-37266, TASK-37267 and TASK-37268 from the
 [source-pinned audit](2026-10-28-textual-book-after-pr3283.md). The
 [implementation plan](../plans/2026-10-28-textual-37266-37268.md) preserves the
 existing Evals, Research Runs and Library owners. The requested delivery is a
-reviewed open PR against `dev`. The source head is independently reviewed and
-fully green in hosted CI. The final metadata head is checked before delivery;
-its run links and result are recorded in the PR description without creating
-another evidence-only commit and CI cycle.
+reviewed open PR against `dev`. The implementation source checkpoint passed
+hosted CI; a later metadata-only head exposed two existing Library control
+preparation races, documented below. The final reviewed head is checked before
+delivery; its run links and result are recorded in the PR description without
+creating another evidence-only commit and CI cycle.
 
 ## Behavior and local evidence
 
@@ -110,7 +111,7 @@ aggregation remain unchanged. The official replay's algorithm is unchanged.
   via CLI, with all13 ACs checked and implementation notes/final summaries present.
   [Closure and source conservation](2026-10-28-textual-followups-implementation/backlog-closure.json)
   records the unchanged product/test/workflow/security inputs. Final delivery
-  also verifies the metadata-only head and records its result in the PR description.
+  also verifies the final reviewed head and records its result in the PR description.
 - The old `test_note_export_onto_an_existing_file_asks_escape_keeps_it_replace_writes`
   fails locally during unchanged Notes source loading before export. It stays
   locally unqualified and enrolled in full. Its exact hosted result passed on
@@ -140,3 +141,62 @@ aggregation remain unchanged. The official replay's algorithm is unchanged.
   mismatch. The [ownership proof](2026-10-28-textual-followups-implementation/artifact-followup-ownership.json)
   checked 412 refs, 366 trees and 55 worktrees before creation, and links existing
   TASK-16483/21127/19300/37267 and ADR-033/068/078. This PR does not fix that action.
+
+## Final-head CI feedback and bounded control repair
+
+Metadata-only head `3e414ff824f88bf8e13a5aef1003be3525481a87` retained the
+previously qualified source inputs, but its [Derived run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454377)
+finished with 37 successful jobs and three failures: UI12, UI19 and their
+dependent required aggregate. [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454364)
+passed. Two unrelated one-off workflows were intentionally skipped; no review
+thread was unresolved. The [historical failure receipt](2026-10-28-textual-followups-implementation/ci-repairs/failed-metadata-head.json)
+keeps the actual assertions, job URLs and raw log hashes. The earlier source-head
+pass and this metadata-head failure are distinct results.
+
+UI12's Reader identity test prepared a filter with separate key bursts. Native
+paced keys independently reproduced query `t` instead of `Product`: each
+debounced browse publication rebuilt the focused Input and selected its prefix.
+The Reader test now prepares its filter with native App Paste, preserving every
+original Reader/write/toast assertion. A private wrong-target negative still
+fails the original write-ID assertion. Ordinary typing remains a product defect,
+tracked separately in [TASK-37360](<../../../backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md>).
+Its [ownership search](2026-10-28-textual-followups-implementation/ci-repairs/media-typing-ownership.json)
+checked 417 refs, 368 trees, 8,493 bodies and 55 worktrees before creation and
+links the older browse/editing tasks and ADRs. Paste is not a typing repair.
+
+UI19's full note-link journey failed its Navigation reopen after its original
+picker and autosave assertions passed. Native delivery tracing showed a row
+pressed while a sibling folder result was still pending; recomposition retired
+its parent before the queued Pressed message could bubble. Local link-test
+preparation now waits for the acknowledged Notes visit, complete expected
+branches and actual current tree DOM publication, then presses one reacquired
+current row. The initial title setup explicitly clicks/focuses its real Input
+before its unchanged typing assertions. A selected Preview keyboard consumer
+also exposed Enter dispatch during native Work/Items recomposition. Only local
+Preview preparation now awaits current focused/painted DOM publication before
+returning; its original keyboard/link/picker oracles remain unchanged. Broader
+production gesture delivery remains the existing TASK-34000.85 obligation.
+
+The [Media investigation](2026-10-28-textual-followups-implementation/ci-repairs/media-filter-investigation.md),
+[Notes investigation](2026-10-28-textual-followups-implementation/ci-repairs/note-open-investigation.md)
+and [native investigation archive/map](2026-10-28-textual-followups-implementation/ci-repairs/native-investigations.json)
+retain the matching mechanisms and distinguish invalid attempts. The
+[combined repair report](2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-report.md)
+and [hashed raw repair map/archive](2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave.json)
+preserve all run outcomes, commands and executed sources. Six distinct targeted
+journeys have qualified latest passing outcomes across bounded runs, not one
+all-green batch. Held-folder and held-Preview controls fail with old preparation
+and pass with the new preparation; holds drain inside App without a watchdog.
+The optional old-helper Preview failure at a later picker assertion is not
+treated as equivalent to the earlier Enter failure. The amended full keyboard
+journey and Preview sibling each pass with their original assertions. Scoped
+Ruff passes; exact inherited formatting regions and unaffected AST owners/oracle
+tails are conserved. An invalid outside-UI collection's raw config capture stays
+private and is excluded from the portable archive.
+
+The [scoped Superpowers re-review](2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-review.md)
+checks this three-test-file repair after the approved whole-branch review. No
+product, fixture/service/getter, workflow, census, timeout or privacy guard changes
+are included in the repair. These native controls qualify preparation and its
+outcome assertions; final delivery still requires actual green CI and resolved
+feedback on the final pushed head, recorded in the PR description.

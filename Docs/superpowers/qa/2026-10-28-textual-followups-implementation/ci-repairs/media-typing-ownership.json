@@ -1,0 +1,16 @@
+{
+  "id": "TASK-37360",
+  "observed_at": "2026-10-29T04:49:46.390508+00:00",
+  "ceiling": 37330,
+  "lead_buffer": 30,
+  "exit_code": 0,
+  "catalog_sha256": "82d81960698baf8b7ec7e1ac9ba2249957a1f20a40bbc1bdd65e9bce6b9d2e57",
+  "refs": 417,
+  "task_trees": 368,
+  "bodies": 8493,
+  "worktrees": 55,
+  "pending_task_records": 182,
+  "errors": [],
+  "path": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+  "sha256": "00a30c3c920dc31217eaadfc2a0694e17b7e6f6c8b5de0bba9637d2327b44b30"
+}

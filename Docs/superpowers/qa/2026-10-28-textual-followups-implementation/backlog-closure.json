@@ -62,5 +62,6 @@
       "Docs/security"
     ]
   },
-  "qualification": "CLI closure follows actual successful source-head hosted CI and independent review. Only documentation/backlog/evidence metadata changes follow that tested head. Final metadata-head CI is checked before delivery and reported in the PR description, avoiding a third evidence-only CI cycle."
+  "qualification": "Historical CLI closure transaction7c2b8f5aab\u21923e414ff824 followed green source CI and independent review; only documentation/backlog/evidence changed in that transition. Later test-preparation CI repairs are separately recorded and reviewed in ci-repairs; this receipt does not claim their test sources unchanged or their CI passing. Final actual-head status is recorded in the PR description.",
+  "closure_head": "3e414ff824f88bf8e13a5aef1003be3525481a87"
 }
