@@ -263,6 +263,7 @@ async def test_project_chat_uat(
                         "max_tokens": 256,
                     },
                     "console": console_settings,
+                    "tools": {"list_directory_enabled": variant == "wrong-family"},
                 }
             )
             from tldw_chatbook.app import TldwCli

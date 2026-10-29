@@ -167,7 +167,9 @@ full discovery/load/refusal sequence, final README evidence.
 
 ### UAT-05 — Wrong arguments cannot produce false project evidence (P0)
 
-Setup: nonempty bound project and empty scratch.
+Setup: nonempty bound project and empty scratch. Enable the optional built-in
+listing tool with `[tools] list_directory_enabled=true` for this variant only;
+local `fs_*` tools remain enabled.
 Actions: script the reported call `list_directory(root_alias=..., path=".")`;
 then recover using the advertised tool's actual schema and bound-root semantics.
 Pass: the mismatched call is rejected before an apparent successful empty listing;
