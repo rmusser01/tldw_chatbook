@@ -1,0 +1,53 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/v1-conflict-offline-evidence.tar.gz",
+  "archive_sha256": "65c7e63ffb3a6611af3e6e015bbe711cdde571a86f19f65c4ad98e21bbb3fd22",
+  "archive_bytes": 5139,
+  "baseline": "4526f771b78e833182d62fe17c7660334ab7d7fd",
+  "scope": "offline V1 resubmission/completion repair",
+  "live_requests": 0,
+  "product_children": 0,
+  "cumulative_live_requests": 386,
+  "cumulative_product_children": 26,
+  "members": [
+    {
+      "name": "task35582-v1-recovery-red.log",
+      "sha256": "c8ea0a9d64426137e104c60508dddf71767b491935de124c621471e85dcc4f70",
+      "bytes": 33470
+    },
+    {
+      "name": "task35582-v1-recovery-red-loop.log",
+      "sha256": "6a808ce22331b741175f9e688397186d9a899ceb1e4cfa1f3123d22e069546c9",
+      "bytes": 6514
+    },
+    {
+      "name": "task35582-v1-recovery-green.log",
+      "sha256": "b9ded7510fb1af0dd3894bdb3bfbd65949969f5c5bd12c8af4dde4778268c08f",
+      "bytes": 335
+    },
+    {
+      "name": "task35582-v1-history-red.log",
+      "sha256": "6efa38e782cbc03c96832747f467ef8aabacb81062ac11ccf18bd6d4c0d1afae",
+      "bytes": 5476
+    },
+    {
+      "name": "task35582-v1-history-green.log",
+      "sha256": "5218a1a6c42e6e7db20dd1381635d21b38159f9af3e25b752253cddc545971f3",
+      "bytes": 209
+    },
+    {
+      "name": "task35582-v1-targeted.log",
+      "sha256": "d600949595e36c15485d5a95d6dc7324bf1d85789dd57b168182221009dd5ee8",
+      "bytes": 461
+    },
+    {
+      "name": "task35582-v1-size.log",
+      "sha256": "c68dda96ed28591d82fda1c2276bdd0548de7231a97bb120b75801409e4cd077",
+      "bytes": 207
+    },
+    {
+      "name": "task35582-v1-static.json",
+      "sha256": "aee3ba595fb5a83bfced4826b28e1c2d4d5c1cbb2d8d46ec87299681e1294e46",
+      "bytes": 578
+    }
+  ]
+}

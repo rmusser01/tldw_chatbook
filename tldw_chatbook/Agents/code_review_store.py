@@ -922,6 +922,15 @@ class ReviewStore:
                 refusal = ReviewRefused("submission_revision_conflict")
                 refusal.submission_revision = stream.revision
                 raise refusal
+            if (
+                kind == "dispositions"
+                and not parsed
+                and stream.rejected.get(
+                    hashlib.sha256(submission_id.encode()).hexdigest()
+                )
+                != "disposition_conflict"
+            ):
+                raise ReviewRefused("invalid_record_count")
             if kind in {"reviewer_complete", "verifier_complete"} and (
                 stream.rejected.keys()
                 - {hashlib.sha256(submission_id.encode()).hexdigest()}
@@ -1113,8 +1122,19 @@ class ReviewStore:
                         stream.submissions[submission_id] = (digest, ack)
                         stream.revision = ack.submission_revision
                         if kind == "dispositions":
-                            ledger.dispositions.update({record.verification_unit_id: record.model_dump(mode="json") for record in parsed})
-                            if ledger.delivered <= ledger.dispositions.keys():
+                            ledger.dispositions.update(
+                                {
+                                    record.verification_unit_id: record.model_dump(
+                                        mode="json"
+                                    )
+                                    for record in parsed
+                                }
+                            )
+                            # Empty withdrawals must retain outstanding recovery rounds in history.
+                            if (
+                                parsed
+                                and ledger.delivered <= ledger.dispositions.keys()
+                            ):
                                 ledger.acknowledged_cursors.append(ack.cursor)
                         stream.local_keys.update(local_keys)
                         stream.rejected.pop(
@@ -1193,7 +1213,8 @@ class ReviewStore:
                 return
             # A finite run can repair the same rejected submission identity.
             key = hashlib.sha256(str(submission_id).encode()).hexdigest()
-            if stream.rejected.get(key) == reason:
+            # Failed withdrawal retries must not erase the recoverable conflict.
+            if stream.rejected.get(key) in {reason, "disposition_conflict"}:
                 return
             stream.rejected[key] = reason
             self._host_receipt(context, binding, stream)

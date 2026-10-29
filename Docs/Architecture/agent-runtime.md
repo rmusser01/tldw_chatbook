@@ -185,7 +185,11 @@ through that same owner after history reduction. Cached batch pages retain their
 original bytes/revisions; the live view supplies current revision, next cursor,
 pending delivered IDs and whether every unit has a disposition. Empty pending IDs
 alone do not imply completion. Rejected submissions require correction under the
-same ID; completion refuses outstanding rejections. The runtime preserves bounded
+same ID; completion refuses outstanding rejections. For disposition_conflict only,
+empty dispositions at the current revision explicitly withdraw that rejected ID
+through the ordinary atomic publish path. Accepted decisions remain immutable;
+failed retries retain the conflict's recovery eligibility. Fresh IDs, other
+rejection reasons and accepted-ID changes cannot use this path. The runtime preserves bounded
 `code_review_submit` error details for the model while ordinary error rendering and
 body-free logs remain unchanged.
 

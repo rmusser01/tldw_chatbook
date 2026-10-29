@@ -395,6 +395,8 @@ def validate_record_chunk(kind: str, records: list[dict]) -> tuple[ReviewRecord,
     model = _RECORD_KINDS.get(kind) if isinstance(kind, str) else None
     if model is None:
         raise ReviewRefused("unknown_submission_kind")
+    if kind == "dispositions" and not records:
+        return ()  # The store requires a same-ID outstanding disposition conflict.
     if not 1 <= len(records) <= SUBMISSION_MAX_RECORDS:
         raise ReviewRefused("invalid_record_count")
     if (

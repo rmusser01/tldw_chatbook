@@ -65,6 +65,13 @@ once with the latest caller revision. Another participant append is independent.
 Correct a rejected record under the SAME submission_id, using returned field/type
 errors. New IDs do not retire earlier rejections. Repair rejected IDs before
 completion, then retry the SAME completion submission_id.
+If a new submission repeats an accepted unit, disposition_conflict preserves the
+accepted decision. Withdraw only that rejected submission using its returned retry
+arguments: kind="dispositions", records=[], the SAME rejected submission_id and
+current expected_revision. This accepts no decisions and clears only that conflict;
+use the acknowledgement revision for subsequent submissions. Empty dispositions
+cannot withdraw fresh IDs, other rejection reasons or accepted submissions. If a
+withdrawal fails, retain that ID and retry after resolving the reported cause.
 
 Accepted submissions checkpoint dispositions/evidence/cursor outside history
 before host request-history reduction. Let the host reduce only recoverable

@@ -22584,3 +22584,15 @@ The repaired control preserves canonical receipt state, defers without execution
 and completes the reissued read. A scripted test that stops before
 the strict builder cannot establish request compatibility. The
 missing original live payload still limits retrospective attribution.
+
+## Test rejection recovery through the next history projection (TASK-35582, 2026-10-28)
+
+The final60 continuation run correctly refused V1's changed resubmission of three
+accepted decisions, but left no supported withdrawal path once every unit was
+already decided. The offline fix exposed another edge: treating its empty
+withdrawal acknowledgement as a decision checkpoint let history reduction erase
+the still-rejected completion ID. Real native/fenced loop controls caught that
+before publication. Empty withdrawals now retain those recovery rounds; accepted
+decisions and ordinary sealing checks remain unchanged. Exercise recovery through
+the next request's real history projection, not just the successful tool return.
+Evidence: `Docs/superpowers/qa/2026-10-18-multi-model-code-review/v1-conflict-offline/report.md`.
