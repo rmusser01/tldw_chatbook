@@ -490,13 +490,13 @@ def speech_install_status(
     return None
 
 
-#: Names the GGUF path's managed VAD download for an install that has to
-#: wait for it (TASK-34100.14 review F3).
+#: Names the managed VAD download behind "Use model from disk…" for an
+#: install that has to wait for it (TASK-34100.14 review F3).
 EXTERNAL_VAD_DOWNLOAD_LABEL = "Silero VAD (voice-activity detector)"
 
 
 def external_vad_install_status(progress: Any) -> str:
-    """The GGUF path's status line while its managed VAD dependency installs.
+    """The external-Parakeet status line while the managed VAD installs.
 
     TASK-34100.14 review F3: that install now waits in line behind another
     model download (it used to fail fast as busy, saying only that it could

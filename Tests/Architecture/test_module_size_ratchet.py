@@ -509,7 +509,7 @@ _BUDGETS: dict[str, int] = {
     # class); the copy itself lives in first_run_speech_step_state.py.
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +2 (review
     # F4) -- leaving setup abandons a Speech download still waiting in line;
-    # then -4 (review F3), the GGUF path's VAD status copy moved to
+    # then -4 (review F3), the use-from-disk VAD status copy moved to
     # first_run_speech_step_state.external_vad_install_status -> 1,766;
     # then +2 (review F5), a progress tick handled after the install's
     # result no longer rewrites the status line -> 1,768.

@@ -2802,8 +2802,9 @@ async def test_leaving_setup_abandons_a_speech_download_still_waiting_in_line(
 async def test_external_vad_install_waits_in_line_naming_what_it_waits_for(
     monkeypatch, tmp_path
 ):
-    """TASK-34100.14 review F3: the GGUF path's managed VAD install was the
-    one wizard install without a DownloadControl. While OmniVoice downloaded
+    """TASK-34100.14 review F3: the managed VAD install behind "Use model from
+    disk…" (external Parakeet files, not the transcribe.cpp GGUF button) was
+    the one wizard install without a DownloadControl. While OmniVoice downloaded
     from the Voice step it failed fast as busy and said only "could not be
     installed"; it now waits in line, says which download it waits for, and
     names itself for any install that has to wait for it.

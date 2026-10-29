@@ -262,8 +262,10 @@ within a few seconds: the partial download is removed and the step says
 time, so starting the second install while the first is running waits in
 line ("Waiting for the OmniVoice voice model download to finish…") and then
 starts on its own; Cancel works while it waits, too, and leaving setup
-cancels an install that is still waiting its turn. The voice-activity
-detector a transcribe.cpp GGUF model needs waits in line the same way. If
+cancels an install that is still waiting its turn. **Use model from disk…**
+(Parakeet files you already have) also installs the voice-activity detector
+those files need when it is not installed yet, and that download waits in
+line the same way. If
 Chatbook is closed or killed part-way through, the next review says "A
 previous download stopped at 120.0 of 632.8 MiB", its button reads
 **Resume download**, and the download continues from about that point
