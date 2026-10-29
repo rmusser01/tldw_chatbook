@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-27 16:12'
-updated_date: '2026-10-28 02:14'
+updated_date: '2026-10-29 08:05'
 labels:
   - console
   - p2
@@ -36,5 +36,5 @@ Fixed with TASK-33620.2 (same root cause): see that task's plan.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Closed by TASK-33620.2 (branch fix/task-33620.2-image-attach-haiku, 2026-10-27). Root cause: no vision row in DEFAULT_MODEL_PATTERNS or the shipped [model_capabilities] template matched claude-haiku-4-5 (nor claude-opus-5 / claude-fable-5), and an older config.toml's Anthropic pattern list replaces the shipped one wholesale. Fix: an Anthropic family rule in ModelCapabilities.get_model_capabilities (claude-<tier>-<major>, major >= 4, provider anthropic) beneath the user's own rows. AC#2 is pinned by Tests/Chat/test_anthropic_vision_capability.py, which iterates the shipped Anthropic list under a fresh and an old config (red on dev f9baac8706 for haiku-4-5, opus-5, fable-5). AC#1 verified live: shipped defaults + no override, a 64x64 PNG staged on claude-haiku-4-5 left Send ready and the real model answered 'Green, purple.' (evidence tools/evidence/bd5/U14/20-21).
+Closed by TASK-33620.2 (branch fix/task-33620.2-image-attach-haiku, 2026-10-27). Root cause: no vision row in DEFAULT_MODEL_PATTERNS or the shipped [model_capabilities] template matched claude-haiku-4-5 (nor claude-opus-5 / claude-fable-5), and an older config.toml's Anthropic pattern list replaces the shipped one wholesale. Fix: an Anthropic family rule in ModelCapabilities.get_model_capabilities (claude-<tier>-<major>, major >= 4, provider anthropic) beneath the user's own rows. AC#2 is pinned by Tests/Chat/test_anthropic_vision_capability.py, which iterates the shipped Anthropic list under a fresh and an old config (red on dev f9baac8706 for haiku-4-5, opus-5, fable-5). AC#1 verified live: shipped defaults + no override, a 64x64 PNG staged on claude-haiku-4-5 left Send ready and the real model answered 'Green, purple.' (evidence tools/evidence/bd5/U14/20-21). Re-verified 2026-10-29 on the branch rebased onto dev 3efe8476ce: a fresh orange-left/blue-right PNG staged on claude-haiku-4-5 left Send ready, and the reply was 'Orange is on the left, blue is on the right.' (evidence 40-41).
 <!-- SECTION:NOTES:END -->
