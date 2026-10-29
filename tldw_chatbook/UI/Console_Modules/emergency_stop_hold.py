@@ -98,8 +98,11 @@ async def refresh(screen: Any) -> None:
     """
     try:
         path, state = await asyncio.to_thread(_read_default_stop)
-    except Exception:  # noqa: BLE001 -- an unknown state leaves the view unknown
-        logger.opt(exception=True).debug("emergency-stop arrival read failed")
+    except Exception as exc:  # noqa: BLE001 -- an unknown state leaves the view unknown
+        # The type only: a path-resolution error's message names the data dir.
+        logger.debug(
+            "emergency-stop arrival read failed (error_type={})", type(exc).__name__
+        )
         return
     if screen.is_mounted:
         note_state(screen, path, state, announce=True)
