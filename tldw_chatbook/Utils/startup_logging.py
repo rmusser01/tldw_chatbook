@@ -51,12 +51,36 @@ def _hold(name: str, message: str) -> None:
         _HELD_NOTICES.append((name or "startup", message))
 
 
+def _handled_elsewhere(holder: logging.Handler, record: logging.LogRecord) -> bool:
+    """Whether a handler other than ``holder`` took ``record`` (lastResort's rule)."""
+    logger = logging.Logger.manager.loggerDict.get(record.name)
+    current = logger if isinstance(logger, logging.Logger) else logging.getLogger()
+    while current is not None:
+        for handler in current.handlers:
+            if handler is not holder and record.levelno >= handler.level:
+                return True
+        if not current.propagate:
+            return False
+        current = current.parent
+    return False
+
+
 class _HoldingHandler(logging.Handler):
-    """Holds stdlib WARNING records so ``logging.lastResort`` never prints them."""
+    """Holds stdlib WARNING records so ``logging.lastResort`` never prints them.
+
+    Being on the root logger, it also stops lastResort printing ERROR and
+    CRITICAL records, which must still reach the terminal before the app's
+    logging exists (review R3: they were dropped). It hands those to
+    lastResort itself, under lastResort's own rule: only when no other
+    handler took the record.
+    """
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.levelno >= logging.ERROR:
-            return  # the stderr sink below reports errors
+            last_resort = logging.lastResort
+            if last_resort is not None and not _handled_elsewhere(self, record):
+                last_resort.handle(record)
+            return
         try:
             _hold(record.name, record.getMessage())
         except Exception:
