@@ -129,6 +129,12 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## A subclass's `on_blur` runs before Textual clears `has_focus` (TASK-33622.5, 2026-10-29)
+
+**Incident.** TASK-33622.5 made the line under the Console Terminal say "Focus or click the terminal to type in it" whenever the viewport lacked focus, recomputing it in `TerminalViewport.on_focus`/`on_blur` from `viewport.has_focus`. All 17 mounted Terminal tests were green, and none read that line. Live at 235x52, F6 moved the keys to the Inspect handle and the line still said "Ctrl+] Release input". Textual's dispatcher walks the MRO subclass-first and takes one of `_on_blur`/`on_blur` per class (`message_pump._get_dispatch_methods`), so the subclass's `on_blur` ran before `Widget._on_blur` set `has_focus = False`, and on focus the reverse. A mounted test that read the line before and after F6 failed on its first assertion: "Focus or click the terminal…" while the viewport had focus.
+
+**What to do.** Derive focus-dependent state in a `watch_has_focus` override (call `super()`), or defer it with `call_next`; never read `has_focus` inside `on_focus`/`on_blur`. When a fix adds copy that depends on focus, assert that copy in both focus states.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
