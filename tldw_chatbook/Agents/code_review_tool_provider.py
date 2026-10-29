@@ -59,7 +59,9 @@ _ROLE_GUIDANCE = {
         + _SUBMISSION_RECOVERY_GUIDANCE
         + "Use submission_revision from your page or acknowledgment as expected_revision. "
         + 'Read view="checkpoint" for current submission_revision, batch_cursor and pending_unit_ids after history reduction or cached replay. '
-        + "Batch pages replay their original revision; do not resubmit accepted dispositions."
+        + "Batch pages replay their original revision; do not resubmit accepted dispositions. "
+        + "On disposition_conflict, withdraw only the rejected submission using the returned retry "
+        "arguments (dispositions, empty records, same ID, current revision); accepted decisions remain unchanged."
     ),
 }
 _ROLE_READ_VIEWS = {
@@ -226,7 +228,25 @@ class CodeReviewToolProvider:
         except ReviewRefused as exc:
             self.service.diagnostic = exc.reason
             content = ""
-            if name == "code_review_submit" and exc.reason in {
+            if name == "code_review_submit" and exc.reason == "disposition_conflict":
+                try:
+                    checkpoint = self.service.verifier_checkpoint(args["review_id"])
+                    content = self.service.encode(
+                        {
+                            "submission_id": args["submission_id"],
+                            "reason": exc.reason,
+                            "recovery": "withdraw_conflicting_submission",
+                            "retry": {
+                                "kind": "dispositions",
+                                "records": [],
+                                "expected_revision": checkpoint.submission_revision,
+                                "submission_id": args["submission_id"],
+                            },
+                        }
+                    )
+                except ReviewRefused:
+                    pass
+            elif name == "code_review_submit" and exc.reason in {
                 "invalid_record",
                 "unresolved_submission_rejections",
             }:

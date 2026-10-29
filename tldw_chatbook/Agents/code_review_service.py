@@ -653,7 +653,9 @@ class CodeReviewService:
                     "Only executed host receipts fully read in this live attempt prove checks. "
                     'Read view="checkpoint" after history reduction or cached batch replay for current '
                     "submission_revision, batch_cursor and pending_unit_ids; cached pages retain their original revision. "
-                    "Never resubmit accepted dispositions. "
+                    "Never resubmit accepted dispositions. On disposition_conflict, use the returned retry "
+                    "arguments to withdraw only that rejected ID with empty dispositions at the current revision; "
+                    "accepted decisions remain unchanged. Then retry the same completion ID. "
                     "Finish with kind=verifier_complete,records=[] after independent dispositions.\n"
                     if claim.slot.role == "verifier"
                     else "Submit kind=findings records with schema_version=1,local_key,title,locations "

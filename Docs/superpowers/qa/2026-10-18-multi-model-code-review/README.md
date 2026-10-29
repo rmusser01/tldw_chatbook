@@ -1,3 +1,9 @@
+Latest follow-up: [offline V1 conflict recovery](v1-conflict-offline/report.md)
+adds explicit same-ID withdrawal of a rejected resubmission, preserving accepted
+decisions and every completion/sealing gate. 285 focused tests and the module-size
+guard pass; scoped review found no actionable issue. No new live requests or
+product children; AC24 remains open and PR #3286 remains draft.
+
 # TASK-35582 delivery evidence
 
 AC24 remains open. The [latest single qualification](continuation-final60/report.md)

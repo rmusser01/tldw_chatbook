@@ -177,6 +177,17 @@ aggregate storage limits before implementation planning.
     Rejected IDs remain outstanding until corrected under that same ID. Completion
     refuses other outstanding rejections; bounded field/type feedback tells the
     participant how to repair without exposing raw invalid input values.
+    A verifier may explicitly withdraw a rejected `disposition_conflict` submission
+    using `kind="dispositions"`, empty `records`, the same rejected ID and the
+    current revision. This publishes an ordinary immutable empty acknowledgement,
+    clears only that rejection and never changes accepted decisions. Fresh IDs,
+    other rejection reasons and accepted-ID changes cannot use this recovery.
+    Failed withdrawal retries retain the original conflict's recovery eligibility.
+    Empty withdrawals do not authorize history reduction of prior rejection rounds.
+    Bounded refusal feedback supplies the retry arguments; missing decisions,
+    other rejected IDs, terminal/capture receipts and all sealing checks remain
+    mandatory. This repairs the V1 dead-end observed in TASK-35582's
+    `continuation-final60` run without treating its changed verdicts as accepted.
 
 13. **Bound accumulated model input, not only transport pages.** The primary
     coordinates from the host finding index, not concatenated original reports.
