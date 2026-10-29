@@ -1910,6 +1910,7 @@ class NotesScopeService:
                 reason_code="not_deleted", user_message=PURGE_REFUSED_NOT_DELETED
             ) from error
         if purged:
+            await self._discard_purged_note_sync_history(key)
             # Function-level so this module never imports RAG at load time.
             # ``ingestion_indexing`` itself is light (the Library screen
             # already imports it); the removal loads the heavy RAG modules
@@ -1920,6 +1921,31 @@ class NotesScopeService:
                 ingestion_indexing.remove_purged_note_projection, key
             )
         return purged
+
+    async def _discard_purged_note_sync_history(self, note_id: str) -> None:
+        """Drop a purged note's queued Sync v2 upserts (review R0, m-2).
+
+        Its delete envelope stays, so a pending server-side delete still
+        propagates; no queued upsert pushes the note's title or text after
+        the purge (``SyncStateRepository.discard_sync_v2_note_history``).
+        With no Sync v2 producer there is no outbox on this device to touch.
+        The purge has already committed, so a failure is logged, not raised.
+        """
+        producer = self.sync_v2_notes_producer
+        if producer is None:
+            return
+        try:
+            # Resolved here, on the loop: a deferred producer wires the Notes
+            # Sync services on first use, as every other caller of it does.
+            repository = getattr(producer, "state_repository", None)
+            discard = getattr(repository, "discard_sync_v2_note_history", None)
+            if callable(discard):
+                await self._run_folder_repository(discard, note_id)
+        except Exception as error:  # noqa: BLE001 - the purge already committed
+            logger.warning(
+                "Dropping a purged note's queued sync upserts failed: {}",
+                type(error).__name__,
+            )
 
     async def live_local_note_ids(
         self, note_ids: Sequence[str], *, user_id: Optional[str] = None
