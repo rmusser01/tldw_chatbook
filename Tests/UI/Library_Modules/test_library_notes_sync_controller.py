@@ -1299,6 +1299,10 @@ async def test_selection_is_keyed_by_observation_token_and_clears_on_stale_back_
     runtime.check_plan = _conflict_plan(root_id="root-2", token=TOKEN)
     await controller.check_root("root-2")
     controller.stage_attention_choice("root-1", TOKEN, "bind-1", "Keep both")
+    # TASK-34000.40 (2026-10-29): leaving no longer clears staged choices
+    # (Tests/Library/test_library_notes_sync_review_selections.py). Nothing is
+    # staged here: the stage above names root-1 on root-2's review and is
+    # refused, and the stale apply already forgot root-1's choices.
     await controller.abandon_setup()
     assert controller.snapshot.review.rows[0].selected_choice is None
 
@@ -2302,9 +2306,15 @@ async def test_successful_mutations_use_safe_local_fallback_when_receipts_fail()
     assert statuses == [controller.snapshot.status_line]
 
 
-async def test_root_activation_clears_choices_and_fences_comparison_on_receipt_switch() -> (
-    None
-):
+async def test_receipt_switch_keeps_staged_choices_and_fences_comparison() -> None:
+    """Opening another root's receipts fences the comparison, not the choice.
+
+    Rewritten 2026-10-29 (TASK-34000.40 N-34, AC#6; was
+    ``test_root_activation_clears_choices_and_fences_comparison_on_receipt_switch``):
+    a switch of the projected root is navigation, so root-1's staged choice is
+    kept -- root-2's own observation token can never match it -- while the
+    in-flight comparison is still cleared and can no longer publish.
+    """
     runtime = _Runtime()
     runtime.check_plan = _conflict_plan()
     gate = asyncio.Event()
@@ -2323,7 +2333,9 @@ async def test_root_activation_clears_choices_and_fences_comparison_on_receipt_s
     )
 
     await controller.refresh_conflict_receipts("root-2")
-    assert controller._selections == {}  # noqa: SLF001 - lifecycle contract
+    assert controller._selections == {  # noqa: SLF001 - lifecycle contract
+        (TOKEN, "bind-1"): NotesSyncConflictChoice.KEEP_FILE
+    }
     assert controller.snapshot.comparison is None
     controller._expanded_binding_id = "bind-1"  # noqa: SLF001 - isolate root fence
     assert not controller._comparison_is_current(  # noqa: SLF001

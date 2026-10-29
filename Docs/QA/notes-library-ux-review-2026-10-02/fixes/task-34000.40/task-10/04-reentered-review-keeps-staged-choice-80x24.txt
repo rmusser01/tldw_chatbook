@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N  Add files to Library notes.
+  a    o  Choice staged. No changes yet.
+  v    t  0 safe · 1 need attention · 0 skipped · 0 folder moves
+       e  Syncs .md, .markdown and .txt only; other files are left alone.
+       s  Both file and note changed (1)
+          quotes.md · Both file and note changed · VSync
+--->      quotes
+            View comparison
+     ---> Selected: Keep both
+            ✓ Keep both
+          preserve an unbound note copy
+--->      then update the bound note.
+            Keep file
+          update the Library note                                              ▃
+            Keep note
+          replace the folder file
+          More below — scroll.
+             Apply reviewed     Resolution history     ‹ Sync folders
+  enter act | esc notes | F1 · F6 · Ctrl+P · Ctrl+Q

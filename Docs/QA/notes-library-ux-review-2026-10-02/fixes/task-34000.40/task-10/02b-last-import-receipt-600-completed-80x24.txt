@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N  Import once
+  a    o  Import completed.
+  v    t  600 notes created
+       e  600 planned changes from 600 reviewed sources.
+       s
+
+--->
+
+     --->
+
+
+--->
+
+
+
+
+            View 600 imported notes
+            ‹ Notes
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit
