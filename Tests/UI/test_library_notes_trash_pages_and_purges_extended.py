@@ -38,6 +38,7 @@ from textual.widgets import Button
 
 from Tests.ChaChaNotesDB.note_trace_census import note_traces
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.library_quit_guard_support import _record_toasts
 from Tests.UI.test_library_notes_trash_pages_and_purges import (
     COMPACT,
     WIDE,
@@ -70,6 +71,7 @@ from tldw_chatbook.Notes.notes_sync_runtime import build_notes_sync_runtime_owne
 from tldw_chatbook.RAG_Search import ingestion_indexing
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -162,7 +164,7 @@ class _PurgeSeed:
             store.close()
 
 
-def _mounted(tmp_path: Path, *, special: bool):
+def _mounted(tmp_path: Path, monkeypatch, *, special: bool):
     app = _build_test_app()
     _seed_conversations(app, [])
     seed = _PurgeSeed(tmp_path, special=special)
@@ -182,7 +184,12 @@ def _mounted(tmp_path: Path, *, special: bool):
         recovery_capacity_bytes=1024 * 1024,
     )
     app.notes_sync_runtime_owner = runtime
-    return LibraryProductionCSSHarness(app, screen=LibraryScreen(app)), seed, runtime
+    host = LibraryProductionCSSHarness(app, screen=LibraryScreen(app))
+    # The Library notifies through ``app_instance``; in the harness that is
+    # the built app, so its toasts are routed to the running host to paint.
+    app.notify = host.notify
+    seed.toasts = _record_toasts(monkeypatch, app)
+    return host, seed, runtime
 
 
 @pytest.fixture
@@ -201,6 +208,21 @@ def index_removals(monkeypatch) -> list[str]:
 
 def _title(screen) -> str:
     return str(getattr(screen.focused, "note_title", "") or "")
+
+
+def _pager(screen) -> str:
+    """The pager's own range and page copy as composed.
+
+    At 100x30 the pager is the trash list's last row, below the fold while
+    focus is on an upper row (Task 8a's design), so the exact total is read
+    from the composed pager rather than the screen.
+    """
+    parts = [
+        LibraryNotesCanvas._static_text(widget)
+        for selector in ("#library-notes-trash-range", "#library-notes-trash-page")
+        for widget in screen.query(selector)
+    ]
+    return "".join(parts)
 
 
 async def _open_trash(host, pilot, count: int) -> LibraryScreen:
@@ -230,13 +252,33 @@ async def _focus_row(host, pilot, screen, title: str, tabs: int) -> None:
     )
 
 
+def _painted_in(host, selector: str) -> str:
+    """The text painted inside one widget's region, its lines joined.
+
+    The confirm wraps its sentence over two lines with the list painted on
+    either side of it, so the whole-screen text cannot hold the sentence.
+    """
+    found = host.screen.query(selector)
+    if not found:
+        return ""
+    region = found.first().region
+    strips = host.screen._compositor.render_strips()
+    lines = [
+        strip.crop(region.x, region.right).text
+        for strip in strips[region.y : region.bottom]
+    ]
+    return " ".join(" ".join(lines).split())
+
+
 async def _confirm_open(host, pilot) -> ConfirmationDialog:
     await _until(
         pilot,
         lambda: isinstance(host.screen, ConfirmationDialog)
         and getattr(host.screen.focused, "id", "") == "cancel-button"
-        and "This cannot be undone." in _painted(host),
-        lambda: f"the confirm on Cancel: {_painted(host)}",
+        and "This cannot be undone." in _painted_in(host, ".dialog-message"),
+        lambda: f"the confirm on Cancel (focus: "
+        f"{getattr(host.screen.focused, 'id', None)!r}): "
+        f"{_painted_in(host, '#confirmation-dialog')!r}",
     )
     return host.screen
 
@@ -275,10 +317,10 @@ def _landing_then_sync(screen, role: str) -> list[bool]:
 
 
 async def test_delete_forever_names_the_note_and_leaves_no_trace(
-    tmp_path, index_removals
+    tmp_path, monkeypatch, index_removals
 ) -> None:
     """AC#9, rulings T8b-a..e, end to end at 160x45."""
-    host, seed, runtime = _mounted(tmp_path, special=True)
+    host, seed, runtime = _mounted(tmp_path, monkeypatch, special=True)
     try:
         async with host.run_test(size=WIDE) as pilot:
             screen = await _open_trash(host, pilot, count=26)
@@ -293,7 +335,10 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
             # The confirm names the note -- literally -- and opens on Cancel.
             await pilot.press("x")
             dialog = await _confirm_open(host, pilot)
-            assert f"“{SPECIAL}” will be deleted for good." in _painted(host)
+            assert _painted_in(host, ".dialog-title") == "Delete this note forever?"
+            assert _painted_in(host, ".dialog-message") == (
+                f"“{SPECIAL}” will be deleted for good. This cannot be undone."
+            )
             # Escape is a Cancel: nothing written, the row and focus stay.
             await pilot.press("escape")
             await _settled_on(
@@ -314,16 +359,17 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
                 host,
                 screen,
                 lambda: "1–20 of 25 · Page 1 of 2" in _painted(host)
-                and f"Deleted forever · {SPECIAL}" in _painted(host)
                 and _title(screen) == "Deleted 03"
                 and _focused_id(screen) == "library-notes-trash-restore-2",
-                lambda: f"the purge landed (focus: {_focused_id(screen)!r}): "
-                f"{_painted(host)}",
+                lambda: f"the purge landed (focus: {_focused_id(screen)!r}, "
+                f"toasts: {seed.toasts!r}): {_painted(host)}",
             )
+            # The notice -- feedback, not a receipt: nothing can undo this.
+            # (This harness mounts no Toast widget; the app's notify is the
+            # seam, recorded as Task 6's export pins record theirs.)
+            assert seed.toasts == [f"Deleted forever · {SPECIAL}"]
             listing = screen.query_one("#library-notes-trash-list")
-            assert SPECIAL not in "\n".join(
-                line for line in _painted(host).splitlines() if "Deleted forever" not in line
-            )
+            assert SPECIAL not in _painted(host)
             assert _visible_in(listing, screen.focused)
             assert (
                 seed.traces(
@@ -345,9 +391,10 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
                 pilot,
                 host,
                 screen,
-                lambda: host.screen is screen and REFUSAL in _painted(host),
-                lambda: f"the refusal: {_painted(host)}",
+                lambda: host.screen is screen and REFUSAL in seed.toasts,
+                lambda: f"the refusal (toasts: {seed.toasts!r}): {_painted(host)}",
             )
+            assert seed.toasts[-1] == REFUSAL
             assert "Deleted 05" in _painted(host)
             assert "1–20 of 25 · Page 1 of 2" in _painted(host)
             assert "Deleted 05" in seed.deleted()
@@ -389,7 +436,7 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
 
 
 async def test_at_100x30_a_same_page_landing_survives_a_sync_right_after_it(
-    tmp_path, index_removals
+    tmp_path, monkeypatch, index_removals
 ) -> None:
     """Parked R4-2 (ruling T8b-e): every same-page landing settles first.
 
@@ -400,7 +447,7 @@ async def test_at_100x30_a_same_page_landing_survives_a_sync_right_after_it(
     the injected sync put the new list's pre-layout offset (0) back over the
     landed row below the fold. Then a purge there.
     """
-    host, seed, runtime = _mounted(tmp_path, special=False)
+    host, seed, runtime = _mounted(tmp_path, monkeypatch, special=False)
     try:
         async with host.run_test(size=COMPACT) as pilot:
             screen = await _open_trash(host, pilot, count=25)
@@ -413,9 +460,10 @@ async def test_at_100x30_a_same_page_landing_survives_a_sync_right_after_it(
                 host,
                 screen,
                 lambda: bool(fired)
-                and "1–20 of 24 · Page 1 of 2" in _painted(host)
+                and _pager(screen) == "1–20 of 24 · Page 1 of 2"
                 and _title(screen) == "Deleted 04",
-                lambda: f"the 3rd row purged (focus: {_focused_id(screen)!r})",
+                lambda: f"the 3rd row purged (focus: {_focused_id(screen)!r} "
+                f"{_title(screen)!r}, injected: {fired}, pager: {_pager(screen)!r})",
             )
             listing = screen.query_one("#library-notes-trash-list")
             assert _visible_in(listing, screen.focused), (
@@ -436,9 +484,10 @@ async def test_at_100x30_a_same_page_landing_survives_a_sync_right_after_it(
                 screen,
                 lambda: bool(fired)
                 and "Deleted 21" not in seed.deleted()
-                and "1–20 of 23 · Page 1 of 2" in _painted(host)
+                and _pager(screen) == "1–20 of 23 · Page 1 of 2"
                 and _title(screen) == "Deleted 22",
-                lambda: f"the last row restored (focus: {_focused_id(screen)!r})",
+                lambda: f"the last row restored (focus: {_focused_id(screen)!r} "
+                f"{_title(screen)!r}, injected: {fired}, pager: {_pager(screen)!r})",
             )
             listing = screen.query_one("#library-notes-trash-list")
             assert _visible_in(listing, screen.focused), (
@@ -455,9 +504,10 @@ async def test_at_100x30_a_same_page_landing_survives_a_sync_right_after_it(
                 host,
                 screen,
                 lambda: bool(fired)
-                and "1–20 of 22 · Page 1 of 2" in _painted(host)
+                and _pager(screen) == "1–20 of 22 · Page 1 of 2"
                 and _title(screen) == "Deleted 23",
-                lambda: f"the last row purged (focus: {_focused_id(screen)!r})",
+                lambda: f"the last row purged (focus: {_focused_id(screen)!r} "
+                f"{_title(screen)!r}, injected: {fired}, pager: {_pager(screen)!r})",
             )
             listing = screen.query_one("#library-notes-trash-list")
             assert _visible_in(listing, screen.focused), (
