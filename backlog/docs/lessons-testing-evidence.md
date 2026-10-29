@@ -376,6 +376,12 @@ files. A test that needs "an older file" must delete the key after the file is
 created. Expect `load_settings()` to merge the shipped value back in anyway
 (see the `chat_defaults.model` entry below).
 
+## After a resume, the setup modal can hold focus when the test presses Enter (TASK-33620.3, 2026-10-29)
+
+**Incident.** `test_a_saved_chat_with_an_unsafe_staged_policy_still_refuses_the_repair` in `Tests/UI/test_console_durable_commit_failure_recovery.py` resumes a saved chat with `_resume_console_workspace_conversation`, calls `_select_llamacpp_console`, loads a draft and presses Enter via `press(host, "enter", "\r")`. It passed on dev in 4.7 s. On the fix head it failed three runs out of five on a 15 s `until` timeout, and the two passes took 16-20 s. Nothing was sent: no `console_send_stage` lines, the draft still in the composer, the commit hook never called. The failure tuple's `repr(host.focused)` was `Button(id='console-setup-modal-action')`. The resume re-reads the chat's settings before the test selects llama.cpp, so the first-run setup modal briefly blocks the Console and takes focus, and the Enter landed on its button. The send never started, so the change under test (in the durable commit) could not have caused it. A sibling test with the same resume sequence happened to win the race every time.
+
+**What to do.** Before a synthetic key press that must reach the composer after a resume, a session switch or a provider change, wait until no `ConsoleSetupModal` reports `is_blocking`. Then focus the composer and wait for `host.focused` to be the composer or inside it. That file's `_enter` helper does this. When a send "does nothing" in a mounted test, put `host.focused` in the failure message before suspecting the product.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
