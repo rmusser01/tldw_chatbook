@@ -492,6 +492,29 @@ def test_without_the_flag_the_configured_splash_still_plays(monkeypatch):
 
 
 @pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("variable", "value", "reduced"),
+    [("TLDW_REDUCE_MOTION", "1", True), ("NO_MOTION", "yes", True), (None, None, False)],
+)
+def test_the_launch_splash_reads_reduce_motion_from_the_process_environment(
+    monkeypatch, variable, value, reduced
+):
+    """T-G13-3 (TASK-34100.13, E7): compose passes no ``environ`` to
+    splash_options, so the launch relies on its ``os.environ`` default. Every
+    other splash test passes ``environ=`` itself, and a default that ignored
+    the process environment survived them all."""
+    from tldw_chatbook.Widgets.splash_screen import SplashScreen
+
+    for name in ("TLDW_REDUCE_MOTION", "NO_MOTION"):
+        monkeypatch.delenv(name, raising=False)
+    if variable:
+        monkeypatch.setenv(variable, value)
+    first, _sentinel, _stub = _compose_first(monkeypatch, app_config={})
+    assert isinstance(first, SplashScreen)
+    assert first.reduced_motion is reduced
+
+
+@pytest.mark.bootstrap_profile
 def test_the_launch_that_creates_the_profile_plays_no_splash(monkeypatch):
     """TASK-34100.13 (entry-exit-handoff-17): first launch = config created now."""
     first, sentinel, stub = _compose_first(
