@@ -1116,11 +1116,7 @@ class ModelCapabilities:
                         )
                         break
 
-        # TASK-33620.2: Claude's tier-first families read images even when
-        # an older config.toml's pattern list (which replaces the shipped
-        # one) never names them.
-        if not capabilities and _anthropic_family_reads_images(provider, model):
-            capabilities = {"vision": True}
+        user_row_matched = bool(capabilities)
 
         # 3. TASK-26023: upstream models.dev gap-fill, BENEATH the hand-
         # maintained direct/pattern entries above (AC#2). Disabled by
@@ -1129,6 +1125,13 @@ class ModelCapabilities:
             upstream = _models_dev_capabilities(provider, model)
             if upstream:
                 capabilities = upstream
+
+        # TASK-33620.2: Claude's tier-first families read images even when
+        # an older config.toml's pattern list (which replaces the shipped
+        # one) never names them. Beneath the user's rows, and layered over
+        # the models.dev row so its context window survives.
+        if not user_row_matched and _anthropic_family_reads_images(provider, model):
+            capabilities = {**capabilities, "vision": True}
 
         # 4. If still no match found, use defaults
         if not capabilities:
