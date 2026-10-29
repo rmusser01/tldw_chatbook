@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import platform
+import sys
+import threading
 import time
 import traceback
 import uuid
@@ -137,11 +139,15 @@ def painted_text(screen, region=None):
 
 def preparation_stacks():
     """Capture suspended app coroutines as well as the native worker threads."""
-    from Tests.private_profile import _stacks_text
-
-    parts = [_stacks_text("at UAT preparation boundary")]
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    parts = []
+    for ident, frame in sys._current_frames().items():
+        if ident == threading.main_thread().ident:
+            continue
+        parts.append(f"\n--- thread {names.get(ident, ident)}\n")
+        parts.extend(traceback.format_stack(frame, limit=20))
     for task in asyncio.all_tasks():
-        parts.append(f"\n--- asyncio task {task.get_name()}\n")
+        chain = [f"\n--- asyncio task {task.get_name()}\n"]
         awaiting = task.get_coro()
         seen = set()
         while awaiting is not None and id(awaiting) not in seen:
@@ -150,10 +156,13 @@ def preparation_stacks():
                 awaiting, "gi_frame", None
             )
             if frame is not None:
-                parts.extend(traceback.format_stack(frame, limit=1))
+                chain.extend(traceback.format_stack(frame, limit=1))
             awaiting = getattr(awaiting, "cr_await", None) or getattr(
                 awaiting, "gi_yieldfrom", None
             )
+        text = "".join(chain)
+        if "tldw_chatbook" in text:
+            parts.append(text)
     return "".join(parts)[:100000]
 
 
