@@ -129,6 +129,12 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## A fallback after a guarded handler undoes the guard's refusals, and only a mounted case sees it (TASK-33622.3, 2026-10-29)
+
+**Incident.** TASK-33622.3's type-to-compose (a printable key on a non-text Console control moves focus to the draft) was written before TASK-33620.15.17's arrival claim merged, then rebased so it runs right after `claim_arrival_key` in `ChatScreen.on_key`. The claim refuses on purpose while the setup card is about to block, even before the card's first sync has made the draft unfocusable, and when the restore aims at another pane. Every arrival test stayed green on the rebased head for that refusal, because it is pinned only by a unit test that calls `claim_arrival_key` alone; the fallback behind it would have typed the same key into the draft anyway. Two other mounted pins went red instead, for the opposite reason: they asserted the old rule that a letter typed on the Home button (after the window) or on the status line (TASK-34720's sentence case) stays there.
+
+**What to do.** When you add a handler after an existing guarded one, list the guard's refusals and make the new handler defer to each (here: no type-to-compose while the arrival window is open), and test the new handler in each refusal state; a test of the guard alone cannot see the handler behind it. When a ruling changes where keys go, grep the mounted tests for keystrokes on non-text controls and rewrite the pins that encode the old rule to assert the new one, citing the ruling; do not delete them.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
