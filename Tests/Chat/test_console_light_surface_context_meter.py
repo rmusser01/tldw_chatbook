@@ -1047,8 +1047,9 @@ async def _history_preflight(bridge, resolution, words_per_row, *, memory=False)
         # The stored summary replaces that history: the light set fits again.
         (False, 800, True, "light"),
         # The direct set and discovery no longer fit beside the history; the
-        # last row alone leaves room for discovery.
-        (True, 150, False, "inbox-only"),
+        # last row alone leaves room for discovery. ADR-253 then sends
+        # compact discovery (find/load plus the progress reader).
+        (True, 150, False, "compact"),
     ],
     ids=["light-short-history", "light-long-history", "light-memory", "full-medium"],
 )
@@ -1092,7 +1093,9 @@ def test_the_history_preflight_counts_what_the_send_carries(
     assert _row_names(sized) == sent, (sorted(_row_names(sized)), sorted(sent))
     if shape == "light":
         assert sent == LIGHT, sorted(sent)
-    elif shape == "inbox-only":
-        assert sent == {"read_agent_messages"}, sorted(sent)
+    elif shape == "compact":
+        assert sent == {"find_tools", "load_tools", "read_agent_messages"}, sorted(
+            sent
+        )
     else:
         assert sent == set(), sorted(sent)
