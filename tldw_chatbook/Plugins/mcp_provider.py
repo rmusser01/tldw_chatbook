@@ -299,6 +299,16 @@ class MCPProviderGroup:
     def provider_for(self, name: str) -> MCPToolProvider | None:
         return self.owners.get(name)
 
+    def server_key_for(self, name: str) -> str | None:
+        """The server a composed tool comes from, asked of its owner.
+
+        TASK-34100.5.3: plain chat's light surface keeps tools from servers
+        the user added; without this the group answered nothing and every
+        MCP tool was dropped whenever a plugin skill was available.
+        """
+        owner = self.owners.get(name)
+        return None if owner is None else owner.server_key_for(name)
+
     @property
     def not_connected_count(self) -> int:
         return sum(provider.not_connected_count for provider in self.providers)

@@ -8964,19 +8964,11 @@ class ConsoleChatController:
         if transformed_saved_rows != original_saved_rows:
             requires_pre_dispatch_authority = True
 
+        # TASK-34100.5.3 review: the speculative attempt carries no tools, as
+        # it did while the bridge had no preview_tool_schemas -- light tools
+        # without the plan's "Answer directly" line drew tool calls, each a
+        # second, authoritative request (tests: test_console_light_surface_voice).
         tools: list[Mapping[str, Any]] = []
-        if (
-            self._agent_runtime_enabled
-            and self._agent_bridge is not None
-            and not prefill
-            and session.assistant_kind != "character"
-        ):
-            preview_tools = getattr(self._agent_bridge, "preview_tool_schemas", None)
-            if callable(preview_tools):
-                try:
-                    tools = list(preview_tools())
-                except Exception:
-                    requires_pre_dispatch_authority = True
         from tldw_chatbook.Chat.console_speculative_voice_session import (
             PreparedSpeculativeVoiceAttempt,
             VoicePromotionSeed,
@@ -15129,6 +15121,7 @@ class ConsoleChatController:
         self,
         tool_count: int | None,
         not_connected_count: int | None,
+        session_id: str | None = None,
     ) -> None:
         """Publish this run's MCP catalog counts for the inspector's "MCP" row.
 
@@ -15156,6 +15149,9 @@ class ConsoleChatController:
         """
         if self.app is None:
             return
+        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
+
+        self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge, session_id)
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
 
@@ -15299,7 +15295,7 @@ class ConsoleChatController:
             if local_kill_switch is not None and local_kill_switch._current is not None:
                 local_kill_switch._current()
             if publish_counts:
-                self._publish_mcp_inspector_counts(tool_count, not_connected)
+                self._publish_mcp_inspector_counts(tool_count, not_connected, session_id)
 
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
@@ -15391,7 +15387,12 @@ class ConsoleChatController:
         if not catalog:
             publish(None, None)
             return None
-        publish(len(catalog), provider.not_connected_count)
+        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_mcp_tool_count
+
+        publish(
+            offered_mcp_tool_count(self._agent_bridge, provider, session_id),
+            provider.not_connected_count,
+        )
         return provider
 
     async def _compose_agent_request_providers(

@@ -119,6 +119,82 @@ class ConsoleContextControlState:
         return self.resolved_policy.effective_conversation_budget_tokens
 
     @property
+    def tool_schema_tokens(self) -> int:
+        """The last prepared request's tool schemas (0 before any send).
+
+        TASK-34100.5.3 AC#5: read from the breakdown rows, which every
+        rebuild of this state carries over.
+        """
+        return next(
+            (row.tokens for row in self.breakdown_rows if row.label == "Tool schemas"),
+            0,
+        )
+
+    @property
+    def last_request_overhead_tokens(self) -> int | None:
+        """The last prepared request's non-conversation tokens, if known.
+
+        An explicit ``request_overhead_tokens`` wins; otherwise the system
+        prompt, tool schemas and instruction rows of the last request's
+        breakdown, or ``None`` before any send.
+        """
+        if self.request_overhead_tokens is not None:
+            return self.request_overhead_tokens
+        rows = [row for row in self.breakdown_rows if row.label in _OVERHEAD_ROW_LABELS]
+        return sum(row.tokens for row in rows) if rows else None
+
+    @property
+    def next_request_tokens(self) -> int | None:
+        """The meter's figure: the estimate plus the tools the send carries.
+
+        TASK-34100.5.3 review round 1 (B-F1): the estimate counts the system
+        prompt, messages and draft, but no tool schemas -- live on an 8,192-
+        token server the strip read "Context 0%" while the request carried
+        ~500 tokens of tools. The last request's tool share is added.
+        """
+        if self.request_tokens is None:
+            return None
+        return self.request_tokens + self.tool_schema_tokens
+
+    def overhead_label(self) -> str:
+        """The "Request overhead" value, naming the tool schemas' share.
+
+        TASK-34100.5.3 AC#5: the overhead comes from the last prepared
+        request, whose accounting now counts the tools the send carries.
+        Display only: the conversation budget does not subtract it (review
+        round 1, F6 -- the Conversation figure already counts the system
+        prompt). An unmeasured overhead reads "unknown", never "unknown
+        tokens", as ``context_token_row`` does (TASK-33007).
+        """
+        overhead = self.last_request_overhead_tokens
+        if overhead is None:
+            return "unknown"
+        text = f"{format_context_tokens(overhead)} tokens"
+        tools = self.tool_schema_tokens
+        return f"{text} (tool schemas {format_context_tokens(tools)})" if tools else text
+
+    def request_estimate_label(self, estimate: ConsoleSettingsContextEstimate) -> str:
+        """The model tab's "Request estimate" text, counting the tools too.
+
+        Args:
+            estimate: The settings estimate whose label leads with
+                ``"<used> / <limit> tokens"``.
+
+        Returns:
+            That label with the last request's tool share added to ``used``
+            and named, or the label unchanged when no tools were sent.
+        """
+        label = estimate.label.strip() or "Not estimated"
+        used, limit, tools = estimate.used_tokens, estimate.token_limit, self.tool_schema_tokens
+        head = f"{used:,} / {limit:,} tokens" if used is not None and limit else ""
+        if not tools or not head or not label.startswith(head):
+            return label
+        return (
+            f"{used + tools:,} / {limit:,} tokens (tool schemas {tools:,})"
+            f"{label[len(head):]}"
+        )
+
+    @property
     def compaction_trigger_tokens(self) -> int | None:
         budget = self.conversation_budget_tokens
         if budget is None:
@@ -203,6 +279,19 @@ def build_console_next_send_spend_state(
         "Response/output spend is added after completion.\n"
         "Cache reads may lower it; cache writes may raise it.",
     )
+
+
+#: The breakdown rows that are not conversation -- system prompt, tool schemas
+#: and instructions -- which "Request overhead" sums (TASK-34100.5.3).
+_OVERHEAD_ROW_LABELS = frozenset(
+    {
+        "System prompt",
+        "Tool schemas",
+        "Retrieved context",
+        "Other instructions",
+        "Instructions & context (unattributed)",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -424,7 +513,8 @@ def build_console_context_cost_state(
         "unavailable",
         "On next send: unavailable\nA next-send spend estimate has not been provided.",
     )
-    used = context.request_tokens
+    # TASK-34100.5.3 review round 1 (B-F1): the tools the send carries count.
+    used = context.next_request_tokens
     ceiling = context.safe_input_ceiling_tokens
     if used is None or ceiling is None or ceiling <= 0:
         fullness = "unknown"

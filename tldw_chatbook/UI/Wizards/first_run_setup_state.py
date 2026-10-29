@@ -1938,7 +1938,6 @@ def build_summary_rows(
     # docstring for why the two deliberately disagree on a bare, wizard-
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
-    tools_on = [key for key, value in prefill.tool_gates if value]
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
@@ -2048,8 +2047,15 @@ def build_summary_rows(
         raw_name = chat_defaults.get("provider")
         if isinstance(raw_name, str):
             provider_name = raw_name.strip()
-    from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        summarize_tool_surface,
+        tool_surface_detail,
+    )
 
+    # TASK-34100.5.3: the row names exactly the tools plain Console chat is
+    # offered -- the light set, each tool switched on, or the full agent
+    # surface -- read from the same config the send reads.
+    tool_surface = summarize_tool_surface(app_config)
     return (
         SummaryRow(
             "Provider",
@@ -2062,28 +2068,8 @@ def build_summary_rows(
         _voice_summary_row(app_config),
         SummaryRow(
             "Tools",
-            ROW_CONFIGURED if tools_on else ROW_DEFAULT,
-            f"{len(tools_on)} enabled"
-            if tools_on
-            # task-32289 AC#1: name the destination -- Quick setup never
-            # shows the Tools step, and a Full-setup user who left every
-            # switch off has the same "nothing is enabled" state, so one
-            # detail string covers both without threading `track` through.
-            # task-32284 (Qodo #2600 #17): the path comes from
-            # `TOOL_GATES_PANE_PATH`, never retyped. The shortened
-            # "MCP ▸ Servers ▸ Tool gates" written here omitted the
-            # built-in server ROW, and the pane only exists inside that
-            # row's detail view -- so the breadcrumb did not lead anywhere.
-            # TASK-34100.5 AC#2: not "all off" -- with every gate off, Console's
-            # assistant still gets the agent runtime, the local tools
-            # ([console] local_tools_enabled) and the built-in MCP source.
-            # Review round 1 (F10): "may ... when the window has room" -- a
-            # send planned against an unverified window carries no tools.
-            else (
-                "gates off; the assistant may still use chatbook's own tools "
-                "(sub-agents, web search, notes, Watchlists) when the model's "
-                f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
-            ),
+            ROW_CONFIGURED if tool_surface.user_turned_on else ROW_DEFAULT,
+            tool_surface_detail(tool_surface),
         ),
         SummaryRow(
             "Notes folder sync",
@@ -2097,6 +2083,28 @@ def build_summary_rows(
         ),
         encryption_row,
     )
+
+
+def quick_track_defaults_note(app_config: Mapping[str, object]) -> str:
+    """The Quick-track Summary's opening line, true to the tool surface.
+
+    TASK-34100.5.3 (TASK-34100.5 owner question 2): it said "tools off" while
+    plain chat offered the agent surface. The tools part now comes from the
+    same reading as the Tools row.
+    """
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        summarize_tool_surface,
+        tool_surface_phrase,
+    )
+
+    summary = summarize_tool_surface(app_config)
+    rest = "RAG off, default theme, notes sync off — each lives in Settings when you want it."
+    if summary.user_turned_on:
+        return (
+            f"Tools as you set them ({tool_surface_phrase(summary)}). "
+            f"Left at recommended defaults: {rest}"
+        )
+    return f"Left at recommended defaults: {tool_surface_phrase(summary)}, {rest}"
 
 
 def rerun_model_prefill(

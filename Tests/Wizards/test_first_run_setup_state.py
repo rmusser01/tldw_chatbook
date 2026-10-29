@@ -1787,7 +1787,8 @@ class TestSummaryRows:
         rows = build_summary_rows({}, {}, rag_deps_installed=True)
         by_label = {row.label: row for row in rows}
         assert by_label["Provider"].ok is False
-        assert by_label["Tools"].ok is False  # no gates on => off is reported honestly
+        # No tool turned on beyond the light set => a default row, not a ✓.
+        assert by_label["Tools"].ok is False
 
     def test_provider_row_checks_for_one_click_local_server_commit(self):
         """F2 regression: the wizard's own one-click "Use this server" path
@@ -2250,15 +2251,19 @@ class TestSummaryThreeState:
         # live, a fresh profile's assistant listed sub-agents, web search,
         # Watchlists and the built-in source's notes tools, and the first
         # chat asked approval for one.
-        # Review round 1 (F10): a first send planned against a window nobody
-        # verified (a fresh local server) carries no tools at all, so the row
-        # says what MAY be offered, not what always is.
+        # TASK-34100.5.3: plain chat now offers exactly the light set until
+        # the user turns more on, so the row names it instead of hedging.
+        # Review round 1 (F4): and says plainly that a small or unread window
+        # gets no tools.
         assert rows["Tools"].detail == (
-            "gates off; the assistant may still use chatbook's own tools "
-            "(sub-agents, web search, notes, Watchlists) when the model's "
-            f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
+            "on: date and time, calculator and ask you a question, plus tools "
+            "from MCP servers you add and Library tools in chats you allow. "
+            "Sub-agents, skills, web, Watchlists, workspace tools and characters "
+            f"stay off until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}. "
+            "A model with a small or not-yet-known context window gets no tools."
         )
         assert "all off" not in rows["Tools"].detail
+        assert "may still" not in rows["Tools"].detail
         # TASK-36387, rewritten on purpose: MCP is a Settings category now.
         assert TOOL_GATES_PANE_PATH == (
             "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"

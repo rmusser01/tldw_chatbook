@@ -6433,9 +6433,8 @@ class MCPWorkbench(Container):
                 "{}", _safe_diagnostic_message("MCP tool gate save failed", exc)
             )
             self.app.notify(_toast(f"Failed to save {key}: {exc}"), severity="error")
-        else:
-            if not saved:
-                self.app.notify(f"Failed to save {key}.", severity="error")
+        else:  # TASK-34100.5.3 (B-F5): mirror into app_config; report a failed write.
+            MCPServersMode.mirror_saved_tool_gate(self.app, section, key, value, saved=saved)
         self._snapshots = await self._collect_snapshots()
         await self._sync_children()
 

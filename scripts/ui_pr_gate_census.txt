@@ -1571,3 +1571,5 @@ Tests/UI/test_console_assistant_turn.py::test_transcript_refresh_lock_resume_sto
 Tests/UI/test_console_fewer_permission_prompts_command.py
 Tests/UI/test_notifications_inbox_responsiveness.py::test_memory_inbox_preserves_rows_and_mutations_on_owning_thread
 Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
+# TASK-34100.5.3: the Tools & MCP Tool gates pane (now led by Full agent tools) fits its content (about 3 s).
+Tests/UI/test_mcp_servers_mode.py::test_builtin_toggles_container_does_not_expand_past_content

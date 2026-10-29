@@ -67,8 +67,14 @@ async def test_compaction_reads_replaced_services_globals_and_accounting(
         calls.append(("prepare", kwargs.get("tools")))
         return prepare(*args, **kwargs)
 
-    def preview_call():
+    previewed: list[tuple[object, object]] = []
+
+    def preview_call(resolution, *, session_id=None, messages=()):
+        # TASK-34100.5.3: the preview is sized against the send's resolution
+        # and request, for the send's own session (recorded, not asserted
+        # here: the preflight swallows a raising preview).
         calls.append("preview")
+        previewed.append((resolution is not None and bool(messages), session_id))
         if preview == "raises":
             raise ValueError("controlled optional preview failure")
         return []
@@ -93,6 +99,7 @@ async def test_compaction_reads_replaced_services_globals_and_accounting(
     assert calls[-1] == "decision"
     assert ("preview" in calls) is isinstance(preview, str)
     assert calls[0] == ("preview" if isinstance(preview, str) else ("prepare", []))
+    assert previewed == ([(True, session.id)] if isinstance(preview, str) else [])
     for optional in (None, 42):
         controller.provider_gateway = SimpleNamespace(prepare_chat_request=optional)
         assert await controller._apply_conversation_memory_preflight(

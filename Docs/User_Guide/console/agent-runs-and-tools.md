@@ -26,10 +26,80 @@ run*. This page covers what you see while a run is in flight, how tool-call
 approvals work, how background runs in other tabs surface, and how skills and
 MCP tools plug in. For the Console screen itself see [Console](../console.md).
 
+## What plain chat offers — the light tool surface
+
+Out of the box, Console's assistant gets a **light, safe tool set**: date
+and time (`get_current_datetime`), `calculator`, and ask-you-a-question
+(`ask_user`, which follows its own `[tools] ask_user_enabled` switch). A
+plain message such as "Reply with just: hi" is answered directly; there are
+no sub-agents, skills, web search, Watchlists, workspace, character,
+Canvas, chat-fork or run-log tools, and none of chatbook's own MCP tools,
+until you turn them on. The system prompt is your session prompt, or "You
+are a helpful assistant." when it is off — not the agent operating prompt.
+
+To turn more on:
+
+- **Full agent tools** — **Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸
+  Tool gates**, or
+  setup's Tools step (`[tools] full_agent_tools_enabled`). It brings back
+  everything this page describes: sub-agents and the fleet, skills, the
+  local workspace, web and Watchlists tools, character tools, Canvas, chat
+  forks, the run-log tools and chatbook's own MCP tools.
+- **One tool at a time** — an individual gate in the same pane (Read file,
+  Create note, Expand document, `web_deep_search`, …) is offered in plain
+  chat on the next send, without the rest of the agent surface. So are
+  tools from an MCP server you added, and Library tools once a conversation
+  allows assistant Library access. On a small context window where they no
+  longer fit beside the light set, the request keeps the light set and
+  leaves them out, so switching one on never leaves you with fewer tools.
+- **One turn** — a message that names a skill (`$skill`) gets the full agent
+  surface for that turn.
+
+Each send reads these switches fresh, so a change applies on the next send.
+The exception is a conversation whose sub-agents are still running, or have
+sent reports nobody has read yet: it keeps the full agent surface until that
+work is picked up, so switching Full agent tools off mid-run never leaves the
+reply that collects the results unable to read or reach its sub-agents.
+A [goal run](#goal-runs) is not plain chat either: each iteration gets the
+tools its reviewed launch selected — including the trusted skill-script
+executor that runs a command-backed check — and the agent operating prompt,
+whether or not Full agent tools is on.
+A small local model whose context window cannot hold even the light set (a
+server the app has not sized yet is planned as 4,096 tokens) gets a plain
+request with no tools.
+Full agent tools needs a much larger window than the light set. On a model
+with about 8,000 tokens (for example a llama.cpp server started with
+`-c 8192`) neither its tools nor its full find-tools fallback fit, so a send
+carries only a compact fallback: `find_tools` and `load_tools`, which must
+look a tool up and load it before the model can call it, and the reader for
+sub-agent reports. When even those do not fit, it carries no tools. With the
+switch off, the same model gets the light set directly. Leave Full agent
+tools off for such a model; the setup Summary says "gets fewer tools, or
+none" when it is on.
+
+The tools a send carries count toward the context meter: the status strip's
+**Context N%**, the model tab's **Request estimate**, and **Next request** and
+**Request overhead** under **Chat settings** (**Ctrl+O**) ▸ **Context and
+memory**, which names the tool share — for example "Request overhead 499
+tokens (tool schemas 489)". The figure comes from the last request the app
+prepared for the conversation, with its tools planned for that request's
+model, window and conversation, as the send plans them — a model with a
+small window, or a conversation that leaves no room, counts the smaller set
+the send gets, or none. With Full agent tools on, the meter learns the local,
+MCP and skill tools a conversation composes from its full sends. Until one
+has gone out in this conversation, it uses the tools of the most recent full
+send in any conversation, or only the built-in tools if there has been none
+since the app started; the send itself is sized correctly either way. A send
+that compacts older turns first is shown as the request stood before
+compacting, tools included; the next send's reading reflects the compacted
+conversation and the tools that fit beside it.
+
 ## Getting there
 
 Open Console (**Ctrl+2**) and send a message — runs happen wherever you
-chat, no separate mode to enable. The surfaces this page covers: the
+chat. Tool rows, approvals and sub-agents appear once a reply uses a tool,
+which for anything beyond the light set means turning it on first (see
+above). The surfaces this page covers: the
 transcript's inline tool rows, the **Agent** section in the left "Console
 context" rail, the Inspector's status rows, the status chips above the
 composer, and the approval and confirm cards that appear above the
