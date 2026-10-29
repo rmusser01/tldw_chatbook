@@ -76,6 +76,14 @@ not the file picker. (That control is labeled **Context rail** as of
 - **✕** removes **everything** staged at once — toast "Attachment cleared".
   There is no per-file removal; to drop one of three, clear all and
   re-attach the two you want.
+- A staged image is enough to send: with an image staged and an empty
+  draft, **Send** is ready and sends the image on its own, provided the
+  current model accepts images (otherwise Send is blocked; see the vision
+  check below). Clearing the image with **✕** returns Send to "Send
+  disabled: type a message" at once. After a send, Send shows the queue
+  copy while the reply runs and returns to "Send disabled: type a message"
+  once it finishes. An inserted text file is draft text, so it makes Send
+  ready like anything you type.
 
 ### Vision check before sending
 

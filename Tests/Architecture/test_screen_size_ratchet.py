@@ -202,7 +202,21 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: only on a real activation, never on the attach reconcile's direct
     #: replay of on_screen_resume. Dev 0923ec0ca2 measured 24319/736; with
     #: the fix, 24321/737, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24329, 737),
+    #: Raised 24319 -> 24320 (methods unchanged) 2026-10-27 by TASK-33620.15.22,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the composer is
+    #: built with the send gate's attachment predicate, so Send's readiness
+    #: has one owner (ConsoleComposerBar.has_sendable_payload). Dev 3be493413a
+    #: measures 24319/736; with the fix, 24320/736, the exact measurement.
+    #: Raised 24320 -> 24321 (methods unchanged) 2026-10-27 by the same task's
+    #: review follow-up, same owner rule: the Workbench `send` action's
+    #: readiness now reads has_sendable_payload and the vision block too, so
+    #: it no longer disagrees with Send for a staged image. With it,
+    #: 24321/736, the exact measurement.
+    #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
+    #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
+    #: exact measurement (same owner rule).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

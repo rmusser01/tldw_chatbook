@@ -721,6 +721,7 @@ class ConsoleComposerBar(Horizontal):
         paste_collapse_threshold: int = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
         send_price_tooltip_provider: Callable[[str], str | None] | None = None,
         send_price_available_provider: Callable[[str], bool] | None = None,
+        sendable_attachment_provider: Callable[[], bool] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -731,6 +732,10 @@ class ConsoleComposerBar(Horizontal):
         # actually on Send, where a 0.5s hover delay pays for it.
         self._send_price_tooltip_provider = send_price_tooltip_provider
         self._send_price_available_provider = send_price_available_provider
+        #: TASK-33620.15.22: whether something staged would be sent with an
+        #: empty draft, asked live of the screen's send gate predicate. The
+        #: attachment label is presentation and never makes Send ready.
+        self._sendable_attachment_provider = sendable_attachment_provider
         #: Whether the last `sync_action_state` decided a price tooltip
         #: exists. Gates the hover handlers so they never overwrite a
         #: blocked/idle Send tooltip.
@@ -2126,15 +2131,29 @@ class ConsoleComposerBar(Horizontal):
                 pass
         self._sync_raw_cli_state()
 
+    def has_sendable_payload(self) -> bool:
+        """Return whether a Send now would carry anything: Send's readiness input.
+
+        TASK-33620.15.22: the one rule for both of Send's sync sites (this
+        composer's resync and the screen's sync), so whichever runs last
+        agrees with the other. Draft text counts. With an empty draft only a
+        staged item the send gate would send counts, asked live of the
+        screen: the label may still show an image a Send has already taken,
+        and the gate refuses every other staged kind unsent.
+
+        Returns:
+            True when the draft has text or the screen reports a staged item
+            the send gate sends on its own; False with no provider installed.
+        """
+        if self.draft_text().strip():
+            return True
+        provider = self._sendable_attachment_provider
+        return provider is not None and bool(provider())
+
     def _sync_current_action_state(self) -> None:
         """Refresh action buttons from the current draft and cached run/save state."""
         self.sync_action_state(
-            # A staged attachment is sendable payload on its own (the screen
-            # passes the same OR at its own sync site) -- without it, a
-            # keystroke-side resync would flip Send back to disabled and
-            # flash the "type a message" reason while an image waits staged.
-            has_draft=bool(self.draft_text().strip())
-            or self._pending_attachment_label is not None,
+            has_draft=self.has_sendable_payload(),
             run_active=self._run_active,
             stop_available=self._stop_available,
             can_save_chatbook=self._can_save_chatbook,

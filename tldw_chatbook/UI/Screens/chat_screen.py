@@ -13719,7 +13719,7 @@ class ChatScreen(BaseAppScreen):
         readiness = self._active_console_settings_readiness()
         blocker_copy = self._console_provider_blocker_copy(settings_readiness=readiness)
         composer = self._console_composer_or_none()
-        has_draft = bool(composer and composer.draft_text().strip())
+        has_draft = bool(composer and composer.has_sendable_payload())  # 33620.15.22
         controller = self._console_chat_controller
         run_state = getattr(controller, "run_state", None)
         store = self._console_chat_store
@@ -13748,6 +13748,7 @@ class ChatScreen(BaseAppScreen):
         can_send = (
             has_draft
             and not bool(self._console_setup_blocked_reason())
+            and not self._console_attachment_blocked_reason()
             and run_allows_send
         )
         return build_console_workbench_state(
@@ -15178,6 +15179,9 @@ class ChatScreen(BaseAppScreen):
                 # itself is derived on hover.
                 send_price_available_provider=(
                     lambda draft: self._send_price.availability_for_draft(draft)
+                ),
+                sendable_attachment_provider=(
+                    lambda: self._console_pending_image_attachment() is not None
                 ),
             )
             # TASK-1364: the composer shares the screen's prompt-history
@@ -21350,10 +21354,8 @@ class ChatScreen(BaseAppScreen):
             or bool(attachment_blocked_reason)
         )
 
-        pending = self._console_pending_image_attachment()
-
         composer.sync_action_state(
-            has_draft=bool(composer.draft_text().strip()) or pending is not None,
+            has_draft=composer.has_sendable_payload(),  # TASK-33620.15.22
             run_active=run_active,
             stop_available=run_active
             or bool(getattr(controller, "is_stop_allowed", False)),
