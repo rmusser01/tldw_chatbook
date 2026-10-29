@@ -822,3 +822,40 @@ async def test_a_closed_row_menu_does_not_eat_a_later_esc(kind):
             lambda: composer.draft_has_focus,
             lambda: f"Esc from the transcript left focus on {console.focused!r}",
         )
+
+
+@pytest.mark.asyncio
+async def test_the_focus_cue_never_grows_the_composer():
+    """TASK-33622.3 review: the 'Esc to type' cue rides on the draft's last
+    row only where it fits there, so focus leaving the composer (F6, a rail
+    click) never adds a row to the bar; where it fits, it still shows."""
+    app = _TypeToComposeApp()
+    async with app.run_test(size=(120, 20)) as pilot:
+        screen = app.screen
+        rows = screen.query_one("#rows", _RowList)
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+        width = composer._draft_render_width()
+        grew = []
+        for length in range(width - 18, width + 2):
+            composer.load_draft("a" * length)
+            composer.focus()
+            await pilot.pause()
+            focused_rows = composer.size.height
+            rows.focus()
+            await pilot.pause()
+            if composer.size.height != focused_rows:
+                grew.append((length, focused_rows, composer.size.height))
+        assert grew == [], f"(draft length, focused, unfocused rows): {grew}"
+
+        composer.load_draft("short draft")
+        await pilot.pause()
+        assert _draft_render(composer).endswith(_COMPOSER_CUE)
+
+
+def test_a_detached_transcript_has_no_escape_layer():
+    """TASK-33622.4 review: ``check_action`` reads ``has_escape_layer``, whose
+    menu lookup resolves the screen; a transcript with no screen answers
+    "nothing to clear" instead of raising ``NoScreen``."""
+    transcript = ConsoleTranscript()
+    assert transcript.has_escape_layer() is False
+    assert transcript.check_action("clear_selection", ()) is False
