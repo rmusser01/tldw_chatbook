@@ -472,3 +472,8 @@ Run 40801165548 preserved the visible notice and a worker waiting for its decisi
 The pilot now accepts it through the real Proceed button and asserts no model
 request preceded consent. Active task/thread stacks are retained separately from
 idle widget stacks so a blocked journey identifies its actual wait.
+
+The saved run is checked for owner, completion, and matching successful read-call
+IDs. Its metadata intentionally omits file arguments and bodies; those are checked
+against the actual provider HTTP history instead. The test never weakens production
+trace privacy or injects raw payloads into AgentRunsDB.

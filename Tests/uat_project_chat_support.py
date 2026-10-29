@@ -24,25 +24,56 @@ MODEL = "uat-project-model"
 
 
 def assert_project_evidence(
-    *, code, alias, steps, final_text, persisted_text, painted_text
+    *, code, alias, steps, provider_request, final_text, persisted_text, painted_text
 ):
-    """Require a successful bound README read and three independent answer views."""
-    pending = None
-    read = False
-    for step in steps:
-        if step.get("kind") == "tool_call" and step.get("tool_name") == "fs_read":
-            pending = step
-        elif step.get("kind") == "tool_result" and step.get("tool_name") == "fs_read":
-            args = (pending or {}).get("args") or {}
-            read |= (
-                args.get("root_alias") == alias
-                and args.get("path") == "README.md"
-                and step.get("tool_outcome") == "success"
-                and code in str(step.get("result", ""))
-                and not str(step.get("result", "")).startswith("ERROR:")
-                and step.get("call_id", "") == (pending or {}).get("call_id", "")
-            )
-            pending = None
+    """Correlate private DB metadata with the actual provider's README exchange."""
+    calls = [
+        s
+        for s in steps
+        if s.get("kind") == "tool_call" and s.get("tool_name") == "fs_read"
+    ]
+    results = [
+        s
+        for s in steps
+        if s.get("kind") == "tool_result" and s.get("tool_name") == "fs_read"
+    ]
+    observed_calls = []
+    for message in provider_request["messages"]:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            if call["function"]["name"] == "fs_read":
+                observed_calls.append(
+                    (json.loads(call["function"]["arguments"]), call["id"])
+                )
+        fence = re.fullmatch(
+            r"\s*```tool_call\s+(.*?)\s*```\s*", message.get("content") or "", re.DOTALL
+        )
+        if fence:
+            call = json.loads(fence[1])
+            if call.get("name") == "fs_read":
+                observed_calls.append((call.get("arguments", {}), None))
+    observed_results = [
+        text for name, text in tool_results(provider_request) if name == "fs_read"
+    ]
+    # AgentRunsDB deliberately omits file arguments/bodies. Require its real
+    # outcome/correlation, and get the body from the HTTP exchange we observed.
+    read = (
+        len(calls) == len(results) == len(observed_calls) == len(observed_results) == 1
+    )
+    if read:
+        args, native_id = observed_calls[0]
+        result = observed_results[0]
+        read = (
+            bool(calls[0].get("call_id"))
+            and results[0].get("call_id") == calls[0]["call_id"]
+            and (native_id is None or native_id == calls[0]["call_id"])
+            and results[0].get("tool_outcome") == "success"
+            and args.get("root_alias") == alias
+            and args.get("path") == "README.md"
+            and code in result
+            and not result.startswith("ERROR:")
+        )
     assert read, "no successful read of the bound README with the fixture code"
     for label, text in (
         ("final_text", final_text),

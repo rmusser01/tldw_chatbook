@@ -70,3 +70,5 @@
 - Inline execution selected to keep this small pilot in one context. Existing worktree/branch `codex/uat-project-chat` reused from merged PR; no new checkout needed.
 
 - Qualification found an omitted user action: first-use AGENTS.md disclosure must be accepted before provider entry. Linux run 40801165548 captured the real runtime waiting for that decision and the visible modal. The pilot now asserts its session/source, proves no generation happened before consent, and clicks Proceed. No production consent gate is bypassed.
+
+- Run 40802492563 completed the real fenced read and all three answer views, then exposed an invalid oracle assumption: AgentRunsDB deliberately omits tool arguments/file bodies. Correlate its call IDs/outcome with actual provider history instead. Updated native/fenced private-metadata controls: 2 RED; 56 support/report/enrollment checks GREEN (8.71s). Preserve synthetic evidence before assertions for diagnostic failures.

@@ -9,33 +9,61 @@ import urllib.request
 import pytest
 
 
-def evidence():
+def evidence(native=False):
+    args = {"root_alias": "folder-abcdef123456", "path": "README.md"}
+    result = "1: Verification code: fixture-unique-9471"
+    messages = [
+        {
+            "role": "assistant",
+            "content": "```tool_call\n"
+            + json.dumps({"name": "fs_read", "arguments": args})
+            + "\n```",
+        },
+        {"role": "user", "content": "Tool result for fs_read: " + result},
+    ]
+    if native:
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "read-1",
+                        "function": {"name": "fs_read", "arguments": json.dumps(args)},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "read-1", "content": result},
+        ]
     return {
         "code": "fixture-unique-9471",
         "alias": "folder-abcdef123456",
         "final_text": "Project summary: fixture-unique-9471",
         "persisted_text": "Project summary: fixture-unique-9471",
         "painted_text": "Project summary: fixture-unique-9471",
+        "provider_request": {"messages": messages},
         "steps": [
             {
                 "kind": "tool_call",
                 "tool_name": "fs_read",
-                "args": {"root_alias": "folder-abcdef123456", "path": "README.md"},
+                "args": None,
+                "call_id": "read-1",
             },
             {
                 "kind": "tool_result",
                 "tool_name": "fs_read",
                 "tool_outcome": "success",
-                "result": "1: Verification code: fixture-unique-9471",
+                "result": "",
+                "call_id": "read-1",
             },
         ],
     }
 
 
-def test_actual_read_and_all_three_answer_views_are_required():
+@pytest.mark.parametrize("native", [False, True])
+def test_actual_read_and_all_three_answer_views_are_required(native):
     from Tests.uat_project_chat_support import assert_project_evidence
 
-    assert_project_evidence(**evidence())
+    assert_project_evidence(**evidence(native))
 
 
 @pytest.mark.parametrize("view", ["final_text", "persisted_text", "painted_text"])
@@ -48,21 +76,40 @@ def test_code_only_in_tool_result_cannot_pass_final_answer(view):
         assert_project_evidence(**row)
 
 
+@pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize(
-    "defect", ["wrong-root", "empty", "failed", "no-read", "wrong-path"]
+    "defect",
+    [
+        "wrong-root",
+        "empty",
+        "failed",
+        "no-read",
+        "wrong-path",
+        "wrong-call",
+        "missing-call",
+    ],
 )
-def test_canned_final_answer_cannot_replace_real_project_evidence(defect):
+def test_canned_final_answer_cannot_replace_real_project_evidence(defect, native):
     from Tests.uat_project_chat_support import assert_project_evidence
 
-    row = evidence()
-    if defect == "wrong-root":
-        row["steps"][0]["args"]["root_alias"] = "scratch"
-    elif defect == "wrong-path":
-        row["steps"][0]["args"]["path"] = "decoy.md"
+    row = evidence(native)
+    messages = row["provider_request"]["messages"]
+    if defect in ("wrong-root", "wrong-path"):
+        old, new = (
+            ("folder-abcdef123456", "scratch")
+            if defect == "wrong-root"
+            else ("README.md", "decoy.md")
+        )
+        messages[0] = json.loads(json.dumps(messages[0]).replace(old, new))
     elif defect == "empty":
-        row["steps"][1]["result"] = ""
+        messages[1]["content"] = "" if native else "Tool result for fs_read: "
     elif defect == "failed":
         row["steps"][1]["tool_outcome"] = "failed"
+    elif defect == "wrong-call":
+        row["steps"][1]["call_id"] = "different-read"
+    elif defect == "missing-call":
+        for step in row["steps"]:
+            step["call_id"] = ""
     else:
         row["steps"] = []
     with pytest.raises(AssertionError, match="bound README"):

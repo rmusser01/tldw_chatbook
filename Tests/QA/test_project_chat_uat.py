@@ -489,6 +489,13 @@ async def test_project_chat_uat(
                         len(runs) == 1
                     ), "expected one owning run for the one user send"
                     run = runs[0]
+                    record.update(
+                        run_id=run["id"],
+                        conversation_id=session.persisted_conversation_id,
+                        assistant_message_id=message.persisted_message_id,
+                        steps=run["steps"],
+                        answer=message.content,
+                    )
                     assert run["status"] == "done"
                     assert_project_ownership(
                         run,
@@ -500,18 +507,12 @@ async def test_project_chat_uat(
                         code=code,
                         alias=alias,
                         steps=run["steps"],
+                        provider_request=server.model.received[-1],
                         final_text=message.content,
                         persisted_text=saved["content"],
                         painted_text=painted_text(console, row.region),
                     )
                     assert not blocked, f"unexpected network destinations: {blocked}"
-                    record.update(
-                        run_id=run["id"],
-                        conversation_id=session.persisted_conversation_id,
-                        assistant_message_id=message.persisted_message_id,
-                        steps=run["steps"],
-                        answer=message.content,
-                    )
                     phase("shutdown")
                 finally:
                     record.update(
