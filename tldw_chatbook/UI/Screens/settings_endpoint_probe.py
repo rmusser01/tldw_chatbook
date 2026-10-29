@@ -292,6 +292,14 @@ def key_check_probe_result(
     I-4), and a 403 means this key may not list models, not that it cannot
     chat (Qodo #2958, owner ruling 2026-10-02).
 
+    TASK-34100.2: ``key_accepted`` stays the listing's own answer to the key
+    it was sent, and ``key_check_passed`` carries the provider's
+    authenticated key check (``ModelDiscoveryResult.key_verified``). A public
+    listing (OpenRouter, Hugging Face, NVIDIA NIM, Novita) answers any key,
+    so the evidence record accepts its key only when that check passed
+    (``provider_test_evidence._evidence_from_exact_outcome``); the wizard's
+    Check key (TASK-34100.6) reads the same pair.
+
     Args:
         result: The ``ModelDiscoveryResult`` of the listing.
         key_sent: Whether the request carried a key.
@@ -311,12 +319,12 @@ def key_check_probe_result(
         model_ids = model_ids_from_payload(listed) or ()
         if not model_ids:  # An empty list proves nothing about the key.
             return ProviderProbeResult("model_listing_unavailable", ())
-        accepted = key_sent and _listing_proves_key(result)
         return ProviderProbeResult(
             "reachable",
             model_ids,
-            key_accepted=accepted,
-            key_check_passed=accepted and getattr(result, "key_verified", False) is True,
+            key_accepted=key_sent,
+            key_check_passed=key_sent
+            and getattr(result, "key_verified", False) is True,
         )
     if kind == "missing_credentials":
         if not key_sent:
@@ -339,25 +347,6 @@ def key_check_probe_result(
             "http_status" if category == "http_status" else None,
         )
     return None
-
-
-def _listing_proves_key(result: object) -> bool:
-    """Whether a successful listing proves the key it was sent (TASK-34100.2).
-
-    An authenticated listing does. A public one (the provider record's
-    ``public_model_listing``: OpenRouter, Hugging Face, NVIDIA NIM, Novita)
-    answers any key, so it proves the key only when discovery's
-    authenticated key check passed (``ModelDiscoveryResult.key_verified``).
-    """
-    from tldw_chatbook.Chat.provider_readiness import provider_config_key
-    from tldw_chatbook.Chat.provider_test_evidence import (
-        PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
-    )
-
-    provider = provider_config_key(str(getattr(result, "provider", "") or ""))
-    if provider not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS:
-        return True
-    return getattr(result, "key_verified", False) is True
 
 
 def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:
