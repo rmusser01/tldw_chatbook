@@ -24,6 +24,8 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     _checkpoint_semantic_value,
     CompletedToolTurnWitness,
     FinalValueBinding,
+    RewrittenTailWitness,
+    replacement_descriptor_count,
     ProviderCredentialSource,
     ProviderOverlayProvenance,
     ProviderRequestShadowBundle,
@@ -1453,6 +1455,7 @@ class _ChildState:
     surface_policies: tuple[FrozenTracePolicy, ...]
     completed_tool_turn: CompletedToolTurnWitness | None = None
     rendered_system_slot: _RenderedSystemSlot | None = None
+    rewritten_tail: RewrittenTailWitness | None = None
 
 
 class _ParentSurfaceCapability:
@@ -2084,6 +2087,17 @@ class ConsoleTraceService:
                 current_policy_id=reserved_call.policy_id,
                 reserved_call=reserved_call,
             )
+        if surface_delta.rewritten_tail is not None:
+            if reserved_call is None or replacement is None:
+                raise ValueError("rewritten_tail_unavailable")
+            _rewritten_tails().validate_rewritten_tail(
+                cursor,
+                self.repository,
+                owner_id=owner_id,
+                witness=surface_delta.rewritten_tail,
+                descriptors=descriptors,
+                current_turn_id=reserved_call.turn_id,
+            )
         saved_delta_pairs = tuple(
             (reference_key, value)
             for descriptor, value in zip(descriptors, values, strict=True)
@@ -2270,7 +2284,11 @@ class ConsoleTraceService:
                     plan=replacement,
                 )
                 appended.append(tail)
-        if replacement is None or surface_delta.completed_tool_turn is not None:
+        if (
+            replacement is None
+            or surface_delta.completed_tool_turn is not None
+            or surface_delta.rewritten_tail is not None
+        ):
             offset = 1 if replacement is not None else 0
             for descriptor, value in zip(
                 descriptors[offset:], values[offset:], strict=True
@@ -2654,6 +2672,7 @@ class ConsoleTraceService:
 
         replacement_range: VerifiedSurfaceReplacementRange | None = None
         compound = False
+        rewritten: RewrittenTailWitness | None = None
         admitted_from = prefix
         admitted_to = len(descriptors)
         if prefix < len(active):
@@ -2724,6 +2743,28 @@ class ConsoleTraceService:
                 and domains[prefix : prefix + incoming_changed]
                 == ("messages_payload",) * incoming_changed
             )
+            rewritten = (
+                _rewritten_tails().build_rewritten_tail_witness(
+                    cursor,
+                    self.repository,
+                    owner_id=owner_id,
+                    retained=descriptors[:prefix],
+                    incoming=descriptors[prefix:],
+                    current_turn_id=current_turn_id,
+                )
+                if not compound
+                and route_identity in {"agent_first", "fresh"}
+                and suffix == 0
+                and incoming_changed >= 2
+                and 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN
+                and current_policy_id is not None
+                and domains[prefix:] == ("messages_payload",) * incoming_changed
+                and all(
+                    _surface_reference_domain(key) == "messages_payload"
+                    for _, _, key in active[prefix:]
+                )
+                else None
+            )
             if (
                 incoming_changed >= 1
                 and active_changed == 0
@@ -2735,7 +2776,7 @@ class ConsoleTraceService:
                 # reconstruct provider order without rewriting the suffix.
                 admitted_to = prefix + incoming_changed
             elif (
-                incoming_changed != 1 and not compound
+                incoming_changed != 1 and not compound and rewritten is None
             ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
                 record_refusal("count_or_span")
                 raise ValueError("unsupported_surface_change")
@@ -2778,7 +2819,9 @@ class ConsoleTraceService:
                         domain == domains[prefix] for domain in domains[:prefix]
                     ),
                 )
-                admitted_to = prefix + (incoming_changed if compound else 1)
+                admitted_to = prefix + (
+                    incoming_changed if compound or rewritten else 1
+                )
 
         if compound:
             assert replacement_range is not None and completed_tool_turn is not None
@@ -2815,15 +2858,18 @@ class ConsoleTraceService:
                     raise ValueError("trace_policy_mismatch")
                 checkpoint = None
         bootstrap = checkpoint is None and predecessor is not None
-        if compound and (
-            bootstrap or completed_tool_turn.project_context_count is not None
-        ):
+        if (
+            compound
+            and (bootstrap or completed_tool_turn.project_context_count is not None)
+        ) or (rewritten is not None and bootstrap):
+            # A cold parent is built entirely from committed references.
             assert tail is not None and current_policy_id is not None
-            assert completed_tool_turn is not None
-            terminal = self.repository.get_call(
-                cursor, completed_tool_turn.terminal_call_id
-            )
-            assert terminal is not None
+            if compound:
+                assert completed_tool_turn is not None
+                terminal = self.repository.get_call(
+                    cursor, completed_tool_turn.terminal_call_id
+                )
+                assert terminal is not None
             checkpoint = self._completed_tool_turn_parent(
                 cursor,
                 owner_id=owner_id,
@@ -2859,6 +2905,7 @@ class ConsoleTraceService:
             projection_checkpoint=checkpoint,
             replacement_range=replacement_range,
             completed_tool_turn=completed_tool_turn if compound else None,
+            rewritten_tail=rewritten,
         )
         if replacement_range is not None and bootstrap:
             raise ValueError("surface_replacement_checkpoint_unavailable")
@@ -4286,10 +4333,8 @@ class ConsoleTraceService:
                 ),
             )
         else:
-            if len(admitted) != (
-                admission.completed_tool_turn.descriptor_count
-                if admission.completed_tool_turn is not None
-                else 1
+            if len(admitted) != replacement_descriptor_count(
+                admission.completed_tool_turn, admission.rewritten_tail
             ):
                 raise ValueError("surface_delta_shape")
             descriptor_root = _DescriptorRoot(
@@ -4579,6 +4624,8 @@ class ConsoleTraceService:
             elif (
                 cast(SurfaceDeltaAdmission, prepared.admission).completed_tool_turn
                 is not None
+                or cast(SurfaceDeltaAdmission, prepared.admission).rewritten_tail
+                is not None
             ):
                 # Removed tool artifacts no longer contribute disclosure policy
                 # or structural metadata to the composed request.
@@ -4692,6 +4739,7 @@ class ConsoleTraceService:
             prepared.surface_policies,
             admission.completed_tool_turn,
             prepared.rendered_system_slot,
+            admission.rewritten_tail,
         )
         self._child_capabilities[id(binding)] = state
         self._prepared_capabilities.pop(id(provenance), None)
@@ -4734,6 +4782,7 @@ class ConsoleTraceService:
             or child.item_signature != signature
             or child.replacement != delta.replacement
             or child.completed_tool_turn != delta.completed_tool_turn
+            or child.rewritten_tail != delta.rewritten_tail
         ):
             raise ValueError("surface_child_binding")
         return child
@@ -6438,6 +6487,13 @@ def _saved_revision_component_kind(descriptor: DerivedTraceProvenance) -> str:
     if descriptor.transform is TraceTransformKind.CONTINUATION_ATTACHMENT:
         return "continuation"
     return "message"
+
+
+def _rewritten_tails():
+    """Load the rewritten-tail proof only when a send needs it."""
+    from tldw_chatbook.Chat import console_trace_rewritten_tail
+
+    return console_trace_rewritten_tail
 
 
 def _saved_descriptors(
