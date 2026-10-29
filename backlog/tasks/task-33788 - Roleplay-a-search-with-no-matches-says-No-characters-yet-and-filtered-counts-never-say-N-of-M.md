@@ -45,3 +45,9 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 - [ ] #4 While a filter has zero results, the centre pane does not say "Pick a character from the list".
 - [ ] #5 Regression tests cover a no-match search in Characters and in Personas, and a no-match tag filter in Characters; they fail on the current code. Tag filtering stays Characters-only (the screen's tag-filter handler is characters-only); this task adds no tag filter to other modes.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- 2026-10-29 (Roleplay frame B2b): absorbed by TASK-33910.4 (spec 5.5, S): still To Do on dev at B2b's start, so its AC#1-#5 are TASK-33910.4's AC#24-#28, delivered by B2b's search-aware empty states (Task 9). It stays To Do until B2b's close-out sets it Done with the evidence.
+<!-- SECTION:NOTES:END -->
