@@ -174,3 +174,93 @@ def test_the_console_vision_gate_lets_claude_haiku_4_5_take_an_image(monkeypatch
     assert "can't accept images" in (
         attachment_core.vision_block_reason("anthropic", "claude-2.1") or ""
     )
+
+
+def _models_dev_stub(rows):
+    """A ``_models_dev_capabilities`` stand-in serving ``rows`` by model id."""
+
+    def lookup(provider, model):
+        row = rows.get(model)
+        return dict(row) if row else {}
+
+    return lookup
+
+
+def test_the_family_rule_keeps_the_models_dev_gap_fill(monkeypatch):
+    """The family rule adds ``vision``; it must not replace the models.dev row.
+
+    A user who turned on ``[model_catalog] use_models_dev`` gets claude-opus-5's
+    upstream context window. The first cut of the family rule returned a bare
+    ``{"vision": True}`` ahead of the gap-fill, so that window was lost and
+    Console request capacity fell back to an unverified 200K provider guess.
+    """
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+    monkeypatch.setattr(
+        capabilities_module,
+        "_models_dev_capabilities",
+        _models_dev_stub(
+            {
+                "claude-opus-5": {
+                    "vision": True,
+                    "context_window": 1_000_000,
+                    "source": "models.dev",
+                },
+                # An upstream row that says "no images" for a family that
+                # reads them: the verified family rule decides vision, the
+                # row still supplies the window.
+                "claude-fable-5": {
+                    "vision": False,
+                    "context_window": 500_000,
+                    "source": "models.dev",
+                },
+            }
+        ),
+    )
+    capabilities = _old_file_capabilities()
+
+    assert capabilities.get_model_capabilities("Anthropic", "claude-opus-5") == {
+        "vision": True,
+        "context_window": 1_000_000,
+        "source": "models.dev",
+    }
+    assert capabilities.get_model_capabilities("anthropic", "claude-fable-5") == {
+        "vision": True,
+        "context_window": 500_000,
+        "source": "models.dev",
+    }
+    # Unknown upstream too: the family rule alone still answers vision.
+    assert capabilities.get_model_capabilities("Anthropic", "claude-haiku-4-5") == {
+        "vision": True
+    }
+
+    window = resolve_context_window(
+        "anthropic", "claude-opus-5", capabilities=capabilities
+    )
+    assert (window.tokens, window.source, window.verified) == (
+        1_000_000,
+        "model catalog",
+        True,
+    )
+
+
+def test_a_users_text_only_row_wins_over_models_dev_and_the_family_rule(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        capabilities_module,
+        "_models_dev_capabilities",
+        _models_dev_stub(
+            {"claude-haiku-4-5": {"vision": True, "source": "models.dev"}}
+        ),
+    )
+    capabilities = ModelCapabilities(
+        {
+            "models": {"claude-haiku-4-5": {"vision": False}},
+            "patterns": {"Anthropic": []},
+        }
+    )
+
+    assert capabilities.get_model_capabilities("Anthropic", "claude-haiku-4-5") == {
+        "vision": False
+    }
