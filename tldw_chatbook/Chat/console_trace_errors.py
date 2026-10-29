@@ -41,3 +41,16 @@ class TraceSurfaceChangeRefused(ValueError):
 
     def __init__(self) -> None:
         super().__init__("unsupported_surface_change")
+
+
+class TraceReservationRefused(ValueError):
+    """The reservation transaction refused a call and rolled it back.
+
+    TASK-33621.6: like ``TraceSurfaceChangeRefused``, this type survives
+    only a successful rollback (a failed rollback or commit surfaces as a
+    database error instead), so it proves no call was reserved. The code is
+    the code-owned refusal reason, e.g. ``trace_tool_chain_unavailable``.
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)

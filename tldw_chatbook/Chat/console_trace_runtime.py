@@ -6,12 +6,16 @@ import json
 import sqlite3
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
-from tldw_chatbook.Chat.console_trace_errors import TraceSurfaceChangeRefused
+from tldw_chatbook.Chat.console_trace_errors import (
+    TraceReservationRefused,
+    TraceSurfaceChangeRefused,
+)
 from tldw_chatbook.Chat.console_trace_final_values import (
     CompletedToolTurnWitness,
     _checkpoint_semantic_value,
@@ -50,6 +54,27 @@ REVISION_OWNER_LOOKUP_BATCH_SIZE = 256
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def _rolled_back_refusal() -> Iterator[None]:
+    """Type a refusal raised inside the reservation transaction (TASK-33621.6).
+
+    Enter it OUTSIDE ``database.transaction()``: a ``ValueError`` reaches it
+    only after that transaction rolled back successfully (a failed rollback
+    or commit raises the database's own error, which passes through as an
+    unknown outcome), so nothing was reserved. Before this, a refused retry
+    (``trace_tool_chain_unavailable``, ``trace_revision_unavailable``) read
+    as reservation status "unknown": Cancel refused, and Retry capture
+    opened a false unknown-delivery panel.
+    """
+    try:
+        yield
+    except (TraceReservationRefused, TraceSurfaceChangeRefused):
+        raise
+    except ValueError as exc:
+        code = exc.args[0] if len(exc.args) == 1 and type(exc.args[0]) is str else ""
+        raise TraceReservationRefused(code or "trace_reservation_refused") from exc
 
 
 def _saved_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
@@ -383,7 +408,10 @@ class ConsoleTraceBoundaryFactory:
         reserved = None
         failed_call_retry = False
         with self._lock, operation_owned_connection(self.database):
-            with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+            with (
+                _rolled_back_refusal(),
+                self.database.transaction(immediate=True) as cursor,  # type: ignore[attr-defined]
+            ):
                 unique_revision_ids = tuple(dict.fromkeys(revision_ids))
                 rows = []
                 for offset in range(
