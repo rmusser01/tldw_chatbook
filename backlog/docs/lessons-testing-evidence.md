@@ -384,6 +384,8 @@ setting native_tools alone does not override provider capability policy.
 
 **What to do.** Establish the state the regression actually needs, then assert its action's outcome. When removing a timing-dependent precondition, use a mutation to prove the remaining assertions still reject the original defect. Keep broader local failures visible instead of describing a passing target as a green file.
 
+**Recurrence (TASK-33622.4, 2026-10-29).** `test_expanded_escape_clears_transcript_selection_before_focus_fallback` selected a message in the same tick it was appended. `select_message` silently ignores an id the transcript does not hold yet, so Esc always ran with nothing selected. On dev Esc stayed on the transcript anyway, so the test passed without ever exercising the selection it was named for. TASK-33622.4 made Esc with nothing to clear return to the composer, and the test started failing 7 of 8 runs. The cause looked like a regression until a probe printed `selected=None` just before Esc. If a setup call can no-op, assert its effect (`selected_message_id == message.id`) before the action under test.
+
 
 ## Required regressions need their lane's dependency set (TASK-37143, 2026-10-27)
 
