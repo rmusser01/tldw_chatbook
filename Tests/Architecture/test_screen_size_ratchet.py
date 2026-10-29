@@ -213,7 +213,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: readiness now reads has_sendable_payload and the vision block too, so
     #: it no longer disagrees with Send for a staged image. With it,
     #: 24321/736, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24321, 736),
+    #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
+    #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
+    #: exact measurement (same owner rule).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
