@@ -1038,10 +1038,13 @@ unchanged — what changed is response validation and request strictness:
   a resolved key sends it as a bearer token, exactly as before.
 - **Your `[api_settings.custom]` fallbacks still apply**, including the
   defaults when the section is silent: `streaming = false` and
-  `max_tokens = 4096` (plus timeout/retry values). Sampler and generation
-  keys (`temperature`, `top_p`, `top_k`, `min_p`, `max_tokens`, `seed`,
-  `stop`, `response_format`, and the legacy `temp`/`maxp`/`topk`/`minp`
-  spellings) are read from the section, and explicit per-send values win.
+  `max_tokens = 4096` (plus timeout/retry values). Console sends its own
+  **Streaming** choice with every request, on by default, so that
+  `streaming = false` applies only to a caller that sends none. Sampler
+  and generation keys (`temperature`, `top_p`, `top_k`, `min_p`,
+  `max_tokens`, `seed`, `stop`, `response_format`, and the legacy
+  `temp`/`maxp`/`topk`/`minp` spellings) are read from the section, and
+  explicit per-send values win.
 - **Stricter request handling than the legacy path.** Sampler values are
   validated to the `[0, 1]` range — an out-of-range `temperature` is
   rejected with an error instead of forwarded. When no `[api_settings.custom]`
