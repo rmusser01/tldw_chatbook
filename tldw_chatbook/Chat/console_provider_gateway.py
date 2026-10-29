@@ -106,6 +106,7 @@ from tldw_chatbook.Chat.console_trace_custom_pii import (
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
+    TraceReservationRefused,
     TraceSurfaceChangeRefused,
 )
 
@@ -3582,7 +3583,8 @@ class ConsoleProviderGateway:
             failure = TraceCallPersistenceError(
                 reservation_status=(
                     "not_established"
-                    if type(exc) is TraceSurfaceChangeRefused and boundary is None
+                    if type(exc) in (TraceSurfaceChangeRefused, TraceReservationRefused)
+                    and boundary is None
                     else "unknown"
                 )
             )
