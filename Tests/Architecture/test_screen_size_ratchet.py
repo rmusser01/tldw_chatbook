@@ -288,6 +288,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: with the same +4, 24333/737. Rebased again 2026-10-29 onto dev
     #: b5150753eb, which measures 24327/737 (its row kept 24329); with the
     #: same +4, 24331/737, the exact measurement.
+    #: Raised to 24331/737 on 2026-10-29 by TASK-33620.2, owner rule (a fix
+    #: over a size ratchet raises the row with a dated comment; never move or
+    #: reflow code to make it fit). Dev b5150753eb measures 24327/737; the
+    #: fix adds 4 lines and no methods: the composer sync passes the vision
+    #: block in its own slot (one kwarg line), compose yields its row (one
+    #: line), and the row joins the composer's Tab region and F6 pane map
+    #: (two lines) so both actions are keyboard-reachable. The row, its sync
+    #: and both actions live in Console_Modules/composer_run_controls.py.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24504, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
