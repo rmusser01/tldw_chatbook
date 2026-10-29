@@ -1,0 +1,101 @@
+{
+  "changes": [
+    {
+      "old_parameter_id": "description-Later description-before-publication",
+      "new_parameter_id": "description-Later-description-before-publication"
+    },
+    {
+      "old_parameter_id": "description-Later description-during-refresh",
+      "new_parameter_id": "description-Later-description-during-refresh"
+    }
+  ],
+  "qualification": "Only explicit pytest ID changed; parameter values and test body unchanged. Original raw receipts retain historical IDs. Final collection and hosted CI qualify current source.",
+  "collected": [
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[name-Saved-new-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[name-Saved-new-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[description-Later-description-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[description-Later-description-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[samples-01-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[samples-01-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[seed-07-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[seed-07-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[temperature-0.70-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[temperature-0.70-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[max-tokens-0256-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[max-tokens-0256-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[cards-None-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[cards-None-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[card-search-Vex-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_later_draft[card-search-Vex-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_newer_selection[completed]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_preserves_newer_selection[lock-pending]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_reloads_canonical_values",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_older_save_preserves_a_later_returned_draft",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[equal-valued-save-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[equal-valued-save-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[single-save-roundtrip-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[single-save-roundtrip-during-refresh]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[focus-only-before-publication]",
+    "Tests/UI/test_evals_character_bench_save_publication.py::test_character_save_retains_returned_text_and_context[focus-only-during-refresh]",
+    "Tests/UI/test_research_run_refresh_publication.py::test_refresh_preserves_newer_run_selection",
+    "Tests/UI/test_research_run_refresh_publication.py::test_local_refresh_cannot_restore_a_departed_source[server]",
+    "Tests/UI/test_research_run_refresh_publication.py::test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+    "Tests/UI/test_research_run_refresh_publication.py::test_source_switch_clears_previous_detail[unavailable]",
+    "Tests/UI/test_research_run_refresh_publication.py::test_source_switch_clears_previous_detail[empty]",
+    "Tests/UI/test_research_run_refresh_publication.py::test_native_refresh_updates_progress_and_retains_current_payload",
+    "Tests/UI/test_research_run_refresh_publication.py::test_native_refresh_skips_terminal_and_server_selections",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[new-ordinary]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[new-held-writer]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_late_collision_keeps_precious_file_until_answer[cancel]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_late_collision_keeps_precious_file_until_answer[replace]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_late_collision_keeps_precious_file_until_answer[recheck-error]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_accepted_write_preserves_changed_result_owner[context-region]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_accepted_write_preserves_changed_result_owner[retired-screen]",
+    "Tests/UI/test_library_note_export_responsiveness.py::test_note_export_failed_replace_keeps_file_and_allows_text_retry",
+    "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet"
+  ],
+  "collection_command": {
+    "args": [
+      "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "-X",
+      "utf8",
+      "-m",
+      "pytest",
+      "Tests/UI/test_evals_character_bench_save_publication.py",
+      "Tests/UI/test_research_run_refresh_publication.py",
+      "Tests/UI/test_library_note_export_responsiveness.py",
+      "Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet",
+      "--collect-only",
+      "-p",
+      "pytest_asyncio.plugin",
+      "-p",
+      "pytest_timeout",
+      "-q",
+      "--tb=short",
+      "--timeout=180",
+      "-o",
+      "cache_dir=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\integration-collect-final\\cache",
+      "--basetemp=C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-f31050d8ad2d45fabbdc8f251e55e088\\pytest",
+      "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\integration-collect-final\\result.xml"
+    ],
+    "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-f31050d8ad2d45fabbdc8f251e55e088",
+    "source_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui"
+  },
+  "collection_verification": {
+    "exit_code": 0,
+    "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-f31050d8ad2d45fabbdc8f251e55e088",
+    "reports": [
+      {
+        "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\integration-collect-final\\result.xml",
+        "sha256": "789834da7969a09ac3ceafdf393f9753e3a69972ed9916be37f0c82268857b95",
+        "cases": 0,
+        "failures": 0,
+        "errors": 0,
+        "skips": 0
+      }
+    ]
+  },
+  "test_sha256": "b9c25a9d779e4338c1764f5c44673eb5ddae5df59b18099c79cdb64fbdf46e8a"
+}

@@ -108,7 +108,7 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane currently runs 28 shards, with at most 17 UI jobs running at once (TASK-37236 and the
+  grown since: the UI lane currently runs 32 shards, with at most 17 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
   tracking tests and the Dreams and Guardian boundary contracts are jobs of
@@ -312,7 +312,7 @@ the earlier passing component timings from final-head qualification.
 
 ## Amendment (2026-10-28, TASK-37236): smaller slices with bounded concurrency
 
-Current UI lane: 28 shards. The current total is 34 eligible test jobs per PR.
+At that checkpoint the UI lane had 28 shards and 34 eligible test jobs per PR.
 The UI matrix sets `max-parallel: 17`; the six other required application lanes
 therefore retain the existing peak of 23 test runners, or 24 with Perf Guard.
 Eligible job count and peak concurrency are distinct. The existing required
@@ -358,3 +358,37 @@ inputs and scoped Superpowers review. This amendment implements the existing
 replay/reorder/add-capacity policy rather than creating a second required gate.
 
 Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds under the same assumptions, above the target; 28 is therefore the smallest feasible count in this model, not merely the first sampled success.
+
+## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
+
+Current UI lane: 32 shards. The current total is 38 eligible test jobs per PR.
+The `max-parallel: 17` ceiling, peak 23 application test runners (24 with
+Perf Guard), minimal dependencies, serial execution, 20-minute job cap,
+180-second test timeout and fail-closed required aggregation remain unchanged.
+All 1,140 inherited selectors remain exactly once. The 43 new concrete native
+cases and the previously unenrolled canonical-class governance control bring
+the census and its floor to 1,184; split-file contracts protect all new cases.
+
+The existing full-census replay policy applies. The inherited worst-observed
+model is updated using only the 28 UI job logs of the last qualified head;
+unrelated lane logs are excluded to avoid counting shared selectors twice.
+Its 17,138.65 seconds plus 2,004.23 seconds of measured local parent-case work
+produce a 19,142.88-second workload. Native parent costs include subprocess and
+case setup/call/teardown; Character cases retain the larger successful earlier
+or final observation. The canonical-class control's Windows failure supplies
+only its timing, never passing evidence. Collection/session overhead remains
+outside case costs and is covered by the existing reserve.
+
+Deterministic longest-processing-time placement respects each round-robin
+shard's exact slot count. Comparing every size from 28 through 36 selects 32:
+`599.34 * 1.15 + 310 = 999.24` seconds against the existing 1,020-second target.
+Even ideal balance at 31 forecasts 1,020.14 seconds, so 32 is the smallest
+feasible count in this model. The four additional jobs add setup and later-wave
+work without raising simultaneous runner demand. This is a forecast, not
+hosted capacity or queue-latency proof; final-head CI must qualify it, including
+the old Notes Escape/Replace control and the canonical-class guard.
+
+The [implementation QA](../../Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md)
+retains source pins, complete-phase timing inputs, selector conservation,
+candidate comparisons, native receipts and Superpowers review. This amendment
+extends the existing gate policy; it adds no required-check owner or dependency.

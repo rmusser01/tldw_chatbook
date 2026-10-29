@@ -712,7 +712,7 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 
 def _assert_ui_capacity(workflow: dict) -> None:
     strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
-    assert strategy["matrix"] == {"shard": list(range(1, 29))}
+    assert strategy["matrix"] == {"shard": list(range(1, 33))}
     assert strategy.get("max-parallel") == 17
 
 
