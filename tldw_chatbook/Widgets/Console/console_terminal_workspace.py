@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from rich.cells import cell_len
 from rich.style import Style
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.widgets import Button, Static
 
@@ -37,6 +39,16 @@ from tldw_chatbook.Widgets.Console.console_terminal_messages import (
 )
 
 _GLOBAL_KEYS = frozenset({"ctrl+p", "ctrl+q", "f1", "f6"})
+#: TASK-33625.3: (full, compact) action labels. A grid cell too narrow for the
+#: full label shows the compact word instead of a label cut mid-word.
+_ACTION_LABELS: dict[str, tuple[str, str]] = {
+    "rename": ("Rename", "Rename"),
+    "focus": ("Focus", "Focus"),
+    "close": ("Close", "Close"),
+    "retry": ("Retry cleanup", "Retry"),
+    "jump-live": ("Jump live", "Live"),
+    "return": ("Return to transcript", "Return"),
+}
 _RELEASE_KEY = "ctrl+right_square_bracket"
 _WORKSPACE_GRID_COLUMNS = 6
 _FIXED_KEY_BYTES = {
@@ -418,6 +430,8 @@ class ConsoleTerminalWorkspace(Static):
         self._session_ids: tuple[str, ...] = ()
         self._controller_status = ""
         self._painted_allocation: tuple[int, int] | None = None
+        #: TASK-33625.3: button id -> (full, compact) label for session tabs.
+        self._session_labels: dict[str, tuple[str, str]] = {}
 
     def compose(self) -> ComposeResult:
         yield Static("", id="console-terminal-danger", markup=False)
@@ -429,16 +443,16 @@ class ConsoleTerminalWorkspace(Static):
         yield Button("New", id="console-terminal-new")
         yield Static("", id="console-terminal-metadata", markup=False)
         yield TerminalViewport(id="console-terminal-viewport")
-        yield Button("Rename", id="console-terminal-rename")
-        yield Button("Focus", id="console-terminal-focus")
-        yield Button("Close", id="console-terminal-close")
-        yield Button("Retry cleanup", id="console-terminal-retry")
-        yield Button("Jump live", id="console-terminal-jump-live")
-        yield Button("Return to transcript", id="console-terminal-return")
+        for name, (label, _compact) in _ACTION_LABELS.items():
+            yield Button(label, id=f"console-terminal-{name}")
         yield Static("", id="console-terminal-status", markup=False)
 
     def on_mount(self) -> None:
         self._apply_projection()
+
+    def on_resize(self) -> None:
+        """TASK-33625.3: re-fit labels once the grid cells have their new widths."""
+        self.call_after_refresh(self._fit_labels)
 
     def project(
         self,
@@ -531,11 +545,17 @@ class ConsoleTerminalWorkspace(Static):
             session.projection.session_id
             for session in visible_sessions[:MAX_SESSION_RECORDS]
         )
+        self._session_labels = {}
         for index in range(MAX_SESSION_RECORDS):
             button = self.query_one(f"#console-terminal-session-{index}", Button)
             if index < len(visible_sessions):
                 session = visible_sessions[index]
                 button.label = session.projection.name
+                # A tab too narrow for its name shows its position, not a cut.
+                self._session_labels[button.id or ""] = (
+                    session.projection.name,
+                    f"#{index + 1}",
+                )
                 button.display = True
                 button.variant = (
                     "primary"
@@ -557,26 +577,60 @@ class ConsoleTerminalWorkspace(Static):
         )
         self._project_selected(selected, armed=armed)
         self._fill_control_rows()
+        self._fit_labels()
+        self.call_after_refresh(self._fit_labels)
+
+    def _fit_labels(self) -> None:
+        """Show each visible label whole, or its compact form when it cannot fit.
+
+        TASK-33625.3: the 1fr grid cells shrink with the Console's width, and
+        a Button pads its label by ``line-pad`` on each side, so at 80x24 the
+        tabs read "Ter" and the actions "Ren / Focu / Clos / Jum".
+        """
+        if not self.is_mounted:
+            return
+        labels = {
+            f"console-terminal-{name}": pair for name, pair in _ACTION_LABELS.items()
+        }
+        labels.update(self._session_labels)
+        for button_id, (full, compact) in labels.items():
+            try:
+                button = self.query_one(f"#{button_id}", Button)
+            except NoMatches:
+                continue
+            budget = button.size.width - 2 * int(button.styles.line_pad or 0)
+            label = full if budget <= 0 or cell_len(full) <= budget else compact
+            if str(button.label) != label:
+                button.label = label
 
     def _fill_control_rows(self) -> None:
-        """Keep full-span content aligned after each partial control row."""
-        session_controls = [
+        """Keep full-span content aligned after each partial control row.
+
+        TASK-33625.3: session tabs share the row's spare columns (New keeps
+        one), so a narrow Console still shows their names whole.
+        """
+        tabs = [
             self.query_one(f"#console-terminal-session-{index}", Button)
             for index in range(MAX_SESSION_RECORDS)
         ]
-        session_controls.append(self.query_one("#console-terminal-new", Button))
+        new = self.query_one("#console-terminal-new", Button)
         bottom_controls = [
             self.query_one(f"#console-terminal-{name}", Button)
-            for name in ("rename", "focus", "close", "retry", "jump-live", "return")
+            for name in _ACTION_LABELS
         ]
-        for controls in (session_controls, bottom_controls):
-            for control in controls:
-                control.styles.column_span = 1
-            visible = [control for control in controls if control.display]
-            if visible:
-                visible[-1].styles.column_span = (
-                    _WORKSPACE_GRID_COLUMNS - len(visible) + 1
-                )
+        for control in (*tabs, new, *bottom_controls):
+            control.styles.column_span = 1
+        visible_tabs = [tab for tab in tabs if tab.display]
+        if visible_tabs:
+            free = _WORKSPACE_GRID_COLUMNS - (1 if new.display else 0)
+            share, extra = divmod(free, len(visible_tabs))
+            for index, tab in enumerate(visible_tabs):
+                tab.styles.column_span = share + (1 if index < extra else 0)
+        elif new.display:
+            new.styles.column_span = _WORKSPACE_GRID_COLUMNS
+        visible = [control for control in bottom_controls if control.display]
+        if visible:
+            visible[-1].styles.column_span = _WORKSPACE_GRID_COLUMNS - len(visible) + 1
 
     def _project_selected(
         self, selected: TerminalSessionView | None, *, armed: bool

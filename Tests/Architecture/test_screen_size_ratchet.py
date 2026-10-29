@@ -258,7 +258,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: focus branches moved into Console_Modules/terminal.py
     #: (finish_center_swap), which also re-syncs the returned transcript.
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24555, 741),
+    #: Raised 24380 -> 24387 (methods unchanged) 2026-10-29 by TASK-33625.3,
+    #: same owner rule: both rail-state builders apply the Terminal's
+    #: narrow-width rail yield, and an explicit rail request exempts its side
+    #: from it (logic in Console_Modules/terminal.py yield_rails/reclaim_rails
+    #: and Chat/console_rail_state.py); 24387/737 measured.
+    #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24562, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

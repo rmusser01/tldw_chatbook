@@ -572,6 +572,13 @@ ConsoleTerminalWorkspace#console-main-column {
     background: $ds-surface-panel;
 }
 
+/* TASK-33625.3: the grid cell is each control's frame. Buttons keep
+   Textual's one-cell line pad but drop the side padding, so a 13-cell column
+   at 80x24 shows "Terminal 1" whole; narrower cells get compact labels. */
+ConsoleTerminalWorkspace#console-main-column > Button {
+    padding: 0;
+}
+
 #console-terminal-danger,
 #console-terminal-access,
 #console-terminal-open-settings,
@@ -608,6 +615,12 @@ ConsoleTerminalWorkspace#console-main-column {
     color: $ds-text-muted;
 }
 
+/* TASK-33625.3: a focus outline is drawn OVER a widget's outermost cells,
+   so the old focused viewport hid column 0, the last column and the top and
+   bottom rows of PTY output (" M" read "M") while the PTY was sized to the
+   whole widget. The dense-form one-column edge is reserved in both states
+   instead: focus changes only its weight, colour and the fill, never the
+   content cells, and the viewport's content size is exactly the PTY's. */
 #console-terminal-viewport {
     width: $ds-width-full;
     min-width: $ds-size-0;
@@ -615,12 +628,16 @@ ConsoleTerminalWorkspace#console-main-column {
     min-height: $ds-size-0;
     padding: $ds-space-0;
     overflow: hidden;
+    border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 #console-terminal-viewport:focus {
-    outline: solid $ds-active-fg;
+    outline: none;
+    border-left: thick $ds-active-fg;
+    background: $ds-input-focus-bg;
 }
 
 #console-right-rail {

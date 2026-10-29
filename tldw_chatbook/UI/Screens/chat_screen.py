@@ -12616,7 +12616,10 @@ class ChatScreen(BaseAppScreen):
         )
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
         rail_state = self._apply_fleet_inspector_rail_auto_open(rail_state)
-        return resolve_console_rail_priority(rail_state, resolved_available_columns)
+        rail_state = resolve_console_rail_priority(rail_state, resolved_available_columns)
+        if self._console_terminal_open:  # TASK-33625.3: a narrow Terminal takes the rails
+            rail_state = self._terminal.yield_rails(rail_state, resolved_available_columns)
+        return rail_state
 
     def _set_console_rail_preference(
         self,
@@ -12628,6 +12631,8 @@ class ChatScreen(BaseAppScreen):
         explicit_right_toggle: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
+        if self._console_terminal_open:  # TASK-33625.3: an asked-for rail beats the yield
+            self._terminal.reclaim_rails(left_open=left_open, right_open=right_open)
         if (
             left_open is not None
             or right_open is not None
@@ -14699,6 +14704,8 @@ class ChatScreen(BaseAppScreen):
         rail_state = resolve_console_rail_priority(rail_state, available_columns)
         rail_state = self._agent._apply_fleet_agent_section_auto_open(rail_state)
         rail_state = resolve_console_rail_priority(rail_state, available_columns)
+        if self._console_terminal_open:  # TASK-33625.3: a narrow Terminal takes the rails
+            rail_state = self._terminal.yield_rails(rail_state, available_columns)
         workbench_state = self._build_console_workbench_state(control_state)
         shell_classes = (
             f"workbench-frame console-workbench-frame density-{workbench_state.density}"

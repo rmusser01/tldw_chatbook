@@ -78,6 +78,8 @@ class ConsoleTerminalController:
         self._frame_pending = False
         self._last_fingerprint: object | None = None
         self._visible_session_id: str | None = None
+        #: TASK-33625.3: rail sides the user asked for during this visit.
+        self._reclaimed_rails: frozenset[str] = frozenset()
 
     @property
     def is_open(self) -> bool:
@@ -102,6 +104,7 @@ class ConsoleTerminalController:
         self._mount_generation += 1
         generation = self._mount_generation
         self._view = view
+        self._reclaimed_rails = frozenset()  # each visit starts from the yield
         self._last_fingerprint = None
         self._visible_session_id = None
         try:
@@ -306,6 +309,38 @@ class ConsoleTerminalController:
             self._status("Terminal session could not be closed.")
             return False
         return receipt is not None
+
+    def reclaim_rails(self, *, left_open: bool | None, right_open: bool | None) -> None:
+        """Exempt the rail sides the user just asked for from the Terminal's yield.
+
+        TASK-33625.3: under a narrow Terminal both rails yield by default,
+        but Alt+C, Alt+I or a handle must still open (or close) a rail;
+        otherwise the toggle writes a preference and shows nothing.
+
+        Args:
+            left_open: The Context rail request, or ``None`` when untouched.
+            right_open: The Inspect rail request, or ``None`` when untouched.
+        """
+        sides = (("left", left_open), ("right", right_open))
+        self._reclaimed_rails |= {side for side, value in sides if value is not None}
+
+    def yield_rails(self, rail_state: Any, available_columns: int | None) -> Any:
+        """Return ``rail_state`` with the narrow-width Terminal rail yield applied.
+
+        Args:
+            rail_state: The effective ``ConsoleRailState`` after every other rule.
+            available_columns: Current Console width, when known.
+
+        Returns:
+            The rail state the Terminal center renders with.
+        """
+        from tldw_chatbook.Chat.console_rail_state import (
+            yield_console_rails_to_terminal,
+        )
+
+        return yield_console_rails_to_terminal(
+            rail_state, available_columns, reclaimed=self._reclaimed_rails
+        )
 
     def owns_widget(self, widget: object | None) -> bool:
         """Return whether ``widget`` is a visible part of the mounted workspace.
@@ -666,6 +701,10 @@ def finish_center_swap(screen: Any) -> None:
         screen: The Console ``ChatScreen`` whose center was just mounted.
     """
     sync_terminal_center_chrome(screen)
+    # TASK-33625.3: a narrow Terminal takes the rails, and Return gives them back.
+    screen._sync_console_rail_visibility_if_changed(
+        screen._current_console_rail_state()
+    )
     if screen._console_terminal_open:
         screen.call_after_refresh(screen._focus_open_console_terminal)
         return

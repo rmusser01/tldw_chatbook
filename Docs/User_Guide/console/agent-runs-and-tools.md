@@ -2008,6 +2008,16 @@ keyboard. **Return to transcript** brings the chat and its composer back: the
 same tabs, the conversation's messages at the place you were reading, and the
 keyboard in the composer.
 
+The terminal shows every cell of its screen whether or not it has focus: focus
+is a thicker, highlighted edge on the terminal's left side, never a frame drawn
+over the output, and the shell is always sized to exactly the cells you can
+see. Below 100 columns the Context and Inspect rails step aside while the
+Terminal is open (your rail settings are kept and come back with **Return to
+transcript**; **Alt+C** or **Alt+I** still opens a rail beside the Terminal
+when you want one), and when a session tab or action button is too narrow for
+its full label it shows a short one instead (for example **Live**, **Return**,
+or the tab's position such as **#2**) rather than a word cut short.
+
 Close, Disarm, and shutdown perform bounded best-effort process cleanup and
 show when cleanup cannot be proven; deliberately detached processes may
 survive. macOS/Linux use an admitted controlling PTY. Windows Terminal support
