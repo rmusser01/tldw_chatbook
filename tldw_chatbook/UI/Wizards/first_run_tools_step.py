@@ -48,12 +48,17 @@ class ToolsStep(SetupStep):
 
         return all_tool_gates(config=posture_mod.gate_config_view(self.wizard))
 
-    def _current_gates(self) -> dict[str, bool]:
-        # TASK-34100.5.3's Full agent tools switch (group "agent") is on this
-        # step too, so its saved value is part of the baseline.
+    def _shown_gates(self) -> dict[str, bool]:
+        """The gates the switches were built from (review V2: never a second
+        read, which can differ from the first and make an untouched step write).
+
+        TASK-34100.5.3's Full agent tools switch (group "agent") is on this
+        step too, so its saved value is part of the baseline.
+        """
+        gates = getattr(self, "_composed_gates", None)
         return {
             gate.key: gate.enabled
-            for gate in self._gates()
+            for gate in (self._gates() if gates is None else gates)
             if gate.group in ("builtin", "agent")
         }
 
@@ -201,12 +206,19 @@ class ToolsStep(SetupStep):
             if gate_key:
                 gate_values[gate_key] = bool(switch.value)
         delta = tools_commit_delta(
-            gate_values=gate_values, current_gates=self._current_gates()
+            gate_values=gate_values, current_gates=self._shown_gates()
         )
         if not delta:
             return True, ""
         ok = await self.wizard.commit_config(build_tools_commit(gate_values=delta))
-        return (True, "") if ok else (False, "Saving tool settings failed.")
+        if not ok:
+            return False, "Saving tool settings failed."
+        # What is saved now is what the switches show: Back, then Next, writes nothing.
+        self._composed_gates = [
+            replace(gate, enabled=delta[gate.key]) if gate.key in delta else gate
+            for gate in getattr(self, "_composed_gates", ())
+        ]
+        return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
         return {
