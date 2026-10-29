@@ -590,7 +590,8 @@ _BUDGETS: dict[str, int] = {
     #: actions live in Console_Modules/composer_run_controls.py. Dev
     #: f9baac8706 measures 7024; with the fix, 7039, the exact measurement.
     #: d36affec9b measures 7043; with the fix, 7058, the exact measurement.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7058.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7058,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
