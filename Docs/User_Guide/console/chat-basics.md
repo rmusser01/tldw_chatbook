@@ -228,7 +228,11 @@ tool, code, and link styling keeps priority over immersive coloring.
 - Typing also reaches the draft from a control that has no use for the key:
   a letter typed on a status-strip segment, a rail or header button or a tab
   moves focus to the draft and lands there (Space still presses a focused
-  button). While focus is elsewhere the draft area says **Esc to type**.
+  button). A letter typed in an open menu (a message's **More…** menu, the
+  text-selection menu, a conversation or workspace row menu) closes the menu
+  and lands in the draft the same way. While the composer is collapsed,
+  such keys are not typed anywhere. While focus is elsewhere the draft area
+  says **Esc to type**, unless that would push the draft onto another row.
 - **Enter sends or queues.** During an accepted agent turn, **Send** becomes
   **Queue** and Enter adds the exact text draft after that turn. For a newline
   inside the draft use **Ctrl+J** (works in
@@ -600,9 +604,10 @@ slot, that action.
 While the transcript has keyboard focus its single letters are commands,
 and the footer says so: it leads with "Transcript keys · Esc to type",
 then **j/k** select and **Y** trace. **Y** opens Trace for the chat only
-from the transcript; from anywhere else a typed **y** is just a letter in
-your draft. **Esc** clears one thing at a time —
-keyboard text selection first, then the selected message — and once there
+from the transcript; from anywhere else a typed **y** is just a letter, in
+your draft (or in the text field or Terminal that has focus). **Esc** clears
+one thing at a time — an open message menu or text selection first, then
+the selected message — and once there
 is nothing left to clear it returns you to the composer, so the next thing
 you type lands in your draft.
 While a reply is still generating, the regular row actions are disabled with
