@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ Navigation                     │  a  │ Library notes · ⚠ A sync folder needs attention · Next: Open │  o                                                   │
+│ │     Import…                    │  v  │ Manage sync folders.                                         │  t                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (97)                                                   │  e                                                   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for notes   │  s                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ that live in a folder on disk, switch to Folder files. To    │                                                      │
+│ │                                │     │ copy or keep a folder synced, choose Add from files.         │                                                      │
+│ │ ─────────────────────────────  │     │                                                              │                                                      │
+│ │ Browse                    ▾    │     │ Filter                                                       │                                                      │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │    Conversations (0)           │     │ ▊ Filter notes… (Enter)                                    ▎ │                                                      │
+│ │  ▸ Notes (97)                  │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Prompts (0) — reuse         │     │                                                              │                                                      │
+│ │    Skills (1) — AI add-ons     │<--- │    New     Sort: Newest     Select                           │                                                      │
+│ │    Collections (0)             │     │    Add from files…     Export     Manage sync folders        │                                                      │
+│ │    Search / RAG — find all     │     │ Folders & placement                                          │                                                      │
+│ │ ─────────────────────────────  │     │    New folder     Add to folder     Move note                │                                                      │
+│ │ Artifacts                 ▾    │     │    ○ Remove placement                                        │                                                      │
+│ │    All artifacts               │     │                                                              │<---                                                  │
+│ │    Chatbooks                   │     │                                                              │                                                      │
+│ │    Reports                     │     │  ▸ Recipes                                                   │                                                      │
+│ │    Dreams                      │     │  ▸ Research                                                  │                                                      │
+│ │ ─────────────────────────────  │     │  ▸ Study                                                     │                                                      │
+│ │ Create                    ▾    │<--- │  ▸ VSync  ⚠ Needs attention                                ▇ │                                                      │
+│ │    New note                    │     │  ▾ Unfiled                                                   │                                                      │
+│ │    New prompt                  │     │    Quotes · 5m                                               │                                                      │
+│ │    New skill                   │     │    Scratch · 5m                                              │                                                      │
+│ │ ─────────────────────────────  │     │    Untitled · 5m                                             │                                                      │
+│ │ Study                     ▾    │     │    A very long note title that keeps going so we can test…   │                                                      │
+│ │    Study decks (0)             │     │    📚 Reading queue 2026 ✨ · 5m                             │                                                      │
+│ │    Flashcards due: 0           │     │ █  Gardening log · 5m                                        │                                                      │
+│ │    Quizzes (0)                 │     │    Meeting Notes 2026-09-30 · 5m                             │                                                      │
+│ │ ─────────────────────────────  │     │    Index — start here · 5m                                   │                                                      │
+│ │ Import / Export           ▾  ▆ │     │    Reading list · 5m                                         │                                                      │
+│ │    Import…                     │     │    Ideas inbox · 5m                                          │                                                      │
+│ │  ▾ scroll for more             │     │   Recently deleted (25)                                      │                                                      │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n new note | / find note | g go to folder | esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
