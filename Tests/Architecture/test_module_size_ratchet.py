@@ -583,7 +583,11 @@ _BUDGETS: dict[str, int] = {
     # only the token the caret is on, Esc and caret moves answer a pending
     # confirm, a click puts the caret on its token, and chips/confirms name
     # the token and its keys.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7074,
+    # 2026-10-29, TASK-33622.9 (same owner rule): 7074 -> 7136 (+62). The
+    # composer reads the raw-CLI arm through an injected provider and shows
+    # each state (armed / not armed / locked) with its own status, primary
+    # action and tooltip, so only an armed draft reads "Run".
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7136,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,

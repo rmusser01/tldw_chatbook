@@ -216,7 +216,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24331 -> 24334 (methods unchanged) 2026-10-29 by TASK-33622.9,
+    #: same owner rule: the composer is built with the raw-CLI authority
+    #: provider, and on_screen_resume repaints a raw draft armed or disarmed
+    #: in Settings meanwhile. Dev 38c9d2edcf measures 24329/737; with the
+    #: fix, 24334/737, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24334, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
