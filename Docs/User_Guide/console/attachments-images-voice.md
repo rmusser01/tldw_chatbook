@@ -101,6 +101,11 @@ disabled and a row above the status line names the model and the cause —
 From the composer, **Shift+Tab** reaches **Switch model**, then **Remove
 image**; **Enter** presses the focused one.
 
+A model name too long for the row is cut short with `…`; hover the row's
+text for the full message. If no model is chosen yet, the row stays hidden
+and the strip asks you to choose a model first; the row appears once you
+pick one that can't read images.
+
 Where the composer row has room, the strip beside Send reads
 `Send blocked — <model> can't accept images` (it is not a link). Hovering
 Send, or pressing Enter, gives the full message: "Console send blocked:
