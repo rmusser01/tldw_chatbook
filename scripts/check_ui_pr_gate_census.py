@@ -630,7 +630,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-33621.53 (2026-10-29) appends 3 entries at the tail: the unreserved
+# commit-failure file (three unmounted cases, about 8 s locally) and two
+# mounted cases of its recovery file as node ids (about 5-13 s each), so no
+# existing entry changes shard: dev's 1140 + 3 = 1143.
+# Rebased 2026-10-29 onto dev's 1141 entries (TASK-36611's +1): 1141 + 3 = 1144.
+# Rebased 2026-10-29 onto dev's 1145 entries (TASK-33620.15.20's +2): 1145 + 3 = 1148.
+MINIMUM_FILES = 1166
 
 
 def read_census(path: Path) -> list[str]:

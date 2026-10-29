@@ -1020,7 +1020,10 @@ If Retry or Send once without Library then finds the provider not ready (a
 local server that is down, or a model you switched to meanwhile), the send
 pauses again and the card says so ("Provider not ready or changed; your
 message was not sent", chip **Blocked — check provider**). It then offers
-**Retry send** and **Cancel send**.
+**Retry send** and **Cancel send**. If the message cannot be saved to the
+conversation on its way out, the send pauses the same way ("Send could not be
+saved; your message was not sent", chip **Blocked — send not saved**) with
+the same two actions; either one ends it, so your next send goes through.
 
 The paused message is also listed as an **unsent turn** above the composer.
 Its **Restore** and **Discard** release the paused send too, so the next
