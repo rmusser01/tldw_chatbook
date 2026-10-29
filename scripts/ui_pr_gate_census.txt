@@ -1786,3 +1786,5 @@ Tests/UI/test_console_key_ownership.py::test_y_on_a_non_text_control_types_inste
 # TASK-33620.2: a vision block names the model and never links to setup (AC#4), and a Switch that clears it leaves the keyboard in the draft.
 Tests/UI/test_console_attachment_vision_block.py::test_a_vision_block_names_the_model_and_never_links_to_setup
 Tests/UI/test_console_attachment_vision_block.py::test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft
+# TASK-33620.2 review: with no model chosen, the setup strip owns the composer and the vision row stays hidden.
+Tests/UI/test_console_attachment_vision_block.py::test_with_no_model_chosen_setup_owns_the_strip_and_the_row_stays_hidden
