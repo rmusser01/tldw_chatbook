@@ -692,6 +692,9 @@ ADMISSION_2_TARGETS = (
     "Tests/Chat/test_console_refused_stream_retry.py",
     "Tests/Chat/test_self_hosted_retry_accounting.py",
     "Tests/UI/test_console_refused_stream_retry_screen.py",
+    # TASK-37600: character launch selection and modal resume (bootstrap_profile).
+    "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
+    "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

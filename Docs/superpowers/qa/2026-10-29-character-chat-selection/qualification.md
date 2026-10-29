@@ -42,18 +42,77 @@ inference quality. Native terminal rendering was not exercised.
   source preservation, duplicate handoffs and both launch routes.
 - Final focused run after test cleanup: all 19 new launch, character-controller,
   and workspace-reconciliation checks passed.
-- Adjacent controller/prompt/workspace run: 21 passed, five existing fixture
-  failures. The failures occur in app-factory config loading with
+- Initial adjacent controller/prompt/workspace run: 21 passed, five fixture
+  failures. The failures occurred in app-factory config loading with
   `RecoveryRequired("raw_source_selection_changed")`, before entering changed
   code. The first case was also run in the unchanged pre-fix checkout and
-  produced the identical exception.
+  produced the identical exception. The merge follow-up repaired those five
+  app-backed tests using the existing private-profile subprocess helper and
+  explicit app-resource retirement. All 13 cases in the prompt module now pass
+  their original assertions; no production admission guard was changed.
 - Ruff is clean for character.py, wiring.py and the UAT helper. Comparing
   session.py and test_console_session_controller.py against the base found zero
   introduced diagnostics (10 and 22 existing diagnostics respectively).
 - Task-ID/path guard passed across 5,924 task files. Diff whitespace check passed.
 - Independent read-only code review found no Critical or Important findings.
 
-The pre-existing fixture failures are:
+Merge follow-up verification before the final dev rebase:
+
+- The prompt module's 13 cases and the combined 32-case character/workspace
+  set pass after repairing the isolated-profile lifetime.
+- Reusing the existing active-session lookup in character and persona handoffs
+  preserves behavior and keeps session.py at its unchanged 7,000-line budget.
+  The ratchet rejected 7,016 lines before this cleanup; both ratchet checks now
+  pass. All 19 targeted launch, pristine-session and persona checks pass afterward.
+- All 400 targeted CI-contract, census, lane-placement and size checks pass.
+  Six launch variants run in the admission-sensitive lane; five repaired prompt
+  cases run individually in the UI census, which passes at 1,150 entries.
+- Scoped Ruff checks and the Textual worker guard pass. The CI-contract file's
+  existing formatting debt is outside the changed lines. Local preflight passes
+  every guard except Canvas Mermaid, which requires Python 3.12.11; this Windows
+  environment has 3.12.10. Hosted CI pins the required 3.12.11 build.
+- Final independent review of the helper reuse, fixture repair and CI enrollment
+  found no Critical, Important or Minor findings; nothing in that scope was
+  declined. Qodo lacked workspace credits, and the user explicitly authorized
+  independent review to replace it for PR #3306. Required CI and thread resolution
+  remain enforced by the merge queue.
+
+## Rebase onto the workspace activation repair
+
+The reviewed head `a43cc847e8` passed every hosted required CI check, including
+the pinned Canvas guard. Before auto-merge, dev advanced to `ed7481a30c` by
+merging PR #3307 / TASK-37620. That change supplies the workspace alignment
+callbacks for character and persona launches and adds eight real model-picker
+Apply/Cancel/pristine regressions.
+
+The rebase retains that implementation and removes this branch's now-redundant
+optional workspace callback and wiring. The remaining production fix supplies
+character defaults from the current worked chat pair, using the established
+callback for activation. Both PRs' CI entries remain enrolled; the combined
+census has 1,157 entries. The controller is 6,989 lines under dev's 6,990-line
+budget. Original UAT receipts describe the pre-rebase run; combined automated
+model-picker checks qualify the integration after rebase.
+
+Post-rebase verification passes all 31 combined character, prompt and real
+model-picker checks, including all eight TASK-37620 cases and all six new
+stale-provider/workspace variants. All 400 CI/census/size contracts pass again.
+Scoped Ruff, task-ID/path and whitespace guards pass. Independent review of
+`ed7481a30c..51de16779e` found no Critical, Important or Minor findings and
+confirmed one activation callback per path. Native rendering and real inference
+remain outside the evidence. Required hosted CI must run on the rebased head.
+
+The next reviewed head `d0ae6d68be` also passed every hosted check. Dev then
+advanced to `ff815f8559` through PR #3302 (speech controls and modal theming).
+The second rebase preserves both lesson additions and all census entries (1,161).
+Session production logic is byte-identical to the previously qualified head;
+the only wiring diff from current dev is still the character-default callback.
+Independent conflict-resolution review found no findings; all 31 character,
+prompt and real model-picker cases and all 400 CI/census/size contracts pass
+again. Scoped Ruff, task IDs across 5,928 files and whitespace guards pass.
+Further ordinary queue updates are left to the queue;
+disabling/re-enabling auto-merge resets its FIFO position.
+
+The repaired fixture cases are:
 
 - `test_personas_start_chat_seeds_template_provenance_with_global_name`
 - `test_character_picker_new_chat_seeds_template_provenance`
