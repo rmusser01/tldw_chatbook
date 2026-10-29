@@ -316,8 +316,12 @@ def test_service_keeps_the_planned_surface_with_a_live_progress_inbox(
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+    # The plain arm plans a 384-token input budget. TASK-34100.5.3 plans
+    # within the Console gateway's ceiling (window - reply - max(512,
+    # window/50)), so that budget needs a 1,024-token window: a 512-token
+    # one leaves the gateway no input at all (512 - 128 - 512 < 0).
     plan = _plan(
-        ContextWindowResolution(4096 if compact else 512, "server metadata", True),
+        ContextWindowResolution(4096 if compact else 1024, "server metadata", True),
         max_tokens=1024 if compact else 128,
     )
     replies = (
@@ -428,6 +432,7 @@ def test_compact_request_budget_survives_runtime_context_additions(
     from Tests.Chat.test_console_agent_project_instructions import _candidate
     from tldw_chatbook.Agents.agent_service import AgentService, ModelRequest
     from tldw_chatbook.Agents.fleet_messages import MessageStore
+    from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
 
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
@@ -437,8 +442,12 @@ def test_compact_request_budget_survives_runtime_context_additions(
         if addition == "late-inbox"
         else "Reply with just: hi"
     )
+    # A 3,072-token compact budget. TASK-34100.5.3 plans within the Console
+    # gateway's ceiling (window - reply - max(512, window/50)), so that
+    # budget needs a 4,608-token window; on a 4,096 one the gateway accepts
+    # 2,560 and refuses the late-inbox message (~2,616 tokens) outright.
     plan = _plan(
-        ContextWindowResolution(4096, "server metadata", True),
+        ContextWindowResolution(4608, "server metadata", True),
         max_tokens=1024,
         native_tools=native,
         provider=provider,
@@ -447,6 +456,14 @@ def test_compact_request_budget_survives_runtime_context_additions(
     )
     assert plan.schemas.request_fits
     assert plan.schemas.schema_input_budget_tokens == 3072
+    # The ceiling a compact plan carries through runtime additions is the
+    # gateway's own, so nothing it admits is refused at send.
+    assert (
+        plan.schemas.schema_input_budget_tokens
+        == resolve_request_capacity(
+            context_window_tokens=4608, requested_response_tokens=1024
+        ).effective_input_ceiling_tokens
+    )
     candidate = None
     if addition == "startup":
         candidate = _candidate(tmp_path)

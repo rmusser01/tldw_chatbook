@@ -57,7 +57,9 @@ def planning_window(
         -- live, Full agent tools on gpt-4 (8k) failed every send
         ("4033 > 3584"), and a first message that fit tool-less was refused
         before commit. Planned within the same ceiling, such a request goes
-        out with fewer tools, or none.
+        out with fewer tools, or none. An ADR-253 compact plan carries
+        ``window - reserve`` as the input ceiling its runtime additions must
+        respect, so that ceiling is the gateway's own too.
     """
     tokens = getattr(window, "tokens", None)
     if type(tokens) is not int or tokens <= 0:
