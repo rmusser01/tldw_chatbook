@@ -144,13 +144,15 @@ class ConsoleRagSettingsModal(
         max-width: 96%;
         height: 20;
         max-height: 96%;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     .console-rag-settings-status {
         margin: 0 0 1 0;
+        color: $text;
     }
 
     #console-rag-settings-body {

@@ -76,19 +76,20 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
     #console-side-chat-modal {
         width: 92;
         height: 30;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     #console-side-chat-identity {
         height: auto;
-        color: gray;
+        color: $text-muted;
     }
 
     #console-side-chat-quote {
         height: 5;
-        border: round gray;
+        border: round $tldw-boundary;
         padding: 0 1;
         margin: 1 0;
         color: $text-muted;

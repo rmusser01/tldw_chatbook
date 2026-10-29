@@ -192,7 +192,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     ConsoleConversationInspector { align: center middle; }
     #console-inspector-modal {
         width: 110; max-width: 95%; height: 42; max-height: 90%;
-        border: tall gray; padding: 1 2;
+        border: tall $tldw-boundary; padding: 1 2;
     }
     #console-inspector-header { height: auto; }
     #console-inspector-policy-status { height: auto; color: $text-muted; }
@@ -200,8 +200,8 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
     #console-inspector-costs-rows { height: 1fr; }
     .console-inspector-cost-row { height: auto; }
     #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
-    #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
-    #console-inspector-capture-status { height: auto; color: yellow; }
+    #console-inspector-exchange-caveat { height: auto; color: $text-muted; margin-bottom: 1; }
+    #console-inspector-capture-status { height: auto; color: $text-warning; }
     #console-inspector-exchange-turns { height: 1fr; }
     .console-inspector-exchange-turn { height: auto; }
     .console-inspector-exchange-call { height: auto; }
@@ -218,7 +218,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
        height to compact (measured identically empty vs. populated). */
     #console-inspector-next-send-pane { height: 1fr; }
     #console-inspector-next-send-header { height: auto; }
-    #console-inspector-next-send-warning { height: auto; color: yellow; }
+    #console-inspector-next-send-warning { height: auto; color: $text-warning; }
     #console-inspector-next-send-loading { display: none; }
     #console-inspector-next-send-loading.loading { display: block; }
     #console-inspector-next-send-tabs { height: 1fr; }

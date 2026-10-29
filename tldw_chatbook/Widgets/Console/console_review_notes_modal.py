@@ -78,8 +78,9 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
         width: 76;
         max-height: 90%;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -95,7 +96,7 @@ class ConsoleReviewNotesModal(SafeModalDismissMixin, ModalScreen[bool]):
 
     .console-review-notes-row {
         height: auto;
-        border: round gray;
+        border: round $tldw-boundary;
         padding: 0 1;
         margin: 0 0 1 0;
     }

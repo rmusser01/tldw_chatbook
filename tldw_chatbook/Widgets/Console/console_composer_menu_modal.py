@@ -212,8 +212,9 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
     #console-composer-menu {
         width: 56;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -234,7 +235,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
        contrast at ~1.1:1, so muting the explanation too would make the
        reason as unreadable as the state it explains. */
     .console-composer-menu-reason {
-        color: $warning;
+        color: $text-warning;
         margin: 0 0 1 2;
         width: 100%;
     }

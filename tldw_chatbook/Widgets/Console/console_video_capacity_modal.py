@@ -66,8 +66,9 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
         width: 76;
         max-width: 100%;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 

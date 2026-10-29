@@ -80,9 +80,14 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
         width: 68;
         max-width: 95%;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
+    }
+
+    #console-auto-speak-consent-modal Static {
+        color: $text;
     }
 
     #console-auto-speak-consent-actions {

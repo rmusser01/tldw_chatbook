@@ -104,8 +104,9 @@ class ConsoleCharacterPickerModal(
         width: 72;
         height: auto;
         max-height: 30;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
