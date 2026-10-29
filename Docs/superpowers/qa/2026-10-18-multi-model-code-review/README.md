@@ -1,37 +1,26 @@
-Current CI candidate: [shutdown reconciliation guard](ci-followup/shutdown.md).
-The earlier [UI wait repair and Windows diagnostics](ci-followup/report.md)
-passed their UI/eval lanes; Windows GGUF exposed a queued callback after exit.
-60 focused tests pass for the narrow guard. Native CI remains required before
-the approved single60-request/3-child qualification; no new live spending.
-
-Latest follow-up: [offline V1 conflict recovery](v1-conflict-offline/report.md)
-adds explicit same-ID withdrawal of a rejected resubmission, preserving accepted
-decisions and every completion/sealing gate. 285 focused tests and the module-size
-guard pass; scoped review found no actionable issue. No new live requests or
-product children; AC24 remains open and PR #3286 remains draft.
-
 # TASK-35582 delivery evidence
 
-AC24 remains open. The [latest single qualification](continuation-final60/report.md)
-ran after all CI passed on `a1b4b8dac95eed4d38186423ee06b71b3c555346`.
-Both reviewers sealed/presented, and the repaired continuation launched Haiku
-under native [2,1]. All three original findings have accepted dispositions and
-readable unified output, but V1 resubmitted accepted units with changed content,
-then ended without a seal after `disposition_conflict`. The result gate exited 2.
-PR #3286 remains draft; no new source defect was established.
+**Latest qualification failed; AC24 remains open and PR3286 draft.**
+The [single run after green CI](v1-final60/report.md) used26/60generation requests
+and2/3children onb35bb489ea. R1 received an accepted but contradictory completion
+that could not seal; R2 sealed; the primary later reported an unresolved provider
+error. V1 did not launch and unified output is unavailable.
+[Independent outcome review](v1-final60/outcome-review.md),
+[spending](v1-final60/spending.json), [raw retention](v1-final60/retention.json).
 
-Actual latest usage: **48/60 requests, 3/3 children**. Cumulative usage:
-**386 generation requests / 26 children**. Accounting settled and cleanup
-completed. The invocation is consumed; no qualification retry or budget request.
-See the [outcome review](continuation-final60/outcome-review.md) and
-[spending receipt](continuation-final60/spending.json).
+Actual cumulative usage is412generation requests/28children. The single
+invocation is consumed; unused34requests/one child do not permit a retry.
+Three offline controls reproduce the completion-consistency boundary while
+preserving strict seals. No further production change was made.
 
-The [offline continuation repair](continuation-offline/report.md) now has live
-evidence through the previously rejected local request and verifier launch.
-The older [final60 failure](final60/report.md), [bounded run](bounded-final/report.md),
-and their reviews remain historical failures. Their raw evidence is preserved.
-The R2/V1 [offline repairs](offline-repairs/report.md) and scripted fault controls
-retain their stated scope; they do not establish live V1 completion.
+The [shutdown reconciliation guard](ci-followup/shutdown.md) and earlier
+[UI wait repair/Windows diagnostics](ci-followup/report.md) passed normal CI
+before qualification:55success/3skips. All7native Windows full-app GGUF cases
+passed; observed close time fell from142s to17s and CPU from136s to0.31s.
+The [V1 conflict repair](v1-conflict-offline/report.md) remains verified offline;
+this run never reached V1 and does not add live evidence for that repair.
+The [previous qualification](continuation-final60/report.md) and older failures
+remain historical evidence with their original spending and limitations.
 
 ## Existing evidence reused
 
