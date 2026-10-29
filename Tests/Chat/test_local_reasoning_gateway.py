@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import Mock
@@ -164,6 +165,7 @@ async def test_generic_local_reasoning_is_a_typed_event(provider, key, streaming
 )
 @pytest.mark.parametrize("streaming", [True, False])
 @pytest.mark.parametrize("capture_on", [True, False])
+@pytest.mark.bootstrap_profile
 async def test_real_local_dispatcher_preserves_native_schema_and_reasoning(
     monkeypatch, provider, key, streaming, capture_on
 ):
@@ -284,7 +286,9 @@ async def test_real_local_dispatcher_preserves_native_schema_and_reasoning(
 @pytest.mark.parametrize("suffix", ["", "/v1", "/v1/chat/completions"])
 async def test_optional_template_probe_uses_server_root_and_exact_fingerprint(suffix):
     requests = []
-    template = Path("Tests/fixtures/reasoning_templates/qwen38.jinja").read_text()
+    template = Path("Tests/fixtures/reasoning_templates/qwen38.jinja").read_text(
+        encoding="utf-8"
+    )
 
     def respond(request):
         requests.append(str(request.url))
@@ -292,15 +296,15 @@ async def test_optional_template_probe_uses_server_root_and_exact_fingerprint(su
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         gateway = ConsoleProviderGateway(http_client=client)
-        resolution = await gateway._resolve_reasoning_history(
-            ConsoleProviderResolution(
-                provider="local_vllm",
-                model="unrelated-alias",
-                base_url="http://localhost:8000" + suffix,
-                ready=True,
-            ),
-            {},
+        target = ConsoleProviderResolution(
+            provider="local_vllm",
+            model="unrelated-alias",
+            base_url="http://localhost:8000" + suffix,
+            ready=True,
         )
+        await gateway._resolve_reasoning_history(target, {})
+        await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
+        resolution = await gateway._resolve_reasoning_history(target, {})
     assert requests == ["http://localhost:8000/tokenizer_info"]
     assert resolution.reasoning_replay.mode == "all"
     assert resolution.reasoning_replay.template_family == "Qwen3.8"
@@ -418,6 +422,7 @@ def test_structured_capture_accepts_only_declared_transport_encoding(provider, k
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_local_llm_template_control_reaches_actual_http_payload(monkeypatch):
     from types import SimpleNamespace
 
@@ -475,7 +480,9 @@ async def test_template_metadata_cache_reuses_facts_but_reapplies_preferences(
         raising=False,
     )
     seen = []
-    template = Path("Tests/fixtures/reasoning_templates/gemma4.jinja").read_text()
+    template = Path("Tests/fixtures/reasoning_templates/gemma4.jinja").read_text(
+        encoding="utf-8"
+    )
 
     def respond(request):
         seen.append(str(request.url))
@@ -500,6 +507,8 @@ async def test_template_metadata_cache_reuses_facts_but_reapplies_preferences(
             base_url="http://localhost:9099",
             ready=True,
         )
+        await gateway._resolve_reasoning_history(resolution, {})
+        await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
         first = await gateway._resolve_reasoning_history(resolution, {})
         again = await gateway._resolve_reasoning_history(
             replace(resolution, base_url="http://localhost:9099/v1"),
@@ -510,6 +519,7 @@ async def test_template_metadata_cache_reuses_facts_but_reapplies_preferences(
         assert again.reasoning_replay.mode == "off"
         now[0] += 61
         stale = await gateway._resolve_reasoning_history(resolution, {})
+        await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
         assert stale.reasoning_replay.template_family == "Gemma 4"
         assert stale.reasoning_replay.native_tools
         assert len(seen) == 2
@@ -518,6 +528,7 @@ async def test_template_metadata_cache_reuses_facts_but_reapplies_preferences(
         await gateway._resolve_reasoning_history(
             replace(resolution, model="different"), {}
         )
+        await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
         assert len(seen) == 3
 
 
@@ -545,10 +556,12 @@ async def test_failed_metadata_probe_has_bounded_negative_cache(monkeypatch):
         )
         for _ in range(2):
             result = await gateway._resolve_reasoning_history(resolution, {})
+            await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
             assert result.reasoning_replay.mode == "server_default"
         assert len(seen) == 1
         now[0] += 16
         await gateway._resolve_reasoning_history(resolution, {})
+        await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
         assert len(seen) == 2
 
 
@@ -574,7 +587,9 @@ async def test_metadata_cache_evicts_old_targets_instead_of_growing():
             await gateway._resolve_reasoning_history(
                 replace(resolution, model=str(number)), {}
             )
+            await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
         assert len(gateway._reasoning_metadata_cache) == 32
         await gateway._resolve_reasoning_history(resolution, {})
+        await asyncio.gather(*gateway._reasoning_metadata_refreshes.values())
         assert len(requests) == 34
         assert len(gateway._reasoning_metadata_cache) == 32

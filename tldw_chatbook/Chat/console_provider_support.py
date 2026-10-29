@@ -102,6 +102,8 @@ _LLAMA_CPP_THINKING_KEYS = frozenset(
     {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
 )
 _VLLM_THINKING_KEYS = frozenset({"vllm", "local_vllm"})
+_STRATA_THINKING_KEYS = frozenset({"strata", "polystrata"})
+_STRATA_EFFORTS = frozenset({"none", "low", "medium", "high"})
 _CUSTOM_OPENAI_THINKING_KEYS = CUSTOM_OPENAI_EXECUTION_KEYS
 # MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
 # support; if unsupported this row degrades to drop-and-log.
@@ -118,8 +120,9 @@ _LOCAL_REASONING_EXECUTION_KEYS = (
     | _VLLM_THINKING_KEYS
     | _CUSTOM_OPENAI_THINKING_KEYS
     | _TEMPLATE_KWARGS_THINKING_KEYS
+    | _STRATA_THINKING_KEYS
 )
-_LOCAL_BUDGET_EXECUTION_KEYS = _LLAMA_CPP_THINKING_KEYS
+_LOCAL_BUDGET_EXECUTION_KEYS = _LLAMA_CPP_THINKING_KEYS | _STRATA_THINKING_KEYS
 _LOCAL_DROPPED_CONTROLS = frozenset(
     {"reasoning_summary", "verbosity", "thinking_effort"}
 )
@@ -620,7 +623,15 @@ def build_local_thinking_payload_fields(
         else None
     )
     fields: dict[str, Any] = {}
-    if key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
+    if key in _STRATA_THINKING_KEYS:
+        # Strata parses these itself; no llama.cpp template kwargs are needed.
+        if effort in _STRATA_EFFORTS:
+            fields["reasoning_effort"] = effort
+        elif effort is not None:
+            logger.debug("reasoning effort '{}' is not supported by {}; dropped", effort, key)
+        if budget is not None:
+            fields["reasoning_budget_tokens"] = budget
+    elif key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
         if effort is not None:
             if effort in _TEMPLATE_SAFE_EFFORTS:
                 template_kwargs: dict[str, Any] = {"reasoning_effort": effort}

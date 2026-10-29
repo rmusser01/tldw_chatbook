@@ -345,8 +345,9 @@ def _chat_with_openai_compatible_local_server(
             def stream_generator():
                 try:
                     for line in response.iter_lines(decode_unicode=True):
-                        if line and line.strip():
-                            yield line + "\n\n"  # Pass through raw SSE line
+                        # Empty control chunks stay invisible while returning
+                        # to the owner so Stop can close a keep-alive-only stream.
+                        yield line + "\n\n" if line.startswith("data:") else ""
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logging.error(
                         f"{provider_name}: ChunkedEncodingError during stream: {e_chunked}",
@@ -761,7 +762,7 @@ def chat_with_llama(
     tool_choice: str | dict[str, Any] | None = None,
     api_key_resolved: bool | None = None,
 ):
-    """Chat with a llama.cpp server (llama_cpp/local_llamacpp/local_llamafile).
+    """Chat with a llama.cpp, Strata or PolyStrata compatible server.
 
     Args:
         input_data: OpenAI-format chat messages to send.
@@ -802,7 +803,14 @@ def chat_with_llama(
     llama_cpp_config_key_in_api_settings = (
         provider_name if provider_name else "llama_cpp"
     )
-    provider_display_name = "Llama.cpp"
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    record = RECORDS_BY_KEY.get(llama_cpp_config_key_in_api_settings)
+    provider_display_name = (
+        record.display_name
+        if record and record.key in {"strata", "polystrata"}
+        else "Llama.cpp"
+    )
 
     api_settings_table = get_runtime_config_snapshot().values.get(
         "api_settings", {}
@@ -824,11 +832,16 @@ def chat_with_llama(
     from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
 
     api_base_url = normalize_llamacpp_base_url(api_base_url)
-    current_api_key = (
-        api_key
-        if api_key_resolved
-        else api_key or resolve_provider_api_key(llama_config.get("api_key"))
-    )
+    if api_key_resolved or api_key:
+        current_api_key = api_key
+    elif record and record.key in {"strata", "polystrata"}:
+        from tldw_chatbook.Chat.provider_readiness import resolve_provider_credential
+
+        current_api_key = resolve_provider_credential(
+            record.key, llama_config, environ=os.environ
+        )[0]
+    else:
+        current_api_key = resolve_provider_api_key(llama_config.get("api_key"))
     current_model = model or llama_config.get("model")
     if (
         not current_model
@@ -931,7 +944,7 @@ def chat_with_llama(
         reasoning_effort=reasoning_effort,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_wire_key=provider_name or "llama_cpp",
-        provider_name="Llama.cpp",
+        provider_name=provider_display_name,
         timeout=timeout,
         api_retries=api_retries,
         api_retry_delay=api_retry_delay,

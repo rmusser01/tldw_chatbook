@@ -249,6 +249,8 @@ API_CALL_HANDLERS = {
     # named legacy slots above stay untouched (kill-switch fallback).
     "custom-hosted": _LazyHostedChatHandler(CUSTOM_HOSTED),
     "llama_cpp": chat_with_llama,
+    "strata": chat_with_llama,
+    "polystrata": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
     "tabbyapi": chat_with_tabbyapi,
@@ -271,6 +273,8 @@ EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
 PROVIDERS_WITH_PROVIDER_NAME = frozenset(
     {
         "llama_cpp",
+        "strata",
+        "polystrata",
         "vllm",
         "ollama",
         "mlx_lm",
@@ -967,6 +971,11 @@ PROVIDER_PARAM_MAP = {
     "commandcode": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
+
+# These independent providers share the local compatible adapter, not the
+# Console's direct llama.cpp execution path or its thinking wire format.
+PROVIDER_PARAM_MAP["strata"] = dict(PROVIDER_PARAM_MAP["llama_cpp"])
+PROVIDER_PARAM_MAP["polystrata"] = dict(PROVIDER_PARAM_MAP["llama_cpp"])
 
 # Custom-endpoint engine surface (ADR-179 Phase 2 Task 6): the legacy
 # "custom-openai-api" map, copied verbatim so the swapped "custom-hosted"

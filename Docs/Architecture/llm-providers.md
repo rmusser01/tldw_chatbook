@@ -53,7 +53,7 @@ ADR-012's 2026-09-19 amendment rules that the stored `api_settings` key outranks
 
 ### Implemented providers
 
-Hosted (bespoke handlers): openai, anthropic, cohere, groq, openrouter, deepseek, mistral(+`mistralai`), google, huggingface, moonshot, zai, qwencloud. Hosted (engine presets): every `ENGINE_RECORDS` entry (33, e.g. databricks, together, fireworks, cerebras, and `custom-hosted`). Local/self-hosted: llama_cpp, koboldcpp, oobabooga, tabbyapi, vllm, local-llm (llamafile), ollama, aphrodite, custom-openai-api(+`-2`), mlx_lm — plus `local_*` aliases onto the same handlers.
+Hosted (bespoke handlers): openai, anthropic, cohere, groq, openrouter, deepseek, mistral(+`mistralai`), google, huggingface, moonshot, zai, qwencloud. Hosted (engine presets): every `ENGINE_RECORDS` entry (33, e.g. databricks, together, fireworks, cerebras, and `custom-hosted`). Local/self-hosted: llama_cpp, strata, polystrata, koboldcpp, oobabooga, tabbyapi, vllm, local-llm (llamafile), ollama, aphrodite, custom-openai-api(+`-2`), mlx_lm — plus `local_*` aliases onto the same handlers.
 
 ## Handler internals (OpenAI as the reference)
 
@@ -97,6 +97,33 @@ Config (`[model_catalog]`): `auto_refresh_enabled` (default true), `refresh_cons
 ## Local backends and managed servers
 
 Local handlers read the immutable `[api_settings]` runtime snapshot. Managed server starts live in `Event_Handlers/LLM_Management_Events/`: per-backend command builders (`--model/-m --host --port` for llamacpp/llamafile), a claim-based lifecycle (`reserve_server_launch`, `run_server_subprocess`, bounded terminate) keyed to app-held `Popen` handles, and the Lab/Models UI for start/stop. Transformers/ONNX participate via local summarization/embedding paths rather than the chat handlers.
+
+### External Strata and PolyStrata servers
+
+`strata` and `polystrata` are separate canonical local providers, with independent
+`api_settings` and saved model lists. They reuse `chat_with_llama(provider_name=...)`
+and the shared compatible HTTP adapter, while staying out of the llama.cpp-only
+direct Console path and server-management assumptions. Their optional credential
+source is resolved through the existing provider credential contract; a resolved
+keyless Console selection is never replaced by a stored key in the adapter.
+
+Discovery uses `/v1/models`, including `meta.n_ctx` for the selected model's context
+window. An optional bounded background `/props?model=...&autoload=false` probe
+reads tool capability without requesting a model load. Missing properties leave
+capabilities unknown. Native tools require both `supports_tools` and
+`supports_tool_calls`; a template string alone grants nothing. Existing explicit
+per-model settings and exact template replay policies still apply.
+
+Their reasoning controls use top-level `reasoning_effort` (`none`, `low`, `medium`,
+`high`) and `reasoning_budget_tokens`. The shared local stream adapter forwards
+SSE `data:` lines and turns control lines into empty iteration checkpoints, which
+Console ignores. Comments and `event`/`id`/`retry` fields never enter prose, and
+keep-alive traffic returns control so Stop can settle the stream on its owner. This also fixes the llama.cpp path used when native tools select that
+adapter. Legitimate assistant text containing "heartbeat" is unchanged.
+
+The upstream contracts and client-only qualification scope are recorded in
+[Settings](../User_Guide/settings.md#strata-and-polystrata) and
+`Tests/Chat/test_strata_providers.py`.
 
 ## Boundaries
 

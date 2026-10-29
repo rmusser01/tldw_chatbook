@@ -85,6 +85,8 @@ class _ProviderOwnership:
 
 _API_URL_PROVIDER_KEYS = frozenset(
     {
+        "strata",
+        "polystrata",
         "aphrodite",
         "custom",
         "custom_2",
@@ -107,6 +109,8 @@ _API_URL_PROVIDER_KEYS = frozenset(
 )
 _CANONICAL_PROVIDER_KEYS = frozenset(
     {
+        "strata",
+        "polystrata",
         "anthropic",
         "aphrodite",
         "cohere",

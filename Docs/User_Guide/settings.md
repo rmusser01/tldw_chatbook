@@ -954,6 +954,35 @@ provider shows as not ready and names the URL it needs.
   plan). Its Claude models are served only on the Messages API, so they are
   not in the list. Streams always include token usage.
 
+#### Strata and PolyStrata
+
+Connect to an already running server from **Providers & Models**. Choose
+**Strata** or **PolyStrata**, enter its URL (default `http://127.0.0.1:8080/v1`),
+then use **Discover models**, select the server's exact model ID, and save.
+A server root, `/v1`, or `/v1/chat/completions` URL is accepted. Use the named
+provider that matches your server so its settings and model list stay separate.
+Chatbook connects over HTTP; start and manage the engine separately.
+
+Leave credentials unset for a keyless server. If authentication is enabled,
+configure the matching credential source in Settings. Both engines use
+`STRATA_API_KEY` as their conventional server environment variable; the app can
+read that variable or use the stored API key selected for that provider.
+
+Streaming and non-streaming chat are supported. Reasoning effort accepts
+**none**, **low**, **medium**, and **high**; a thinking-token budget is sent as
+`reasoning_budget_tokens`. Native tools are enabled only when the selected model's
+server metadata advertises both tools and tool calls, or an explicit per-model
+setting enables them. Unknown chat templates keep the existing unverified replay
+policy. SSE keep-alive comments do not appear in the reply.
+
+Compatibility tests use the published APIs of
+[Strata](https://github.com/Niko1221/Strata/blob/46c152a1310f77cd2f0ce2c7cd213962df14fe83/serve/server.py)
+and [PolyStrata](https://github.com/VecSzn/PolyStrata/blob/504ff71d310a4a4d9dfcf9176978f68110814969/serve/server.py).
+They exercise configuration, discovery, context metadata, tool capability and
+actual client request/stream handling with scripted HTTP responses. Live inference
+against these engines has not yet been qualified; a model's ability to follow tool
+instructions still depends on its serving configuration and template.
+
 #### Custom endpoints
 
 A **custom endpoint** is a named endpoint entry you can template off any

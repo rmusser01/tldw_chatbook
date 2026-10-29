@@ -279,7 +279,7 @@ PROVIDER_ERROR_MODEL_ID_MAX_CHARS = 256
 """Maximum model-ID context included in user-visible provider error copy."""
 _CONTINUATION_PROTOCOLS = frozenset({"chat_completions", "responses"})
 _DISPLAYABLE_THINKING_EXECUTION_KEYS = frozenset(
-    {"llama_cpp", "local_llamacpp", "vllm", "local_vllm"}
+    {"llama_cpp", "local_llamacpp", "vllm", "local_vllm", "strata", "polystrata"}
 )
 _HOSTED_THINKING_FINISH_POLICIES = MappingProxyType(
     {
@@ -556,7 +556,11 @@ def _thinking_stream_capability(
         disposition: ReasoningDisposition = (
             "displayable"
             if effort != "none"
-            and (bool(effort) or reasoning_effort_hint_for_model(model) is not None)
+            and (
+                key in {"strata", "polystrata"}
+                or bool(effort)
+                or reasoning_effort_hint_for_model(model) is not None
+            )
             else "ignored"
         )
         return {
@@ -4411,10 +4415,16 @@ class ConsoleProviderGateway:
         self, resolution: ConsoleProviderResolution, key: str
     ) -> None:
         from .local_reasoning import _LOCAL_FAMILIES
+        from .local_reasoning_metadata import read_local_reasoning_metadata
 
         family = _LOCAL_FAMILIES.get(resolution.provider.lower())
         # Ollama exposes Go templates; until reviewed, use its server default.
-        route = {"llama_cpp": "/props", "vllm": "/tokenizer_info"}.get(family)
+        route = {
+            "llama_cpp": "/props",
+            "vllm": "/tokenizer_info",
+            "strata": "/props",
+            "polystrata": "/props",
+        }.get(family)
         if not route:
             return
         base = resolution.base_url.rstrip("/").removesuffix("/chat/completions")
@@ -4422,31 +4432,14 @@ class ConsoleProviderGateway:
         cached = self._reasoning_metadata_cache.get(key)
         template, native_tools = cached[1:] if cached else (None, False)
         try:
-            async with asyncio.timeout(1.0):
-                async with self._active_http_client().stream(
-                    "GET",
-                    base + route,
-                    headers=self._authorization_headers(resolution.api_key),
-                    timeout=1.0,
-                ) as response:
-                    response.raise_for_status()
-                    data = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        data.extend(chunk)
-                        if len(data) > 262144:
-                            raise ValueError(
-                                "Template metadata exceeds size limit."
-                            )
-                    payload = json.loads(data)
-                    metadata = payload if isinstance(payload, dict) else {}
-            raw_template = metadata.get("chat_template")
-            template = raw_template if isinstance(raw_template, str) else None
-            caps = metadata.get("chat_template_caps", {})
+            template, tools_supported = await read_local_reasoning_metadata(
+                self._active_http_client(),
+                base + route,
+                headers=self._authorization_headers(resolution.api_key),
+                model=resolution.model if family in {"strata", "polystrata"} else None,
+            )
             native_tools = (
-                family == "llama_cpp"
-                and isinstance(caps, Mapping)
-                and caps.get("supports_tool_calls") is True
-                and caps.get("supports_tools") is True
+                family in {"llama_cpp", "strata", "polystrata"} and tools_supported
             )
             ttl = REASONING_METADATA_TTL_SECONDS
         except Exception:  # noqa: BLE001 -- background metadata must never raise
@@ -6011,7 +6004,9 @@ class ConsoleProviderGateway:
         if resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
-        elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
+        elif resolution.execution_key in (
+            _CUSTOM_CREDENTIAL_DECISION_PROVIDERS | {"strata", "polystrata"}
+        ):
             kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
 

@@ -131,6 +131,8 @@ KEYLESS_PROVIDER_KEYS = frozenset(
         "koboldcpp",
         "mlx_lm",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llm",
         "local_llamacpp",
         "local_llamafile",

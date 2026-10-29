@@ -152,6 +152,8 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "kilo",
         "koboldcpp",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local-llm",
         "local_llamacpp",
         "local_llamafile",

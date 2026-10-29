@@ -1644,6 +1644,14 @@ LLAMA_CPP = ProviderRecord(
     api_key_env_var="LLAMA_CPP_API_KEY",
     api_key_env_candidates=("LLAMA_CPP_API_KEY",),
 )
+STRATA = ProviderRecord(
+    key="strata", config_key="Strata", display_name="Strata", classification=_LOCAL,
+    api_key_env_var="STRATA_API_KEY", api_key_env_candidates=("STRATA_API_KEY",),
+)
+POLYSTRATA = ProviderRecord(
+    key="polystrata", config_key="PolyStrata", display_name="PolyStrata", classification=_LOCAL,
+    api_key_env_var="STRATA_API_KEY", api_key_env_candidates=("STRATA_API_KEY",),
+)
 KOBOLDCPP = ProviderRecord(
     key="koboldcpp", config_key="koboldcpp", display_name="Koboldcpp", classification=_LOCAL,
 )
@@ -1705,7 +1713,7 @@ ALL_RECORDS: tuple[ProviderRecord, ...] = (
     VERCEL, ZENMUX, KILO, SILICONFLOW, BASETEN, GMI, OLLAMA_CLOUD,
     UPSTAGE, ARCEE, QIANFAN, NOUS, VENICE, META,
     AZURE, WANDB, CLOUDFLARE, OPENCODE_ZEN, COMMANDCODE,
-    LLAMA_CPP, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
+    LLAMA_CPP, STRATA, POLYSTRATA, KOBOLDCPP, OOABOOGA, TABBYAPI, VLLM, OLLAMA, APHRODITE,
     LOCAL_LLM, CUSTOM_OPENAI_API, CUSTOM_OPENAI_API_2, MLX_LM,
 )
 
