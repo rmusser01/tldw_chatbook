@@ -300,6 +300,33 @@ async def test_a_resumed_legacy_pick_is_listed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("markup", ["[b]", "[/x]"])
+async def test_a_typed_filter_echoed_in_the_count_line_renders_literally(
+    monkeypatch, markup
+):
+    """Pre-merge review (2026-10-29), minor 5 (TASK-1513): the count line
+    echoes the typed filter, so '[b]' styled it and '[/x]' raised MarkupError.
+    No shipped name has a bracket, so the line only echoes a query that
+    matched; one bracketed name is listed here to make it match."""
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
+
+    real = first_run_provider_catalog()
+    bracketed = replace(real[0], display_name=f"Acme {markup} Labs")
+    monkeypatch.setattr(
+        step_guard, "first_run_provider_catalog", lambda: (*real[1:], bracketed)
+    )
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard)
+        step.query_one(_FILTER, Input).value = markup
+        await pilot.pause()
+        assert static_text(step, _COUNT) == f"1 of {len(real)} match “{markup}”"
+
+
+@pytest.mark.asyncio
 async def test_the_list_grows_into_free_height():
     """provider-11: more than the old five visible rows when there is room."""
     wizard = resumed_on_provider()

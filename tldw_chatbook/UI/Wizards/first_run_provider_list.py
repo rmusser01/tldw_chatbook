@@ -552,10 +552,11 @@ class ProviderListStep(ProviderKeyEntryStep):
                 classes="setup-provider-filter",
                 compact=True,
             )
-            yield Static(
+            yield Static(  # echoes the typed filter: never markup (TASK-1513)
                 build.count_line,
                 id="setup-provider-count",
                 classes="setup-provider-count setup-subtitle",
+                markup=False,
             )
         yield ProviderChoiceList(
             *build.options, id="setup-provider-choice", classes="setup-choice-list"
