@@ -21288,6 +21288,11 @@ class ConsoleChatController:
                 and frozen_policy.assistant_access
                 is ConsoleAssistantLibraryAccess.ALLOWED
             )
+            # TASK-33621.17: a temporary chat saved after this ceiling froze
+            # (Save & Send) has a durable policy row the commit checks against.
+            live_identity = live_narrowed or (
+                frozen_policy.source == "temporary" and policy.source == "durable"
+            )
             policy = ConsoleLibraryPolicySnapshot(
                 auto_retrieve=(
                     ConsoleAutoRetrieve.NEVER
@@ -21303,12 +21308,12 @@ class ConsoleChatController:
                 ),
                 policy_revision=(
                     policy.policy_revision
-                    if live_narrowed
+                    if live_identity
                     else frozen_policy.policy_revision
                 ),
-                source=policy.source if live_narrowed else frozen_policy.source,
+                source=policy.source if live_identity else frozen_policy.source,
                 error_code=(
-                    policy.error_code if live_narrowed else frozen_policy.error_code
+                    policy.error_code if live_identity else frozen_policy.error_code
                 ),
             )
         frozen_scope = configuration.library_scope_maximum

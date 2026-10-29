@@ -177,10 +177,13 @@ _BUDGETS: dict[str, int] = {
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
+    # 2026-10-29 (TASK-33621.17, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): +5, Save & Send's promoted Library
+    # identity in _capture_turn_library_authority.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29312,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29317,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
