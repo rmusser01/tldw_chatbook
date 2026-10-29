@@ -121,6 +121,44 @@ def _fts_row_total(connection: sqlite3.Connection, fts: str) -> int | None:
     return values[0] if values else None
 
 
+def value_traces(
+    connection: sqlite3.Connection, needles: Iterable[str]
+) -> dict[str, int]:
+    """Count, per ``table.column`` and needle, the rows whose value holds it.
+
+    Review R0, m-3: a token scan, not a column-name scan. EVERY table in
+    ``sqlite_master`` -- ordinary, virtual and FTS shadow tables alike -- and
+    EVERY column of it (``PRAGMA table_info``), whatever its declared type:
+    each value is compared as bytes (``CAST(... AS BLOB)``), so TEXT, JSON
+    and BLOB columns are all searched, an id inside a JSON payload or a
+    composite key included.
+
+    Args:
+        connection: A plain ``sqlite3`` connection to the database file.
+        needles: Strings to look for (a note id, words only the note had).
+
+    Returns:
+        ``{"<table>.<column>:<needle>": rows}`` for every non-zero finding.
+    """
+    found: dict[str, int] = {}
+    wanted = [needle for needle in needles if needle]
+    for table, _sql in _tables(connection):
+        columns = [
+            str(column[1])
+            for column in connection.execute(f"PRAGMA table_info({_quoted(table)})")
+        ]
+        for column in columns:
+            for needle in wanted:
+                count = connection.execute(
+                    f"SELECT COUNT(*) FROM {_quoted(table)} WHERE "
+                    f"instr(CAST({_quoted(column)} AS BLOB), CAST(? AS BLOB)) > 0",
+                    (needle,),
+                ).fetchone()[0]
+                if count:
+                    found[f"{table}.{column}:{needle}"] = int(count)
+    return found
+
+
 def note_traces(
     connection: sqlite3.Connection,
     note_id: str,

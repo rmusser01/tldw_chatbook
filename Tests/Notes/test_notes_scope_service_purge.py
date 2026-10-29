@@ -301,3 +301,81 @@ def test_removing_a_purged_note_never_builds_the_runtime_or_a_store(
 
     assert ingestion_indexing.remove_purged_note_projection("note-9") == 0
     assert not (tmp_path / "chromadb").exists()
+
+
+# -- the Sync v2 outbox (review R0, m-2) -------------------------------------
+
+
+class _Dispatchable:
+    @staticmethod
+    def is_note_dispatchable(note_id: str) -> bool:
+        return bool(note_id)
+
+
+@pytest.mark.asyncio
+async def test_a_purge_drops_queued_sync_upserts_and_keeps_the_delete(
+    tmp_path, removals
+) -> None:
+    """No queued upsert pushes the note's title or text after a purge.
+
+    The rule the outbox already states for object history -- only a
+    tombstone may supersede it: the note's upserts go, pending or already
+    accepted, while its delete stays queued so the server still hears of it.
+    Another note's upsert is untouched.
+    """
+    from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
+    from tldw_chatbook.Sync_Interop.notes_outbox_producer import (
+        NotesSyncV2OutboxProducer,
+    )
+    from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+
+    profile = _Profile(tmp_path)
+    repository = SyncStateRepository(tmp_path / "sync_state.db")
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": None,
+    }
+    repository.set_sync_v2_profile_state(
+        **scope, profile_mode="local_first", device_id="device-1", dataset_id="dataset-1"
+    )
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=repository,
+        dataset_keys={"dataset-1": generate_dataset_key()},
+        notes_db=_Dispatchable(),
+    )
+    profile.service.sync_v2_notes_producer = producer
+    accepted = producer.enqueue_note_upsert(
+        **scope, note_id=profile.note_id, title="Gone note", content="secret body",
+        status="active", entity_version=1,
+    )["outbox_entry"]["client_envelope_id"]
+    repository.mark_sync_v2_outbox_push_results(
+        **scope,
+        dataset_id="dataset-1",
+        accepted=[{"client_envelope_id": accepted, "server_cursor": 1}],
+        rejected=[],
+        conflicts=[],
+    )
+    producer.enqueue_note_upsert(
+        **scope, note_id=profile.note_id, title="Gone note", content="secret body v2",
+        status="active", base_version=1, entity_version=2,
+    )
+    producer.enqueue_note_delete(
+        **scope, note_id=profile.note_id, base_version=2, entity_version=3
+    )
+    producer.enqueue_note_upsert(
+        **scope, note_id=profile.live_id, title="Live note", content="still here",
+        status="active", entity_version=1,
+    )
+
+    assert await _purge(profile, None) is True
+
+    left = sorted(
+        (row["envelope"]["object_id"], row["envelope"]["operation"], row["status"])
+        for row in repository.list_sync_v2_outbox_entries(
+            **scope, dataset_id="dataset-1"
+        )
+    )
+    assert left == sorted(
+        [(profile.note_id, "delete", "pending"), (profile.live_id, "upsert", "pending")]
+    )
