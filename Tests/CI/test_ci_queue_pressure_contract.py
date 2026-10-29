@@ -53,6 +53,7 @@ FAST_LANE_TARGETS = (
     # each) and pure unit tests: a few seconds for the lane in total.
     "Tests/Architecture/test_flush_screens_have_quit_hooks.py",
     "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+    "Tests/Architecture/test_app_string_lookup_census.py",
     "Tests/Library/test_library_note_autosave_max_wait.py",
     # TASK-34000 wave 1a final review (I2): the fast pins for the export seam
     # (atomic write, no-clobber, symlink write-through, the Report and
@@ -66,6 +67,8 @@ FAST_LANE_TARGETS = (
     # names the workspace, never its id; pure, a few seconds.
     "Tests/Workspaces/test_link_on_use.py",
     "Tests/Workspaces/test_workspace_eligibility.py",
+    "Tests/Research/test_server_research_search_service.py::test_paper_search_detail_and_ingest_use_public_client_methods",
+    "Tests/Research/test_server_research_search_service.py::test_no_interop_module_calls_private_client_request",
     # TASK-34000.27: the sentence a vetoed nav-bar click gets from Library
     # (the save's own field-naming reason, the Esc path's sentence for
     # the other kinds, the destination in its head); pure, a few seconds.
@@ -125,6 +128,8 @@ FAST_LANE_TARGETS = (
     # reaches the recycled-number branch on a filesystem that recycles, had
     # never run on Linux before a merge. Plain filesystem unit tests, seconds.
     "Tests/Notes/test_sync_containment.py",
+    "Tests/DB/test_subscriptions_db.py::test_base_exception_in_transaction_rolls_back_and_leaves_no_open_transaction[False]",
+    "Tests/DB/test_subscriptions_db.py::test_base_exception_in_transaction_rolls_back_and_leaves_no_open_transaction[True]",
     # TASK-34100.5: the first-reply and handoff unit guards -- the direct
     # runtime's unavailable tools never reach the agent catalog, plain arrival
     # words, the missing-revision trace diagnostic, the provider's own reason
@@ -136,9 +141,11 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_first_reply_failure_copy.py",
     "Tests/Chat/test_first_token_window.py",
     "Tests/Architecture/test_surface_swap_guard.py",
+    "Tests/Architecture/test_agent_runtime_import_footprint.py",
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
+    "Tests/Architecture/test_layer_direction.py",
     # TASK-25907.23 / 34800: bounded privacy, closed-native and Canvas parity.
     "Tests/Personal_Context/test_context_service.py::test_device_only_additions_cannot_change_context_selection_or_explanation",
     "Tests/Personal_Context/test_context_service.py::test_quarantine_hint_cannot_change_permitted_packing",
