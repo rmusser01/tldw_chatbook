@@ -21,7 +21,6 @@ UI/stts_profile_library.py::TTSProfileDeleteModal.DEFAULT_CSS	#stts-profile-dele
 UI/stts_profile_library.py::TTSProfileEditorModal.DEFAULT_CSS	#stts-profile-editor-actions Button:focus	outline	$accent
 Widgets/Console/console_conversation_action_menu.py::ConsoleConversationActionMenu.BUNDLED_CSS	ConsoleConversationActionMenu Button:focus	outline	$accent
 Widgets/Console/console_fork_chat_modal.py::ConsoleForkChatModal.BUNDLED_CSS	#console-fork-chat-title:focus	border	$accent
-Widgets/Console/console_message_more_menu.py::ConsoleMessageMoreMenu.BUNDLED_CSS	ConsoleMessageMoreMenu Button:focus	outline	$accent
 Widgets/Console/console_project_instructions.py::ConsoleProjectInstructionStatusRow.BUNDLED_CSS	#console-project-instruction-status-button:focus	outline	$accent
 Widgets/Console/console_reaction_picker_modal.py::ConsoleReactionPickerModal.BUNDLED_CSS	#console-reaction-picker-actions Button:focus	outline	$accent
 Widgets/Console/console_workspace_action_menu.py::ConsoleWorkspaceActionMenu.BUNDLED_CSS	ConsoleWorkspaceActionMenu Button:focus	outline	$accent

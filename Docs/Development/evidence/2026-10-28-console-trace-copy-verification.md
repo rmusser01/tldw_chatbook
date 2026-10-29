@@ -252,3 +252,15 @@ pulled with rebase before applying this CI fix. The initial stale-head pipeline
 was cancelled only after confirming its branch/SHA and retaining its failed job
 log, allowing the current-head pipeline to start. Future updates keep the same
 disarm/synchronize/push/re-arm discipline.
+
+### Focus-contrast inventory correction
+
+UI Fast Lane (1), job `123273305542`, completed with 135 passed and one failure:
+the focus-edge debt inventory still listed the More-menu outline removed by UAT.
+Deleted only that obsolete TSV row, as the inventory contract requires after
+an edge is fixed. No contrast exemption or assertion was added or weakened.
+The focus-edge sweep across 89 measurable themes, inventory consistency and
+painted More-label regression all pass: **91 passed**, 34.80s. A bootstrap-enrolled
+theme case runs before the unmarked inventory case, matching CI's initialized
+App-module setup; the initial inventory-first run stopped in fixture import.
+This is metadata closeout for the existing focus fix, with no product change.

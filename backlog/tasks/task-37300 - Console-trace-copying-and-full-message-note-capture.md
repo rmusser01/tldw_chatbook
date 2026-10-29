@@ -226,3 +226,10 @@ No size pins were changed in this feature.
 The user explicitly approved substituting independent review/UAT for Qodo on
 PR #3291 only. Auto-merge was disarmed and the branch synchronized before this
 CI fix, as required by the enabled merge queue workflow; re-arm after publication.
+
+UI Fast Lane (1) subsequently found the stale focus-debt TSV entry for the
+More-menu outline removed during UAT (135 other cases passed). Deleted that
+single obsolete row; no contrast exemptions or assertions were weakened.
+The 89-theme edge sweep, inventory consistency and actual painted-menu check
+pass together: **91 passed** in 34.80s, using CI-equivalent profile initialization
+order. The PR was disarmed/synchronized before this metadata-only update.
