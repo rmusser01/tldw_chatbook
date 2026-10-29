@@ -519,7 +519,8 @@ def build_first_run_provider_commit(
         )
     else:
         # TASK-34100.6 AC#6 (coverage-08): every other exported key is recorded
-        # as credential_source = "environment" in the same write (no secret).
+        # by its variable's name (api_key_env_var) in the same write -- no
+        # secret and no credential_source (review v3r1, R1-04).
         mutation = build_provider_setup_mutation(
             shared_draft(
                 "none"
