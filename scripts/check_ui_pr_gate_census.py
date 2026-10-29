@@ -589,7 +589,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #   refusals.py (~2 s), all timed alone with no plugin: 926 -> 929.
 # - task 10 (2026-10-29, TASK-34000.40 N-34, ruling T10-a): Tests/UI/test_library_
 #   notes_import_escape_keeps_running.py (two production-CSS Library boots over
-#   a real import, ~24 s alone at load average ~28, no plugin): 929 -> 930.
+#   a real import, ~9 s alone at load ~6 and ~24 s at load ~28, no plugin): 929 -> 930.
 MINIMUM_FILES = 930
 
 
