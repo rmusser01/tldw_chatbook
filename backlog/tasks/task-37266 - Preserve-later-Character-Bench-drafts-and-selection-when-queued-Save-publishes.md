@@ -1,7 +1,7 @@
 ---
 id: TASK-37266
 title: Preserve later Character Bench drafts and selection when queued Save publishes
-status: In Progress
+status: Done
 created_date: 2026-10-28 22:07
 labels:
 - textual-patterns
@@ -13,7 +13,7 @@ references:
 - tldw_chatbook/UI/Screens/evals_screen.py
 assignee:
 - '@codex'
-updated_date: 2026-10-29 02:56
+updated_date: 2026-10-29 03:57
 ---
 
 ## Description
@@ -32,10 +32,10 @@ Book Chapters 7/9 and the actual controls, source pins, ownership screen and lim
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Successful Character Bench Save followed by accepted later field input retains the exact later draft and its editing context when publication completes, including input accepted during the awaited Catalog refresh.
-- [ ] #2 The submitted snapshot remains correctly persisted and reflected in Catalog/Inspector; later draft edits remain unsaved until a subsequent explicit Save, which persists them normally.
-- [ ] #3 Newer supported public shell selection remains authoritative whether already mounted or awaiting the existing region-swap lock when an older character Save publishes.
-- [ ] #4 Ordinary Save/rename refresh, validation/write failures, Revert and existing run-completion dirty-editor guards retain their established outcomes; mounted real-SQLite controls exercise the actual Save producer, native focused-child input and selection interleaves.
+- [x] #1 Successful Character Bench Save followed by accepted later field input retains the exact later draft and its editing context when publication completes, including input accepted during the awaited Catalog refresh.
+- [x] #2 The submitted snapshot remains correctly persisted and reflected in Catalog/Inspector; later draft edits remain unsaved until a subsequent explicit Save, which persists them normally.
+- [x] #3 Newer supported public shell selection remains authoritative whether already mounted or awaiting the existing region-swap lock when an older character Save publishes.
+- [x] #4 Ordinary Save/rename refresh, validation/write failures, Revert and existing run-completion dirty-editor guards retain their established outcomes; mounted real-SQLite controls exercise the actual Save producer, native focused-child input and selection interleaves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,14 +61,13 @@ Files: UI/Evals/character_bench_editor.py, UI/Screens/evals_screen.py, new nativ
 
 ADR required:no; existing ADR-011/033/150/161 retained, with shared CI amendment ADR-103. Independent task review approved after one repair round; no Critical/Important remain. Inherited dependency/config warnings remain disclosed.
 
-Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final whole-branch review and current-head hosted CI remain pending; status stays In Progress until closure.
+Shared enrollment conserves all 1140 inherited selectors and adds43 new native cases plus the canonical-class guard (1184 total). ADR-103's existing measured capacity policy is amended to32 serial shards with max-parallel17 and unchanged timeouts/aggregation. QA and portable raw receipts/reviews: Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md. Final Superpowers whole-branch review is approved. Hosted application, Perf Guard and required checks pass on 7c2b8f5aab066035ed9d06f9719a93d184f8e5c3; all44 added selections and the exact existing Notes Escape/Replace case have execution receipts. PR3290 is open against dev. Final delivery rechecks the metadata-only closure head; earlier local failures/qualifications remain historical, not relabeled passes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Implemented and independently reviewed; targeted native/contract/static evidence and final hosted qualification are linked in the implementation QA and PR3290. Existing ADR ownership retained; ADR103 extends only existing CI capacity policy.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->

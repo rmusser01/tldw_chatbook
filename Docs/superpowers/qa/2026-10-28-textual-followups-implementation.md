@@ -4,8 +4,10 @@ This implements TASK-37266, TASK-37267 and TASK-37268 from the
 [source-pinned audit](2026-10-28-textual-book-after-pr3283.md). The
 [implementation plan](../plans/2026-10-28-textual-37266-37268.md) preserves the
 existing Evals, Research Runs and Library owners. The requested delivery is a
-reviewed open PR against `dev`; hosted checks and final branch review are still
-pending at this local integration checkpoint.
+reviewed open PR against `dev`. The source head is independently reviewed and
+fully green in hosted CI. The final metadata head is checked before delivery;
+its run links and result are recorded in the PR description without creating
+another evidence-only commit and CI cycle.
 
 ## Behavior and local evidence
 
@@ -74,6 +76,24 @@ aggregation remain unchanged. The official replay's algorithm is unchanged.
 
 ## Qualifications and follow-up
 
+- [PR #3290](https://github.com/rmusser01/tldw_chatbook/pull/3290) remains open
+  against `dev`. Source head `7c2b8f5aab066035ed9d06f9719a93d184f8e5c3` passed
+  all **40 Derived Artifacts jobs** and **Perf Guard**:
+  [application/required run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40810284866),
+  [performance run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40810284730).
+  All 32 UI shards passed; their longest actual execution was **679 seconds**
+  under the unchanged 1,200-second cap. All 44 added selections have actual
+  execution rows in successful jobs, including the canonical-class guard on
+  shard22 and the exact existing Notes Escape/Replace case on shard8. There were
+  zero unresolved GitHub review threads. [Hashed hosted qualification](2026-10-28-textual-followups-implementation/hosted-source-head.json)
+  records jobs, case ownership, timings and retained private-log hashes. This
+  establishes hosted parent outcomes; it does not claim independently extracted
+  hosted child XML. Local actual children are archived above.
+- The [whole-branch Superpowers review](2026-10-28-textual-followups-implementation/final-review.md)
+  approved implementation with **0 Critical/Important/new Minor** findings.
+  The two inherited Minor categories remain disclosed below. The
+  [decision ledger](2026-10-28-textual-followups-implementation/decision-ledger.md)
+  records every scope ruling and the final review's declined-to-judge items.
 - The [integration map](2026-10-28-textual-followups-implementation/integration-local-evidence.json)
   and [raw archive](2026-10-28-textual-followups-implementation/integration-local-receipts.tar.gz)
   retain 262 distinct contract cases with passing latest observations across
@@ -85,14 +105,19 @@ aggregation remain unchanged. The official replay's algorithm is unchanged.
 - Rebase onto `3efe8476cebf70eceafa605d1abed76a4aad4e0e` changed none of the
   owned committed product, test, workflow or evidence blobs. Only the appended
   testing-lessons conflict needed resolution; both branches' entries survive.
-- Task-scoped reviews approve all three changes; final whole-branch review and
-  actual final-head CI remain root-owned closure gates.
+- Task-scoped and whole-branch reviews approve all three changes. Task closure
+  followed the successful source-head hosted qualification: all three are Done
+  via CLI, with all13 ACs checked and implementation notes/final summaries present.
+  [Closure and source conservation](2026-10-28-textual-followups-implementation/backlog-closure.json)
+  records the unchanged product/test/workflow/security inputs. Final delivery
+  also verifies the metadata-only head and records its result in the PR description.
 - The old `test_note_export_onto_an_existing_file_asks_escape_keeps_it_replace_writes`
   fails locally during unchanged Notes source loading before export. It stays
-  locally unqualified and enrolled in full. Its exact hosted result must pass.
+  locally unqualified and enrolled in full. Its exact hosted result passed on
+  the qualified source head; the local failures are not relabeled passes.
 - The canonical-class guard fails locally because Windows path separators differ
   from its slash-based inventory. Exact baseline inputs are conserved; this
-  unchanged guard is newly enrolled for actual Linux qualification.
+  unchanged guard is newly enrolled and passed actual Linux qualification.
 - Research's timer/worker static comparison retains the same 120 semantic timer
   sites/75 roots and existing findings. Windows path handling is not the only
   cause: inherited ProjectIndexBindingCard inventory gaps also remain. No green
