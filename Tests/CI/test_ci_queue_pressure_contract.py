@@ -139,7 +139,6 @@ FAST_LANE_TARGETS = (
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
-    "Tests/Architecture/test_layer_direction.py",
     # TASK-25907.23 / 34800: bounded privacy, closed-native and Canvas parity.
     "Tests/Personal_Context/test_context_service.py::test_device_only_additions_cannot_change_context_selection_or_explanation",
     "Tests/Personal_Context/test_context_service.py::test_quarantine_hint_cannot_change_permitted_packing",
