@@ -433,6 +433,9 @@ _BUDGETS: dict[str, int] = {
     # transcript (+31). Dev b5150753eb already measures 8,821 against this
     # row's 8,353; the row moves by this fix's +31 only and does not absorb
     # dev's overrun, so it stays red exactly as on dev.
+    # dev's overrun, so it stays red exactly as on dev. Review follow-up
+    # (2026-10-29, same owner rule): has_escape_layer answers "nothing to
+    # clear" for a transcript with no screen instead of raising (+4).
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
@@ -593,6 +596,9 @@ _BUDGETS: dict[str, int] = {
     # typing (+54). Dev b5150753eb measures 7,024; with the fix, 7,078.
     # Rebased 2026-10-29 onto dev 7b9fb3d555 (7,043 after TASK-33620.15.22):
     # 7,043 + 54 = 7,097.
+    # Review follow-up (2026-10-29, same owner rule): the cue is left off
+    # where it would wrap onto a row the focused draft does not use, so focus
+    # leaving the composer never grows the bar (+17): 7,114.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,

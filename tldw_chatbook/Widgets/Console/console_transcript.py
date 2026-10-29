@@ -6853,11 +6853,15 @@ class ConsoleTranscript(VerticalScroll):
 
     def has_escape_layer(self) -> bool:
         """Whether Esc has a message selection, menu or highlight to clear here."""
-        return (
+        if (
             self.selected_message_id is not None
             or self.selection_manager.state.selection is not None
-            or bool(self._attached_selection_menus())
-        )
+        ):
+            return True
+        try:
+            return bool(self._attached_selection_menus())
+        except NoScreen:  # detached: no screen, so no menu to clear
+            return False
 
     def check_action(
         self, action: str, parameters: tuple[object, ...]

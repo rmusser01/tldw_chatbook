@@ -3912,7 +3912,7 @@ class ConsoleComposerBar(Horizontal):
             draft,
             width,
             self.draft_has_focus,
-            self._focus_cue_suffix(),
+            self._fitting_focus_cue(draft, width),
             self._segments_initialized,
             self._cursor_index,
             self._cursor_display_index() if self._segments_initialized else None,
@@ -3952,7 +3952,7 @@ class ConsoleComposerBar(Horizontal):
 
     def _build_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
-        cue = self._focus_cue_suffix()
+        cue = self._fitting_focus_cue(draft, width)
         if draft:
             focused = self.draft_has_focus
             style_ranges = self._display_draft_style_ranges()
@@ -4009,6 +4009,23 @@ class ConsoleComposerBar(Horizontal):
         except NoScreen:
             return ""
         return f" · {self.FOCUS_CUE}"
+
+    def _fitting_focus_cue(self, draft: str, width: int) -> str:
+        """Return `_focus_cue_suffix` unless it would grow the draft by a row.
+
+        The cue rides on the draft's last row; where it would wrap onto a row
+        the focused draft does not use, it is left off, so focus leaving the
+        composer never resizes the bar. Measures only while the cue shows
+        (focus elsewhere), never on a blink tick.
+        """
+        cue = self._focus_cue_suffix()
+        if cue and draft:
+            rows = self._visible_draft_row_count
+            if rows(draft + cue, width) > rows(
+                draft, width, reserve_trailing_cell=True
+            ):
+                return ""
+        return cue
 
     def set_draft_focusable(self, focusable: bool) -> None:
         """Set whether the draft can take focus, repainting its focus cue.
@@ -4078,7 +4095,7 @@ class ConsoleComposerBar(Horizontal):
             # composer, not only on the draft (which alone PAINTS the caret),
             # so Tab onto a composer button never resizes the bar.
             row_count = self._visible_draft_row_count(
-                f"{draft}{self._focus_cue_suffix()}" if draft else draft,
+                f"{draft}{self._fitting_focus_cue(draft, width)}" if draft else draft,
                 width,
                 reserve_trailing_cell=self.has_focus_within,
             )
