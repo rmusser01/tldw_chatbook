@@ -64,7 +64,11 @@ def test_state_carries_a_clear_hint(tmp_path: Path):
     set_emergency_stop(path, reason="r")
     msg = emergency_stop_state(path).visible_copy()
     assert "stop" in msg.lower()
-    assert "clear" in msg.lower()
+    # TASK-33620.1 AC#4: "clear" alone passed while the copy said only "Clear
+    # it to resume." and never named the command that does it.
+    assert "/emergency-stop clear" in msg
+    assert "Clear it to resume." not in msg
+    assert "scheduled dispatches are held" in msg
 
 
 import pytest
