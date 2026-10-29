@@ -1227,10 +1227,14 @@ MINIMUM_FILES = 2439
 # - task 10 (2026-10-29, TASK-34000.40 N-34, ruling T10-a): Tests/UI/test_library_
 #   notes_import_escape_keeps_running.py (two production-CSS Library boots over
 #   a real import, ~9 s alone at load ~6 and ~24 s at load ~28, no plugin): 929 -> 930.
+# - task 8b (2026-10-29, TASK-34000.29 N-29, ruling T8b-f): Tests/UI/test_library_
+#   notes_trash_pages_and_purges_extended.py (Delete forever: two production-CSS
+#   Library boots over a real ChaChaNotes database and a real lasting-sync store,
+#   ~19 s alone at load ~11, no plugin; its sibling was already ~33 s): 930 -> 931.
 # Rebased 2026-11-20 onto dev d85e90bc9e (2439 entries, floor 2439): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2439 + 14 = 2453.
-MINIMUM_FILES = 2453
+# moves; the floor is the measured entry count: 2439 + 15 = 2454.
+MINIMUM_FILES = 2454
 
 
 def read_census(path: Path) -> list[str]:
