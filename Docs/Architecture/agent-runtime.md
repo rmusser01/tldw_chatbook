@@ -193,6 +193,13 @@ rejection reasons and accepted-ID changes cannot use this path. The runtime pres
 `code_review_submit` error details for the model while ordinary error rendering and
 body-free logs remain unchanged.
 
+Reviewer completion also validates `empty_findings` against that participant's
+accepted findings before publishing intent. Contradictions return `invalid_record`
+with bounded field feedback and the expected boolean; correction uses the same
+submission ID without changing accepted findings. Intermediate coverage can precede
+findings, and accepted submission replays remain immutable. Final sealing still
+independently checks coverage, successful termination and complete capture.
+
 Final review admission is host-only. `AgentService.review_input_capacity` reuses the
 existing message/schema estimator and response reservation for direct requests.
 `_StreamingModelAdapter.review_request_admission` captures a thread-scoped reject-only
