@@ -9425,7 +9425,7 @@ class TestServerCharacterSourceIsolation:
                     initial_character_published.set()
                     await release_initial_character.wait()
                     return
-                if not rows and kwargs.get("noun") == "characters":
+                if not rows and str(kwargs.get("title", "")).startswith("Characters"):
                     cleanup_writer_entered.set()
                     await release_cleanup_writer.wait()
                 await original_update_rows(rows, **kwargs)
@@ -9983,11 +9983,12 @@ class TestServerCharacterSourceIsolation:
                     else "Lore books (?)"
                 )
                 expected_cache = prior_cache
+                # Frame slice B2b: the recovery row has Retry (spec 1.5.4);
+                # dev's copy added "Switch modes and back to retry."
                 expected_recovery = (
-                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
+                    "Dictionaries could not be loaded."
                     if valid_mode == "dictionaries"
-                    else "Lore books could not be loaded.\n"
-                    "Switch modes and back to retry."
+                    else "Lore books could not be loaded."
                 )
 
             assert (

@@ -739,7 +739,6 @@ class TestLibraryMetaRows:
                     ),
                 ),
                 total=1,
-                noun="dictionaries",
             )
             await pilot.pause()
             item_list = screen.query_one("#personas-library-rows")
@@ -760,7 +759,6 @@ class TestLibraryMetaRows:
             await pane.update_rows(
                 (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
                 total=1,
-                noun="characters",
             )
             await pilot.pause()
             item = item_at(screen, 0)
@@ -785,7 +783,6 @@ class TestLibraryMetaRows:
                     ),
                 ),
                 total=1,
-                noun="dictionaries",
             )
             await pilot.pause()
             # SEMANTIC (D14-A): rows are option lines, so the geometry check
@@ -848,7 +845,8 @@ class TestDictionariesList:
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
             empty = screen.query_one("#personas-library-empty", Static)
-            assert "No dictionaries yet" in str(empty.renderable)
+            # The canonical noun (frame slice B2b); dev said "No dictionaries yet".
+            assert "No chat dictionaries yet" in str(empty.renderable)
 
 
 class DetailHarnessApp(ConsolidatedCSSApp):
