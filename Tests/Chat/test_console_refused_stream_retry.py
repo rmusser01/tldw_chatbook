@@ -43,6 +43,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 #: The adapters read provider settings through the guarded config loader;
@@ -69,11 +70,15 @@ class _OpenAICompatibleServer(ThreadingHTTPServer):
         *,
         stream_status: int = 400,
         empty_stream: bool = False,
+        empty_stream_usage: dict[str, Any] | None = None,
+        ignore_stream: bool = False,
         refuse_all: bool = False,
     ) -> None:
         super().__init__(("127.0.0.1", 0), _Handler)
         self.stream_status = stream_status
         self.empty_stream = empty_stream
+        self.empty_stream_usage = empty_stream_usage
+        self.ignore_stream = ignore_stream
         self.refuse_all = refuse_all
         self.stream_flags: list[bool] = []
 
@@ -99,8 +104,24 @@ class _Handler(BaseHTTPRequestHandler):
         streamed = bool(payload.get("stream"))
         server.stream_flags.append(streamed)
         if streamed and server.empty_stream:
-            self._send(200, "text/event-stream", b"data: [DONE]\n\n")
+            body = b""
+            if server.empty_stream_usage is not None:
+                # No text, but the usage of the prompt it read (llama.cpp and
+                # vLLM report it when asked for ``include_usage``).
+                usage_chunk = {
+                    "id": "chatcmpl-empty",
+                    "object": "chat.completion.chunk",
+                    "model": _MODEL,
+                    "choices": [],
+                    "usage": server.empty_stream_usage,
+                }
+                body += f"data: {json.dumps(usage_chunk)}\n\n".encode()
+            body += b"data: [DONE]\n\n"
+            self._send(200, "text/event-stream", body)
             return
+        if streamed and server.ignore_stream:
+            # Answers whole, as JSON, as if ``stream`` had not been sent.
+            streamed = False
         if streamed or server.refuse_all:
             body = json.dumps(
                 {
@@ -259,10 +280,15 @@ def test_self_hosted_refused_stream_is_retried_once_without_streaming(
 
 
 @pytest.mark.loopback_network
-def test_self_hosted_empty_stream_is_retried_once_without_streaming(tmp_path):
+@pytest.mark.parametrize(
+    "provider", ["custom", "custom-ep:box", "vllm"], ids=lambda p: p
+)
+def test_self_hosted_empty_stream_is_retried_once_without_streaming(
+    tmp_path, provider
+):
     """A server that accepts ``stream`` but sends no text cannot stream."""
     with _server(empty_stream=True) as server:
-        gateway, resolution = _resolve("custom", server.base_url)
+        gateway, resolution = _resolve(provider, server.base_url)
         outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
 
     assert outcome.status == "done", _copy(outcome)
@@ -270,6 +296,57 @@ def test_self_hosted_empty_stream_is_retried_once_without_streaming(tmp_path):
     assert server.stream_flags == [True, False]
     assert outcome.total_tokens == _USAGE["total_tokens"]
     assert len(signals.usage_payloads()) == 1
+
+
+@pytest.mark.loopback_network
+def test_custom_endpoint_that_ignores_streaming_is_retried_once(tmp_path):
+    """A Custom endpoint entry streams through the hosted engine, which
+    cannot read a whole JSON answer as a stream: asked again without
+    streaming, its answer is the reply (before: "unexpected provider error").
+    """
+    with _server(ignore_stream=True) as server:
+        gateway, resolution = _resolve("custom-ep:box", server.base_url)
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status == "done", _copy(outcome)
+    assert outcome.final_text == _REPLY
+    assert server.stream_flags == [True, False]
+    assert len(signals.usage_payloads()) == 1
+
+
+@pytest.mark.loopback_network
+def test_empty_stream_usage_is_not_merged_into_the_retry_usage(tmp_path):
+    """The retry's usage is the reply's usage, never key-merged with the
+    empty stream's.
+
+    Review of TASK-37421: the empty stream reported its prompt with a cache
+    read, the retry reported its own prompt and output. Merging the two
+    payloads key by key billed the retry's prompt beside the empty call's
+    ``cached_tokens`` -- a cache read the retry never made -- and the bill
+    read as one call that was mostly cached.
+    """
+    empty_usage = {
+        "prompt_tokens": 21,
+        "completion_tokens": 0,
+        "total_tokens": 21,
+        "prompt_tokens_details": {"cached_tokens": 16},
+    }
+    with _server(empty_stream=True, empty_stream_usage=empty_usage) as server:
+        gateway, resolution = _resolve("custom", server.base_url)
+        outcome, _store, signals = _run_console_reply(tmp_path, gateway, resolution)
+
+    assert outcome.status == "done", _copy(outcome)
+    assert server.stream_flags == [True, False]
+    assert outcome.total_tokens == _USAGE["total_tokens"]
+    payloads = signals.usage_payloads()
+    assert len(payloads) == 1, payloads
+    assert "prompt_tokens_details" not in payloads[0], payloads
+    usage = ProviderUsage.from_provider_payload(
+        payloads[0], provider="custom", model=_MODEL
+    )
+    assert usage.cache_read == 0
+    assert usage.uncached_input == _USAGE["prompt_tokens"]
+    assert usage.output == _USAGE["completion_tokens"]
 
 
 @pytest.mark.loopback_network

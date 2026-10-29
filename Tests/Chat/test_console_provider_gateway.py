@@ -106,7 +106,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ThinkingEnvelope,
 )
-from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError, HostedChatTurn
 
 
 # Real config/TLS/app consumers retain their collection-selected private profile.
@@ -1282,6 +1282,183 @@ async def test_cloud_refused_stream_is_not_retried_by_the_gateway() -> None:
 
     assert calls == [True]
     assert "turn Streaming off" in raised.value.console_copy
+
+
+def _self_hosted_streaming_resolution(
+    provider: str = "custom", execution_key: str = "custom-openai-api"
+) -> ConsoleProviderResolution:
+    return ConsoleProviderResolution(
+        provider=provider,
+        base_url="http://127.0.0.1:8080/v1",
+        model="local-model",
+        ready=True,
+        readiness_key=provider,
+        execution_key=execution_key,
+        streaming=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["refusal", "unreadable"])
+async def test_self_hosted_stream_failing_after_text_is_not_retried(
+    failure: str,
+) -> None:
+    """TASK-37421 review: text already shown means the stream worked.
+
+    A 400 (or an unreadable record) that ends a stream after its first text
+    is a failure of that reply, not a refusal to stream: asking again would
+    show the reply twice, and Streaming is not the fix, so the copy does not
+    name it.
+    """
+    calls: list[bool] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs["streaming"])
+
+        def stream():
+            yield 'data: {"choices": [{"delta": {"content": "partial"}}]}'
+            if failure == "unreadable":
+                raise HostedChatProtocolError("Hosted Chat stream JSON is malformed.")
+            raise ChatBadRequestError(
+                provider="custom-openai-api",
+                message="Streaming is not supported by this server.",
+                status_code=400,
+            )
+
+        return stream()
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    output: list[object] = []
+    with pytest.raises(Exception) as raised:
+        async for item in gateway.stream_chat(
+            _self_hosted_streaming_resolution(), [{"role": "user", "content": "q"}]
+        ):
+            output.append(item)
+
+    assert calls == [True]
+    assert output == ["partial"]
+    assert "turn Streaming off" not in (
+        getattr(raised.value, "console_copy", None) or str(raised.value)
+    )
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_empty_tools_stream_with_terminal_metadata_is_retried() -> (
+    None
+):
+    """TASK-37421 review: a hosted-engine stream that ends cleanly with no
+    text and no tool call is still an empty stream, and is asked again.
+
+    The custom-ep engine reports a terminal turn (finish reason, usage) even
+    when nothing was streamed; that metadata alone is not a reply.
+    """
+    turn = HostedChatTurn(
+        text="",
+        tool_calls=(),
+        assistant_message={"role": "assistant", "content": ""},
+        finish_reason="stop",
+    )
+    calls: list[bool] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs["streaming"])
+        if kwargs["streaming"]:
+            return _TerminalHostedResponse([], turn)
+        return {"choices": [{"message": {"content": "fallback"}}]}
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            _self_hosted_streaming_resolution("custom-ep:box", "custom-hosted"),
+            [{"role": "user", "content": "q"}],
+            tools=TOOLS,
+        )
+    ]
+
+    assert calls == [True, False]
+    assert "fallback" in items
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_retry_failure_is_not_chained_to_the_refused_stream() -> (
+    None
+):
+    """TASK-37421 review: the retry runs after the refusal is handled.
+
+    A retry that fails raises its own error, not one "during handling of" the
+    internal refused-stream signal, so logs and tracebacks show one failure.
+    """
+
+    def adapter(**kwargs):
+        raise ChatBadRequestError(
+            provider="custom-openai-api",
+            message="bad request",
+            status_code=400,
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    with pytest.raises(ChatBadRequestError) as raised:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                _self_hosted_streaming_resolution(),
+                [{"role": "user", "content": "q"}],
+            )
+        ]
+
+    chain: list[BaseException] = []
+    link: BaseException | None = raised.value
+    while link is not None and len(chain) < 10:
+        chain.append(link)
+        link = link.__cause__ or link.__context__
+    assert not any(
+        isinstance(item, gateway_module._StreamFallbackRequired) for item in chain
+    ), chain
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_empty_stream_usage_is_replaced_by_the_retry_usage() -> (
+    None
+):
+    """TASK-37421 review: two calls' usage is never key-merged.
+
+    The empty stream reported its prompt with a cache read; the retry its
+    own prompt and output. The call's usage (what the agent bridge and the
+    trace read) and the turn's bill (the aggregate) are the retry's alone.
+    """
+    retry_usage = {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55}
+
+    def adapter(**kwargs):
+        if kwargs["streaming"]:
+            return iter(
+                (
+                    'data: {"choices": [], "usage": {"prompt_tokens": 50, '
+                    '"completion_tokens": 0, "total_tokens": 50, '
+                    '"prompt_tokens_details": {"cached_tokens": 40}}}',
+                    "data: [DONE]",
+                )
+            )
+        return {
+            "choices": [{"message": {"content": "fallback"}}],
+            "usage": dict(retry_usage),
+        }
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    aggregate = ConsoleProviderStreamSignals()
+    call_view = aggregate.new_usage_call()
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            _self_hosted_streaming_resolution(),
+            [{"role": "user", "content": "q"}],
+            signals=call_view,
+        )
+    ]
+
+    assert items == ["fallback"]
+    assert call_view.usage_snapshot() == retry_usage
+    assert aggregate.usage_payloads() == [retry_usage]
 
 
 @pytest.mark.asyncio
