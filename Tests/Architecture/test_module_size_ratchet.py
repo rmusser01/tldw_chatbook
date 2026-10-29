@@ -582,7 +582,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
-    "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
+    # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
+    # docstring says so.
+    "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     "tldw_chatbook/Chat/console_runtime.py": 6686,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
