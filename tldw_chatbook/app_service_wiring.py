@@ -62,7 +62,7 @@ import os
 import threading
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Mapping  # noqa: UP035
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping  # noqa: UP035
 
 from loguru import logger
 from textual.app import ScreenStackError
@@ -2533,6 +2533,21 @@ class ServiceWiringMixin(
 
         self._daily_report_demo_service = service
 
+    def _sync_v2_note_ids_present(self, note_ids: Iterable[str]) -> set[str]:
+        """Which of ``note_ids`` still have a ChaChaNotes row, deleted or not.
+
+        TASK-34000.29 (final review C-1): ``LocalFirstSyncService``'s
+        ``note_exists`` seam, so a Sync v2 push never carries a purged note's
+        title and text. Read at call time: ``self.chachanotes_db`` is
+        assigned later in ``__init__`` than the sync services are wired. With
+        no Notes database there is no purge to guard, so every id counts as
+        present and nothing is held back.
+        """
+        notes_db = getattr(self, "chachanotes_db", None)
+        if notes_db is None:
+            return {str(note_id) for note_id in note_ids}
+        return set(notes_db.note_ids_present(note_ids))
+
     def _wire_watchlists_and_notifications_services(self) -> None:
         """Initialize source-aware watchlists and local notification services."""
         # task-15463: ONE SubscriptionsDB for this whole wiring. `db_factory`
@@ -3127,6 +3142,9 @@ class ServiceWiringMixin(
             personal_context_runtime_loader=(
                 self._load_personal_context_sync_runtime
             ),
+            # Final review C-1: the purge guard at the only place content
+            # leaves the device, from the ChaChaNotes database.
+            note_exists=self._sync_v2_note_ids_present,
         )
         self.sync_restore_service = SyncRestoreService(
             server_service=self.server_sync_service,

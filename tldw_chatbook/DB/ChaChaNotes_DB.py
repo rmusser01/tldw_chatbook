@@ -19970,6 +19970,38 @@ DELETE FROM keywords
             )
             raise
 
+    def note_ids_present(self, note_ids: Iterable[str]) -> Set[str]:
+        """Return which of ``note_ids`` still have a ``notes`` row, deleted or not.
+
+        TASK-34000.29 (final review C-1): the Sync v2 push asks this once per
+        batch before an upsert leaves the device -- a note deleted for good
+        has no row, so its queued title and text are never pushed; a note in
+        Recently deleted still has one, so its upsert (followed by its
+        delete) may go. The same one-statement ``json_each`` shape as
+        ``live_note_ids``, without the ``deleted = 0`` clause.
+
+        Args:
+            note_ids: Candidate note ids (strings; blanks are ignored).
+
+        Returns:
+            The subset of ``note_ids`` whose ``notes`` row exists.
+
+        Raises:
+            CharactersRAGDBError: For database errors.
+        """
+        ids = sorted({str(note_id) for note_id in note_ids if str(note_id or "")})
+        if not ids:
+            return set()
+        query = "SELECT id FROM notes WHERE id IN (SELECT value FROM json_each(?))"
+        try:
+            cursor = self.execute_query(query, (json.dumps(ids),), redact_params=True)
+            return {row["id"] for row in cursor.fetchall()}
+        except CharactersRAGDBError as e:
+            logger.error(
+                f"Database error checking note ids: exception_type={type(e).__name__}"
+            )
+            raise
+
     @staticmethod
     def normal_note_dispatch_predicate(note_id_sql: str) -> str:
         """Return the shared SQL guard for every ordinary Notes dispatcher.

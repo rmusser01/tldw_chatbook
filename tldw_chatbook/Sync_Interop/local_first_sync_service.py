@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping, Sequence, TYPE_CHECKING
+from typing import Any, Callable, Iterable, Mapping, Sequence, TYPE_CHECKING
+
+from loguru import logger
 
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
@@ -26,6 +28,15 @@ if TYPE_CHECKING:
         NotesOrganizationRepository,
     )
     from tldw_chatbook.tldw_api import SyncV2Envelope
+
+#: The Sync v2 domains that carry a note's title and text (TASK-34000.29,
+#: final review C-1): the coarse ``notes`` domain and the per-note
+#: ``notes.note`` domain. An upsert in either is held back once the note has
+#: been deleted for good.
+NOTE_CONTENT_DOMAINS = frozenset({"notes", "notes.note"})
+#: The operations that may still leave the device for a purged note: they
+#: carry no content, and a pending server-side delete must still propagate.
+NOTE_TOMBSTONE_OPERATIONS = frozenset({"delete", "tombstone"})
 
 
 class LocalFirstSyncService:
@@ -55,6 +66,7 @@ class LocalFirstSyncService:
         personal_context_outbox_dispatcher: Any = None,
         personal_context_service: Any = None,
         personal_context_runtime_loader: Any = None,
+        note_exists: Callable[[Iterable[str]], Iterable[str]] | None = None,
     ) -> None:
         self._producer_lifetime = ProducerLifetime()
         self.server_service = server_service
@@ -66,6 +78,120 @@ class LocalFirstSyncService:
         self.personal_context_outbox_dispatcher = personal_context_outbox_dispatcher
         self.personal_context_service = personal_context_service
         self.personal_context_runtime_loader = personal_context_runtime_loader
+        #: TASK-34000.29 (final review C-1): which of a batch's note ids still
+        #: have a ``notes`` row, deleted or not -- wired from the ChaChaNotes
+        #: database (``CharactersRAGDB.note_ids_present``), never from
+        #: ``local_store`` (the in-memory P2 protocol). One batched lookup per
+        #: push; a note deleted for good has no row, so its queued upsert is
+        #: never pushed, whatever became of the purge-time outbox discard.
+        self.note_exists = note_exists
+
+    def _held_note_ids(self, note_ids: Iterable[str]) -> tuple[set[str], set[str]]:
+        """``(held, purged)`` for the note ids a push batch carries content for.
+
+        ``purged`` are the ids with no ``notes`` row: held back and healed.
+        ``held`` is ``purged``, or EVERY id when the lookup raised -- that
+        fails closed (held this cycle, not healed, retried next time),
+        because a deleted note's words must never leave the device on a
+        guess. With no seam injected (a device without a Notes database has
+        no purge to guard) nothing is held.
+        """
+        ids = sorted({str(note_id) for note_id in note_ids if str(note_id or "")})
+        if not ids or self.note_exists is None:
+            return set(), set()
+        try:
+            present = {str(note_id) for note_id in self.note_exists(ids)}
+        except Exception as error:  # noqa: BLE001 - one normalized boundary
+            logger.warning(
+                "Sync v2 push could not check its note envelopes against the "
+                "notes database; holding them back this cycle: {}",
+                type(error).__name__,
+            )
+            return set(ids), set()
+        purged = {note_id for note_id in ids if note_id not in present}
+        return purged, purged
+
+    @staticmethod
+    def _note_content_envelope_id(
+        domain: Any, operation: Any, object_id: Any
+    ) -> str | None:
+        """The note id an envelope would push content for, or ``None``."""
+        if str(domain) not in NOTE_CONTENT_DOMAINS:
+            return None
+        if str(operation) in NOTE_TOMBSTONE_OPERATIONS:
+            return None
+        note_id = str(object_id or "")
+        return note_id or None
+
+    def _drop_purged_note_outbox_entries(
+        self, outbox_entries: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Skip, and heal, every queued upsert for a note deleted for good.
+
+        TASK-34000.29 (final review C-1). The purge-time discard
+        (``NotesScopeService._discard_purged_note_sync_history``) runs after
+        the purge commits and may fail or never run (the app quit between
+        the two), so the outbox can still hold the note's title and text.
+        This is the one place content leaves the device: a ``notes`` or
+        ``notes.note`` upsert whose note has no row is not pushed, and its
+        history is dropped through ``discard_sync_v2_note_history`` (inside
+        a logged try, so a failed heal retries next cycle instead of
+        pushing). Delete and tombstone envelopes still go out, and a note in
+        Recently deleted still has its row, so its upsert may go.
+        """
+        def content_note_id(entry: Mapping[str, Any]) -> str | None:
+            envelope = entry.get("envelope") or {}
+            return self._note_content_envelope_id(
+                entry.get("domain", envelope.get("domain")),
+                envelope.get("operation"),
+                envelope.get("object_id"),
+            )
+
+        candidates = {
+            note_id
+            for entry in outbox_entries
+            if (note_id := content_note_id(entry)) is not None
+        }
+        if not candidates:
+            return outbox_entries
+        held, purged = self._held_note_ids(candidates)
+        if not held:
+            return outbox_entries
+        kept = [entry for entry in outbox_entries if content_note_id(entry) not in held]
+        for note_id in sorted(purged):
+            try:
+                self.state_repository.discard_sync_v2_note_history(note_id)
+            except Exception as error:  # noqa: BLE001 - the skip already held
+                logger.warning(
+                    "Sync v2 push skipped a purged note's queued upsert but could "
+                    "not drop it from the outbox; it is skipped again next cycle: {}",
+                    type(error).__name__,
+                )
+        return kept
+
+    def _drop_purged_note_outgoing(self, outgoing_parsed: list[Any]) -> list[Any]:
+        """Skip an unsaved upsert for a note deleted for good (no outbox row)."""
+
+        def content_note_id(envelope: Any) -> str | None:
+            return self._note_content_envelope_id(
+                envelope.domain, envelope.operation, envelope.object_id
+            )
+
+        candidates = {
+            note_id
+            for envelope in outgoing_parsed
+            if (note_id := content_note_id(envelope)) is not None
+        }
+        if not candidates:
+            return outgoing_parsed
+        held, _purged = self._held_note_ids(candidates)
+        if not held:
+            return outgoing_parsed
+        return [
+            envelope
+            for envelope in outgoing_parsed
+            if content_note_id(envelope) not in held
+        ]
 
     @_sync_call(delegate=True, local=True)
     async def sync_once(
@@ -234,6 +360,9 @@ class LocalFirstSyncService:
                     str(entry["envelope"].get("object_id") or "")
                 )
             ]
+        # Final review C-1: whatever the organization service, a purged
+        # note's queued upsert never leaves the device (both Notes domains).
+        outbox_entries = self._drop_purged_note_outbox_entries(outbox_entries)
         try:
             outbox_parsed = []
             for entry in outbox_entries:
@@ -257,6 +386,7 @@ class LocalFirstSyncService:
                     if envelope.domain != "notes"
                     or notes_db.is_note_dispatchable(str(envelope.object_id or ""))
                 ]
+            outgoing_parsed = self._drop_purged_note_outgoing(outgoing_parsed)
             validate_outgoing_envelope_scope(
                 dataset_id=str(dataset_id),
                 device_id=str(device_id),
