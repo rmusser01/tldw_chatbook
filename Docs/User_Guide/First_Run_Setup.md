@@ -181,16 +181,16 @@ the line under the field says the moved key replaced it. With the key
 already exported, the step offers
 "Use OPENAI_API_KEY from your environment (found; not stored)" or **Store a
 different key for this app**, which shows the key field; the line under it
-says the variable must be set in the shell that starts chatbook. A saved key
-is used instead of an exported one, and the step says so. If you move to
+says the variable must be set in the shell that starts chatbook. Console uses a
+saved key instead of an exported one, and the step says so. If you move to
 another provider after typing a key, a line under the list says that key
 won't be saved unless you choose its provider (a key setup already saved,
 when you come Back from a later step, gets no such line). When setup saves your
 provider, every other provider whose key is exported, and that your config
 doesn't already decide, is saved with the variable's name
 (`api_key_env_var`). The key itself is never written to `config.toml`, and
-nothing else changes: an `api_key` you add to that provider's table later
-still takes precedence over the variable.
+nothing else changes: Console uses an `api_key` you add to that provider's
+table later instead of the variable.
 
 **Check key** beside the key lists the provider's models with that key — the
 same non-billable check Settings makes — and reads "✓ Key works — OpenAI

@@ -692,7 +692,42 @@ async def test_a_saved_key_that_outranks_the_environment_offers_one_control(
         assert not step.query_one("#setup-provider-key-source").display
         assert step.query_one("#setup-provider-key-actions").display
         key_line = static_text(step, "#setup-provider-key-status")
-        assert "used instead of OPENAI_API_KEY" in key_line
+        # Pre-merge review (2026-10-29), minor 6: scoped to Console, where it
+        # holds for every provider (see the engine-preset test below).
+        assert "Console uses it instead of OPENAI_API_KEY." in key_line
+
+
+@pytest.mark.asyncio
+async def test_a_saved_engine_preset_key_names_only_where_it_outranks_the_variable(
+    monkeypatch,
+):
+    """Pre-merge review (2026-10-29), minor 6: 'It's used instead of
+    TOGETHER_API_KEY' was not true of an engine preset everywhere: the hosted
+    engine reads the variable before the stored key unless its caller passes
+    a key (Docs/Architecture/llm-providers.md, "Credential precedence").
+    Console passes readiness's key, which is the stored one, so the line
+    scopes the claim to Console."""
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+
+    async def no_scan(_config, **_kwargs):
+        return ()
+
+    monkeypatch.setattr(local_server_discovery, "discover_local_servers", no_scan)
+    wizard = resumed_on_provider(
+        lambda config: config.setdefault("api_settings", {})
+        .setdefault("together", {})
+        .update(api_key="tgp-saved-" + "s" * 40)
+    )
+    monkeypatch.setenv("TOGETHER_API_KEY", "tgp-exported-" + "e" * 40)
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        await wait_for_step(pilot, wizard, STEP_PROVIDER)
+        _c, step = current_step(wizard)
+        await pick_provider(pilot, step, "together")
+        assert step._credential_at_request_boundary()[0] == "stored"
+        key_line = static_text(step, "#setup-provider-key-status")
+        assert "Console uses it instead of TOGETHER_API_KEY." in key_line
+        assert "It's used instead of" not in key_line
 
 
 async def _custom_at(pilot, step, endpoint: str) -> None:
