@@ -204,7 +204,7 @@ async def test_an_unanswered_key_check_keeps_the_listing_and_verifies_nothing(
     assert result.status == "success"
     assert [model.model_id for model in result.models] == ["openai/gpt-4.1-mini"]
     assert result.key_verified is False
-    assert key_check_probe_result(result, key_sent=True).key_accepted is False
+    assert key_check_probe_result(result, key_sent=True).key_check_passed is False
 
 
 @pytest.mark.asyncio
@@ -300,6 +300,25 @@ async def test_a_key_for_another_host_is_never_sent_to_the_key_check(
 def test_a_listing_accepts_a_key_only_when_something_checked_it(
     provider: str, verified: bool, accepted: bool
 ) -> None:
+    """The probe reports the listing and the key check separately; the
+    evidence record decides whether the key was accepted (spec §5).
+
+    ``key_accepted`` keeps dev's meaning -- the listing answered the key it was
+    sent -- and ``key_check_passed`` carries the authenticated check
+    (``ModelDiscoveryResult.key_verified``). TASK-34100.6's wizard Check key
+    reads exactly that pair: an answered public listing whose key check did
+    not pass says 'its model list answers without a key', not 'answered with
+    an empty model list'. Settings still records an accepted key only for an
+    authenticated listing or a passed key check.
+    """
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderDraftIdentity,
+        ProviderTestEvidenceStore,
+        connection_credential_revision,
+    )
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
         DiscoveredModel,
         ModelDiscoveryResult,
@@ -327,7 +346,21 @@ def test_a_listing_accepts_a_key_only_when_something_checked_it(
     probe = key_check_probe_result(result, key_sent=True)
 
     assert probe is not None
-    assert probe.key_accepted is accepted
+    assert probe.key_accepted is True  # the listing answered the key it was sent
+    assert probe.key_check_passed is verified
+    identity = ProviderDraftIdentity(
+        provider_key=provider,
+        connection_identity=canonical_connection_identity(
+            provider, "https://example.test/v1"
+        ),
+        credential_source="stored",
+        credential_revision=connection_credential_revision(_KEY),
+        draft_generation=0,
+    )
+    app = type("App", (), {})()
+    store = ProviderTestEvidenceStore(lambda: app)
+    assert store.settle(store.begin(identity), probe)
+    assert (store.evidence_for(identity).credential == "listing_accepted") is accepted
 
 
 # --- Gemini: native listing doubles as the key check -------------------------
