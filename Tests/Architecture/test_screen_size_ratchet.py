@@ -1202,7 +1202,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: line, the note save passes ``explicit`` to its outcome, and every
     #: reset of the analysis form resets its save guard: 38781 -> 38796
     #: lines, 1397 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38796, 1397),
+    #: 2026-10-29, TASK-34000.40 Task 10 (N-34; owner decision "expand limits,
+    #: don't contort code"): the Notes import tier's Escape chip splits by phase
+    #: (``esc cancel`` while checking, ``esc notes`` while importing, ruling
+    #: T10-e) and F1 starts from the footer the screen paints, keeping F6:
+    #: 38796 -> 38812 lines, 1397 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38812, 1397),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

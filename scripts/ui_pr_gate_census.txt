@@ -1377,3 +1377,4 @@ Tests/UI/test_library_ctrl_s_saves_in_every_editor_skills.py
 Tests/UI/test_library_ctrl_s_saves_in_every_editor_extended.py
 Tests/UI/test_library_ctrl_s_chip_follows_save_state.py
 Tests/UI/test_library_ctrl_s_refusals.py
+Tests/UI/test_library_notes_import_escape_keeps_running.py

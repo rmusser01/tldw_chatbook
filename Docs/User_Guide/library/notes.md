@@ -793,7 +793,14 @@ stage exactly one choice:
 - **Skip for now** changes nothing. The conflict stays in **Needs attention**
   and can be reviewed later.
 
-Staging or changing a choice does not alter either authority. **Apply
+Staging or changing a choice does not alter either authority. Choices you
+stage in a review are kept while the folder is unchanged, even if you leave and
+come back: the status line then reads "Choice staged. No changes yet." (or "2
+choices staged. No changes yet."), and nothing is applied until you choose
+**Apply reviewed**. A folder that changed in the meantime gets a fresh review
+with no choices staged. A review opened from **Manage sync folders** offers
+**‹ Sync folders** to go back there; one reached from **Add from files…** offers
+**‹ Notes**. **Apply
 reviewed** rechecks the whole review against fresh file and note state, applies
 the safe actions and selected conflict resolutions that are still valid, and
 can finish partially when some rows were skipped. If anything changed since
@@ -1193,7 +1200,11 @@ selected items unavailable — Choose how to handle the folder name
 collision."), as **Check selection** does before a source is chosen.
 
 Progress remains visible and **Cancel import** stops cooperatively after the
-current item; completed items are not rolled back. Progress counts *planned
+current item; completed items are not rolled back. Escape leaves the import
+running (use **Cancel import** to stop it): it returns to the Notes list, as
+**‹ Notes** does, and the footer reads `esc notes` meanwhile. While the
+selection is still being checked, Escape cancels the check instead (`esc
+cancel`) and keeps you on the import with your selection. Progress counts *planned
 changes* — one per note a source creates, one per source otherwise — so a
 two-note CSV is two of them; the line says so ("67 of 67 planned changes
 complete").
@@ -1211,9 +1222,10 @@ created, with the count on its label. A file the app skipped for you — an unch
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry
-unfinished items**. **‹ Notes** may hide a running import without
+unfinished items**. **‹ Notes** or Escape may hide a running import without
 stopping it; the list then offers **View import** or **Continue import** until
-it settles. **Last import** reopens the same-session receipt afterward.
+it settles, and **View import** reopens the running import with its progress
+and **Cancel import**. **Last import** reopens the same-session receipt afterward.
 
 #### Obsidian vaults
 
