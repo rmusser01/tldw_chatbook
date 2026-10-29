@@ -1,5 +1,34 @@
 # Lessons: what counts as evidence a change works
 
+## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
+
+**Incident.** PR #3291 passed its focused Console/Notes journeys and screen
+ratchets, but required CI rejected 14 clipboard-revision member lines in
+`app.py` (5726 versus 5712). The existing `TextualAppGuards` aggregate explicitly
+owns cross-cutting App guards without adding App lines or boot imports. Moving
+the unchanged members there passed the exact App ceiling/slack checks and the
+real-App clipboard race tests without raising a pin or changing transport.
+
+**What to do.** Include the module-size ratchet node for the composition root
+when a UI feature touches it; screen-size checks are a different census. Put
+new App-level guards in the existing aggregate and verify the actual App MRO.
+
+## Reachable geometry can still paint over a focused label (TASK-37300, 2026-10-28)
+
+**Incident.** PR #3291's short-terminal More-menu test kept the last button inside
+the menu and successfully clicked it through shrink/grow cycles. Native UAT's
+rendered frame showed only a heavy border where the focused label belonged:
+the menu's local focus outline covered its one-row button. A compositor-strip
+assertion for the expected shortened label reproduced the failure. Removing the
+local outline override let the canonical Button focus fill/ink and text cue apply.
+The same paint assertion then showed long labels wrapping below the only visible
+row; single-line ellipsis preserves their identifying prefix.
+
+**What to do.** Check the painted action label as well as its region, focus and
+click outcome, especially on one-row controls. Reuse the design language's
+non-obscuring focus contract; a successful event alone does not prove a person
+can identify its target.
+
 ## A successful wrong-family tool call is not project evidence (TASK-37234, 2026-10-28)
 
 **Incident.** The Fedora follow-up to PR #3284 recorded successful directory listings,
@@ -21346,6 +21375,16 @@ another yield. The same controlled lifecycle and both original Delete/Undo
 journeys pass. The CI schedule itself was not captured; this control proves
 the helper defect, not a historical request/epoch cause.
 Evidence: [Buddy closeout receipt](../../Docs/Reviews/artifacts/buddy-closeout-20261011/verification.json).
+
+2026-10-28 recurrence, PR3291: the older Notes sync attention journey still
+waited for any folder before calling `next(VSync)` inside its status predicate.
+Required UI lane9 failed with `RuntimeError: coroutine raised StopIteration`.
+Reuse the existing settled-canvas live-button helper for exact `folder-1`, and
+let polling predicates retry when it is absent. Executing the old/new predicate
+ASTs against delayed folder snapshots reproduced both old held/healed failures;
+the fixed waits survive both and refuse a pruning canvas. All real sync Recovery,
+database and file-byte assertions remain for the Linux job; the Windows host
+does not support that POSIX writable fixture.
 
 ## A safe output wrapper cannot protect an earlier markup parse (PR #3040, TASK-1513)
 

@@ -133,6 +133,7 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSelectionNoteRequested,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
+    ConsoleTraceCopyRequested,
     selection_menus_on_screen,
 )
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
@@ -1876,7 +1877,12 @@ class ConsoleMarkdownMessage(Vertical):
             return
         start, end = self._selection_line_range
         text = self.get_display_text()
-        selected = cap_quote(text[max(0, start) : min(end, len(text))])
+        full_selection = text[max(0, start) : min(end, len(text))]
+        selected = cap_quote(full_selection)
+        if len(selected) < len(full_selection):
+            selected += (
+                f"\n{len(full_selection):,} characters selected (preview abbreviated)."
+            )
         strip.update(Text(selected, style="reverse"))
         strip.display = bool(selected)
 
@@ -2110,6 +2116,7 @@ class ConsoleTranscriptMessage(Vertical):
         # Text-selection range over the BODY text domain (header excluded),
         # console selection phase 1. None = no highlight.
         self._selection_range: tuple[int, int] | None = None
+        self._full_body_selected = False
         # TASK-21114: cached body render (``get_display_text`` derives its
         # ``.plain`` from it). Rebuilt lazily; invalidated in ``sync_message``
         # -- the single seam where ``_message``/``_presentation`` are
@@ -2175,6 +2182,10 @@ class ConsoleTranscriptMessage(Vertical):
         """Return the plain body text this row renders (selection domain)."""
         return self._body_render_content().plain
 
+    def get_body_source_text(self) -> str:
+        """Return the current canonical body without rendered row chrome."""
+        return _assistant_markdown_body(self._message, self._presentation)
+
     def get_selection_text(self, *, capped: bool = True) -> str:
         """Return the currently highlighted text.
 
@@ -2187,14 +2198,26 @@ class ConsoleTranscriptMessage(Vertical):
         """
         if self._selection_range is None:
             return ""
-        start, end = sorted(self._selection_range)
-        text = self.get_display_text()
-        start, end = max(0, start), min(end, len(text))
-        selected = text[start:end]
+        if self._full_body_selected:
+            selected = self.get_body_source_text()
+        else:
+            start, end = sorted(self._selection_range)
+            text = self.get_display_text()
+            start, end = max(0, start), min(end, len(text))
+            selected = text[start:end]
         return cap_quote(selected) if capped else selected
 
-    def set_selection_range(self, start: int, end: int) -> None:
-        """Highlight ``[start, end)`` in the body and re-render it."""
+    def set_selection_range(
+        self, start: int, end: int, *, full_body: bool = False
+    ) -> None:
+        """Highlight the display range and choose its clipboard/note payload.
+
+        Args:
+            start: First displayed character to highlight.
+            end: Exclusive displayed character boundary.
+            full_body: Copy the canonical body rather than rendered row text.
+        """
+        self._full_body_selected = full_body
         if self._selection_range == (start, end):
             # TASK-21114: unchanged range -- the highlight already shows it;
             # skip the full-body re-render (drags re-send the same range at
@@ -2205,6 +2228,7 @@ class ConsoleTranscriptMessage(Vertical):
 
     def clear_selection(self) -> None:
         """Remove any highlight and re-render the plain body."""
+        self._full_body_selected = False
         if self._selection_range is None:
             return
         self._selection_range = None
@@ -2217,6 +2241,9 @@ class ConsoleTranscriptMessage(Vertical):
         contains the range start, drop the selection entirely.
         """
         if self._selection_range is None:
+            return
+        if self._full_body_selected:
+            self._selection_range = (0, len(self.get_display_text()))
             return
         start, end = self._selection_range
         new_len = len(self.get_display_text())
@@ -6222,6 +6249,14 @@ class ConsoleTranscript(VerticalScroll):
             # guard for unmeasured owners.
             screen_size = self.screen.size
             bounds = Region(0, 0, screen_size.width, screen_size.height)
+        from ...Chat.console_ephemeral import blocked_reason
+
+        source_session_id = (
+            self._session_identity
+            if isinstance(self._session_identity, str) and self._session_identity
+            else None
+        )
+        response_message_id = self._selection_response_owner(origin_row)
         self.screen.mount(
             ConsoleSelectionMenu(
                 screen_x=self._clamp_menu_offset(
@@ -6234,8 +6269,115 @@ class ConsoleTranscript(VerticalScroll):
                 feedback_available=feedback_available,
                 run_active=feedback_available and self._selection_run_active(),
                 selection_top=selection_top,
+                has_copy_all=source_session_id is not None
+                and response_message_id is not None,
+                has_copy_all_messages=source_session_id is not None,
+                has_select_full_message=self._selection_is_message_body(origin_row),
+                source_session_id=source_session_id,
+                source_message_ids=tuple(
+                    message.id
+                    for message in self._messages
+                    if message.role
+                    in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+                ),
+                response_message_id=response_message_id,
+                selection_row_id=origin_row.id if origin_row is not None else None,
+                note_disabled_reason=blocked_reason(
+                    "save-as-note",
+                    ephemeral=self._console_ephemeral_active(),
+                )
+                or "",
             )
         )
+
+    def _selection_response_owner(self, row) -> str | None:
+        if row is None:
+            return None
+        message_id = getattr(row, "message_id", None)
+        ownership = self._ownership_by_message_id().get(message_id)
+        owner = self._message_by_id(ownership[0]) if ownership is not None else None
+        if owner is not None and owner.role == ConsoleMessageRole.ASSISTANT:
+            return owner.id
+        return None
+
+    def _selection_is_message_body(self, row) -> bool:
+        if not isinstance(row, (ConsoleTranscriptMessage, ConsoleMarkdownMessage)):
+            return False
+        message = self._message_by_id(row.message_id)
+        if message is None or message.role not in {
+            ConsoleMessageRole.USER,
+            ConsoleMessageRole.ASSISTANT,
+        }:
+            return False
+        return bool(
+            row.get_body_source_text()
+            if isinstance(row, ConsoleTranscriptMessage)
+            else row.get_display_text()
+        )
+
+    def select_full_message_text(self) -> bool:
+        """Select the complete current body without shortening copied/saved text.
+
+        Returns:
+            True for a nonempty selectable message body, otherwise False.
+        """
+        row = self._active_selection_row()
+        if not self._selection_is_message_body(row):
+            return False
+        text = row.get_display_text()
+        if not text:
+            return False
+        self.selection_manager.begin_drag(row.id, 0)
+        self.selection_manager.extend_drag(row.id, len(text))
+        if isinstance(row, ConsoleTranscriptMessage):
+            row.set_selection_range(0, len(text), full_body=True)
+        else:
+            row.set_selection_range(0, len(text))
+        self.selection_manager.finish_drag()
+        self.selection_manager.consume_just_finished()
+        self.selection_manager.consume_release_click()
+        if self._kb_selection_row is row:
+            self._kb_anchor, self._kb_end = 0, len(text)
+        for menu in self._attached_selection_menus():
+            menu.query_one("#console-selection-copy", Button).focus(
+                scroll_visible=False
+            )
+        return True
+
+    @on(ConsoleSelectionMenu.SelectFullMessage)
+    def _selection_select_full_message(
+        self, event: ConsoleSelectionMenu.SelectFullMessage
+    ) -> None:
+        event.stop()
+        row = self._active_selection_row()
+        if (
+            row is not None
+            and row.id == event.row_id
+            and (event.session_id is None or event.session_id == self._session_identity)
+        ):
+            self.select_full_message_text()
+
+    @on(ConsoleSelectionMenu.CopyAll)
+    def _selection_copy_all(self, event: ConsoleSelectionMenu.CopyAll) -> None:
+        event.stop()
+        if (
+            isinstance(event.session_id, str)
+            and event.session_id == self._session_identity
+            and (
+                event.message_id is None
+                or self._message_by_id(event.message_id) is not None
+            )
+        ):
+            self.post_message(
+                ConsoleTraceCopyRequested(
+                    event.session_id,
+                    message_id=event.message_id,
+                    source_message_ids=event.source_message_ids,
+                )
+            )
+        self._remove_selection_menu()
+        self.selection_manager.cancel()
+        self._selection_origin_row = None
 
     @staticmethod
     def _clamp_menu_offset(value: int, low: int, high: int, *, margin: int) -> int:
@@ -6349,14 +6491,22 @@ class ConsoleTranscript(VerticalScroll):
         """Save the active selection as a note (task-18156 Task 6).
 
         Same quote plumbing and cleanup as ``_selection_add_to_chat``: the
-        capped quote leaves the transcript in an app-level message; the
+        full selection leaves the transcript in an app-level message; the
         owning screen derives the title and writes the note off-thread.
         """
         event.stop()
         row = self._active_selection_row()
-        if row is not None:
+        if (
+            row is not None
+            and (event.row_id is None or event.row_id == row.id)
+            and (event.session_id is None or event.session_id == self._session_identity)
+        ):
             self.post_message(
-                ConsoleSelectionNoteRequested(quote=cap_quote(row.get_selection_text()))
+                ConsoleSelectionNoteRequested(
+                    quote=row.get_selection_text(capped=False),
+                    source_session_id=event.session_id,
+                    open_note=event.open_note,
+                )
             )
             row.clear_selection()
         self.selection_manager.cancel()
@@ -8622,10 +8772,25 @@ class ConsoleTranscript(VerticalScroll):
             return
 
     def dispatch_captured_message_action(
-        self, message_id: str, action_id: str, *, opener_button_id: str
+        self,
+        message_id: str,
+        action_id: str,
+        *,
+        opener_button_id: str,
+        source_session_id: str | None = None,
     ) -> None:
         """Post one controller-compatible action after the menu detached."""
         self._restore_message_action_focus(opener_button_id)
+        if action_id == "copy-all":
+            if (
+                source_session_id == self._session_identity
+                and isinstance(source_session_id, str)
+                and self._message_by_id(message_id) is not None
+            ):
+                self.post_message(
+                    ConsoleTraceCopyRequested(source_session_id, message_id=message_id)
+                )
+            return
         button = Button("", id=f"console-message-action-{action_id}-{message_id}")
         button.console_action_id = action_id
         button.console_message_id = message_id
@@ -8635,12 +8800,16 @@ class ConsoleTranscript(VerticalScroll):
         self, message_id: str, action_id: str, *, opener_button_id: str
     ) -> None:
         """Detach More in a separate message turn, then dispatch its capture."""
+        source_session_id = (
+            self._session_identity if isinstance(self._session_identity, str) else None
+        )
         await self.dismiss_message_more_menu(restore_focus=False)
         self.call_later(
             self.dispatch_captured_message_action,
             message_id,
             action_id,
             opener_button_id=opener_button_id,
+            source_session_id=source_session_id,
         )
 
     def _focus_action_button(self, message_id: str, action_id: str) -> None:

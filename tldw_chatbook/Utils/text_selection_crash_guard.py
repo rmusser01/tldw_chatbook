@@ -7,6 +7,8 @@ docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class),
 and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
 not swallow the next key).
 The aggregate also selects a resize-capable native Windows driver (TASK-37173).
+It tracks clipboard write intent so older asynchronous copies cannot publish
+over a later user copy (TASK-37300).
 They share a module so a new App-level guard costs neither another ``app.py``
 line (size ratchet) nor another boot-path module (ADR-097 census).
 
@@ -306,6 +308,20 @@ class TextualAppGuards(
     DetachedFocusGuard, TextSelectionCrashGuard, UserInputTap, ThreadWorkerContextGuard
 ):
     """Every guard in this module; add BEFORE ``App`` in the base list."""
+
+    @property
+    def clipboard_revision(self) -> int:
+        """Return the revision of the latest in-app clipboard write intent."""
+        return getattr(self, "_clipboard_revision", 0)
+
+    def copy_to_clipboard(self, text: str) -> None:
+        """Copy text and invalidate earlier asynchronous clipboard requests.
+
+        Args:
+            text: Text to send through the existing clipboard transport.
+        """
+        self._clipboard_revision = self.clipboard_revision + 1
+        super().copy_to_clipboard(text)  # type: ignore[misc]
 
     def get_driver_class(self) -> type[Driver]:
         """Enable native Windows resize reporting while preserving custom drivers.

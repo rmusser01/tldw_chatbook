@@ -592,8 +592,9 @@ the focused action, and **Esc** clears the selection. Four shortcuts act
 on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
 **r** Regenerate — or, on a row that shows **Retry** or **Resend** in that
 slot, that action.
-While a reply is still generating, every action is disabled with the
-tooltip "Wait for response to finish before using message actions."
+While a reply is still generating, the regular row actions are disabled with
+the tooltip "Wait for response to finish before using message actions."
+**More… ▸ Copy all** remains available for its current response trace.
 
 In a long chat Console draws only the part of the transcript around what you
 are reading, and loads more as you scroll. When a message is selected for
@@ -611,13 +612,16 @@ scrolled in the meantime.
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
 **Regenerate/Retry/Resend** when applicable, **Continue** when applicable, and
-**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
+**More…**. The menu contains **Copy all** for assistant responses,
+**Save as…**, **Helpful**, **Not helpful**,
 **Delete**, and — on a finished assistant reply — the three note actions
 **Capture as note**, **Summarize up to** (here as note) and **Save
 transcript** (up to here as note), when those actions are available; the
 diagnostic **View original** also appears there when an original attempt can
-be shown safely. The menu is 24 cells wide and cuts a long label at about
-fifteen characters, which is why the last two read short.
+be shown safely. Long labels stay on one row and end with an ellipsis when
+needed, so their identifying words remain visible even while focused.
+In a short terminal the menu scrolls; **↑/↓** bring the focused action into
+view, including after resizing.
 
 | Action | What it does | Where it appears |
 |---|---|---|
@@ -654,6 +658,14 @@ fifteen characters, which is why the last two read short.
 ### Copy a reply
 1. Click the reply, or move to it with j/k.
 2. Press **c** or click **Copy** — toast: "Copied message to clipboard."
+
+For the complete retained response trace, choose **More… ▸ Copy all**. It
+includes thinking, tool arguments and full retained results even when those
+sections are collapsed. A text selection also offers **Copy all messages** for
+the entire current chat's active branch and **Select full message** for the
+whole current body. **Create Note** and **Create+Go to Note** save the full
+selection without the prompt quote limit. See [text selection & feedback](text-selection-and-feedback.md)
+for the scopes, note actions, and terminal clipboard limits.
 
 ### Retry a failed reply
 1. Select the reply tagged "[failed]".

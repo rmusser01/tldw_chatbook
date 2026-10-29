@@ -2218,6 +2218,103 @@ class ConsoleMessageController:
                 f"Saved {len(written)} images to {escape_markup(str(save_location))}"
             )
 
+    async def save_console_selection_note(self, title: str, content: str) -> str | None:
+        """Save selected text through local Notes authority on a finite worker.
+
+        Args:
+            title: Derived note title.
+            content: Full selected text with captured source provenance.
+
+        Returns:
+            The exact created note ID, or None when Notes is unavailable.
+        """
+        service = getattr(self.app_instance, "notes_scope_service", None)
+        if service is None or not callable(getattr(service, "save_note", None)):
+            return None
+        user_id = self._console_notes_owner_id()
+
+        def save_local():
+            from ...DB.base_db import operation_owned_connection
+
+            local = service.local_notes_service
+            # A first-use route opens its initial handle before the operation
+            # context can observe it. Only that newly created route's worker
+            # handle needs explicit retirement; borrowed handles stay borrowed.
+            previous = getattr(local, "_db_instances", {}).get(user_id)
+            database = local.notes_db(user_id)
+            try:
+                with operation_owned_connection(database), local.bound_notes_db(
+                    user_id, database
+                ):
+                    result = service.save_note(
+                        scope=ScopeType.LOCAL_NOTE.value,
+                        title=title,
+                        content=content,
+                        user_id=user_id,
+                        keywords=["console"],
+                    )
+                    return (
+                        asyncio.run(result) if inspect.isawaitable(result) else result
+                    )
+            finally:
+                if previous is not database and not database.is_memory_db:
+                    database.close()
+
+        result = await asyncio.to_thread(save_local)
+        note_id = result.get("id") if isinstance(result, Mapping) else result
+        return note_id if isinstance(note_id, str) and note_id else None
+
+    def open_console_selection_note(self, note_id: str) -> bool:
+        """Request Library navigation to an already-created note.
+
+        Args:
+            note_id: Exact identifier returned by Notes creation.
+
+        Returns:
+            Whether the navigation request was accepted for dispatch.
+        """
+        from ...Constants import LIBRARY_NAV_CONTEXT_NOTE_ID, TAB_LIBRARY
+        from ..Navigation.main_navigation import NavigateToScreen
+
+        store = self._ensure_console_chat_store()
+        source_session_id = store.active_session_id
+
+        def source_is_current() -> bool:
+            return (
+                store.active_session_id == source_session_id
+                and self._screen.is_mounted
+                and self._screen.app.screen is self._screen
+            )
+
+        async def offer_if_current() -> None:
+            if source_is_current():
+                await self._offer_captured_note_handoff(note_id)
+
+        def completed(succeeded: bool) -> None:
+            if succeeded:
+                return
+            self.app_instance.notify(
+                f"Note saved ({escape_markup(note_id)}), but it could not be opened.",
+                severity="warning",
+            )
+            if source_is_current():
+                self.run_worker(
+                    offer_if_current(),
+                    group="console-selection-note-open",
+                    exclusive=True,
+                    exit_on_error=False,
+                )
+
+        return bool(
+            self.app_instance.post_message(
+                NavigateToScreen(
+                    TAB_LIBRARY,
+                    {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id},
+                    on_completion=completed,
+                )
+            )
+        )
+
     def _console_notes_owner_id(self) -> str:
         """Return the identity every Console note write is saved under.
 
@@ -2300,10 +2397,7 @@ class ConsoleMessageController:
         await self.push_screen(
             ConfirmationDialog(
                 title="Saved to Notes",
-                message=(
-                    "The answer is now a note in Library ▸ Notes, tagged with "
-                    "this conversation."
-                ),
+                message="The note was saved in Library ▸ Notes.",
                 confirm_label="Open note",
                 cancel_label="Stay in Console",
             ),

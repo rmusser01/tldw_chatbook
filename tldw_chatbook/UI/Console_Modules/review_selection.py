@@ -69,6 +69,28 @@ class _SelectionFeedbackRequest(BaseModel):
         return value
 
 
+class _SelectionNoteRequest(BaseModel):
+    """Strict selection capture, independent of the prompt quote limit."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    quote: str = Field(min_length=1)
+    source_session_id: str | None = Field(default=None, min_length=1, max_length=255)
+    open_note: bool = False
+
+    @field_validator("quote")
+    @classmethod
+    def _validate_quote(cls, value: str) -> str:
+        from ...Utils.input_validation import validate_text_input
+
+        if not value.strip() or not validate_text_input(
+            value,
+            max_length=len(value),
+            allow_html=True,
+        ):
+            raise ValueError("invalid selected text")
+        return value
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleTrajectoryLaunch:
     """Presentation data for one lazily opened trajectory view."""
@@ -315,6 +337,12 @@ class ConsoleReviewSelectionController:
         marshal_to_ui: Callable[..., None],
         present_trajectory: Callable[..., None],
         notify: Callable[..., None],
+        copy_to_clipboard: Callable[[str], None] | None = None,
+        clipboard_revision_accessor: Callable[[], int | None] | None = None,
+        selection_note_context_active: Callable[[], bool] | None = None,
+        save_selection_note: Callable[[str, str], Awaitable[str | None]] | None = None,
+        open_selection_note: Callable[[str], bool] | None = None,
+        offer_selection_note_open: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the controller from explicit, late-bound collaborators.
 
@@ -334,6 +362,12 @@ class ConsoleReviewSelectionController:
             marshal_to_ui: Marshal a callback onto the UI thread.
             present_trajectory: Present a completed trajectory launch.
             notify: Show a user-facing Console notification.
+            copy_to_clipboard: Send the completed trace on the UI thread.
+            clipboard_revision_accessor: Latest app clipboard intent revision.
+            selection_note_context_active: Whether the source Console is foreground.
+            save_selection_note: Persist the full selection through Notes authority.
+            open_selection_note: Hand off the exact saved note to Library.
+            offer_selection_note_open: Offer retry of a failed handoff without saving again.
         """
         self._store_accessor = store_accessor
         self._agent_conversation_id_accessor = agent_conversation_id_accessor
@@ -350,9 +384,155 @@ class ConsoleReviewSelectionController:
         self._marshal_to_ui = marshal_to_ui
         self._present_trajectory = present_trajectory
         self._notify = notify
+        self._copy_to_clipboard = copy_to_clipboard
+        self._clipboard_revision_accessor = clipboard_revision_accessor
+        self._selection_note_context_active = selection_note_context_active or (
+            lambda: True
+        )
+        self._trace_copy_serial = 0
+        self._save_selection_note = save_selection_note
+        self._open_selection_note = open_selection_note
+        self._offer_selection_note_open = offer_selection_note_open
+        self._selection_note_inflight: set[str] = set()
         self.annotation_loaded_conversation: str | None = None
         self.annotation_previews: dict[str, tuple[str, ...]] = {}
         self.selection_feedback_inflight = False
+
+    def request_selection_action(self, request: Any) -> None:
+        """Adapt a selection request's value payload to its policy entry point.
+
+        Args:
+            request: Trace-copy or note-creation message, without DOM authority.
+        """
+        from ...Widgets.Console.console_selection_menu import ConsoleTraceCopyRequested
+
+        if isinstance(request, ConsoleTraceCopyRequested):
+            self.request_trace_copy(
+                request.session_id,
+                message_id=request.message_id,
+                source_message_ids=request.source_message_ids,
+            )
+        else:
+            self.request_selection_note(
+                request.quote,
+                source_session_id=request.source_session_id,
+                open_note=request.open_note,
+            )
+
+    def request_trace_copy(
+        self,
+        session_id: str,
+        *,
+        message_id: str | None = None,
+        source_message_ids: tuple[str, ...] | None = None,
+    ) -> None:
+        """Capture one explicit source before scheduling trace formatting.
+
+        Args:
+            session_id: Source chat captured by the invoking menu.
+            message_id: Response/owned activity ID, or None for the whole chat.
+            source_message_ids: Menu's captured path; refuse a replacement branch.
+        """
+        self._trace_copy_serial += 1
+        serial = self._trace_copy_serial
+        if self._copy_to_clipboard is None:
+            self._notify("Clipboard is unavailable.", severity="warning")
+            return
+        try:
+            store = self._store_accessor()
+            messages = tuple(store.read_only_messages_for_session(session_id))
+            clipboard_revision = (
+                self._clipboard_revision_accessor()
+                if self._clipboard_revision_accessor is not None
+                else None
+            )
+            if source_message_ids is not None:
+                from ...Chat.console_chat_models import ConsoleMessageRole
+
+                current_ids = tuple(
+                    message.id
+                    for message in messages
+                    if message.role
+                    in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+                )
+                if current_ids != source_message_ids:
+                    self._notify(
+                        "The chat branch changed. Select text again to copy it.",
+                        severity="warning",
+                    )
+                    return
+            title = next(
+                (
+                    session.title
+                    for session in store.sessions()
+                    if session.id == session_id
+                ),
+                "Console",
+            )
+        except Exception:
+            self._notify("The source chat is no longer available.", severity="warning")
+            return
+        self._run_worker(
+            self._copy_trace_snapshot(
+                messages, title, message_id, serial, clipboard_revision
+            ),
+            group="console-trace-copy",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _copy_trace_snapshot(
+        self, messages, title, message_id, serial, clipboard_revision=None
+    ) -> None:
+        """Format detached data off-thread and reject superseded publication."""
+
+        def render():
+            from ...Chat.console_response_trace import (
+                find_response_turn,
+                render_chat_trace_markdown,
+                render_response_trace_markdown,
+            )
+
+            if message_id is None:
+                return render_chat_trace_markdown(messages, title=title)
+            turn = find_response_turn(messages, message_id)
+            return render_response_trace_markdown(turn) if turn is not None else None
+
+        try:
+            text = await asyncio.to_thread(render)
+            if serial != self._trace_copy_serial:
+                return
+            if (
+                clipboard_revision is not None
+                and self._clipboard_revision_accessor is not None
+                and self._clipboard_revision_accessor() != clipboard_revision
+            ):
+                return
+            if text is None:
+                self._notify(
+                    "There is no response or chat content to copy.", severity="warning"
+                )
+                return
+            size_kib = max(1, round(len(text.encode("utf-8")) / 1024))
+            self._copy_to_clipboard(text)
+        except Exception as error:
+            if serial == self._trace_copy_serial:
+                logger.warning("Console trace copy failed: {}", type(error).__name__)
+                self._notify(
+                    "Could not send the trace to the clipboard.", severity="warning"
+                )
+            return
+        if message_id is None:
+            from ...Chat.console_chat_models import ConsoleMessageRole
+
+            count = sum(
+                message.role in {ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT}
+                for message in messages
+            )
+            label = f"{count} messages"
+        else:
+            label = "Response trace"
+        self._notify(f"{label} sent to clipboard ({size_kib} KiB).")
 
     def _console_change_review_provider(self, conversation_id=None) -> Any | None:
         """Return the live provider recipe, degrading on missing collaborators."""
@@ -433,57 +613,154 @@ class ConsoleReviewSelectionController:
             previews[native_id] = previews.get(native_id, ()) + (row["comment"],)
         self.annotation_previews = previews
 
-    def request_selection_note(self, quote: str) -> None:
-        """Schedule selection-note creation for non-blank input.
+    def request_selection_note(
+        self,
+        quote: str,
+        *,
+        source_session_id: str | None = None,
+        open_note: bool = False,
+    ) -> None:
+        """Admit one full selection against its captured source chat.
 
         Args:
-            quote: Capped transcript selection to persist as a note.
+            quote: Complete selected text, without the prompt quote cap.
+            source_session_id: Original chat, or the current chat for legacy callers.
+            open_note: Open the created note after a successful save.
         """
-        if not quote.strip():
+        try:
+            request = _SelectionNoteRequest(
+                quote=quote,
+                source_session_id=source_session_id,
+                open_note=open_note,
+            )
+        except ValidationError:
             return
+        source = self._selection_note_source(request.source_session_id)
+        if source is None:
+            return
+        session_id, title = source
+        if session_id in self._selection_note_inflight:
+            self._notify("A note is already being created for this chat.")
+            return
+        self._selection_note_inflight.add(session_id)
         self._run_worker(
-            self._create_console_selection_note(quote),
-            group="console-selection-note",
+            self._create_console_selection_note(
+                request.quote,
+                source_session_id=session_id,
+                source_title=title,
+                open_note=request.open_note,
+            ),
+            group=f"console-selection-note-{session_id}",
+            exclusive=True,
             exit_on_error=False,
         )
 
-    async def _create_console_selection_note(self, quote: str) -> None:
-        """Derive note provenance and persist it off-thread."""
-        from tldw_chatbook.Utils.input_validation import validate_text_input
+    def _selection_note_source(self, session_id):
+        from ...Chat.console_ephemeral import blocked_reason
 
-        if not validate_text_input(
-            quote, max_length=SELECTION_QUOTE_CAP + 64, allow_html=True
-        ):
-            self._notify(
-                "Selection is too large to save as a note.", severity="warning"
-            )
-            return
-        first_line = quote.strip().splitlines()[0]
-        title = first_line if len(first_line) <= 48 else first_line[:47] + "…"
         try:
             store = self._store_accessor()
-            database = (
-                getattr(store.persistence, "db", None) if store.persistence else None
+            session_id = session_id or store.active_session_id
+            reader = getattr(store, "sessions", None)
+            sessions = (
+                reader()
+                if callable(reader)
+                else getattr(store, "_sessions", {}).values()
             )
-            if database is None:
+            session = next((item for item in sessions if item.id == session_id), None)
+            if session is None:
+                raise KeyError(session_id)
+            reason = blocked_reason(
+                "save-as-note", ephemeral=bool(getattr(session, "ephemeral", False))
+            )
+            if reason:
+                self._notify(reason, severity="warning")
+                return None
+            return session_id, str(session.title or "Console")
+        except Exception:
+            self._notify(
+                "Notes are unavailable (source chat or notes database unavailable).",
+                severity="warning",
+            )
+            return None
+
+    async def _create_console_selection_note(
+        self,
+        quote: str,
+        *,
+        source_session_id: str | None = None,
+        source_title: str | None = None,
+        open_note: bool = False,
+    ) -> None:
+        """Retain issued save ownership until it settles, then offer navigation."""
+        if source_title is None:
+            source = self._selection_note_source(source_session_id)
+            if source is None:
+                return
+            source_session_id, source_title = source
+        note_id = None
+        try:
+            if self._save_selection_note is None:
                 self._notify(
-                    "Notes are unavailable (no notes database).",
+                    "Notes are unavailable (no notes database service).",
                     severity="warning",
                 )
                 return
-            session = getattr(store, "_sessions", {}).get(store.active_session_id)
-            session_title = str(getattr(session, "title", "") or "Console")
+            request = _SelectionNoteRequest(quote=quote, open_note=open_note)
+            first_line = request.quote.strip().splitlines()[0]
+            title = first_line if len(first_line) <= 48 else first_line[:47] + "…"
             stamp = datetime.now().strftime("%Y-%m-%d")
-            content = f"{quote}\n\n— Console selection, {session_title}, {stamp}"
-            await asyncio.to_thread(database.add_note, title, content)
-        except Exception:
-            logger.warning(
-                f"Console selection note: write failed (title length {len(title)})",
-                exc_info=True,
-            )
-            self._notify("Could not create the note.", severity="warning")
-            return
-        self._notify(f"Note created: {escape_markup(title)}")
+            content = f"{request.quote}\n\n— Console selection, {source_title}, {stamp}"
+            save = asyncio.create_task(self._save_selection_note(title, content))
+            cancelled = False
+            while not save.done():
+                try:
+                    await asyncio.shield(save)
+                except asyncio.CancelledError:
+                    if save.cancelled():
+                        raise
+                    cancelled = True
+            note_id = save.result()
+            if not note_id:
+                self._notify("Could not create the note.", severity="warning")
+                return
+            self._notify(f"Note created: {escape_markup(title)}")
+            if not open_note:
+                return
+            if (
+                cancelled
+                or self._store_accessor().active_session_id != source_session_id
+                or not self._selection_note_context_active()
+            ):
+                self._notify(
+                    f"Note saved ({escape_markup(note_id)}). Open it in Library > Notes."
+                )
+                return
+            try:
+                opened = (
+                    self._open_selection_note is not None
+                    and self._open_selection_note(note_id)
+                )
+            except Exception:
+                opened = False
+            if not opened:
+                self._notify(
+                    f"Note saved ({escape_markup(note_id)}), but it could not be opened.",
+                    severity="warning",
+                )
+                if self._offer_selection_note_open is not None:
+                    await self._offer_selection_note_open(note_id)
+        except Exception as error:
+            logger.warning("Console selection note failed: {}", type(error).__name__)
+            if note_id:
+                self._notify(
+                    f"Note saved ({escape_markup(note_id)}). Open it in Library > Notes.",
+                    severity="warning",
+                )
+            else:
+                self._notify("Could not create the note.", severity="warning")
+        finally:
+            self._selection_note_inflight.discard(source_session_id)
 
     def request_selection_feedback(
         self, action: str, quote: str, anchor_message_id: str | None

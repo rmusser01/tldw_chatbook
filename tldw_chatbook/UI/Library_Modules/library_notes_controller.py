@@ -3541,6 +3541,34 @@ class LibraryNotesController:
                 else LibraryEntryReconcileResult.FAILED
             )
         return None
+
+    def defer_initial_note_load(self, note_id: str) -> None:
+        """Start a deep-linked note's deadline after the destination paints.
+
+        Args:
+            note_id: Exact initial target, valid only while its route remains current.
+        """
+
+        route_key = self._library_entry_route_key()
+
+        def load_initial_note() -> None:
+            if (
+                self.is_mounted
+                and self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+                and self._library_entry_route_key() == route_key
+                and self._selected_note_id == note_id
+                and self._library_notes_view == "editor"
+                and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
+                and self._library_note_session.snapshot is None
+            ):
+                self.run_worker(
+                    self._refresh_library_note_detail(note_id, entry_origin=True),
+                    exclusive=True,
+                    group="library_note_detail",
+                )
+
+        self.call_after_refresh(load_initial_note)
+
     def _begin_library_note_load(
         self, note_id: str, *, entry_origin: bool = False
     ) -> None:

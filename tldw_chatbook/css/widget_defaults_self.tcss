@@ -1462,6 +1462,8 @@ ConsoleMessageMoreMenu {
     overlay: screen;
     width: 24;
     height: auto;
+    max-height: 100%;
+    overflow-y: auto;
     border: round $primary;
     background: $surface;
     padding: 0 1;
@@ -1475,9 +1477,8 @@ ConsoleMessageMoreMenu Button {
     border-bottom: none !important;
     padding: 0 1 !important;
     text-align: left;
-}
-ConsoleMessageMoreMenu Button:focus {
-    outline: heavy $accent;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 /* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
@@ -1593,10 +1594,14 @@ ConsoleSelectionMenu Button {
 }
 
 ConsoleSelectionMenu #console-selection-copy,
+ConsoleSelectionMenu #console-selection-copy-all,
+ConsoleSelectionMenu #console-selection-copy-all-messages,
+ConsoleSelectionMenu #console-selection-full-message,
 ConsoleSelectionMenu #console-selection-add-to-chat,
 ConsoleSelectionMenu #console-selection-more-details,
 ConsoleSelectionMenu #console-selection-ask-side-chat,
 ConsoleSelectionMenu #console-selection-create-note,
+ConsoleSelectionMenu #console-selection-create-note-go,
 ConsoleSelectionMenu #console-selection-request-changes,
 ConsoleSelectionMenu #console-selection-lgm,
 ConsoleSelectionMenu #console-selection-comment {

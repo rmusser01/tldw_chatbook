@@ -280,9 +280,6 @@ from ...Chat.console_command_grammar import (
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
     STREAM_VIDEO_COMMAND_HANDLER_ID,
-    STREAM_VIDEO_COMMAND_NAME,
-    SYSTEM_COMMAND_HANDLER_ID,
-    SYSTEM_COMMAND_NAME,
     COMMAND_PREFIX,
     CommandParse,
     ConsoleCommandRegistry,
@@ -309,7 +306,6 @@ from ...Chat.console_chat_models import (
     ConsoleRunMarker,
     ConsoleRunStatus,
     FEEDBACK_ACTIVE_RUN_STATUSES,
-    MessageAttachment,
     ConsoleWorkspaceContext,
     console_pending_round_copy_for,
     derive_console_session_title,
@@ -581,6 +577,7 @@ from ...Widgets.Console.console_selection_menu import (
     ConsoleSelectionFeedbackRequested,
     ConsoleSelectionNoteRequested,
     ConsoleSelectionMenu,
+    ConsoleTraceCopyRequested,
     ConsoleSelectionQuoteRequested,
     ConsoleSideChatRequested,
     selection_menus_on_screen,
@@ -647,7 +644,7 @@ from ...Widgets.compact_model_bar import CompactModelBar
 from ...Widgets.Persona_Widgets.dictionary_picker import DictionaryPicker
 
 FeedbackRequested = ConsoleSelectionFeedbackRequested
-NoteRequested = ConsoleSelectionNoteRequested
+SelectionRequest = ConsoleSelectionNoteRequested | ConsoleTraceCopyRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -21994,10 +21991,11 @@ class ChatScreen(BaseAppScreen):
             )
         )
 
+    @on(ConsoleTraceCopyRequested)
     @on(ConsoleSelectionNoteRequested)
-    def on_console_selection_note_requested(self, event: NoteRequested) -> None:
+    def on_console_selection_note_requested(self, event: SelectionRequest) -> None:
         event.stop()
-        self._review_selection.request_selection_note(event.quote)
+        self._review_selection.request_selection_action(event)
 
     @on(ConsoleSelectionFeedbackRequested)
     def on_console_selection_feedback_requested(self, event: FeedbackRequested) -> None:

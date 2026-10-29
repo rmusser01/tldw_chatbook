@@ -86,6 +86,12 @@ CONTROLLER_DEPENDENCIES = frozenset(
         "marshal_to_ui",
         "present_trajectory",
         "notify",
+        "copy_to_clipboard",
+        "clipboard_revision_accessor",
+        "selection_note_context_active",
+        "save_selection_note",
+        "open_selection_note",
+        "offer_selection_note_open",
     }
 )
 
@@ -366,7 +372,10 @@ def test_review_selection_delegates_are_complete_and_bounded() -> None:
         "on_console_selection_feedback_requested": (
             "on(ConsoleSelectionFeedbackRequested)",
         ),
-        "on_console_selection_note_requested": ("on(ConsoleSelectionNoteRequested)",),
+        "on_console_selection_note_requested": (
+            "on(ConsoleTraceCopyRequested)",
+            "on(ConsoleSelectionNoteRequested)",
+        ),
     }
     for name in DELEGATE_METHODS:
         method = methods[name]

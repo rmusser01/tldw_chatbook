@@ -34,6 +34,7 @@ from Tests.UI.library_quit_guard_support import (
     _until,
 )
 from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
+from Tests.UI.test_library_notes_sync_delete_restore import LIST, _live_button
 from Tests.app_module_patches import patch_app_global
 
 #: The user-visible copy, spelled out so a RED run fails on behaviour.
@@ -49,11 +50,12 @@ def _text(screen, selector: str) -> str:
     return " ".join(str(screen.query_one(selector, Static).render()).split())
 
 
-def _folder_row(screen) -> Button:
-    return next(
-        button
-        for button in screen.query(".library-notes-folder-row").results(Button)
-        if "VSync" in str(button.label)
+def _folder_row(screen) -> Button | None:
+    return _live_button(
+        screen,
+        LIST,
+        ".library-notes-folder-row",
+        lambda row: getattr(row, "folder_id", "") == "folder-1",
     )
 
 
@@ -81,21 +83,21 @@ async def test_a_held_sync_folder_reads_needs_attention_until_recovery_heals_it(
                 await _until(
                     pilot,
                     lambda: (
-                        NOTES_TREE_SYNC_ATTENTION_STATUS
-                        in str(_folder_row(screen).label)
+                        (row := _folder_row(screen)) is not None
+                        and NOTES_TREE_SYNC_ATTENTION_STATUS in str(row.label)
                     ),
                     "the held folder's tree row to say it needs attention",
                 )
-                assert "Sync managed" not in str(_folder_row(screen).label)
-                assert _folder_row(screen).has_class(
-                    "library-notes-tree-needs-attention"
-                )
+                folder_row = _folder_row(screen)
+                assert folder_row is not None
+                assert "Sync managed" not in str(folder_row.label)
+                assert folder_row.has_class("library-notes-tree-needs-attention")
                 list_line = _text(screen, "#library-notes-authority")
                 assert SYNC_ATTENTION_LIST_STATUS in list_line, list_line
                 assert "Ready" not in list_line, list_line
 
                 # Editor: the location row and the status both say it.
-                _folder_row(screen).press()
+                folder_row.press()
                 await _until(
                     pilot,
                     lambda: any(
@@ -154,14 +156,14 @@ async def test_a_held_sync_folder_reads_needs_attention_until_recovery_heals_it(
                 await _until(
                     pilot,
                     lambda: (
-                        bool(screen.query(".library-notes-folder-row"))
-                        and "Sync managed" in str(_folder_row(screen).label)
+                        (row := _folder_row(screen)) is not None
+                        and "Sync managed" in str(row.label)
                     ),
                     "the healed folder's tree row to read Sync managed again",
                 )
-                assert NOTES_TREE_SYNC_ATTENTION_STATUS not in str(
-                    _folder_row(screen).label
-                )
+                folder_row = _folder_row(screen)
+                assert folder_row is not None
+                assert NOTES_TREE_SYNC_ATTENTION_STATUS not in str(folder_row.label)
     finally:
         await owner.shutdown()
         vault.close()
