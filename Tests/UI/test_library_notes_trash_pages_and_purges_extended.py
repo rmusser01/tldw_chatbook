@@ -81,9 +81,10 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 SPECIAL = "[Draft] plan · Q3"
 #: Only the special note's body has it.
 TOKEN = "plutonium"
+#: Review R0, I-3: no reachable control unbinds a note in this release, so
+#: the refusal names no way out.
 REFUSAL = (
-    "This note is kept in sync with a folder — remove it from the folder's "
-    "sync first."
+    "This note is kept in sync with a folder, so it can't be deleted forever here."
 )
 _DIGEST = "b" * 64
 
@@ -274,6 +275,24 @@ def _painted_in(host, selector: str) -> str:
     return " ".join(" ".join(lines).split())
 
 
+def _painted_toasts(host) -> list[str]:
+    """Each toast as painted, its wrapped lines joined.
+
+    Inside the toast's border and padding, so a sentence wrapped over two
+    lines reads whole (the border paints at the start of every line).
+    """
+    strips = host.screen._compositor.render_strips()
+    painted = []
+    for toast in host.screen.query("Toast"):
+        region = toast.content_region
+        lines = [
+            strip.crop(region.x, region.right).text
+            for strip in strips[region.y : region.bottom]
+        ]
+        painted.append(" ".join(" ".join(lines).split()))
+    return painted
+
+
 async def _confirm_open(host, pilot) -> ConfirmationDialog:
     await _until(
         pilot,
@@ -326,7 +345,9 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
     """AC#9, rulings T8b-a..e, end to end at 160x45."""
     host, seed, runtime = _mounted(tmp_path, monkeypatch, special=True)
     try:
-        async with host.run_test(size=WIDE) as pilot:
+        # Toasts painted (``run_test`` turns them off by default), so the
+        # refusal is read from the screen, not only from the notify call.
+        async with host.run_test(size=WIDE, notifications=True) as pilot:
             screen = await _open_trash(host, pilot, count=26)
             assert "1–20 of 26 · Page 1 of 2" in _painted(host)
             await _focus_row(host, pilot, screen, SPECIAL, tabs=2)
@@ -369,11 +390,21 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
                 f"toasts: {seed.toasts!r}): {_painted(host)}",
             )
             # The notice -- feedback, not a receipt: nothing can undo this.
-            # (This harness mounts no Toast widget; the app's notify is the
-            # seam, recorded as Task 6's export pins record theirs.)
             assert seed.toasts == [f"Deleted forever · {SPECIAL}"]
+            await _until(
+                pilot,
+                lambda: any(
+                    f"Deleted forever · {SPECIAL}" in toast
+                    for toast in _painted_toasts(host)
+                ),
+                lambda: f"the notice never painted: {_painted_toasts(host)!r}",
+            )
             listing = screen.query_one("#library-notes-trash-list")
-            assert SPECIAL not in _painted(host)
+            # The list's own rows (the notice toast paints over the list).
+            assert SPECIAL not in [
+                getattr(button, "note_title", None)
+                for button in listing.query(".library-notes-trash-restore")
+            ]
             assert _visible_in(listing, screen.focused)
             assert (
                 seed.traces(
@@ -391,6 +422,13 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
             seed.bind(bound_id)
             await _focus_row(host, pilot, screen, "Deleted 05", tabs=2)
             await _delete_forever(host, pilot)
+            # Read off the screen while the toast lives (5 s), before settling.
+            await _until(
+                pilot,
+                lambda: any(REFUSAL in toast for toast in _painted_toasts(host)),
+                lambda: f"the refusal never painted: {_painted_toasts(host)!r} "
+                f"(notified: {seed.toasts!r})",
+            )
             await _settled_on(
                 pilot,
                 host,
@@ -400,7 +438,8 @@ async def test_delete_forever_names_the_note_and_leaves_no_trace(
             )
             assert seed.toasts[-1] == REFUSAL
             assert "Deleted 05" in _painted(host)
-            assert "1–20 of 25 · Page 1 of 2" in _painted(host)
+            # The refusal toast paints over the pager: read it as composed.
+            assert _pager(screen) == "1–20 of 25 · Page 1 of 2"
             assert "Deleted 05" in seed.deleted()
             assert "notes.id" in seed.traces(bound_id)
             assert index_removals == [seed.special_id]

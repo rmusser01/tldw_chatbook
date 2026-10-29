@@ -89,9 +89,12 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
 #: pressed it. A note a sync folder still holds is refused, not warned about
 #: (ruling T8b-c): its file stays on disk, and purging the note under a live
 #: binding would leave lasting sync planning against a note that is gone.
+#: The sentence names no way out because this release has none (review R0,
+#: I-3): Disconnect is blocked (``NotesSyncRuntimeOwner.disconnect_root``),
+#: Manage sync folders says "Retarget/Disconnect unavailable", and a
+#: deletion review's "Disconnect item" is painted disabled.
 PURGE_REFUSED_SYNC_BOUND = (
-    "This note is kept in sync with a folder — remove it from the folder's "
-    "sync first."
+    "This note is kept in sync with a folder, so it can't be deleted forever here."
 )
 PURGE_REFUSED_SYNC_UNKNOWN = (
     "Couldn't check whether a sync folder holds this note — nothing was deleted."
