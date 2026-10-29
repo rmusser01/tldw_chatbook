@@ -655,6 +655,30 @@ class ProviderListStep(ProviderKeyEntryStep):
         choices.call_after_refresh(choices._keep_highlighted_row_on_screen)
         return True
 
+    def adopt_highlighted_found_server(self) -> str:
+        """At Next with nothing picked, the highlighted found server is the pick.
+
+        Pre-merge review (2026-10-29): a found server is the list's first row,
+        "already highlighted" (User Guide), yet Next with nothing touched read
+        the untouched list as nothing picked and skipped the step. Only
+        commit asks this, so highlighting alone still never picks, and an
+        explicit skip is never turned into a pick.
+
+        Returns:
+            The provider key now selected, or "" when the highlighted row is
+            not a found server.
+        """
+        if getattr(self, "_skip_requested", False):
+            return ""
+        try:
+            option = self.query_one("#setup-provider-choice", ProviderChoiceList).highlighted_option
+        except NoMatches:
+            return ""
+        if not isinstance(option, FoundServerOption) or option.disabled:
+            return ""
+        self._select_provider_option(option)  # type: ignore[attr-defined]
+        return getattr(self, "selected_provider_key", "")
+
     def found_server_for(self, provider_key: str) -> Any:
         """The first detected server for ``provider_key``, or None."""
         return next(
