@@ -18,6 +18,7 @@ and the speech model, and nothing on the consent or cancel path is stubbed.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -28,6 +29,7 @@ from textual.color import Color
 from textual.widget import Widget
 from textual.widgets import Button
 
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.css.Themes.themes import _contrast_ratio
@@ -157,6 +159,29 @@ def _header_controls(console):
 # ---------------------------------------------------------------------------
 
 
+async def _turn_hands_free_on(console, host, pilot, session) -> None:
+    """Hands-free On through the real path, pausing at "Starting…".
+
+    The user's gesture (`request_console_hands_free_toggle`, what the control
+    and Ctrl+Shift+H call), the consent's real Enable button, then the model
+    load: the loop's capture reads `starting` until ``session.release`` is
+    set, and the header reads from that state, not from a pushed value.
+    """
+    console._hands_free.request_console_hands_free_toggle()
+    await accept_hands_free_consent(host, pilot)
+    assert await _wait_for(pilot, lambda: session.started.is_set())
+    assert console._console_hands_free is not None
+    assert console._console_dictation_state == "starting"
+
+
+async def _finish_model_load(console, pilot, session) -> None:
+    session.release.set()
+    assert await _wait_for(
+        pilot, lambda: console._console_dictation_state == "recording"
+    ), console._console_dictation_state
+    await pilot.pause()
+
+
 def _word_contrast(console, widget: Widget, theme: str, state: str) -> None:
     """The state word reads at AA against the header it is painted on."""
     glyph, ink, fill = _first_glyph(_control_cells(console, widget))
@@ -166,9 +191,13 @@ def _word_contrast(console, widget: Widget, theme: str, state: str) -> None:
 
 @pytest.mark.parametrize("size", SIZES, ids=SIZE_IDS)
 @pytest.mark.parametrize("theme", THEMES)
-async def test_header_prints_each_state_as_a_readable_word(theme, size) -> None:
+async def test_header_prints_each_state_as_a_readable_word(
+    monkeypatch, theme, size
+) -> None:
+    speech = _patch_speech(monkeypatch)
     app, host = _ready_host()
-    async with host.run_test(size=size) as pilot:
+    _install_tts_destination(app)
+    async with _running(host, speech, size=size) as pilot:
         console = await _console(host, pilot, theme=theme)
         controls, auto_speak, hands_free = _header_controls(console)
         coordinator = console._console_auto_speak
@@ -186,18 +215,18 @@ async def test_header_prints_each_state_as_a_readable_word(theme, size) -> None:
         # active conversation repaints the same state, not Off).
         store.set_auto_speak(session.id, True)
         coordinator.sync_controls()
-        console._hands_free._sync_hands_free_switch(True)
+        # Hands-free's state comes from the loop and its capture.
+        await _turn_hands_free_on(console, host, pilot, speech)
         await pilot.pause()
+        assert "Hands-free: Starting…" in _row_text(console, controls)
+        _word_contrast(console, hands_free, theme, "starting")
+
+        await _finish_model_load(console, pilot, speech)
         on = _row_text(console, controls)
         assert "Speak replies: On" in on and "Hands-free: On" in on, on
         assert on != off
         _word_contrast(console, auto_speak, theme, "on")
         _word_contrast(console, hands_free, theme, "on")
-
-        console._hands_free._sync_hands_free_state_fn(True, True)
-        await pilot.pause()
-        assert "Hands-free: Starting…" in _row_text(console, controls)
-        _word_contrast(console, hands_free, theme, "starting")
 
         # AC#5: an auto-speak failure pauses it persistently; the control
         # itself says so instead of staying On.
@@ -214,9 +243,13 @@ async def test_header_prints_each_state_as_a_readable_word(theme, size) -> None:
 
 
 @pytest.mark.parametrize("theme", THEMES)
-async def test_focused_control_keeps_its_value_and_shows_a_3_to_1_cue(theme) -> None:
+async def test_focused_control_keeps_its_value_and_shows_a_3_to_1_cue(
+    monkeypatch, theme
+) -> None:
+    speech = _patch_speech(monkeypatch)
     app, host = _ready_host()
-    async with host.run_test(size=(235, 52)) as pilot:
+    _install_tts_destination(app)
+    async with _running(host, speech, size=(235, 52)) as pilot:
         console = await _console(host, pilot, theme=theme)
         _controls, _auto_speak, hands_free = _header_controls(console)
         resting = _control_cells(console, hands_free)
@@ -225,8 +258,11 @@ async def test_focused_control_keeps_its_value_and_shows_a_3_to_1_cue(theme) -> 
         await pilot.pause()
         assert console.app.focused is hands_free
         focused_off = _control_cells(console, hands_free)
-        console._hands_free._sync_hands_free_switch(True)
+        await _turn_hands_free_on(console, host, pilot, speech)
+        await _finish_model_load(console, pilot, speech)
+        hands_free.focus()
         await pilot.pause()
+        assert console.app.focused is hands_free
         focused_on = _control_cells(console, hands_free)
 
         off_text = "".join(cell[0] for cell in focused_off)
@@ -325,6 +361,136 @@ async def test_enter_on_hands_free_asks_consent_and_declining_starts_nothing(
         assert console._console_hands_free is None
         controls = console.query_one("#console-speech-controls")
         assert "Hands-free: Off" in _row_text(console, controls)
+
+
+def _modal_copy(modal) -> str:
+    return " ".join(str(static.render()) for static in modal.query("Static"))
+
+
+async def _open_hands_free_consent(console, host, pilot):
+    await _press_enter_on_hands_free(console, pilot)
+    assert await _wait_for(pilot, lambda: _top(host) == "AutoSpeakConsentModal")
+    modal = host.screen_stack[-1]
+    assert modal.hands_free is True
+    return modal
+
+
+async def _decline(console, host, pilot, session) -> None:
+    await pilot.press("escape")
+    assert await _wait_for(pilot, lambda: _top(host) == "ChatScreen")
+    await pilot.pause(0.2)
+    assert session.start_calls == 0
+    assert console._console_hands_free is None
+    assert console._console_realtime is None
+
+
+async def test_hands_free_consent_without_a_tts_destination_says_replies_go_unspoken(
+    monkeypatch,
+) -> None:
+    """Review follow-up: the no-destination variant had no rendered case."""
+    session = _patch_speech(monkeypatch)
+    app, host = _ready_host()
+
+    class _NoDestination:
+        async def resolve_console_speech_destination(self, *_args, **_kwargs):
+            return None
+
+    async def _ensure_tts_handler():
+        return _NoDestination()
+
+    app._ensure_tts_handler = _ensure_tts_handler
+    async with _running(host, session) as pilot:
+        console = await _console(host, pilot)
+        copy = _modal_copy(await _open_hands_free_consent(console, host, pilot))
+        assert "Turn on Hands-free?" in copy
+        assert (
+            "Replies will not be spoken: no TTS destination is available." in copy
+        ), copy
+        assert "Provider:" not in copy and "Destination:" not in copy, copy
+        assert "Provider charges may apply." not in copy, copy
+        await _decline(console, host, pilot, session)
+
+
+async def test_hands_free_consent_for_the_realtime_engine_names_that_provider(
+    monkeypatch,
+) -> None:
+    """Review follow-up: with the realtime engine, replies come from the
+    realtime provider, so the consent names it and shows no TTS destination
+    even when one is configured."""
+    session = _patch_speech(monkeypatch)
+    monkeypatch.setattr(hands_free_module, "resolve_handsfree_engine", lambda: "realtime")
+    monkeypatch.setattr(hands_free_module, "realtime_enabled", lambda: True)
+    monkeypatch.setattr(voice_module, "realtime_provider", lambda config=None: "openai")
+    monkeypatch.setattr(voice_module, "realtime_model", lambda config=None: "gpt-realtime")
+    app, host = _ready_host()
+    _install_tts_destination(app)
+    async with _running(host, session) as pilot:
+        console = await _console(host, pilot)
+        copy = _modal_copy(await _open_hands_free_consent(console, host, pilot))
+        assert "Provider: openai realtime voice (gpt-realtime)" in copy, copy
+        assert "Destination:" not in copy, copy
+        assert "Test Voice Cloud" not in copy, copy
+        assert "Provider charges may apply." in copy, copy
+        await _decline(console, host, pilot, session)
+
+
+async def test_hands_free_stays_off_when_its_consent_cannot_be_asked(
+    monkeypatch,
+) -> None:
+    """While a Speak replies enable is still resolving its destination the
+    coordinator cannot raise a second question. Hands-free stays Off, starts
+    nothing, and its notice does not claim a question is open (none is yet:
+    review follow-up on the old "Close the open question" copy)."""
+    session = _patch_speech(monkeypatch)
+    app, host = _ready_host()
+    resolve = asyncio.Event()
+
+    class _SlowHandler:
+        async def resolve_console_speech_destination(self, *_args, **_kwargs):
+            await resolve.wait()
+            return DESTINATION
+
+    async def _ensure_tts_handler():
+        return _SlowHandler()
+
+    app._ensure_tts_handler = _ensure_tts_handler
+    notices: list[str] = []
+    notify = app.notify
+
+    def _record_notice(message, *args, **kwargs):
+        notices.append(str(message))
+        return notify(message, *args, **kwargs)
+
+    monkeypatch.setattr(app, "notify", _record_notice)
+    async with _running(host, session) as pilot:
+        console = await _console(host, pilot)
+        controls, auto_speak, _hands_free = _header_controls(console)
+        auto_speak.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        coordinator = console._console_auto_speak
+        assert await _wait_for(
+            pilot, lambda: coordinator._enable_operation_generation is not None
+        )
+
+        await _press_enter_on_hands_free(console, pilot)
+        notice = "Hands-free couldn't ask for the speech consent just now"
+        assert await _wait_for(
+            pilot, lambda: any(notice in message for message in notices)
+        ), notices
+        assert not any("open question" in message for message in notices)
+        assert _top(host) == "ChatScreen"
+        assert session.start_calls == 0
+        assert console._console_dictation_state == "idle"
+        assert console._console_hands_free is None
+        assert "Hands-free: Off" in _row_text(console, controls)
+
+        # The Speak replies question it was waiting on still opens.
+        resolve.set()
+        assert await _wait_for(pilot, lambda: _top(host) == "AutoSpeakConsentModal")
+        assert host.screen_stack[-1].hands_free is False
+        await pilot.press("escape")
+        assert await _wait_for(pilot, lambda: _top(host) == "ChatScreen")
 
 
 async def _enter_hands_free_with_consent(console, host, pilot, session) -> None:

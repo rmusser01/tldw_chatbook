@@ -1153,9 +1153,12 @@ class ConsoleHandsFreeController:
         if ask is None or not ask(
             accepted, declined, realtime_label=self._console_realtime_consent_label()
         ):
+            # Not asked: another speech question or a Speak replies enable is
+            # in flight, no conversation is active, or the Console is
+            # tearing down. The copy claims none of those in particular.
             self.app_instance.notify(
-                "Hands-free needs the speech consent first. Close the open "
-                "question and try again.",
+                "Hands-free couldn't ask for the speech consent just now, so "
+                "it stays Off. Try again in a moment.",
                 severity="warning",
             )
             declined()

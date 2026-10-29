@@ -83,8 +83,9 @@ reply and the spoken version must fit the existing 5,000-character speech limit.
   not be spoken.
 - **Starting…** means the speech model is still loading (minutes on a
   first run); the mic button reads **Cancel** meanwhile. Leaving Hands-free
-  then (**Esc**, the control, Ctrl+Shift+H or **Cancel**) stops the load
-  and the microphone never opens.
+  then (**Esc**, the control, Ctrl+Shift+H or **Cancel**) cancels it:
+  nothing is recorded. The load itself runs to the end in the background,
+  and the capture it would have opened is discarded.
 - **Interrupt a spoken reply** by typing anywhere in the composer, or press
   **Esc** / **Ctrl+Shift+H** to exit the loop from any phase.
 - The mic closes while a reply is generated/spoken (no echo cancellation),
