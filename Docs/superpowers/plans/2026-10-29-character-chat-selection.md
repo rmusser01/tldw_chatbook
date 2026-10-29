@@ -56,3 +56,34 @@ default_console_session_settings, and the existing workspace alignment callback.
       a PR against dev.
 
 Published: https://github.com/rmusser01/tldw_chatbook/pull/3306.
+
+## Merge follow-up
+
+- [x] Rebase on dev ed7481a30c after PR #3307 merged the workspace activation
+      repair; retain that callback and remove this branch's duplicate wiring.
+- [x] Repair the five adjacent app-backed prompt tests through the existing
+      private-profile helper and resource-owner fixture; 13 module cases pass.
+- [x] Verify the final combined targeted checks and derived-artifact guards
+      (400 CI/size checks, 32 combined cases; local Canvas guard needs CI's pin).
+- [x] Keep the existing session-controller size budget by reusing its active
+      session lookup; register launch and prompt regressions in required PR CI.
+- [x] Obtain an independent review of the final follow-up; no findings.
+- [ ] Merge through the configured queue after required checks and review policy.
+
+The prior reviewed head a43cc847e8 passed all required hosted CI. The final rebase
+retains dev's workspace implementation and both sets of regression enrollments;
+recheck their combined behavior and obtain an independent conflict-resolution
+review before rearming.
+
+- [x] Requalify the integration: 31 combined character/prompt/model-picker cases
+      and 400 CI/census/size contracts pass; conflict-resolution review is clean.
+
+Second dev rebase: d0ae6d68be passed every hosted check, then PR #3302 advanced
+dev to ff815f8559. Retain both additive lesson/census changes (1,161 entries);
+the session controller is unchanged and the one defaults callback remains the
+only wiring diff. Requalify the changed modal integration, then leave the PR
+armed so the queue manages further ordinary updates. Rearming resets its place.
+
+Qodo could not review because its workspace has no credits. The user authorized
+the requested independent review to replace Qodo for PR #3306; required CI and
+review-thread resolution still apply.

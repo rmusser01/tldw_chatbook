@@ -622,7 +622,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # shard: 1143 + 2 = 1145. Rebased 2026-10-29 onto dev's 1142: 1144 + 2 = 1146.
 # Rebased 2026-10-29 onto dev's 1143: 1145 + 2 = 1147.
 # Rebased 2026-10-29 onto dev's 1145 entries: 1147 + 2 = 1149.
-MINIMUM_FILES = 1149
+# TASK-37620 adds seven roleplay nodes; TASK-37600 adds five prompt cases.
+# The combined census includes those entries plus the four TASK-33626 nodes.
+MINIMUM_FILES = 1161
 
 
 def read_census(path: Path) -> list[str]:

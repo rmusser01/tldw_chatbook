@@ -633,6 +633,9 @@ ADMISSION_2_TARGETS = (
     # own control, never the rail's subtree (the mounted Console;
     # bootstrap_profile, two tests, ~18 s).
     "Tests/UI/test_console_edge_focus_restyle_scope.py",
+    # TASK-37600: character launch selection and modal resume (bootstrap_profile).
+    "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
+    "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
