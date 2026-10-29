@@ -81,6 +81,9 @@ def assert_project_evidence(
         ("painted_text", painted_text),
     ):
         assert code in text, f"{label} has no README verification code"
+    assert (
+        persisted_text == final_text
+    ), "persisted answer differs from completed answer"
 
 
 def assert_project_ownership(run, saved, conversation_id, assistant_message_id):

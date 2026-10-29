@@ -320,3 +320,12 @@ def test_run_and_saved_answer_must_share_the_expected_owner(defect):
         saved["id"] = "answer-2"
     with pytest.raises(AssertionError, match="owner"):
         assert_project_ownership(run, saved, "chat-1", "answer-1")
+
+
+def test_persisted_answer_must_match_even_when_it_retains_the_code():
+    from Tests.uat_project_chat_support import assert_project_evidence
+
+    row = evidence()
+    row["persisted_text"] += " altered after completion"
+    with pytest.raises(AssertionError, match="persisted answer"):
+        assert_project_evidence(**row)

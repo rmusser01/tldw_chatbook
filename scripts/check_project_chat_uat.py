@@ -12,6 +12,12 @@ import xml.etree.ElementTree as ET
 EXPECTED = {"fenced", "native", "compact-recovery", "wrong-family"}
 
 
+def _require(condition: bool, message: str = "") -> None:
+    """Keep evidence checks active under Python optimization."""
+    if not condition:
+        raise AssertionError(message)
+
+
 def check_reports(junit: Path, artifacts: Path) -> None:
     """Require each exact pytest case and its completed, clean evidence receipt."""
     cases = [
@@ -20,81 +26,102 @@ def check_reports(junit: Path, artifacts: Path) -> None:
         if case.get("classname") == "Tests.QA.test_project_chat_uat"
     ]
     expected_names = {f"test_project_chat_uat[{variant}]" for variant in EXPECTED}
-    assert Counter(case.get("name") for case in cases) == Counter(
-        expected_names
-    ), "missing or duplicate UAT cases"
+    _require(
+        Counter(case.get("name") for case in cases) == Counter(expected_names),
+        "missing or duplicate UAT cases",
+    )
     for case in cases:
-        assert not any(
-            case.find(tag) is not None for tag in ("failure", "error", "skipped")
-        ), f"nonpassing UAT case: {case.get('name')}"
+        _require(
+            not any(
+                case.find(tag) is not None for tag in ("failure", "error", "skipped")
+            ),
+            f"nonpassing UAT case: {case.get('name')}",
+        )
     receipts = [
         (path, json.loads(path.read_text(encoding="utf-8")))
         for path in artifacts.glob("*/receipt.json")
     ]
-    assert Counter(row.get("variant") for _, row in receipts) == Counter(
-        EXPECTED
-    ), "missing or duplicate UAT receipts"
+    _require(
+        Counter(row.get("variant") for _, row in receipts) == Counter(EXPECTED),
+        "missing or duplicate UAT receipts",
+    )
     for path, row in receipts:
-        assert (
+        _require(
             row.get("case") == "UAT-02"
             and row.get("status") == "passed"
-            and row.get("phase") == "complete"
-        ), f"unfinished UAT receipt: {path}"
-        assert all(
-            row.get(key)
-            for key in (
-                "run_id",
-                "conversation_id",
-                "assistant_message_id",
-                "request_count",
-            )
-        ), f"missing run evidence: {path}"
-        assert (
-            row.get("model_errors") == [] and row.get("blocked_destinations") == []
-        ), f"UAT protocol/network failure: {path}"
+            and row.get("phase") == "complete",
+            f"unfinished UAT receipt: {path}",
+        )
+        _require(
+            all(
+                row.get(key)
+                for key in (
+                    "run_id",
+                    "conversation_id",
+                    "assistant_message_id",
+                    "request_count",
+                )
+            ),
+            f"missing run evidence: {path}",
+        )
+        _require(
+            row.get("model_errors") == [] and row.get("blocked_destinations") == [],
+            f"UAT protocol/network failure: {path}",
+        )
         for name in ("viewport.txt", "viewport.svg"):
-            assert (
-                path.with_name(name).is_file() and path.with_name(name).stat().st_size
-            ), f"missing viewport: {path}"
+            _require(
+                path.with_name(name).is_file()
+                and path.with_name(name).stat().st_size > 0,
+                f"missing viewport: {path}",
+            )
 
 
 def check_negative_control(junit: Path, artifacts: Path) -> None:
     """The deliberately damaged README must fail after a real file-tool result."""
     reason = "README read did not supply a verification code"
     cases = list(ET.parse(junit).iter("testcase"))
-    assert len(cases) == 1 and cases[0].get("name") == "test_project_chat_uat[fenced]"
-    assert (
-        cases[0].find("error") is None and cases[0].find("skipped") is None
-    ), "negative control has a teardown error or skip"
+    _require(
+        len(cases) == 1 and cases[0].get("name") == "test_project_chat_uat[fenced]"
+    )
+    _require(
+        cases[0].find("error") is None and cases[0].find("skipped") is None,
+        "negative control has a teardown error or skip",
+    )
     failure = cases[0].find("failure")
-    assert failure is not None and reason in (
-        failure.get("message", "") + (failure.text or "")
-    ), "negative control failed for another reason"
+    _require(
+        failure is not None
+        and reason in failure.get("message", "") + (failure.text or ""),
+        "negative control failed for another reason",
+    )
     receipts = list(artifacts.glob("*/receipt.json"))
-    assert len(receipts) == 1, "negative control receipt missing or duplicated"
+    _require(len(receipts) == 1, "negative control receipt missing or duplicated")
     row = json.loads(receipts[0].read_text(encoding="utf-8"))
-    assert row.get("variant") == "fenced" and row.get("status") == "failed"
-    assert (
+    _require(row.get("variant") == "fenced" and row.get("status") == "failed")
+    _require(
         row.get("negative_control") == "missing-readme"
         and row.get("phase") == "await-answer"
     )
-    assert row.get("blocked_destinations") == []
+    _require(row.get("blocked_destinations") == [])
     errors = row.get("model_errors", [])
-    assert errors and all(
-        error == "AssertionError: " + reason for error in errors
-    ), "negative control protocol failure was unexpected"
+    _require(
+        bool(errors) and all(error == "AssertionError: " + reason for error in errors),
+        "negative control protocol failure was unexpected",
+    )
     messages = [
         message
         for payload in row.get("requests", [])
         for message in payload.get("messages", [])
     ]
-    assert any(
-        message.get("role") == "user"
-        and isinstance(message.get("content"), str)
-        and message["content"].startswith("Tool result for fs_read:")
-        and "README deliberately lacks verification evidence." in message["content"]
-        for message in messages
-    ), "negative control never reached its file read"
+    _require(
+        any(
+            message.get("role") == "user"
+            and isinstance(message.get("content"), str)
+            and message["content"].startswith("Tool result for fs_read:")
+            and "README deliberately lacks verification evidence." in message["content"]
+            for message in messages
+        ),
+        "negative control never reached its file read",
+    )
 
 
 def main() -> None:

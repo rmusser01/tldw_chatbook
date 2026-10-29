@@ -1,7 +1,10 @@
 """Exact UAT gate contract: no missing/skipped cases or stale partial receipts."""
 
 import json
+import os
 import runpy
+import subprocess
+import sys
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -84,6 +87,7 @@ def test_incomplete_or_nonpassing_pytest_cases_fail(reports, defect):
         "protocol-error",
         "network-escape",
         "no-screenshot",
+        "no-text",
     ],
 )
 def test_missing_or_failed_receipts_fail(reports, defect):
@@ -96,8 +100,10 @@ def test_missing_or_failed_receipts_fail(reports, defect):
         other = artifacts / "stale"
         other.mkdir()
         (other / "receipt.json").write_text(json.dumps(data))
-    elif defect == "no-screenshot":
-        path.with_name("viewport.svg").unlink()
+    elif defect in ("no-screenshot", "no-text"):
+        path.with_name(
+            "viewport.svg" if defect == "no-screenshot" else "viewport.txt"
+        ).unlink()
     else:
         if defect in ("failed", "running"):
             data["status"] = defect
@@ -191,3 +197,49 @@ def test_expected_red_rejects_teardown_errors_and_skips(negative_reports, extra)
     tree.write(negative_reports[0])
     with pytest.raises(AssertionError):
         check_negative(*negative_reports)
+
+
+@pytest.mark.parametrize("optimization", ["flag", "environment"])
+@pytest.mark.parametrize("negative", [False, True])
+@pytest.mark.parametrize("defect", [None, "junit", "receipt"])
+def test_cli_validation_survives_python_optimization(
+    request, optimization, negative, defect
+):
+    junit, artifacts = request.getfixturevalue(
+        "negative_reports" if negative else "reports"
+    )
+    if defect == "junit":
+        tree = ET.parse(junit)
+        ET.SubElement(next(tree.iter("testcase")), "skipped")
+        tree.write(junit)
+    elif defect == "receipt":
+        path = artifacts / "fenced" / "receipt.json"
+        row = json.loads(path.read_text())
+        row["blocked_destinations"] = [["127.0.0.1", 9000]]
+        path.write_text(json.dumps(row))
+    command = [sys.executable]
+    environment = dict(os.environ)
+    environment.pop("PYTHONOPTIMIZE", None)
+    if optimization == "flag":
+        command.append("-O")
+    else:
+        environment["PYTHONOPTIMIZE"] = "1"
+    command += [
+        str(Path(__file__).resolve().parents[2] / "scripts/check_project_chat_uat.py"),
+        "--junit",
+        str(junit),
+        "--artifacts",
+        str(artifacts),
+    ]
+    if negative:
+        command.append("--negative-control")
+    result = subprocess.run(
+        command, env=environment, capture_output=True, text=True, timeout=15
+    )
+    if defect is None:
+        assert result.returncode == 0, result.stderr
+        assert "Project-chat UAT:" in result.stdout
+    else:
+        assert result.returncode != 0, result.stdout
+        assert "AssertionError" in result.stderr
+        assert "Project-chat UAT:" not in result.stdout

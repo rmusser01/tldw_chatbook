@@ -16,6 +16,7 @@ This document describes how chat requests reach providers: the `chat_api_call` d
 | `LLM_Calls/moonshot.py`, `zai.py`, `qwencloud*.py` | Strict Chat-Completions adapter-policy modules |
 | `LLM_Calls/pricing_catalog.py` | Per-model $/Mtok pricing for the Console cost ticker |
 | `Chat/usage_recorder.py` | Context-scoped token-usage recording seam |
+| `Chat/local_reasoning_metadata.py` | Bounded `/props` template and tool-capability reads (`read_local_reasoning_metadata`) |
 | `tldw_chatbook/model_capabilities.py` | Package-root capability detection: vision, context windows, thinking/sampling predicates |
 | `LLM_Provider_Catalog/` | Model list discovery + auto-refresh (ADR-020) |
 | `Event_Handlers/LLM_Management_Events/` | Managed local-server lifecycle (per-backend modules + `server_lifecycle.py`) |

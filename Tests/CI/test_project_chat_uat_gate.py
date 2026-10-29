@@ -52,6 +52,13 @@ def test_project_chat_uat_is_required_without_extra_runners():
         "TLDW_UAT_ARTIFACTS": "project-chat-negative",
         "TLDW_UAT_NEGATIVE_CONTROL": "missing-readme",
     }
-    assert 'test "$status" -eq 1' in negative["run"]
-    assert "scripts/check_project_chat_uat.py --negative-control" in negative["run"]
+    assert negative["run"] == (
+        "status=0\n"
+        "pytest 'Tests/QA/test_project_chat_uat.py::test_project_chat_uat[fenced]' \\\n"
+        "  -q -o addopts= --timeout=240 --tb=short \\\n"
+        "  --basetemp=project-chat-negative-pytest --junitxml=project-chat-negative.xml || status=$?\n"
+        'test "$status" -eq 1\n'
+        "python scripts/check_project_chat_uat.py --negative-control \\\n"
+        "  --junit project-chat-negative.xml --artifacts project-chat-negative\n"
+    )
     assert "project-chat-negative/" in upload["with"]["path"]

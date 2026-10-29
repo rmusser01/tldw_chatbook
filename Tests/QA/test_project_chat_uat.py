@@ -494,7 +494,8 @@ async def test_project_chat_uat(
                         == len(server.model.requests)
                         == len(server.model.sequence)
                     )
-                    assert code not in json.dumps(server.model.requests[0])
+                    for pre_final_request in server.model.requests[:-1]:
+                        assert code not in json.dumps(pre_final_request)
                     assert server.model.alias == alias
                     if variant == "compact-recovery":
                         initial = server.model.requests[0]
