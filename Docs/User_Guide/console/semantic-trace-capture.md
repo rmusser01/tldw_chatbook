@@ -63,26 +63,33 @@ When the provider answers with an error such as HTTP 429 (rate limited), 500
 or 504, Console retries the call automatically. If that retry's trace record
 cannot be saved, the retry is not sent, and the callout leads with the
 provider's error instead: for example "OpenAI returned HTTP 429 (rate limit
-exceeded)", with an Impact line saying the provider was contacted and a note
+exceeded)", with "Impact: OpenAI was contacted; no reply arrived" and a note
 that the automatic retry was not sent. **Retry** is the first action there.
-The Impact line always reflects what happened to this send: "The provider was
-not contacted", "The provider was contacted", or "It is not known whether the
-provider was contacted". On this callout:
+Otherwise the Impact line says what is known about this send: "The provider
+was not contacted", "The provider was contacted earlier in this send; this
+request was not sent", or "It is not known whether the provider was
+contacted". On this callout:
 
 - **Retry** (or **Retry capture**) sends the turn again with capture on. When
   Console cannot confirm whether the failed retry left a trace reservation
   behind, it says so on the callout ("Trace capture could not be confirmed for
-  this send ...") and sends nothing; choose **Send without capture** or
-  **Cancel send**.
+  this send ...") and sends nothing; **Send without capture** then becomes the
+  first action, and **Cancel send** remains available.
 - **Send without capture** sends the turn once with capture off.
-- **Cancel send** always ends the send and puts your message back in the
-  composer, even when the trace reservation's state is unknown. Any
-  reservation left behind is closed as not sent by Console's startup trace
-  maintenance, once it is a few minutes old.
+- **Cancel send** ends the send, even when the trace reservation's state is
+  unknown, and puts your message back in the composer if the composer is
+  empty. Any reservation left behind is closed as not sent by Console's
+  startup trace maintenance, once it is a few minutes old. If the chat
+  database cannot be written at that moment, the callout says the
+  cancellation could not be saved and the send stays paused.
 
-None of these opens the "Response delivery status is unknown" panel: that
-panel is only for a request that may have reached the provider without a
-known outcome.
+When the provider refused every earlier call of the send, none of these opens
+the "Response delivery status is unknown" panel. That panel is for a request
+that may have reached the provider without a known outcome: if the provider
+already answered an earlier call of the same send (for example a tool step)
+and a later call's trace record then fails, **Retry** or **Send without
+capture** can still lead to it, because replaying the turn could repeat work
+the provider already did.
 
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.
