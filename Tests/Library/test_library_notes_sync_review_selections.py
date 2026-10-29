@@ -392,8 +392,12 @@ async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
             await _press(screen, pilot, "#notes-sync-back")
             await _wait_for_condition(
                 pilot,
-                lambda: screen._notes_state.view == "lasting_roots",
-                message="‹ Sync folders did not return to Manage sync folders",
+                lambda: screen._notes_state.view == "lasting_roots"
+                and getattr(screen.focused, "id", None) == "notes-sync-roots-back",
+                message=lambda: (
+                    "‹ Sync folders did not return to Manage sync folders: "
+                    f"view={screen._notes_state.view!r} focus={screen.focused!r}"
+                ),
             )
             await _check_changes_from_manage_sync_folders(screen, pilot)
             await _wait_for_condition(
@@ -425,6 +429,13 @@ async def test_the_review_names_its_way_back_and_paints_the_kept_choice(
                     f"view={screen._notes_state.view!r} "
                     f"roots status={_painted_of(host, screen, '#notes-sync-roots-status')!r}"
                 ),
+            )
+            # The next key has somewhere to go: the folder list's own back
+            # control, exactly where the ‹ Sync folders press leaves it.
+            await _wait_for_condition(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "notes-sync-roots-back",
+                message=lambda: f"after Escape focus is on {screen.focused!r}",
             )
             await _check_changes_from_manage_sync_folders(screen, pilot)
             await _wait_for_condition(

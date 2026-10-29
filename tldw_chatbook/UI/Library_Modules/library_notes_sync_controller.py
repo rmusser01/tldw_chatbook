@@ -303,6 +303,8 @@ _LIFECYCLE_EPOCH_MAX = 2**63 - 1
 #: observations (least recently staged dropped first) -- memory hygiene only;
 #: a review only ever shows the choices of its own observation token.
 _KEPT_SELECTION_OBSERVATIONS = 3
+#: ``LibraryNotesLastingSyncSnapshot`` refuses a longer status line.
+_STATUS_LINE_MAX = 512
 _CHOICES_BY_LABEL = {
     "Keep file": NotesSyncConflictChoice.KEEP_FILE,
     "Keep note": NotesSyncConflictChoice.KEEP_NOTE,
@@ -410,6 +412,27 @@ class LibraryNotesSyncController:
         if count == 1:
             return "Choice staged. No changes yet."
         return f"{count} choices staged. No changes yet."
+
+    def _review_status_line(self, fallback: str) -> str:
+        """The review's status line: why Activate is held, then what is staged.
+
+        TASK-34000.40 fix round 1 (review R0 M-3): the one derivation for a
+        check, a staged choice and a refused Activate, so the hold reason is
+        never hidden behind the staged line. ``fallback`` is the writer's own
+        line when neither applies.
+        """
+        review = self._state.review
+        hold = (
+            migration_activation_blocked_line(review.activation_blockers)
+            if review.source == "migration" and review.activation_blockers
+            else ""
+        )
+        staged = self._staged_choice_line()
+        if hold and staged:
+            joined = f"{hold} {staged}"
+            # The snapshot bounds its status line; the hold reason wins.
+            return joined if len(joined) <= _STATUS_LINE_MAX else hold
+        return hold or staged or fallback
 
     def _project_review(
         self,
@@ -733,14 +756,19 @@ class LibraryNotesSyncController:
         self._invalidate_receipt_history()
         return self._lifecycle_epoch
 
-    def _begin_bound_control_lifecycle(self, root_id: str) -> int:
+    def _begin_bound_control_lifecycle(
+        self, root_id: str, *, forget_choices: bool = True
+    ) -> int:
         if root_id != self._projection_root_id:
             self._switch_projection_root(root_id)
         else:
             self._advance_lifecycle()
             self._invalidate_receipt_history()
         # A root control changes that root: what was staged on it is void.
-        self._forget_root_selections(root_id)
+        # The inert ``stage_root_action`` changes nothing and keeps them
+        # (fix round 1, review R0 M-2).
+        if forget_choices:
+            self._forget_root_selections(root_id)
         self._invalidate_review_authority()
         return self._lifecycle_epoch
 
@@ -1178,19 +1206,15 @@ class LibraryNotesSyncController:
         )
         if installed is None:
             return
-        blockers = self._state.review.activation_blockers
         self._state = replace(
             self._state,
             phase="review",
-            # TASK-34000.40 N-34: a re-entry that finds kept choices says so.
-            status_line=self._staged_choice_line()
-            or (
-                (
-                    # TASK-34000.16 fix round 1 (I-2): a migrated candidate the
-                    # walk could not read holds Activate; say which and why.
-                    migration_activation_blocked_line(blockers)
-                    if source == "migration" and blockers
-                    else "Review migration before activating this folder."
+            # TASK-34000.16 fix round 1 (I-2): a migrated candidate the walk
+            # could not read holds Activate, and the line says which and why;
+            # TASK-34000.40: kept choices are named after it.
+            status_line=(
+                self._review_status_line(
+                    "Review migration before activating this folder."
                     if source == "migration"
                     else "Review the mutation-free check before applying changes."
                 )
@@ -1251,9 +1275,10 @@ class LibraryNotesSyncController:
         self._state = replace(
             self._state,
             phase="review",
-            status_line=self._staged_choice_line()
-            or (
-                "Review setup effects before activating this root."
+            status_line=(
+                self._review_status_line(
+                    "Review setup effects before activating this root."
+                )
                 if installed
                 else "Conflict details are unavailable. Check the folder again."
             ),
@@ -1632,8 +1657,9 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 phase="review",
-                status_line=self._staged_choice_line()
-                or f"Manual check finished. {pending} {noun} to review.",
+                status_line=self._review_status_line(
+                    f"Manual check finished. {pending} {noun} to review."
+                ),
             )
         elif next_action == "sync_now":
             self._state = replace(
@@ -1727,7 +1753,7 @@ class LibraryNotesSyncController:
         self._project_review()
         self._state = replace(
             self._state,
-            status_line=self._staged_choice_line(),
+            status_line=self._review_status_line(""),
         )
         self._publish()
 
@@ -2294,7 +2320,7 @@ class LibraryNotesSyncController:
             "disconnect",
         }:
             raise ValueError("unknown root action")
-        self._begin_bound_control_lifecycle(root_id)
+        self._begin_bound_control_lifecycle(root_id, forget_choices=False)
         self._state = replace(
             self._state,
             phase="roots",
@@ -2338,9 +2364,7 @@ class LibraryNotesSyncController:
             # before any mutation; the controller never even asks.
             self._state = replace(
                 self._state,
-                status_line=migration_activation_blocked_line(
-                    review.activation_blockers
-                ),
+                status_line=self._review_status_line(""),
             )
             self._publish()
             return False
