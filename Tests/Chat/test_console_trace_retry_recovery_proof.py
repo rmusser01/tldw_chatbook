@@ -23,8 +23,8 @@ from Tests.Chat.test_console_trace_runtime import (
 from tldw_chatbook.Chat.console_provider_gateway import (
     ConsoleProviderResolution,
     ConsoleProviderStreamSignals,
-    TraceProviderRejection,
 )
+from tldw_chatbook.Chat.console_trace_call_recovery import TraceProviderRejection
 from tldw_chatbook.Chat.console_trace_errors import (
     TraceCallPersistenceError,
     TraceReservationRefused,

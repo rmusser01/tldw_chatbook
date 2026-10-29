@@ -30,6 +30,15 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
+class TraceProviderRejection:
+    """A provider's definitive HTTP refusal of one call (TASK-33621.5)."""
+
+    provider: str
+    status_code: int
+    meaning: str
+
+
+@dataclass(frozen=True, slots=True)
 class TraceCallProviderContact:
     """Whether a paused send reached the provider, for the card (TASK-33621.5).
 
@@ -113,6 +122,7 @@ def repause_unconfirmed_trace_call(
 __all__ = [
     "UNCONFIRMED_RESERVATION_COPY",
     "TraceCallProviderContact",
+    "TraceProviderRejection",
     "provider_contact_for_pause",
     "repause_unconfirmed_trace_call",
 ]
