@@ -647,6 +647,12 @@ ADMISSION_2_TARGETS = (
     # reply text from a drip provider (bootstrap_profile, ~22 s).
     "Tests/test_config_streaming_default.py",
     "Tests/UI/test_console_streaming_default_screen.py",
+    # TASK-37421: a self-hosted server that refuses streaming is retried once
+    # without streaming -- real adapters against a loopback server
+    # (bootstrap_profile, ten cases, ~12 s) and a mounted Console send that
+    # persists one reply with the retry's usage (bootstrap_profile, ~8 s).
+    "Tests/Chat/test_console_refused_stream_retry.py",
+    "Tests/UI/test_console_refused_stream_retry_screen.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
