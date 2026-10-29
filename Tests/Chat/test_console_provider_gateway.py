@@ -106,7 +106,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ThinkingEnvelope,
 )
-from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError, HostedChatTurn
+from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
 
 
 # Real config/TLS/app consumers retain their collection-selected private profile.
@@ -1193,31 +1193,25 @@ async def test_cloud_refused_stream_is_not_retried_by_the_gateway() -> None:
     assert "turn Streaming off" in raised.value.console_copy
 
 
-def _self_hosted_streaming_resolution(
-    provider: str = "custom", execution_key: str = "custom-openai-api"
-) -> ConsoleProviderResolution:
+def _self_hosted_streaming_resolution() -> ConsoleProviderResolution:
     return ConsoleProviderResolution(
-        provider=provider,
+        provider="custom",
         base_url="http://127.0.0.1:8080/v1",
         model="local-model",
         ready=True,
-        readiness_key=provider,
-        execution_key=execution_key,
+        readiness_key="custom",
+        execution_key="custom-openai-api",
         streaming=True,
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["refusal", "unreadable"])
-async def test_self_hosted_stream_failing_after_text_is_not_retried(
-    failure: str,
-) -> None:
+async def test_self_hosted_stream_refused_after_text_is_not_retried() -> None:
     """TASK-37421 review: text already shown means the stream worked.
 
-    A 400 (or an unreadable record) that ends a stream after its first text
-    is a failure of that reply, not a refusal to stream: asking again would
-    show the reply twice, and Streaming is not the fix, so the copy does not
-    name it.
+    A 400 that ends a stream after its first text is a failure of that reply,
+    not a refusal to stream: asking again would show the reply twice, and
+    Streaming is not the fix, so the copy does not name it.
     """
     calls: list[bool] = []
 
@@ -1226,8 +1220,6 @@ async def test_self_hosted_stream_failing_after_text_is_not_retried(
 
         def stream():
             yield 'data: {"choices": [{"delta": {"content": "partial"}}]}'
-            if failure == "unreadable":
-                raise HostedChatProtocolError("Hosted Chat stream JSON is malformed.")
             raise ChatBadRequestError(
                 provider="custom-openai-api",
                 message="Streaming is not supported by this server.",
@@ -1238,7 +1230,7 @@ async def test_self_hosted_stream_failing_after_text_is_not_retried(
 
     gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
     output: list[object] = []
-    with pytest.raises(Exception) as raised:
+    with pytest.raises(ChatBadRequestError) as raised:
         async for item in gateway.stream_chat(
             _self_hosted_streaming_resolution(), [{"role": "user", "content": "q"}]
         ):
@@ -1246,47 +1238,7 @@ async def test_self_hosted_stream_failing_after_text_is_not_retried(
 
     assert calls == [True]
     assert output == ["partial"]
-    assert "turn Streaming off" not in (
-        getattr(raised.value, "console_copy", None) or str(raised.value)
-    )
-
-
-@pytest.mark.asyncio
-async def test_self_hosted_empty_tools_stream_with_terminal_metadata_is_retried() -> (
-    None
-):
-    """TASK-37421 review: a hosted-engine stream that ends cleanly with no
-    text and no tool call is still an empty stream, and is asked again.
-
-    The custom-ep engine reports a terminal turn (finish reason, usage) even
-    when nothing was streamed; that metadata alone is not a reply.
-    """
-    turn = HostedChatTurn(
-        text="",
-        tool_calls=(),
-        assistant_message={"role": "assistant", "content": ""},
-        finish_reason="stop",
-    )
-    calls: list[bool] = []
-
-    def adapter(**kwargs):
-        calls.append(kwargs["streaming"])
-        if kwargs["streaming"]:
-            return _TerminalHostedResponse([], turn)
-        return {"choices": [{"message": {"content": "fallback"}}]}
-
-    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
-    items = [
-        item
-        async for item in gateway.stream_chat(
-            _self_hosted_streaming_resolution("custom-ep:box", "custom-hosted"),
-            [{"role": "user", "content": "q"}],
-            tools=TOOLS,
-        )
-    ]
-
-    assert calls == [True, False]
-    assert "fallback" in items
+    assert "turn Streaming off" not in (raised.value.console_copy or "")
 
 
 @pytest.mark.asyncio

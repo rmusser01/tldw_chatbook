@@ -5,12 +5,13 @@ cannot stream answers ``"stream": true`` with a client error before any text
 arrives, or opens the stream and sends no text. Two consequences follow, and
 they share the one classification below:
 
-* TASK-37421 (owner decision 2026-10-29): a self-hosted or Custom
-  OpenAI-compatible server is asked once more without streaming, the way the
+* TASK-37421 (owner decision 2026-10-29): a self-hosted server or a Custom
+  OpenAI-compatible slot is asked once more without streaming, the way the
   llama.cpp path always has. A retry there costs nothing.
 * TASK-37180: a provider that is not retried (a cloud provider, where a
-  silent second paid call is not wanted) names the Streaming setting in its
-  failure copy, beside the model advice.
+  silent second paid call is not wanted, and for now a named custom endpoint
+  run by the hosted engine) names the Streaming setting in its failure copy,
+  beside the model advice.
 
 Classification only: nothing here reaches the wire or the provider's text.
 Imported lazily by the gateway (ADR-097 boot ratchet).
@@ -69,33 +70,17 @@ def is_refused_stream(exc: BaseException) -> bool:
     return not is_context_overflow_error(exc)
 
 
-def is_unreadable_stream(exc: BaseException) -> bool:
-    """Whether a streamed reply failed because its stream could not be read.
-
-    A Custom endpoint (``custom-ep:<slug>``) streams through the hosted
-    engine, which raises a protocol error, not a status, for a stream that
-    ends with no terminal record or is not SSE at all: what a server that
-    sends no text, or ignores ``stream`` and answers whole, looks like there.
-    The caller decides the rest: the request was streamed, to a server that
-    is retried, and nothing arrived before the failure.
-
-    Args:
-        exc: The adapter's failure, before any projection.
-
-    Returns:
-        True for the hosted engine's stream protocol error.
-    """
-    from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatProtocolError
-
-    return isinstance(exc, HostedChatProtocolError)
-
-
 def retries_refused_stream(resolution: Any) -> bool:
     """Whether a refused or empty stream is retried once without streaming.
 
-    Every self-hosted provider and every Custom OpenAI-compatible endpoint
-    (``custom``, ``custom_2``, a ``custom-ep:<slug>`` entry and the engine key
-    it executes through). Cloud providers never are.
+    Every self-hosted provider and the Custom OpenAI-compatible slots
+    (``custom``, ``custom_2``). Cloud providers never are. Nor, for now, is a
+    named ``custom-ep:<slug>`` entry that runs through the hosted engine
+    (``custom-hosted``): its traced request never aligns with the prepared
+    one (each call's surface is an alignment-mismatch omission), so the
+    retry's own trace call cannot be reserved and, with capture on, the run
+    would block (measured live 2026-10-29, TASK-37762). Its refused stream
+    names the Streaming setting instead, as a cloud provider's does.
 
     Args:
         resolution: The Console provider resolution about to stream.
@@ -104,6 +89,8 @@ def retries_refused_stream(resolution: Any) -> bool:
         True when the resolution streams to a self-hosted endpoint.
     """
     if getattr(resolution, "streaming", False) is not True:
+        return False
+    if getattr(resolution, "execution_key", None) == "custom-hosted":
         return False
     from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
 
