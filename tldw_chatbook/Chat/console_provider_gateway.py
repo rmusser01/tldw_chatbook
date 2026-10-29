@@ -31,13 +31,11 @@ from loguru import logger
 from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.Chat_Deps import (
-    ChatAuthenticationError,
     ChatAPIError,
     project_provider_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
-    ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleResolvedDestination
@@ -461,15 +459,6 @@ def require_durable_capture_admission(
         )
 
 
-@dataclass(frozen=True, slots=True)
-class TraceProviderRejection:
-    """A provider's definitive HTTP refusal of one call (TASK-33621.5)."""
-
-    provider: str
-    status_code: int
-    meaning: str
-
-
 @dataclass(slots=True)
 class _TraceAcceptedPreparation:
     """One live accepted continuation's private recovery handoff."""
@@ -487,7 +476,7 @@ class _TraceAcceptedPreparation:
     #: failure without a status) marks the run ``provider_answered``.
     provider_rejections: int = 0
     provider_answered: bool = False
-    last_rejection: TraceProviderRejection | None = None
+    last_rejection: object | None = None
 
 
 class _ProviderAdapterAdmission:
@@ -1522,55 +1511,6 @@ def _cap_automatic_prepared(
     )
 
 
-#: Generic provider failures whose HTTP status has a plainer meaning than
-#: "provider unavailable" (TASK-33621.5). 502/503 keep that default.
-_PROVIDER_STATUS_CATEGORIES = {
-    408: "request timed out",
-    500: "internal server error",
-    504: "gateway timed out",
-}
-
-
-def provider_error_category(exc: BaseException) -> str:
-    """Name what one provider failure means, without any of its content.
-
-    Args:
-        exc: Exception raised by the provider adapter.
-
-    Returns:
-        A short lower-case category, e.g. "rate limit exceeded".
-    """
-    category = "unexpected provider error"
-    if isinstance(exc, ChatAuthenticationError):
-        category = "authentication failed"
-    elif isinstance(exc, ChatRateLimitError):
-        category = "rate limit exceeded"
-    elif isinstance(exc, ChatBadRequestError):
-        category = "bad request"
-    elif isinstance(exc, ChatConfigurationError):
-        category = "configuration error"
-    elif isinstance(exc, ChatProviderError):
-        # TASK-33621.5 AC#1: a status with its own meaning says it; a 504
-        # read "provider unavailable" although the gateway timed out.
-        category = _PROVIDER_STATUS_CATEGORIES.get(
-            getattr(exc, "status_code", None), "provider unavailable"
-        )
-    if getattr(exc, "status_code", None) == 404 and not isinstance(
-        exc, (ChatAuthenticationError, ChatRateLimitError)
-    ):
-        # TASK-34100.5 AC#4: a 404 is the model, whichever class carried it
-        # (live: Gemini's retired-model 404 arrived as a provider error).
-        category = "model or endpoint not found"
-    from tldw_chatbook.Chat.provider_error_reason import (
-        CONTEXT_OVERFLOW_CATEGORY,
-        is_context_overflow_error,
-    )
-
-    if is_context_overflow_error(exc):
-        category = CONTEXT_OVERFLOW_CATEGORY  # review round 2, V2-F3
-    return category
-
-
 def safe_provider_error_copy(
     provider: str,
     exc: BaseException,
@@ -1592,6 +1532,7 @@ def safe_provider_error_copy(
     from tldw_chatbook.Chat.provider_error_reason import (
         CONTEXT_OVERFLOW_FIX,
         is_context_overflow_error,
+        provider_error_category,
         provider_reason_for_exception,
     )
 
@@ -3443,36 +3384,42 @@ class ConsoleProviderGateway:
             raise TraceCallPersistenceError()
         return scope
 
-    def _note_provider_outcome(
-        self, signals: object, rejection: TraceProviderRejection | None
-    ) -> None:
-        """Record what the provider did with one call (TASK-33621.5/.6).
+    def _note_provider_outcome(self, signals: object, rejection: object) -> None:
+        """Record one call's outcome for trace recovery (TASK-33621.5/.6).
 
-        ``rejection`` is the call's definitive HTTP refusal; ``None`` means it
-        answered, or failed in a way that does not prove it was refused.
-        Bookkeeping only: it never changes the call's own outcome.
+        ``rejection`` is its definitive HTTP refusal; ``None`` means it
+        answered, or failed without proof of refusal. Bookkeeping only.
         """
         with contextlib.suppress(Exception):
             scope = self._trace_preparation_scope(signals)
-            if scope is None:
-                return
-            if rejection is None:
+            if scope is not None and rejection is None:
                 scope.provider_answered = True
-            else:
+            elif scope is not None:
                 scope.provider_rejections += 1
                 scope.last_rejection = rejection
 
-    def trace_provider_contact(
-        self, signals: object
-    ) -> tuple[bool, TraceProviderRejection | None] | None:
-        """Return whether this run's provider calls got any outcome, and the last refusal.
+    def _note_provider_failure(
+        self, signals: object, resolution: Any, exc: BaseException, status: int | None
+    ) -> None:
+        from .console_trace_call_recovery import TraceProviderRejection
+        from .provider_error_reason import provider_error_category
 
-        Args:
-            signals: The run's stream signals, bound by ``_bind_trace_preparation``.
+        self._note_provider_outcome(
+            signals,
+            None
+            if status is None
+            else TraceProviderRejection(
+                _sanitized_provider_diagnostic(
+                    provider_display_name(resolution.provider),
+                    known_credentials=(resolution.api_key or "",),
+                ),
+                status,
+                provider_error_category(exc),
+            ),
+        )
 
-        Returns:
-            ``(contacted, last_rejection)`` for a bound run, else ``None``.
-        """
+    def trace_provider_contact(self, signals: object) -> tuple[bool, object] | None:
+        """Return ``(contacted, last_rejection)`` for a bound run, else ``None``."""
         try:
             scope = self._trace_preparation_scope(signals)
         except TraceCallPersistenceError:
@@ -7288,19 +7235,7 @@ class ConsoleProviderGateway:
                     signals.close_exchange(status="error")
                 local = isinstance(exc, ChatConfigurationError) and status_code is None
                 if not local:
-                    self._note_provider_outcome(
-                        signals,
-                        None
-                        if status_code is None
-                        else TraceProviderRejection(
-                            _sanitized_provider_diagnostic(
-                                provider_display_name(resolution.provider),
-                                known_credentials=(resolution.api_key or "",),
-                            ),
-                            status_code,
-                            provider_error_category(exc),
-                        ),
-                    )
+                    self._note_provider_failure(signals, resolution, exc, status_code)
                 enqueue(
                     _QueueItem.error(
                         error_copy,

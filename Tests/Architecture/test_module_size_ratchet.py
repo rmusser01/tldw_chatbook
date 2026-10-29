@@ -149,6 +149,11 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
+    # 2026-10-29, TASK-33621.5/.6 (owner rule: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 29,055 -> 29,082 (+27). Cancel on an unknown trace reservation, the
+    # unconfirmed-reservation re-pause and the per-send provider-contact
+    # record; their bodies live in console_trace_call_recovery.
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
@@ -571,6 +576,10 @@ _BUDGETS: dict[str, int] = {
     # asks storage for its count by title only (owner decision 2026-10-27),
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    # 2026-10-29, TASK-33621.5/.6 (same owner rule): 8,184 -> 8,250 (+66).
+    # The run's per-call provider outcomes (refused / answered), the typed
+    # not-established refusal and the in-place-retry recovery proof; the
+    # status meanings moved to provider_error_reason.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
@@ -581,6 +590,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
+    # 2026-10-29, TASK-33621.5/.6 (same owner rule): 7,000 -> 7,010 (+10).
+    # Cancel on a trace card returns the draft; the card gets the
+    # provider-contact record.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,

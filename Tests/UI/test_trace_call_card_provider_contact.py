@@ -11,8 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Chat.console_provider_gateway import TraceProviderRejection
-from tldw_chatbook.Chat.console_trace_call_recovery import TraceCallProviderContact
+from tldw_chatbook.Chat.console_trace_call_recovery import (
+    TraceCallProviderContact,
+    TraceProviderRejection,
+)
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
