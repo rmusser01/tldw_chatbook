@@ -6,11 +6,12 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-29 16:09'
+updated_date: '2026-10-29 17:25'
 labels:
   - console
   - tabs-sessions
 dependencies: []
-priority: medium
+priority: high
 ---
 
 ## Description
