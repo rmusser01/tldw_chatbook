@@ -1636,6 +1636,7 @@ Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
 # TASK-33621.17/.18 (2026-10-29): a Temporary chat's sends on the stock
 # received path -- the default send goes out with traces off, Save & Send
-# reaches the provider, and a capture pause leaves no unsent turn or answered
-# prompt (three mounted cases, about 25 s locally), appended at the tail.
+# reaches the provider, a capture pause leaves no shelf entry or answered
+# prompt, and its Cancel gives back the text and image (five mounted cases,
+# about 25 s locally), appended at the tail.
 Tests/UI/test_console_temporary_capture_flow.py

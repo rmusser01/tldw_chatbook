@@ -43,7 +43,9 @@ provider, because a Capture On call needs a durable owner. The transcript shows
 **Save chat to capture this send** with **Save & Send**, **Send without
 capture** and **Cancel send**. **Save & Send** saves the current lineage and
 its trace ownership, then sends that message; **Send without capture** sends
-that one message with Capture Off. Temporary trace and fork state can stay
+that one message with Capture Off; **Cancel send** puts the message back in the
+composer with any attachments it carried. While the card is on screen, the
+queue shelf does not list the send as unsent. Temporary trace and fork state can stay
 coherent while the app is running and while you switch chats, but it is not
 restart-durable until saved.
 

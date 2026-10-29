@@ -172,12 +172,12 @@ async def test_a_resumed_turn_does_not_take_evidence_staged_while_it_was_paused(
         pii_redaction_enabled=None,
         expected_policy_revision=store.capture_policy_state(session_id).policy_revision,
     )
-    # The paused send is not accepted; TASK-33621.18: its card owns it, so
-    # the custody task returns the refusal instead of parking an unsent turn.
-    refused = await runtime.wait_for_turn(
-        _admit(runtime, controller, session_id, "summarize our chat")
-    )
-    assert refused.accepted is False
+    # A paused send is not durably accepted, so the custody task reports it.
+    # TASK-33621.18: its card owns it, so the shelf does not offer it too.
+    with pytest.raises(RuntimeError, match="refused before durable acceptance"):
+        await runtime.wait_for_turn(
+            _admit(runtime, controller, session_id, "summarize our chat")
+        )
     assert runtime.recoveries_for_session(session_id) == ()
     paused = store.preparation_for_session(session_id)
     assert paused is not None

@@ -631,9 +631,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
 # TASK-33621.17/.18 (2026-10-29) appends 1 whole-file entry at the tail: a
-# Temporary chat's sends on the stock received path (three cases, about 25 s
-# locally), so no existing entry changes shard: dev's 1144 + 1 = 1145 (the
-# earlier 1145 assignment, which the 1144 one overrides, moves with it).
+# Temporary chat's sends on the stock received path (five cases, about 25 s
+# locally), so no existing entry changes shard: dev's 1144 + 1 = 1145. Dev
+# carried a dead 1145 assignment above its effective 1144; one line now.
 # Rebased 2026-10-30 onto dev's 1149 (TASK-33626.1/.2 landed): 1149 + 1 = 1150.
 MINIMUM_FILES = 1164
 

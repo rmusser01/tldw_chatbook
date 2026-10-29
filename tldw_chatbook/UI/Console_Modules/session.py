@@ -6832,6 +6832,7 @@ class ConsoleSessionController:
         from ...Chat.console_unsent_turn import (
             card_action_finished,
             card_action_started,
+            card_owned_pause,
             clear_answered_draft,
             own_draft_takes_it_back,
             shelf_releasable,
@@ -6842,17 +6843,18 @@ class ConsoleSessionController:
         # TASK-33621.20: a paused send the unsent-turn shelf also lists (a
         # Library pause, or a send that re-paused): one surface at a time.
         releasable = shelf_releasable(held, preparation_id)
-        runtime = self._console_runtime_accessor() if releasable else None
+        # TASK-33621.18: a capture pause's unsent turn is kept, held off the
+        # shelf, so Cancel can give back what the send took (its attachments).
+        card_owned = card_owned_pause(held, preparation_id)
+        kept = releasable or card_owned
+        runtime = self._console_runtime_accessor() if kept else None
         # TASK-34350: read the held text BEFORE the action: the UI sync that
         # follows it mirrors the (empty) composer back into the session draft.
         held_text = (
             held.executed_draft
             if held is not None
             and held.preparation_id == preparation_id
-            and (
-                releasable
-                or controller.context_compaction_hold(preparation_id) is not None
-            )
+            and (kept or controller.context_compaction_hold(preparation_id) is not None)
             else ""
         )
         sync_ui = self._read_trace_recovery_finished()
@@ -6869,7 +6871,7 @@ class ConsoleSessionController:
                 on_finished=self._read_trace_recovery_finished(),
             )
         except BaseException:
-            if releasable:
+            if kept:
                 # TASK-33621.20: the card may be gone (a center swap cancels its
                 # worker), so the shelf offers the turn again, repainted from
                 # the screen rather than from this ending task (passed uncalled,
@@ -6887,9 +6889,11 @@ class ConsoleSessionController:
         composer = self._console_composer_or_none()
         # By id: after a tab switch the active session's pause is another's.
         now_held = controller.store.preparation_by_id(preparation_id)
-        settled = bool(held_text) and (
+        settled = (bool(held_text) or card_owned) and (
             not shelf_releasable(now_held, preparation_id)
             if releasable
+            else not card_owned_pause(now_held, preparation_id)
+            if card_owned
             else controller.context_compaction_hold(preparation_id) is None
         )
         # TASK-33621.20: a tab switch during the action leaves the composer on
@@ -6908,16 +6912,17 @@ class ConsoleSessionController:
         refill = (
             cancelled
             and shown
-            and (not typed or (releasable and typed == held_text.strip()))
+            and (not typed or (kept and typed == held_text.strip()))
         )
-        # Only a shelf-releasable pause has an unsent turn to send back there.
+        # Only a kept unsent turn can be sent back there.
         to_own_draft = (
-            releasable
+            kept
             and cancelled
             and not shown
             and own_draft_takes_it_back(controller.store, held.session_id, held_text)
         )
-        if releasable:
+        returned = None
+        if kept:
             returned = card_action_finished(
                 runtime,
                 controller,
@@ -6927,13 +6932,15 @@ class ConsoleSessionController:
             )
             if returned is not None:
                 held_text = returned.draft  # with its attachments restaged
+            # A trace pause comes after the durable commit: nothing was kept.
+            refill = refill and (releasable or returned is not None)
         if refill:
             # Cancel puts the held message back where it came from.
             composer.load_draft(held_text)
         elif shown and getattr(result, "accepted", False):  # TASK-33621.18
             sent = held.executed_draft if held.preparation_id == preparation_id else ""
             clear_answered_draft(controller.store, composer, held.session_id, sent)
-        if releasable:
+        if releasable or returned is not None:
             await sync_ui()  # the shelf (and the staged attachments) settled
         return result
 
