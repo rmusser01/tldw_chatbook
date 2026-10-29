@@ -1560,8 +1560,10 @@ the page before it, with focus on its first row. If a page cannot be read, the
 view keeps what it shows, says "Couldn't load recently deleted notes." and
 offers **Retry**.
 
-**Delete forever** (x) removes a note for good after a confirm that names it;
-a note bound to a synced folder is refused. The confirm opens on **Cancel**,
+**Delete forever** (x) removes a note for good after a confirm that names it.
+A note kept in sync with a folder is refused with "This note is kept in sync
+with a folder, so it can't be deleted forever here."; this release has no way
+to take one note out of its folder's sync. The confirm opens on **Cancel**,
 and **Escape** cancels it without changing anything. There is no Undo
 afterwards: the note, its keyword and folder links and its earlier versions
 are gone, and focus lands on the row now in its place.

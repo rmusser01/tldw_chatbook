@@ -153,9 +153,11 @@ async def test_purge_note_refuses_a_note_kept_in_sync_with_a_folder(
 
     assert refused.value.reason_code == "sync_bound"
     assert refused.value.user_message == PURGE_REFUSED_SYNC_BOUND
+    # Review R0, I-3: no reachable control unbinds a note in this release,
+    # so the sentence sends the user nowhere that does not exist.
     assert PURGE_REFUSED_SYNC_BOUND == (
-        "This note is kept in sync with a folder — remove it from the "
-        "folder's sync first."
+        "This note is kept in sync with a folder, so it can't be deleted "
+        "forever here."
     )
     assert profile.state(profile.note_id) == 1
     assert removals == []
