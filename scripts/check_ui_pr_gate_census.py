@@ -1273,10 +1273,13 @@ MINIMUM_FILES = 2520
 #   (~14 s alone), plus Tests/UI/test_library_ctrl_s_chip_follows_save_state.py
 #   (two boots, ~15 s) and the boot-free Tests/UI/test_library_ctrl_s_
 #   refusals.py (~2 s), all timed alone with no plugin: 926 -> 929.
+# - task 10 (2026-10-29, TASK-34000.40 N-34, ruling T10-a): Tests/UI/test_library_
+#   notes_import_escape_keeps_running.py (two production-CSS Library boots over
+#   a real import, ~24 s alone at load average ~28, no plugin): 929 -> 930.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 13 = 2470.
-MINIMUM_FILES = 2470
+# moves; the floor is the measured entry count: 2457 + 14 = 2471.
+MINIMUM_FILES = 2471
 
 
 MINIMUM_FILES = 2038
