@@ -831,3 +831,43 @@ The owner approved a prospective versioned response-profile repair after native 
 The exact terminal block retains its concrete source_format and provider/model/protocol/status/text. Version2 validates the exact shape and integer versions, unchanged terminal-round/type/single-block evidence and process-keyed raw equality proof. Credential/PII projection and completed-tool revision/range/lineage/policy checks are unchanged. A scalar version1 profile remains strict; hosted proprietary profiles and legacy visible-only responses retain their meanings. Old headers, links, artifacts, revisions and reconstructions remain immutable; no relinking, migration or retrospective source inference is permitted. Fresh captures establish the new contract.
 
 The contract uses the existing immutable request-header defaults JSON; no schema/storage expansion or new retained raw bodies. Rejected alternatives are widening v1, rewriting old artifact links, relabeling actual parser provenance, weakening equality/completed-tool checks, or disabling capture/thinking. Design: Docs/superpowers/specs/2026-10-18-versioned-thinking-response-profile-design.md; recovery task TASK-33164 and its existing correction plan link this amendment.
+
+### Amendment recorded 2026-10-27: rewritten surface tail after Edit & resend
+
+TASK-33621.7 (Console UX review, 2026-09-29) reproduced an ordinary action that
+blocked capture for the rest of a chat. Edit & resend dispatches its own call with
+Capture Off, because it has no turn preparation, so the edited sibling branch never
+reaches the surface. The next captured FRESH or AGENT_FIRST send carried a
+replacement of the recorded surface's tail plus the new turn. The planner admits
+only an append or a one-item replacement, so it refused the send with
+`count_or_span`, and every later send stopped at "Trace capture blocked". Measured
+live on dev `f9baac8706`: prefix 2, 1 recorded entry changed, 3 incoming.
+
+Permit one more typed replacement-plus-append, the rewritten tail, for FRESH and
+AGENT_FIRST sends only, when no completed tool-turn transition applies. The replaced
+range is the recorded surface's whole tail after the matched prefix (no retained
+suffix), messages only, within the 256-node range limit. Every replacement row
+except the current user must be an exact saved revision; a saved response may carry
+its typed thinking replay. The current user may carry its admitted current-turn
+transform. Each row's live message must be an undeleted message of the attached
+conversation and the direct parent of the next row's message, and the last row must
+be the call's own turn. The oldest row's parent must be one proven anchor:
+
+- the message of the last retained saved row (an edited or switched branch); or
+- no parent, when no saved row is retained (a branch from the conversation root).
+
+Recheck the chain and the anchor in the dispatch-binding transaction; any change
+fails capture closed. Removed rows contribute no disclosure policy or structural
+metadata to the composed request.
+
+This is not a general history-replacement permission. Retained suffixes, tool or
+project artifacts in the replacement, provider continuations, unsaved or foreign
+rows, gaps, deleted rows and unmatched anchors stay refused. Historical calls and
+heads stay immutable. No schema, retention change or durable registry is added; the
+proof is a bounded transient witness, like the completed tool-turn witness. Edit &
+resend and Regenerate themselves remain uncaptured: the edited branch enters the
+trace at the next captured send, not at the edit.
+
+The owner ruled on 2026-10-27 that TASK-33621.7 fixes the edited-branch trace
+defect only, with no remembered per-chat capture bypass. This amendment is recorded
+with the implementing change and is subject to the owner's review of that change.

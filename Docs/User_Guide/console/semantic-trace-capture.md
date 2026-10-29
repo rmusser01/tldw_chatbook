@@ -170,10 +170,13 @@ transcript:
 
 - Editing or deleting a referenced message preserves the needed old revision
   once before changing the live message.
-- Edit & resend, regeneration, retries, failures, stops, and tool-loop calls are
-  separate call boundaries. Abandoned variants remain identifiable.
-- Context compaction and message edits append bounded replacement records; they
-  do not rewrite old trace events.
+- Retries, failures, stops, and tool-loop calls are separate call boundaries.
+  Abandoned variants remain identifiable.
+- Edit & resend and Regenerate send their reply with capture off, so that reply
+  has no trace call of its own. Your next send in the chat is captured as usual.
+  It records the edited branch as one bounded replacement of the earlier trace
+  history, and it does not ask you to choose an action.
+  Old trace events are never rewritten.
 - A fork shares the immutable trace prefix visible at its boundary and adds only
   its own suffix. The complete inherited history remains coherent in the fork
   without copying the prefix.

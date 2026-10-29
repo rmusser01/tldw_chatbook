@@ -406,6 +406,89 @@ class CompletedToolTurnWitness:
         )
 
 
+def rewritten_history_revision_id(descriptor: TraceProvenance) -> str | None:
+    """Return the saved owner of one history row a rewritten tail may carry.
+
+    Args:
+        descriptor: Incoming provider-order descriptor before the current user.
+
+    Returns:
+        The exact saved revision of a plain saved row, or of a saved response
+        replayed with its typed thinking. None for every other shape.
+    """
+    if type(descriptor) is SavedRevisionTraceProvenance:
+        return descriptor.revision_id
+    return saved_response_source_revision_id(descriptor)
+
+
+@dataclass(frozen=True, slots=True)
+class RewrittenTailWitness:
+    """Saved-branch evidence for replacing a rewritten surface tail.
+
+    ADR-097 amendment 2026-10-27 (TASK-33621.7). Edit & resend changes the
+    provider-visible history without a captured call that records the change.
+    The next FRESH or AGENT_FIRST send may replace the recorded surface's whole
+    tail with the current branch's saved rows, ending at the current user.
+    Every row is rechecked against durable messages.
+
+    Args:
+        history: Oldest-to-newest saved history descriptors before the current
+            user. Each row's message is the direct parent of the next one.
+        user_revision_id: Exact saved revision of the current user turn.
+        anchor_message_id: Saved message that parents the oldest replacement
+            row: the last retained saved row, or None when the oldest row
+            starts the conversation.
+
+    Raises:
+        ValueError: If an identity is not a canonical UUIDv4 string, a history
+            row has no saved owner, or the range reaches the replacement bound.
+    """
+
+    history: tuple[TraceProvenance, ...]
+    user_revision_id: str
+    anchor_message_id: str | None = None
+
+    def __post_init__(self) -> None:
+        SemanticRevisionRef(self.user_revision_id)
+        if self.anchor_message_id is not None:
+            SemanticRevisionRef(self.anchor_message_id)
+        if (
+            type(self.history) is not tuple
+            or len(self.history) + 1 > MAX_SURFACE_REPLACEMENT_SPAN
+            or any(rewritten_history_revision_id(row) is None for row in self.history)
+        ):
+            raise ValueError("rewritten_tail_shape")
+
+    @property
+    def descriptor_count(self) -> int:
+        """Count the saved history rows and the current user."""
+        return len(self.history) + 1
+
+    def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
+        """Match the exact saved history followed by the current user."""
+        return (
+            len(descriptors) == self.descriptor_count
+            and tuple(descriptors[:-1]) == self.history
+            and current_turn_source_revision_id(descriptors[-1])
+            == self.user_revision_id
+        )
+
+
+def replacement_descriptor_count(
+    completed_tool_turn: CompletedToolTurnWitness | None,
+    rewritten_tail: RewrittenTailWitness | None,
+    live_native: LiveNativeContinuationWitness | None = None,
+) -> int:
+    """Return how many descriptors one admitted surface replacement carries."""
+    if live_native is not None:
+        return live_native.descriptor_count
+    if completed_tool_turn is not None:
+        return completed_tool_turn.descriptor_count
+    if rewritten_tail is not None:
+        return rewritten_tail.descriptor_count
+    return 1
+
+
 @dataclass(frozen=True, slots=True)
 class SurfaceDeltaAdmission:
     """Preparation-owned declaration containing only newly admitted descriptors."""
@@ -423,6 +506,7 @@ class SurfaceDeltaAdmission:
     completed_tool_turn: CompletedToolTurnWitness | None = field(
         default=None, kw_only=True
     )
+    rewritten_tail: RewrittenTailWitness | None = field(default=None, kw_only=True)
 
     live_native: LiveNativeContinuationWitness | None = field(
         default=None, repr=False, kw_only=True
@@ -453,16 +537,19 @@ class SurfaceDeltaAdmission:
             if (
                 type(witness) is not LiveNativeContinuationWitness
                 or self.completed_tool_turn is not None
+                or self.rewritten_tail is not None
                 or self.route_identity != "tool_loop"
                 or witness.custody is not self.live_native_custody
                 or witness.continuation_ordinal != self.live_native_ordinal
                 or not 1 <= witness.message_count <= 256
             ):
                 raise ValueError("surface_delta_shape")
-        if self.completed_tool_turn is not None:
-            witness = self.completed_tool_turn
+        witness = self.completed_tool_turn or self.rewritten_tail
+        if witness is not None:
             if (
-                type(witness) is not CompletedToolTurnWitness
+                (self.completed_tool_turn is not None)
+                == (self.rewritten_tail is not None)
+                or type(witness) not in {CompletedToolTurnWitness, RewrittenTailWitness}
                 or self.replacement_range is None
                 or self.replacement_range.component_name != "messages_payload"
                 or self.route_identity not in {"agent_first", "fresh"}
@@ -495,6 +582,7 @@ class VerifiedSurfaceDelta:
     completed_tool_turn: CompletedToolTurnWitness | None = field(
         default=None, kw_only=True
     )
+    rewritten_tail: RewrittenTailWitness | None = field(default=None, kw_only=True)
 
     live_native: LiveNativeContinuationWitness | None = field(
         default=None, repr=False, kw_only=True
@@ -521,16 +609,24 @@ class VerifiedSurfaceDelta:
             if (
                 type(witness) is not LiveNativeContinuationWitness
                 or self.completed_tool_turn is not None
+                or self.rewritten_tail is not None
                 or self.route_identity != "tool_loop"
                 or witness.custody is not self.live_native_custody
                 or witness.continuation_ordinal != self.live_native_ordinal
                 or not 1 <= witness.message_count <= 256
             ):
                 raise ValueError("surface_delta_shape")
-        if self.completed_tool_turn is not None:
-            witness = self.completed_tool_turn
+        witness = self.completed_tool_turn or self.rewritten_tail
+        if witness is not None:
+            replay_row_count = (
+                witness.replay_row_count
+                if type(witness) is CompletedToolTurnWitness
+                else 0
+            )
             if (
-                type(witness) is not CompletedToolTurnWitness
+                (self.completed_tool_turn is not None)
+                == (self.rewritten_tail is not None)
+                or type(witness) not in {CompletedToolTurnWitness, RewrittenTailWitness}
                 or self.replacement is None
                 or len(self.items) != witness.descriptor_count - 1
                 or self.route_identity not in {"agent_first", "fresh"}
@@ -539,11 +635,11 @@ class VerifiedSurfaceDelta:
                     item.component_name != "messages_payload"
                     or item.ordinal != self.replacement.item.ordinal + offset
                     for offset, item in enumerate(
-                        self.items[:-1] if witness.replay_row_count else self.items, 1
+                        self.items[:-1] if replay_row_count else self.items, 1
                     )
                 )
                 or (
-                    witness.replay_row_count
+                    replay_row_count
                     and self.items[-1].component_name != "provider_continuations"
                 )
                 or not witness.matches_descriptors(
@@ -687,12 +783,8 @@ def build_verified_surface_delta(
             ordinal = replacement_range.current_ordinal
             if (
                 delta_count
-                != (
-                    admission.live_native.descriptor_count
-                    if admission.live_native is not None
-                    else admission.completed_tool_turn.descriptor_count
-                    if admission.completed_tool_turn is not None
-                    else 1
+                != replacement_descriptor_count(
+                    admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
                 )
                 or ordinal < 0
                 or ordinal >= len(full_messages) + len(full_continuations)
@@ -742,12 +834,8 @@ def build_verified_surface_delta(
             )
     replacement: VerifiedSurfaceReplacement | None = None
     if admission.replacement_range is not None:
-        if len(items) != (
-            admission.live_native.descriptor_count
-            if admission.live_native is not None
-            else admission.completed_tool_turn.descriptor_count
-            if admission.completed_tool_turn is not None
-            else 1
+        if len(items) != replacement_descriptor_count(
+            admission.completed_tool_turn, admission.rewritten_tail, admission.live_native
         ):
             raise ValueError("surface_delta_shape")
         replacement_range = admission.replacement_range
@@ -796,6 +884,7 @@ def build_verified_surface_delta(
         live_native=admission.live_native,
         live_native_custody=admission.live_native_custody,
         live_native_ordinal=admission.live_native_ordinal,
+        rewritten_tail=admission.rewritten_tail,
     )
 
 
