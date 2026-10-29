@@ -583,6 +583,11 @@ _BUDGETS: dict[str, int] = {
     # two trace steps (hoisted, not duplicated), the refused/empty-stream
     # hand-back in _stream_generic_chat, and the retry's usage hand-over.
     # Classification and copy live in Chat/refused_stream.py.
+    # 2026-10-29 (TASK-37421 review fixes, same owner rule): 8333 -> 8362
+    # (+29) -- the retry's usage replaces the replaced call's instead of
+    # key-merging into it, the retry runs after the refusal handler (no
+    # exception chaining), an empty tools stream with terminal metadata and
+    # an unreadable Custom-endpoint stream are retried too.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet

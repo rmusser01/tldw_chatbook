@@ -1264,12 +1264,17 @@ class ConsoleProviderCallSignals:
                 self._aggregate._discard_scoped_usage_call(self._token)
 
     def transfer_usage_to(self, target: "ConsoleProviderCallSignals | None") -> None:
-        """Close this call and merge its usage into ``target`` instead.
+        """Close this call and make its usage ``target``'s usage instead.
 
         TASK-37421: a non-streaming retry is a call of its own for capture and
         tracing, but the turn's usage is read from the call it replaced (the
         agent bridge reads only that view). Publishing here as well would bill
         the retry twice, so this call's in-flight entry is discarded.
+        ``target``'s usage is REPLACED, never key-merged (two calls' payloads
+        must not merge, see ``usage_payload``): an empty stream that reported
+        its prompt's ``cached_tokens`` would otherwise lend the retry a cache
+        read it never made. The replaced call's own usage is dropped, as its
+        trace call already settles with none.
         """
         with self._usage_lock:
             if self._closed:
@@ -1279,8 +1284,20 @@ class ConsoleProviderCallSignals:
                 dict(self._usage_payload) if self._usage_payload is not None else None
             )
         self._aggregate._discard_scoped_usage_call(self._token)
-        if payload is not None and target is not None:
-            target.record_usage_payload(payload)
+        if target is not None:
+            target._replace_usage_payload(payload)
+
+    def _replace_usage_payload(self, payload: Mapping[str, Any] | None) -> None:
+        with self._usage_lock:
+            if self._closed or not self._aggregate.accepts_events():
+                return
+            self._usage_payload = dict(payload) if payload is not None else None
+            if self._usage_payload is None:
+                self._aggregate._discard_scoped_usage_call(self._token)
+            else:
+                self._aggregate._record_scoped_usage_call(
+                    self._token, self._usage_payload
+                )
 
     def usage_snapshot(self) -> dict[str, Any] | None:
         """Return a defensive copy of this call's current usage.
@@ -6727,6 +6744,7 @@ class ConsoleProviderGateway:
                 from tldw_chatbook.Chat.refused_stream import retries_refused_stream
 
                 with _automatic_generation(prepared, call_signals):
+                    stream_refused = False
                     try:
                         async for emission in self._stream_generic_chat(
                             effective_resolution,
@@ -6744,11 +6762,15 @@ class ConsoleProviderGateway:
                             observe_emission(emission.synthetic)
                             yield emission.item
                     except _StreamFallbackRequired:
+                        # The retry runs after this handler, so its own
+                        # failure is not chained to the internal signal.
+                        stream_refused = True
+                    if stream_refused:
                         # TASK-37421: a self-hosted server refused the stream,
                         # or sent nothing, before any text. Ask once more
                         # without streaming, as the llama.cpp path does: its
-                        # own traced call and capture, and its usage handed to
-                        # this call's signals so it is billed exactly once.
+                        # own traced call and capture, and its usage replacing
+                        # this call's (never merged), so it is billed once.
                         if call_signals is not None:
                             call_signals._aggregate.mark_model_retry()
                             call_signals.close_exchange(status="error")
@@ -7237,10 +7259,12 @@ class ConsoleProviderGateway:
                     if signals is not None and calls:
                         signals.record_exchange_tool_calls(calls)
                     metadata = _provider_turn_metadata(provider_response)
-                    if calls or metadata is not None:
-                        enqueue(_QueueItem.native_tool_calls(calls, metadata))
-                    elif not delivered and stream_fallback:
+                    if not calls and not delivered and stream_fallback:
+                        # A clean terminal turn (finish reason, usage) with
+                        # nothing in it is still an empty stream.
                         enqueue(_QueueItem("stream_fallback"))
+                    elif calls or metadata is not None:
+                        enqueue(_QueueItem.native_tool_calls(calls, metadata))
                     elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
                         # visible content NOR tool-calls. On the fence path
@@ -7284,12 +7308,17 @@ class ConsoleProviderGateway:
                 if isinstance(exc, PRE_EFFECT_ERRORS):
                     enqueue(_QueueItem("error", adapter_error=exc))
                     return
-                from tldw_chatbook.Chat.refused_stream import is_refused_stream
+                from tldw_chatbook.Chat.refused_stream import (
+                    is_refused_stream,
+                    is_unreadable_stream,
+                )
 
                 refused_stream = (
                     resolution.streaming and not delivered and is_refused_stream(exc)
                 )
-                if refused_stream and stream_fallback:
+                if stream_fallback and (
+                    refused_stream or (not delivered and is_unreadable_stream(exc))
+                ):
                     if signals is not None:
                         signals.close_exchange(status="error")
                     enqueue(_QueueItem("stream_fallback"))
