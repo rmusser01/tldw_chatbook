@@ -515,6 +515,106 @@ async def test_character_picker_new_chat_preserves_control_derived_settings(
     assert created.settings != blank_defaults
 
 
+async def _launch_character(screen, card, route):
+    if route == "handoff":
+        assert await screen._session._start_character_console_session(
+            _start_chat_handoff(card)
+        )
+    else:
+        from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+            ConsoleCharacterChoice,
+        )
+
+        await screen._character._apply_console_character_choice_async(
+            ConsoleCharacterChoice(
+                character_id=card["id"], name=card["name"], placement="new"
+            )
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["handoff", "picker"])
+@pytest.mark.parametrize("saved_provider", ["llama_cpp", "openai"])
+async def test_character_launch_uses_worked_chat_pair_over_stale_controls(
+    monkeypatch, route, saved_provider
+):
+    card = _roleplay_card(name="pixel-migu")
+    screen = _character_screen(monkeypatch, card)
+    config = screen.app_instance.app_config
+    config["chat_defaults"].update(provider=saved_provider, model="saved-model")
+    config["api_settings"] = {
+        "llama_cpp": {
+            "api_url": "http://127.0.0.1:9099",
+            "model_defaults": {"active-model": {"temperature": 0.23}},
+        }
+    }
+    screen._session._provider_readiness_app_config_fn = lambda: config
+    screen._console_control_provider = "vllm"
+    screen._console_control_model = "older-model"
+    monkeypatch.setattr(
+        screen._character, "_fetch_character_card_for_avatar", lambda _id: card
+    )
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        settings=ConsoleSessionSettings(
+            provider="llama_cpp",
+            model="active-model",
+            system_prompt="Other chat's instructions",
+            pinned_prefill="Other chat's prefill",
+        )
+    )
+    store.set_session_draft(source.id, "existing work")
+    source_before = replace(source)
+
+    await _launch_character(screen, card, route)
+
+    target = store.ensure_session()
+    assert target.id != source.id
+    assert (target.settings.provider, target.settings.model) == (
+        "llama_cpp",
+        "active-model",
+    )
+    assert target.settings.temperature == 0.23
+    assert target.settings.system_prompt == "Protect Captain Rowan as pixel-migu."
+    assert target.settings.pinned_prefill is None
+    assert source == source_before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["handoff", "picker"])
+async def test_character_launch_aligns_workspace_before_modal_resume(
+    monkeypatch, tmp_path, request, route
+):
+    from Tests.Workspaces.test_console_workspace_reconcile import _registry
+    from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
+
+    card = _roleplay_card(name="pixel-migu")
+    screen = _character_screen(monkeypatch, card)
+    registry = _registry(tmp_path, active_id="workspace-a")
+    register_database = request.getfixturevalue("owned_console_apps")
+    register_database(screen.app_instance.console_runtime, registry.db)
+    screen.app_instance.workspace_registry_service = registry
+    monkeypatch.setattr(
+        screen._character, "_fetch_character_card_for_avatar", lambda _id: card
+    )
+    store = screen._ensure_console_chat_store()
+    source = store.create_session(
+        title="Workspace chat",
+        workspace_id="workspace-a",
+        settings=screen._session._default_console_session_settings(),
+    )
+    store.set_session_draft(source.id, "existing work")
+
+    await _launch_character(screen, card, route)
+
+    target = store.ensure_session()
+    assert target.id != source.id
+    assert target.workspace_id == "global"
+    assert registry.get_active_workspace().workspace_id == DEFAULT_WORKSPACE_ID
+    screen._workspace._reconcile_console_session_with_registry()
+    assert store.active_session_id == target.id
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "worked_state",

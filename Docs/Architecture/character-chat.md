@@ -44,6 +44,16 @@ Placeholder expansion (`replace_placeholders`) handles `{{char}}`, `{{user}}`, `
 
 All three are managed in the Personas screen.
 
+Character Start Chat and the Console character picker's New Chat resolve the
+new generation defaults from the current worked conversation's provider/model.
+Older compact-control mirrors cannot replace that pair. An untouched initial
+chat still converges to current canonical defaults, and a launch without source
+settings retains the existing control/default fallback. The new card owns its
+prompt and greeting; source-chat prompts and prefills are not copied. Both
+activation routes align the workspace registry to the actual target session
+before switching, so resuming after a model dialog preserves the character chat
+(ADR-095 and the TASK-15120 global-workspace ownership ruling).
+
 ## Search activation
 
 The pure `UI/Persona_Modules/roleplay_list_window_state.py` owns the existing

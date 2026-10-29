@@ -1,0 +1,19 @@
+{
+  "source_session": "b5db2fcd-b187-41fa-8117-493f652aae87",
+  "source_messages": [
+    "Existing workspace conversation.",
+    "This source chat must remain unchanged."
+  ],
+  "active_session": "db483773-44a0-401f-8339-9c48822826c1",
+  "title": "Chat with pixel-migu",
+  "workspace": "global",
+  "registry_workspace": "workspace-default",
+  "provider": "llama_cpp",
+  "model": "uat-llama-b",
+  "stale_controls": "vllm",
+  "screen": "ChatScreen",
+  "messages": [
+    "Hi! I\u2019m pixel-migu. What are we exploring today?"
+  ],
+  "code_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\fix-character-chat-selection\\tldw_tui"
+}
