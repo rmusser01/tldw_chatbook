@@ -678,7 +678,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # existing entry changes shard: dev's 1140 + 3 = 1143.
 # Rebased 2026-10-29 onto dev's 1141 entries (TASK-36611's +1): 1141 + 3 = 1144.
 # Rebased 2026-10-29 onto dev's 1145 entries (TASK-33620.15.20's +2): 1145 + 3 = 1148.
-MINIMUM_FILES = 1261
+# TASK-33620.3 (2026-10-29) appends 1 node entry at the tail: a saved chat
+# with no Library-policy row sends and its commit repairs the row (one
+# mounted case, about 6-15 s locally): 1148 -> 1149.
+MINIMUM_FILES = 1262
 
 
 def read_census(path: Path) -> list[str]:

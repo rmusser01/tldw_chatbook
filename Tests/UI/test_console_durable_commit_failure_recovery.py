@@ -1,18 +1,28 @@
 """A send whose durable commit fails never jams its conversation.
 
-TASK-33621.53 and TASK-33620.3 (Console UX review 2026-09-29). A commit that
-failed before the store reserved it -- the store's own preflight ("Durable
-identity owner changed." and its siblings) or the controller's "no committed
-owner" check -- left the preparation COMMITTING. COMMITTING is not a pause,
-so neither the card nor the shelf could end it: Discard dropped the shelf
-entry and every later send was refused ("Console session already has an
-admission owner."). It now pauses as PERSISTENCE, exactly like a commit that
-failed inside its transaction: the card says "Send could not be saved", and
-Retry send, Cancel send, Restore and Discard each end it.
+TASK-33621.53 and TASK-33620.3 (Console UX review 2026-09-29). Two defects
+behind one symptom, a send that could not be saved:
+
+1. A commit that failed before the store reserved it -- the store's own
+   preflight ("Durable identity owner changed." and its siblings) or the
+   controller's "no committed owner" check -- left the preparation
+   COMMITTING. COMMITTING is not a pause, so neither the card nor the
+   shelf could end it: Discard dropped the shelf entry and every later send
+   was refused ("Console session already has an admission owner."). It now
+   pauses as PERSISTENCE, exactly like a commit that failed inside its
+   transaction: the card says "Send could not be saved", and Retry send,
+   Cancel send, Restore and Discard each end it.
+2. A saved chat with no Library-policy sidecar row (a legacy or imported
+   conversation) refused every send at the durable commit: "Durable Console
+   Library policy no longer matches acceptance." Live on dev f9baac8706, every
+   send in such a chat read "Send could not be saved; your message was not
+   sent", for good. The commit now writes the safe default row (Never /
+   Blocked, the policy the turn already ran under) in the same transaction.
 
 These drive the real ChatScreen, controller, store, runtime and an in-memory
-ChaChaNotes database. Only the provider gateway is a double, and the forced
-failure is injected inside the real store's commit, before its reservation.
+ChaChaNotes database. Only the provider gateway is a double; the forced
+failure of (1) is injected inside the real store's commit, before its
+reservation.
 """
 
 from __future__ import annotations
@@ -315,3 +325,133 @@ async def test_card_retry_after_a_commit_failure_sends_the_turn_once(monkeypatch
             assert _NOT_SAVED not in _screen_text(host)
             conversation_id = _session(store, session_id).persisted_conversation_id
             assert _user_rows(db, conversation_id, FIRST) == 1
+
+
+def _policy_row(db, conversation_id: str):
+    row = db.execute_query(
+        "SELECT auto_retrieve_on_send, assistant_library_access, policy_revision "
+        "FROM console_conversation_library_policy WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    return None if row is None else tuple(row)
+
+
+@pytest.mark.asyncio
+async def test_a_saved_chat_without_its_library_policy_row_sends_and_repairs_it():
+    """TASK-33620.3 AC#4: the turn commits under the safe default policy.
+
+    Before the fix the commit raised "Durable Console Library policy no longer
+    matches acceptance." and the send paused as "Send could not be saved"; a
+    retry failed the same way, every time.
+    """
+    gateway = _Gateway()
+    host, service = _build(gateway)
+    db = host.app_instance.chachanotes_db
+    # The legacy/imported shape: a conversation written without the Console's
+    # Library-policy sidecar row.
+    cid = service.create_conversation(title="Imported chat")
+    db.add_message(
+        {"conversation_id": cid, "sender": "user", "content": "imported question"}
+    )
+    assert _policy_row(db, cid) is None
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _ready(host, pilot)
+            assert (
+                await console._workspace._resume_console_workspace_conversation(cid)
+                is True
+            )
+            await _select_llamacpp_console(console)
+            store = controller.store
+            session_id = store.active_session_id
+            session = _session(store, session_id)
+            assert session.persisted_conversation_id == cid
+            await until(lambda: session.library_policy_hydrated)
+            assert session.library_policy_holder.snapshot.source == "missing"
+
+            await _send(host, pilot, composer, FIRST)
+            await until(
+                lambda: gateway.stream_calls == 1 or _NOT_SAVED in _screen_text(host)
+            )
+            assert _NOT_SAVED not in _screen_text(host)
+            await until(lambda: REPLY in _screen_text(host))
+            # Repaired with the safe defaults the turn ran under, not refused.
+            assert _policy_row(db, cid) == (0, 0, 1)
+            assert session.library_policy_holder.snapshot.source == "durable"
+            assert session.library_policy_holder.snapshot.policy_revision == 1
+
+            # The repaired row is now the chat's durable policy: the next send
+            # validates against it instead of tripping the same check.
+            await until(lambda: _idle(controller, session_id))
+            await _send(host, pilot, composer, SECOND)
+            await until(lambda: gateway.stream_calls == 2)
+            await until(lambda: _screen_text(host).count(REPLY) >= 2)
+            assert _NOT_SAVED not in _screen_text(host)
+            assert _user_rows(db, cid, FIRST) == 1
+            assert _user_rows(db, cid, SECOND) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_saved_chat_with_an_unsafe_staged_policy_still_refuses_the_repair(
+    monkeypatch,
+):
+    """The repair writes only the safe defaults, never a staged upgrade.
+
+    Negative control for the AC#4 repair: if the session somehow holds a
+    missing-row authority with a non-default candidate, the commit refuses as
+    before rather than persisting an Automatic policy nobody saved.
+    """
+    from tldw_chatbook.Chat.chat_persistence_service import (
+        ChatPersistenceService,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+        ConsoleLibraryPolicyCandidate,
+    )
+
+    gateway = _Gateway()
+    host, service = _build(gateway)
+    db = host.app_instance.chachanotes_db
+    cid = service.create_conversation(title="Imported chat")
+    original = ChatPersistenceService.commit_durable_turn
+    seen: list[ConsoleLibraryPolicyCandidate] = []
+
+    def commit_with_upgrade(self, *, policy_candidate, **kwargs):
+        upgraded = ConsoleLibraryPolicyCandidate(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        )
+        seen.append(upgraded)
+        return original(self, policy_candidate=upgraded, **kwargs)
+
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _ready(host, pilot)
+            assert (
+                await console._workspace._resume_console_workspace_conversation(cid)
+                is True
+            )
+            await _select_llamacpp_console(console)
+            session = _session(controller.store, controller.store.active_session_id)
+            await until(lambda: session.library_policy_hydrated)
+            monkeypatch.setattr(
+                ChatPersistenceService, "commit_durable_turn", commit_with_upgrade
+            )
+            await _send(host, pilot, composer, FIRST)
+            try:
+                await until(lambda: _NOT_SAVED in _screen_text(host))
+            except AssertionError:
+                raise AssertionError(
+                    (
+                        seen,
+                        gateway.stream_calls,
+                        controller.store.preparation_for_session(session.id),
+                        composer.draft_text(),
+                        repr(host.focused),
+                        [line for line in _painted_lines(host) if line.strip()][-14:],
+                    )
+                )
+            assert seen
+            assert _policy_row(db, cid) is None
+            assert gateway.stream_calls == 0

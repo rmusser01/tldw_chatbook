@@ -726,7 +726,11 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
+    # 2026-10-29 (TASK-33620.3, owner decision: a fix over a size ratchet
+    # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
+    # a legacy/imported chat's missing Library-policy row (the safe
+    # Never/Blocked default its turn ran under) instead of refusing it.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4272,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4304,
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,
