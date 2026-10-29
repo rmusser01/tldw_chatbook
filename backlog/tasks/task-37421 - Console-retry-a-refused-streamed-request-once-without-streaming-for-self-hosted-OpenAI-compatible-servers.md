@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29 07:34'
-updated_date: '2026-10-29 15:58'
+updated_date: '2026-10-29 16:11'
 labels:
   - console
   - streaming
@@ -59,4 +59,6 @@ Since TASK-33620.10 every Console provider streams by default, and [chat_default
 **Not changed.** TASK-37181 (llama.cpp's direct path records no Console usage for any reply, retried or not; measured and noted there) stays open; the llama.cpp branch's own retry and its capture are unchanged apart from the shared trace steps.
 
 **Files.** tldw_chatbook/Chat/console_provider_gateway.py, tldw_chatbook/Chat/refused_stream.py (new); Tests/Chat/test_console_refused_stream_retry.py (new), Tests/UI/test_console_refused_stream_retry_screen.py (new), Tests/Chat/test_console_provider_gateway.py, Tests/Architecture/test_module_size_ratchet.py, Tests/CI/test_ci_queue_pressure_contract.py, .github/workflows/derived-artifacts.yml; Docs/User_Guide/console/chat-basics.md, CHANGELOG.md; backlog/docs/lessons-testing-evidence.md.
+
+**Rebased onto origin/dev 38c9d2edcf** (one conflict, the module-size ratchet: dev raised the adjacent console_composer_bar row; both rows and both dated comments kept). On the rebased code: the two new files 11 passed (8 of them red on origin/dev itself: the refusals fail, the cloud copy lacks the advice, and the mounted send is not streamed there); Tests/Chat/test_console_provider_gateway.py 469 passed, the same 2 reds as dev (qwencloud/deepseek base-URL pins); test_config_streaming_default 69, test_console_streaming_default_screen 1, test_settings_console_fallback_rows 19, test_ci_queue_pressure_contract 89, tool-definition rejection 16, first-reply failure copy 27, model-retry traces 4, agent bridge 342 passed (one teardown logging error under load did not recur alone or on a rerun of the file); provider failure copy and the module-size ratchet fail the same ids as dev (the gateway row passes); the UI-ready census sits at 1031/1032 and flips between runs on dev and branch alike, and refused_stream.py is never resident; boot CSS budget passed. ./scripts/preflight.sh passed (diagnostic inventory verified, no drift). Live on the rebased head: Custom at the refusing front -> one refused streamed request, one non-streamed retry, one reply saved with usage 537 prompt (524 cached) and 7 output, matching llama-server; trace calls agent_first (error) then llama_fallback (complete).
 <!-- SECTION:NOTES:END -->
