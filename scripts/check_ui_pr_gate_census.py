@@ -597,7 +597,20 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # staged attachment gets one Send readiness from either sync site (four
 # mounted cases, about 17 s locally), so no existing entry changes shard:
 # dev's 964 + 1 = 965.
-MINIMUM_FILES = 1143
+# TASK-33620.15.20 (2026-10-27) appends 1 whole-file entry at the tail: the
+# Conversations tray's run-marker diff composes style no throwaway node (two
+# cases, about 8 s locally), so no existing entry changes shard: dev's 1141 + 1
+# = 1142.
+# Conversations tray's run-marker patch builds no throwaway widget, and its
+# A/B parity and drift cases (four tests, three app runs, about 15 s locally),
+# so no existing entry changes shard: dev's 1141 + 1 = 1142.
+# TASK-33620.15.20 (2026-10-27) appends 2 whole-file entries at the tail: the
+# Conversations tray's run-marker patch builds no throwaway widget, with its
+# A/B, drift and content-sized-box cases (five tests, four app runs), and its
+# structural-sequence case (one test, one app run), each about 18 s locally
+# at load 34, so no existing entry changes shard: dev's 1141 + 2 = 1143.
+MINIMUM_FILES = 1145
+MINIMUM_FILES = 1144
 
 
 def read_census(path: Path) -> list[str]:

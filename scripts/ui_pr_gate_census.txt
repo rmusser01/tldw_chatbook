@@ -1594,3 +1594,9 @@ Tests/UI/test_console_agent_drill_tick_reads.py::test_drilled_run_is_read_once_p
 # TASK-33620.15.22: one rule for Send's readiness with a staged attachment (four
 # mounted cases, about 17 s locally), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_send_ready_attachment.py
+# TASK-33620.15.20 (2026-10-27): the Conversations tray's run-marker patch
+# decides from row data. Its no-throwaway, A/B, drift and content-sized-box
+# pins, then its structural-sequence pin, appended at the tail after dev's
+# 1141 entries (about 18 s each locally at load 34).
+Tests/UI/test_console_tray_patch_styles.py
+Tests/UI/test_console_tray_patch_sequence.py

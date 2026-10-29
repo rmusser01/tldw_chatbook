@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from collections.abc import Callable
+from functools import partial
 
 from typing import Any, Literal
 
@@ -11,7 +13,6 @@ from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.compose import compose
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Button, Input, Static
@@ -45,7 +46,7 @@ from tldw_chatbook.UI.character_display_text import sanitize_character_display_l
 from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
-from .compose_delta import ComposeReadView, plan_in_place_delta
+from .compose_delta import ComposeReadView, box_ignores_content, same_visual
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -434,10 +435,6 @@ _ROW_BOTTOM_MARGIN = 1
 # state-change recompose (observed as a collapse failing to render) and, in
 # any environment where the gutter CSS is absent, oscillate the relabel.
 _RELABEL_MIN_WIDTH_DELTA = 2
-#: Controls the screen mounts into the tray outside ``compose`` (the
-#: transitional legacy "New conversation" alias,
-#: ``ChatScreen._sync_console_legacy_workspace_context_aliases``).
-_OUT_OF_BAND_CHILD_IDS = frozenset({"console-new-workspace-conversation"})
 
 
 def _conversation_activity_text(row) -> str:
@@ -461,14 +458,15 @@ _PATCHABLE_BROWSER_FIELDS = frozenset(
 def _browser_delta_may_patch(old: Any, new: Any) -> bool:
     """Return False when a browser delta is sure to need the tray rebuilt.
 
-    TASK-36012 review: ``plan_in_place_delta`` decides by diffing two off-DOM
-    composes, and a refused patch throws both away before the rebuild
-    composes a third time, synchronously on the UI thread. A conversation
-    switch at 40 rows went from 203 to 382 ms of CPU that way. This state
-    check runs first and admits only a delta confined to
+    TASK-36012 review: a delta the in-place patch refuses must cost nothing
+    before the rebuild composes (when the patch decided by composing, a
+    refused conversation switch at 40 rows went from 203 to 382 ms of CPU).
+    This state check admits only a delta confined to
     ``_PATCHABLE_BROWSER_FIELDS`` that leaves every row's activity line as it
-    was (that line adds a row of height). The compose diff stays the
-    authority on whether the admitted delta really moves nothing.
+    was (that line adds a row of height): every other field compose reads is
+    equal, so no row changes its box. What the admitted delta changes on the
+    composed rows is then decided from the same data
+    (``_BrowserRowPaint``, ``_browser_header_marker``).
 
     Args:
         old: The browser state (or a value inside it) the tray shows.
@@ -494,6 +492,169 @@ def _browser_delta_may_patch(old: Any, new: Any) -> bool:
         or _browser_delta_may_patch(getattr(old, field.name), getattr(new, field.name))
         for field in dataclasses.fields(old)
     )
+
+
+def _browser_header_marker(
+    header: ConsoleConversationBrowserSection | ConsoleConversationBrowserGroup,
+) -> str:
+    """Return the aggregate run marker a section or group header shows, or "".
+
+    A collapsed header echoes the most urgent marker among all of its rows;
+    an expanded one only the marker among rows its cap hides (TASK-912), since
+    every visible row shows its own.
+
+    Args:
+        header: The section or group whose header is composed.
+
+    Returns:
+        The marker glyph appended to the header title and decoded in its
+        toggle's tooltip, or "" for none.
+    """
+    return header.run_marker if header.collapsed else header.capped_run_marker
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class _BrowserRowPaint:
+    """The values on a composed browser row that its run state decides.
+
+    TASK-33620.15.20. ``_compose_conversation_browser_row`` writes these onto
+    the row's two buttons, and the tray's in-place patch compares the record
+    of what was written with the paint the incoming row gives. Compare with
+    ``same_visual``: ``Text`` equality ignores the glyph's colour.
+
+    Attributes:
+        row_tooltip: The row button's tooltip.
+        menu_label: The action button's glyph, in the row's colour when no
+            attention fact owns the slot.
+        menu_class: The action button's attention class, or "".
+        menu_tooltip: The action button's tooltip.
+    """
+
+    row_tooltip: Text | str
+    menu_label: Text
+    menu_class: str
+    menu_tooltip: Text
+
+
+@dataclasses.dataclass(frozen=True)
+class _ComposedBrowserRow:
+    """One browser row as compose built it.
+
+    Attributes:
+        path: ``(section index, group index or None, row index)`` of the row
+            in the browser state.
+        paint: The run-dependent values last written onto the row.
+        row_button: The row's title button.
+        menu_button: The row's action button.
+    """
+
+    path: tuple[int, int | None, int]
+    paint: _BrowserRowPaint
+    row_button: Button
+    menu_button: Button
+
+
+@dataclasses.dataclass
+class _BrowserPaintRecord:
+    """What a completed compose wrote that a run's start or end can change.
+
+    Attributes:
+        ascii_mode: The glyph mode the compose ran in; the paint depends on it.
+        headers: Each composed header's path (``(section,)`` or
+            ``(section, group)``) -> the marker it shows.
+        rows: Every composed browser row, in compose order.
+    """
+
+    ascii_mode: bool
+    headers: dict[tuple[int, ...], str] = dataclasses.field(default_factory=dict)
+    rows: list[_ComposedBrowserRow] = dataclasses.field(default_factory=list)
+
+
+def _browser_header_at(
+    browser: ConsoleConversationBrowserState, path: tuple[int, ...]
+) -> ConsoleConversationBrowserSection | ConsoleConversationBrowserGroup:
+    section = browser.sections[path[0]]
+    return section if len(path) == 1 else section.groups[path[1]]
+
+
+def _browser_row_at(
+    browser: ConsoleConversationBrowserState, path: tuple[int, int | None, int]
+) -> ConsoleConversationBrowserRow:
+    section_index, group_index, row_index = path
+    section = browser.sections[section_index]
+    rows = section.rows if group_index is None else section.groups[group_index].rows
+    return rows[row_index]
+
+
+def _write_button_label(button: Button, label: Text) -> None:
+    """Show ``label`` on a mounted Button, even when only its style changed.
+
+    Textual's reactive compares ``Content`` by text alone, so a plain
+    ``button.label = label`` drops a colour-only change (a conversation's
+    new colour on an unchanged glyph): TASK-36012's patch did, and the glyph
+    kept its old colour until the next rebuild.
+
+    Args:
+        button: The mounted button.
+        label: The label to show.
+    """
+    button.set_reactive(Button.label, button.validate_label(label))
+    button.mutate_reactive(Button.label)
+
+
+def _row_paint_writes(
+    composed: _ComposedBrowserRow, paint: _BrowserRowPaint
+) -> list[Callable[[], None]] | None:
+    """Return the writes that make a composed row show ``paint``.
+
+    The mounted buttons are checked against the record only when ``paint``
+    differs from it. A row whose incoming paint equals the record is left as
+    it is, even if its buttons drifted; the compose diff this replaced checked
+    mounted values only on the nodes it changed, too.
+
+    Args:
+        composed: The row as compose (or the last patch) left it.
+        paint: The values the incoming row data gives.
+
+    Returns:
+        The writes, empty when nothing differs; ``None`` when the row must be
+        rebuilt instead: its buttons left the DOM or no longer show the
+        recorded values (a row that drifted from its record is not patched),
+        or the glyph would change inside a content-sized box.
+    """
+    was = composed.paint
+    row_tooltip = not same_visual(paint.row_tooltip, was.row_tooltip)
+    menu_label = not same_visual(paint.menu_label, was.menu_label)
+    menu_class = paint.menu_class != was.menu_class
+    menu_tooltip = not same_visual(paint.menu_tooltip, was.menu_tooltip)
+    if not (row_tooltip or menu_label or menu_class or menu_tooltip):
+        return []
+    row_button, menu = composed.row_button, composed.menu_button
+    if (
+        row_button.parent is None
+        or menu.parent is None
+        or not same_visual(row_button.tooltip, was.row_tooltip)
+        or not same_visual(menu.tooltip, was.menu_tooltip)
+        or not same_visual(menu.label, menu.validate_label(was.menu_label))
+        or (was.menu_class and not menu.has_class(was.menu_class))
+    ):
+        return None
+    writes: list[Callable[[], None]] = []
+    if row_tooltip:
+        writes.append(partial(setattr, row_button, "tooltip", paint.row_tooltip))
+    if menu_label:
+        if not box_ignores_content(menu):
+            return None
+        writes.append(partial(_write_button_label, menu, paint.menu_label))
+    if menu_class:
+        if paint.menu_class and menu.has_class(paint.menu_class):
+            return None
+        swap = {was.menu_class: False, paint.menu_class: True}
+        swap.pop("", None)
+        writes.append(partial(menu.update_classes, swap))
+    if menu_tooltip:
+        writes.append(partial(setattr, menu, "tooltip", paint.menu_tooltip))
+    return writes
 
 
 def _conversation_row_render_height(
@@ -668,6 +829,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     _composed_fixed_signature: tuple[str, ...] | None = None
     #: Live collector for the compose pass currently running, or None.
     _composing_fixed_signature: list[str] | None = None
+    #: TASK-33620.15.20: the run-dependent values the last COMPLETED
+    #: `compose()` wrote onto the browser rows and headers (kept current by
+    #: `_patch_in_place`), or None when no compose has finished. Only the
+    #: in-place patch reads it; None means "no record, rebuild".
+    _composed_browser_paint: _BrowserPaintRecord | None = None
+    #: Live collector for the compose pass currently running, or None.
+    _composing_browser_paint: _BrowserPaintRecord | None = None
 
     class WorkspaceFilesRequested(Message):
         """Typed request to inspect one stable workspace without activation."""
@@ -825,12 +993,20 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         two tooltips. The recompose that used to follow re-mounted every row,
         and each mount cost a whole-screen layout (plus the legacy alias
         re-mount and two section reconciles): three extra full reflows at a
-        send's start, two at its end. ``plan_in_place_delta`` patches only a
-        delta whose two composes have the same shape, styles and inputs, on a
-        tray whose DOM is proved to show its current state (the same proof
-        ``_can_skip_recompose`` uses); anything else rebuilds as before. The
-        two composes run only for a browser delta ``_browser_delta_may_patch``
-        admits, so every other sync composes once, as it did before.
+        send's start, two at its end. The patch takes only a browser delta
+        ``_browser_delta_may_patch`` admits, on a tray whose DOM is proved to
+        show its current state (the same proof ``_can_skip_recompose``
+        uses); anything else rebuilds as before.
+
+        TASK-33620.15.20. It decides from the row data. Compose records the
+        run-dependent values it wrote on each browser row
+        (``_BrowserRowPaint``) and the marker each header shows, and the patch
+        compares that record with what the incoming state gives. It used to
+        compose the tray twice off the DOM and diff the two trees, which built
+        and restyled every widget of both only to drop them (live, 21-34 ms
+        of a send's first poll tick). A header whose marker changes would need
+        new copy in a content-sized title, so that delta rebuilds, as it did
+        under the compose diff.
 
         Args:
             state: The incoming display state.
@@ -838,9 +1014,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         Returns:
             True when the mounted rows now show ``state``.
         """
+        record = self._composed_browser_paint
         if (
-            not getattr(self, "_console_workspace_context_synced", False)
+            record is None
+            or not getattr(self, "_console_workspace_context_synced", False)
             or self._composed_row_signature is None
+            # Every row the signature proves mounted has a record entry.
+            or len(record.rows) != len(self._composed_row_signature)
             or self._composed_fixed_signature is None
             or getattr(self, "_recompose_required", False)
             or self.recompose_in_flight
@@ -853,10 +1033,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             self._composed_fixed_signature,
         ):
             return False
-        # Only a run-shaped browser delta is worth the two composes the diff
-        # costs. A delta that also moves a field this tray does not render
-        # (the screen's out-of-band alias reads `new_conversation_enabled`)
-        # keeps the rebuild that re-syncs those controls.
+        # Only a run-shaped browser delta can be patched. A delta that also
+        # moves a field this tray does not render (the screen's out-of-band
+        # alias reads `new_conversation_enabled`) keeps the rebuild that
+        # re-syncs those controls.
         reads = self._composed_state_reads
         changed = {
             field.name
@@ -872,44 +1052,58 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
         ):
             return False
-        shown = self._state
-        record = (
-            self._composed_row_signature,
-            self._composed_fixed_signature,
-            self._composed_state_reads,
-            self._composed_publication_state,
+        writes = self._plan_browser_paint(
+            record, self._state.conversation_browser, state.conversation_browser
         )
-        writes = None
-        try:
-            before = compose(self)
-            self._state = state
-            # Composed last, so the recorded signatures and reads describe
-            # the state the patched tree shows.
-            after = compose(self)
-            writes = plan_in_place_delta(
-                [
-                    child
-                    for child in self.children
-                    if child.id not in _OUT_OF_BAND_CHILD_IDS
-                ],
-                before,
-                after,
-                patchable_types=(ConsoleBrowserSearchInput,),
-            )
-        finally:
-            if writes is None:
-                self._state = shown
-                (
-                    self._composed_row_signature,
-                    self._composed_fixed_signature,
-                    self._composed_state_reads,
-                    self._composed_publication_state,
-                ) = record
         if writes is None:
             return False
         for write in writes:
             write()
+        self._state = state
+        # What compose would publish for `state`: the rows now show it.
+        self._composed_publication_state = state
         return True
+
+    def _plan_browser_paint(
+        self,
+        record: _BrowserPaintRecord,
+        shown: ConsoleConversationBrowserState,
+        incoming: ConsoleConversationBrowserState,
+    ) -> list[Callable[[], None]] | None:
+        """Return the writes that make the composed browser show ``incoming``.
+
+        Args:
+            record: What the composed rows and headers show now.
+            shown: The browser state they were composed (or patched) from.
+            incoming: The browser state to show; ``_browser_delta_may_patch``
+                has admitted the delta.
+
+        Returns:
+            The writes, the last of which updates ``record``; ``None`` when
+            the tray must be rebuilt instead.
+        """
+        if record.ascii_mode != ascii_glyph_mode():
+            return None
+        writes: list[Callable[[], None]] = []
+        rows = list(record.rows)
+        try:
+            for path, marker in record.headers.items():
+                if _browser_header_marker(_browser_header_at(incoming, path)) != marker:
+                    return None
+            for index, composed in enumerate(record.rows):
+                row = _browser_row_at(incoming, composed.path)
+                if row == _browser_row_at(shown, composed.path):
+                    continue
+                paint = self._conversation_row_paint(row)
+                plan = _row_paint_writes(composed, paint)
+                if plan is None:
+                    return None
+                writes.extend(plan)
+                rows[index] = dataclasses.replace(composed, paint=paint)
+        except IndexError:
+            return None
+        writes.append(partial(setattr, record, "rows", rows))
+        return writes
 
     async def wait_for_publication(self) -> bool:
         """Await refresh and the existing mounted-DOM proof, not state assignment.
@@ -1631,11 +1825,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         collected: list[tuple[str, str]] = []
         collected_fixed: list[str] = []
         state_reads: set[str] = set()
+        # TASK-33620.15.20: what the in-place patch compares, published (like
+        # the signatures) only when the pass completes.
+        browser_paint = _BrowserPaintRecord(ascii_mode=ascii_glyph_mode())
         publication_state = self._state
         self._composing_row_signature = collected
         self._composing_fixed_signature = collected_fixed
+        self._composing_browser_paint = browser_paint
         self._composed_row_signature = None
         self._composed_fixed_signature = None
+        self._composed_browser_paint = None
         self._state_field_reads = state_reads
         self._composed_state_reads = None
         try:
@@ -1679,9 +1878,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         finally:
             self._composing_row_signature = None
             self._composing_fixed_signature = None
+            self._composing_browser_paint = None
             self._state_field_reads = None
         self._composed_row_signature = tuple(collected)
         self._composed_fixed_signature = tuple(collected_fixed)
+        self._composed_browser_paint = browser_paint
         self._composed_state_reads = frozenset(state_reads)
         self._composed_publication_state = publication_state
 
@@ -2036,8 +2237,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         )
         conversation_list.styles.min_height = 0
         with conversation_list:
-            for section in browser.sections:
-                yield from self._compose_conversation_browser_section_header(section)
+            for section_index, section in enumerate(browser.sections):
+                yield from self._compose_conversation_browser_section_header(
+                    section, path=(section_index,)
+                )
                 if section.collapsed:
                     continue
                 if section.groups:
@@ -2045,15 +2248,17 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                         yield from self._compose_conversation_browser_group_header(
                             group,
                             group_index,
+                            path=(section_index, group_index),
                         )
                         if group.collapsed:
                             continue
                         if group.rows:
-                            for row in group.rows:
+                            for offset, row in enumerate(group.rows):
                                 yield from self._compose_conversation_browser_row(
                                     row,
                                     row_index,
                                     marks_available=browser.marks_available,
+                                    path=(section_index, group_index, offset),
                                 )
                                 row_index += 1
                         elif group.empty_copy:
@@ -2109,6 +2314,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                             row_index,
                             marks_available=browser.marks_available,
                             show_workspace=show_workspace,
+                            path=(section_index, None, index),
                         )
                         row_index += 1
                 elif section.empty_copy:
@@ -2121,6 +2327,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def _compose_conversation_browser_section_header(
         self,
         section: ConsoleConversationBrowserSection,
+        *,
+        path: tuple[int, ...],
     ) -> ComposeResult:
         """Render one grouped browser section header.
 
@@ -2143,13 +2351,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         header instead, mirroring `_compose_conversation_browser_group_
         header` exactly. A visible marked row within the cap needs no
         header echo, which is exactly what `capped_run_marker` excludes.
+
+        ``path`` (``(section index,)``) records the shown marker for the
+        in-place patch (TASK-33620.15.20).
         """
 
-        label = section.label
-        if section.collapsed and section.run_marker:
-            label = f"{label} {section.run_marker}"
-        elif not section.collapsed and section.capped_run_marker:
-            label = f"{label} {section.capped_run_marker}"
+        header_marker = self._record_browser_header(path, section)
+        label = f"{section.label} {header_marker}" if header_marker else section.label
         with Horizontal(classes="console-conversation-browser-section-header"):
             title = self._static(
                 label,
@@ -2169,9 +2377,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # TASK-1233 AC#1: decode whichever aggregate marker the header
             # itself is currently showing (same collapsed/capped split as
             # the label above) rather than inventing a new tooltip surface.
-            header_marker = (
-                section.run_marker if section.collapsed else section.capped_run_marker
-            )
             action_verb = "Expand" if section.collapsed else "Collapse"
             toggle.tooltip = _marker_aware_tooltip(
                 f"{action_verb} {section.label}", header_marker
@@ -2182,6 +2387,8 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self,
         group: ConsoleConversationBrowserGroup,
         index: int,
+        *,
+        path: tuple[int, ...],
     ) -> ComposeResult:
         """Render one workspace group header.
 
@@ -2203,14 +2410,14 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         hidden overflow rows, TASK-912 AC#2) is borrowed onto the header in
         that case instead. A visible marked row within the cap needs no
         header echo, which is exactly what `capped_run_marker` excludes.
+
+        ``path`` (``(section index, group index)``) records the shown marker
+        for the in-place patch (TASK-33620.15.20).
         """
 
+        header_marker = self._record_browser_header(path, group)
         with Horizontal(classes="console-conversation-browser-group-header"):
-            label = group.label
-            if group.collapsed and group.run_marker:
-                label = f"{label} {group.run_marker}"
-            elif not group.collapsed and group.capped_run_marker:
-                label = f"{label} {group.capped_run_marker}"
+            label = f"{group.label} {header_marker}" if header_marker else group.label
             title = self._static(
                 label,
                 id=f"console-conversation-browser-group-title-{index}",
@@ -2236,9 +2443,6 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # TASK-1233 AC#1: same collapsed/capped aggregate-marker split
             # as the label above, decoded into the already-existing toggle
             # tooltip rather than a new tooltip surface.
-            header_marker = (
-                group.run_marker if group.collapsed else group.capped_run_marker
-            )
             action_verb = "Expand" if group.collapsed else "Collapse"
             toggle.tooltip = _marker_aware_tooltip(
                 f"{action_verb} {group.label}", header_marker
@@ -2269,6 +2473,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         index: int,
         *,
         marks_available: bool,
+        path: tuple[int, int | None, int],
         show_workspace: bool = False,
     ) -> ComposeResult:
         """Render one grouped browser row plus its local star control.
@@ -2276,6 +2481,11 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         ``show_workspace`` carries the owning workspace into the subtitle for rows
         rendered without a workspace group header (the cross-workspace Starred
         section), where it is the disambiguator (Qodo #812).
+
+        Every value the row's run state decides comes from
+        ``_conversation_row_paint``; ``path`` (where the row lives in the
+        browser state) records them for the in-place patch
+        (TASK-33620.15.20).
         """
 
         with Horizontal(classes="console-conversation-browser-row-line"):
@@ -2287,9 +2497,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             text = name + (
                 "\n" + conversation_title_cells(activity, budget) if activity else ""
             )
-            presentation = present_conversation_attention(
-                row.attention, custom_icon=row.icon, ascii_mode=ascii_glyph_mode()
-            )
+            paint = self._conversation_row_paint(row)
             row_button = self._conversation_button(
                 text,
                 id=f"console-workspace-conversation-{index}",
@@ -2305,19 +2513,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 1 + bool(activity) + bool(row.subagent_count) + bool(row.progress_count)
             )
             row_button.styles.min_height = None
-            row_button.tooltip = Text(
-                " · ".join(
-                    part
-                    for part in (
-                        title,
-                        self._conversation_status(row.status),
-                        row.updated_label,
-                        presentation.summary,
-                        "m: conversation actions",
-                    )
-                    if part
-                )
-            )
+            row_button.tooltip = paint.row_tooltip
             row_button.row_key = row.row_key
             # Qodo #2932: the id is positional; a rebuild that reorders the
             # list must hand focus to this chat's row, not to its old slot.
@@ -2341,18 +2537,16 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             if not row.openable:
                 # TASK-717: a prior open proved this record is missing; the
                 # row must stop presenting as an openable conversation.
+                # Its tooltip says so (`_conversation_row_paint`).
                 row_button.disabled = True
                 row_button.add_class("console-workspace-conversation-row-broken")
-                row_button.tooltip = (
-                    "This conversation's record is missing and cannot be opened."
-                )
             yield row_button
 
             menu_button = Button(
-                Text(presentation.icon, style=row.color if not row.attention else ""),
+                paint.menu_label,
                 id=f"console-conversation-actions-{index}",
                 classes="console-workspace-action console-conversation-actions "
-                + presentation.css_class,
+                + paint.menu_class,
                 compact=True,
             )
             menu_button.remove_class(
@@ -2365,9 +2559,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # nine label cells in the fixed ASCII attention target.
             menu_button.styles.line_pad = 0
             menu_button.set_class(ascii_glyph_mode(), "conversation-actions-ascii")
-            menu_button.tooltip = Text(
-                f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
-            )
+            menu_button.tooltip = paint.menu_tooltip
             menu_button.row_key = row.row_key
             if row.row_key:
                 menu_button.focus_identity = f"conversation-actions:{row.row_key}"
@@ -2380,7 +2572,81 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             menu_button.marks_available = marks_available
             menu_button.conversation_title = row.title
             menu_button.manual_unread = row.manual_unread
+            record = self._composing_browser_paint
+            if record is not None:
+                record.rows.append(
+                    _ComposedBrowserRow(path, paint, row_button, menu_button)
+                )
             yield menu_button
+
+    @classmethod
+    def _conversation_row_paint(
+        cls, row: ConsoleConversationBrowserRow
+    ) -> _BrowserRowPaint:
+        """Return the values one browser row's run state decides.
+
+        The single source for them: compose writes exactly these, and the
+        in-place patch compares two of them (TASK-33620.15.20), so a run's
+        start or end is decided from the row data alone.
+
+        Args:
+            row: The browser row's display data.
+
+        Returns:
+            The row's tooltip and its action button's glyph, attention class
+            and tooltip.
+        """
+        title = cls._conversation_title(row.title)
+        presentation = present_conversation_attention(
+            row.attention, custom_icon=row.icon, ascii_mode=ascii_glyph_mode()
+        )
+        if row.openable:
+            row_tooltip: Text | str = Text(
+                " · ".join(
+                    part
+                    for part in (
+                        title,
+                        cls._conversation_status(row.status),
+                        row.updated_label,
+                        presentation.summary,
+                        "m: conversation actions",
+                    )
+                    if part
+                )
+            )
+        else:
+            # TASK-717: a prior open proved this record is missing.
+            row_tooltip = "This conversation's record is missing and cannot be opened."
+        return _BrowserRowPaint(
+            row_tooltip=row_tooltip,
+            menu_label=Text(
+                presentation.icon, style=row.color if not row.attention else ""
+            ),
+            menu_class=presentation.css_class,
+            menu_tooltip=Text(
+                f"{title} · {presentation.summary or 'Conversation'} — conversation actions"
+            ),
+        )
+
+    def _record_browser_header(
+        self,
+        path: tuple[int, ...],
+        header: ConsoleConversationBrowserSection | ConsoleConversationBrowserGroup,
+    ) -> str:
+        """Return the marker a header shows, recording it for the patch.
+
+        Args:
+            path: ``(section,)`` or ``(section, group)`` in the browser state.
+            header: The section or group being composed.
+
+        Returns:
+            ``_browser_header_marker(header)``.
+        """
+        marker = _browser_header_marker(header)
+        record = self._composing_browser_paint
+        if record is not None:
+            record.headers[path] = marker
+        return marker
 
     def _workspace_selector_label(self) -> str:
         """Return the visible active-workspace selector affordance."""
