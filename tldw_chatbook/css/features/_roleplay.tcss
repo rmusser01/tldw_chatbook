@@ -199,6 +199,16 @@
     color: $ds-text-muted;
 }
 
+/* Frame slice B2b (spec 1.5.4): the no-match message, composed once and
+   updated in place, and the recovery row's Retry. */
+#personas-library-nomatch {
+    height: auto;
+}
+
+#personas-library-retry {
+    margin: $ds-space-0 $ds-space-1;
+}
+
 /* Frame slice B2a: the marks bar (spec 1.5.5), the items pane's bottom row
    while marks exist. Its words and actions size to their labels; the bar
    degrades its text by width (roleplay_frame_state.marks_bar_view), never by

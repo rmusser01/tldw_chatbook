@@ -478,6 +478,9 @@ _CHARACTERS_EMPTY_GUIDANCE = (
 #: No-selection copy when the library HAS characters (F-035): the next
 #: action is picking one, not creating one.
 _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
+#: The items list's recovery copy when a character read fails (spec 1.5.4,
+#: with Retry; frame slice B2b). Dev showed "No characters yet" there.
+_CHARACTERS_LOAD_FAILED = "Characters could not be loaded."
 #: F-037: reason shown on local-only actions (card Edit, inspector
 #: export/delete) while browsing server-owned characters.
 _SERVER_READ_ONLY_TOOLTIP = frame_state.SERVER_CHARACTERS_READ_ONLY
@@ -3872,6 +3875,10 @@ class PersonasScreen(BaseAppScreen):
         db = self._character_db()
         if db is None:
             self._window_read_failed(fence)
+            if request.replace:
+                await self._apply_character_window(
+                    request, [], total=0, more=False, failed=True
+                )
             return
         term = fence.query.strip()
         search = quote_fts5_prefix(term) if term else None
@@ -3963,16 +3970,19 @@ class PersonasScreen(BaseAppScreen):
             await self._apply_character_window(
                 request, [], total=0, more=False, blank=True
             )
-        if fence.server_id is None:
-            self._window_read_failed(fence)
-            return
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         query = fence.query
         load = getattr(
             service, "search_characters" if query else "list_characters", None
         )
-        if not callable(load):
+        if fence.server_id is None or not callable(load):
+            # The blank above shows "Loading characters…" once slow: a read
+            # that cannot start says so instead (dev showed "No characters yet").
             self._window_read_failed(fence)
+            if request.replace:
+                await self._apply_character_window(
+                    request, [], total=0, more=False, failed=True
+                )
             return
         size = _SERVER_CHARACTER_SEARCH_MAX_RESULTS
         records: list[dict] = []
@@ -4088,19 +4098,28 @@ class PersonasScreen(BaseAppScreen):
             filtered = fence.runtime_source != "server" and bool(
                 fence.query or fence.tag
             )
-            if request.replace:
+            if request.replace and blank:
+                # A reload of another source reads: nothing of the old list
+                # stays up, and "Loading characters…" shows if it is slow.
+                await library.show_loading()
+            elif request.replace:
                 with window.painting():
                     await library.update_rows(
                         rows,
                         total=(self._character_unfiltered_total or total)
                         if filtered
                         else total,
-                        noun="characters",
                         filtered=filtered,
                         matched=total,
                         title=self._character_title(),
+                        recovery_copy=_CHARACTERS_LOAD_FAILED if failed else None,
                         anchor=request.anchor,
+                        query=fence.query,
+                        tag=fence.tag,
                     )
+                # On dev the centre kept "Pick a character…" over a search
+                # that listed nothing (TASK-33788 AC#4).
+                self._refresh_characters_empty_guidance()
                 if not self._list_fence_is_current(fence):
                     # The fence moved while the rows painted (a mode, query,
                     # sort, tag or source change): the screen keeps none of
@@ -4271,7 +4290,6 @@ class PersonasScreen(BaseAppScreen):
             await library.update_rows(
                 rows,
                 total=total,
-                noun="personas",
                 filtered=filtered,
                 matched=matched,
                 title=frame_state.items_border_title(
@@ -4288,6 +4306,7 @@ class PersonasScreen(BaseAppScreen):
                     if recovery_state is not None
                     else "personas-library-recovery"
                 ),
+                query=self.state.search_query,
             )
             library.item_list.set_more_available(False)
             if recovery_state is None:
@@ -4569,9 +4588,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.warning("Could not list chat dictionaries.")
                 records = []
-                recovery_copy = (
-                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
-                )
+                recovery_copy = "Dictionaries could not be loaded."
 
         needle = expected_query.lower()
         visible = (
@@ -4596,7 +4613,6 @@ class PersonasScreen(BaseAppScreen):
             await library.update_rows(
                 rows,
                 total=len(records),
-                noun="dictionaries",
                 filtered=bool(needle),
                 matched=len(visible),
                 title=frame_state.items_border_title(
@@ -4607,6 +4623,7 @@ class PersonasScreen(BaseAppScreen):
                     failed=recovery_copy is not None,
                 ),
                 recovery_copy=recovery_copy,
+                query=expected_query,
             )
             library.item_list.set_more_available(False)
             from ..Persona_Modules import persona_search_completion
@@ -4673,9 +4690,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).warning("Could not list lore books.")
                 records = []
-                recovery_copy = (
-                    "Lore books could not be loaded.\nSwitch modes and back to retry."
-                )
+                recovery_copy = "Lore books could not be loaded."
 
         needle = expected_query.lower()
         visible = (
@@ -4700,7 +4715,6 @@ class PersonasScreen(BaseAppScreen):
             await library.update_rows(
                 rows,
                 total=len(records),
-                noun="lore books",
                 filtered=bool(needle),
                 matched=len(visible),
                 title=frame_state.items_border_title(
@@ -4711,6 +4725,7 @@ class PersonasScreen(BaseAppScreen):
                     failed=recovery_copy is not None,
                 ),
                 recovery_copy=recovery_copy,
+                query=expected_query,
             )
             library.item_list.set_more_available(False)
             from ..Persona_Modules import persona_search_completion
@@ -4799,6 +4814,10 @@ class PersonasScreen(BaseAppScreen):
         lore_tryit.display = is_lore
         if is_lore:
             lore_tryit.set_ready(False, "Select a lore book to preview injections.")
+        if mode in MODE_CHIP_ORDER:
+            # Spec 1.5.4 "Loading": the old kind's rows go now; the new
+            # kind's read below (or the personas worker) ends the wait.
+            await library.show_loading()
         # The character dictionaries/world-books panels are only meaningful
         # in Characters mode; they are not one of the exclusive
         # _CENTER_VIEW_IDS pages (they sit alongside the character card
@@ -4821,17 +4840,6 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
         elif mode == "personas":
             self._profile_lookup_recovery_state = None
-            async with self._render_lock:
-                if self._library_render_snapshot_is_current(
-                    expected_query="",
-                    expected_mode=mode,
-                ):
-                    await library.update_rows(
-                        (),
-                        total=0,
-                        noun="personas",
-                        title=frame_state.items_border_title("persona", total=None),
-                    )
             self._show_center(None)
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
@@ -4846,12 +4854,7 @@ class PersonasScreen(BaseAppScreen):
                     expected_query="",
                     expected_mode=mode,
                 ):
-                    await library.update_rows(
-                        (),
-                        total=0,
-                        noun=MODE_LABELS.get(mode, mode).lower(),
-                        title="",
-                    )
+                    await library.update_rows((), total=0, title="")
             self.query_one("#personas-mode-placeholder", Static).update(
                 self._mode_placeholder_text(mode)
             )
@@ -7878,9 +7881,28 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_delete_marked)
         elif message.action == "export_marked":
             self._begin_export_marked()
+        elif message.action == "retry":
+            await self._retry_items_list()
         # The open item's Delete is the Inspector's "#personas-delete"
         # (_begin_delete_selection / _delete_entity). The rest are wired in
         # follow-up tasks.
+
+    async def _retry_items_list(self) -> None:
+        """The recovery row's Retry (spec 1.5.4): read the active kind's list again.
+
+        Dev had no Retry: its copy said "Switch modes and back to retry".
+        """
+        mode = self.state.active_mode
+        if mode == "characters":
+            self._count_cache_key = None
+            self._character_unfiltered_total = None
+            await self._reload_character_page()
+        elif mode == "personas":
+            self._refresh_profile_rows_worker()
+        elif mode == "dictionaries":
+            await self._render_dictionary_rows(self.state.search_query)
+        elif mode == "lore":
+            await self._render_lore_rows(self.state.search_query)
 
     def _open_new_chooser(self) -> None:
         """``+ New`` and Ctrl+N open the one New chooser (frame slice B2b, spec 1.4.6).
@@ -16621,9 +16643,29 @@ class PersonasScreen(BaseAppScreen):
         Returns:
             Guidance copy for the current library state.
         """
+        if (self.state.search_query or self.state.tag_filter) and not (
+            self._character_total
+        ):
+            # A search that shows nothing (spec 1.5.4, TASK-33788 AC#4): the
+            # kind's line without "pick one on the left", unless the kind
+            # holds nothing at all. Dev read the filtered total here.
+            if self._character_unfiltered_total == 0:
+                return _CHARACTERS_EMPTY_GUIDANCE
+            return frame_state.mode_descriptor("characters")
         if self._character_total > 0:
             return _CHARACTERS_EMPTY_PICKER_GUIDANCE
         return _CHARACTERS_EMPTY_GUIDANCE
+
+    def _refresh_characters_empty_guidance(self) -> None:
+        """Re-word the no-selection centre once the character list changed."""
+        if not self._should_show_characters_empty_guidance():
+            return
+        try:
+            empty = self.query_one("#personas-characters-empty", Static)
+        except QueryError:
+            return
+        if empty.display:
+            empty.update(self._characters_empty_guidance_text())
 
     def _show_center(self, visible_id: str | None) -> None:
         """Show one center-area view (or none); tolerate missing nodes."""
@@ -16908,7 +16950,8 @@ class PersonasScreen(BaseAppScreen):
         Editor open -> the SAME cancel path as the Cancel button (the posted
         cancel message routes through the unsaved guard; never bypassed).
         Transcript open -> back to the card, focus the conversations list.
-        Search focused -> move focus to the library list.
+        Search focused -> clear the search while nothing matches (D9), else
+        move focus to the library list.
         Items list or its marks bar focused -> clear this kind's marks (spec
         1.5.5, Q-2); from any other focus Escape leaves the marks alone.
         """
@@ -16937,6 +16980,12 @@ class PersonasScreen(BaseAppScreen):
             return
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
+            if self.query_one(PersonasLibraryPane).no_match_showing():
+                # Owner decision D9 (2026-10-29): while nothing matches, rung 8
+                # runs before the focus move, as the hint "esc clears the
+                # search" says. Otherwise focus moves to the list, as on dev.
+                self._clear_search_and_tag()
+                return
             self._focus_library_list(force=True)
             return
         # Frame slice B2a: the marks bar's "Clear esc" (spec 1.5.5). It sits
@@ -16951,7 +17000,34 @@ class PersonasScreen(BaseAppScreen):
             or any(node.id == "personas-library-marks" for node in focused.ancestors)
         ):
             return
+        if self.state.search_query or self.state.tag_filter:
+            # Spec 4.5 rung 8 (owner decision D4, ahead of frame slice B3):
+            # the search and its tag go together, before the marks; the
+            # selection and the marks stay. Dev cleared only the marks here.
+            self._clear_search_and_tag()
+            return
         library.clear_marks()
+
+    def _clear_search_and_tag(self) -> None:
+        """Escape's rung 8: the search box and the tag cleared, the list read again now."""
+        # The user's own clear is a newer intent than an import in flight,
+        # like a typed search (B2b Task 5); the prevented Input.Changed below
+        # would otherwise skip _handle_search_changed's bump.
+        self._bump_import_intent()
+        self._cancel_search_debounce()
+        self.state.search_query = ""
+        self.state.tag_filter = None
+        if self.state.sort_key == "relevance":
+            self.state.sort_key = "name_asc"
+        self._count_cache_key = None
+        try:
+            search = self.query_one("#personas-library-search", Input)
+        except QueryError:
+            return
+        # No Input.Changed: its handler would arm a second, debounced read.
+        with search.prevent(Input.Changed):
+            search.value = ""
+        self._start_debounced_search_render(query="", mode=self.state.active_mode)
 
     async def action_personas_mode(self, mode: str) -> None:
         """Single-letter mode keys (c/p/d/l): same guarded path as the mode chips."""

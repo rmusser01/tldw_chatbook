@@ -339,10 +339,11 @@ async def wait_until(
 
 
 def _first_list_item_present(app) -> bool:
-    """Roleplay is up once its list shows a row, or its empty or recovery line."""
+    """Roleplay is up once its list shows a row, or its empty, no-match or recovery line."""
     screen = app.screen
     return isinstance(screen, PersonasScreen) and (
-        bool(visible_item_ids(screen)) or list_state(screen).state != "rows"
+        bool(visible_item_ids(screen))
+        or list_state(screen).state not in ("rows", "loading")
     )
 
 
@@ -373,7 +374,8 @@ class RoleplayItemView:
 
 @dataclass(frozen=True)
 class RoleplayListState:
-    """``rows``, ``empty`` or ``recovery``, with the rows, the cursor and the status copy."""
+    """``rows``, ``empty``, ``recovery``, ``no_match`` or ``loading``, with the
+    rows, the cursor and the status copy (lines joined by a newline)."""
 
     state: str
     items: tuple[RoleplayItemView, ...]
@@ -437,16 +439,33 @@ def highlighted_item_id(node) -> str | None:
 
 
 def list_state(node) -> RoleplayListState:
-    """The list's rows and cursor, and the empty or recovery copy shown beside it."""
+    """The list's rows and cursor, and the copy shown beside it (spec 1.5.4)."""
     item_list = _item_list(node)
     items = tuple(item_at(node, index) for index in range(item_list.option_count))
     status = node.query_one("#personas-library-status")
+    # Queried, not required: a tree without them reads as dev's states.
+    loading = node.query("#personas-library-loading")
     state, text = "rows", None
     if status.display and status.children:
         static = status.children[0]
         text = str(static.render())
         state = "empty" if static.id == "personas-library-empty" else "recovery"
+    elif no_match_lines(node):
+        state, text = "no_match", "\n".join(no_match_lines(node))
+    elif loading and loading.first().display:
+        state, text = "loading", str(loading.first().render())
     return RoleplayListState(state, items, highlighted_item_id(node), text)
+
+
+def no_match_lines(node) -> tuple[str, ...]:
+    """The no-match message's painted lines (spec 1.5.4), or () while it is hidden."""
+    blocks = node.query("#personas-library-nomatch")
+    if not blocks or not blocks.first().display:
+        return ()
+    return tuple(
+        str(line.render())
+        for line in blocks.first().query(".personas-library-status-copy")
+    )
 
 
 def painted_option_rows(item_list: RoleplayItemList) -> dict[int, list[int]]:
