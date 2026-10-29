@@ -177,7 +177,7 @@ Tests/UI/test_console_session_settings.py::test_console_settings_fields_are_size
 # TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
 # out. Appended, so no other file changes shard.
 Tests/UI/test_library_note_autosave_recovers.py
-Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset]
+Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset-reads-shipped-on-saves-nothing]
 Tests/UI/test_console_projection_reads_off_loop.py
 Tests/UI/test_settings_connect_key_rows.py::test_a_filled_required_endpoint_says_what_it_holds_not_required
 # TASK-33003.20: production batch geometry, isolated profile and shipping CSS.

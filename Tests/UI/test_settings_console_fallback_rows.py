@@ -879,7 +879,7 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
 @pytest.mark.parametrize(
     "seed",
     [{"streaming": False}, {"enable_streaming": False}, {}],
-    ids=["saved-off", "legacy-off-only", "unset"],
+    ids=["saved-off", "legacy-off-only", "unset-reads-shipped-on-saves-nothing"],
 )
 async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value(
     request, monkeypatch, seed
