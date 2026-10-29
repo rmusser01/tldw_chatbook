@@ -146,6 +146,8 @@ class AppearanceStep(SetupStep):
             return
         with box.prevent(Checkbox.Changed):
             box.value = live
+        # Welcome saved it on its Next: the shown value is the saved one.
+        self._current_reduce = live
 
     @on(Checkbox.Changed, "#setup-appearance-reduce-motion")
     def _on_reduce_motion(self, event: Checkbox.Changed) -> None:
@@ -294,16 +296,17 @@ class AppearanceStep(SetupStep):
                 self._comfort_touched = True
 
     async def commit(self) -> tuple[bool, str]:
-        self._read_current()
+        # Review V2: the delta is against what the controls were built from
+        # (``_current_*``), never a fresh read -- a config that moved since
+        # then would make an untouched step write its shown values back.
         prefill = wizard_state.read_wizard_prefill(self._app_config())
         commit: dict[str, dict[str, Any]] = {}
         # Bug-2b: write the theme only when it differs from what is saved.
         if self.selected_theme and self.selected_theme != prefill.default_theme:
             commit["general"] = {"default_theme": self.selected_theme}
+        startup = self._pressed_startup()
         commit.update(
-            look.build_startup_commit(
-                choice=self._pressed_startup(), current=self._current_startup
-            )
+            look.build_startup_commit(choice=startup, current=self._current_startup)
         )
         reduce_motion = self._checked(
             "#setup-appearance-reduce-motion", self._current_reduce
@@ -333,7 +336,9 @@ class AppearanceStep(SetupStep):
             from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 
             set_ascii_glyph_mode(ascii_glyphs)
-        self._read_current()
+        # What is saved now is what the controls show.
+        self._current_startup = startup
+        self._current_reduce, self._current_ascii = reduce_motion, ascii_glyphs
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
