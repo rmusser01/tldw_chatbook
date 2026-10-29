@@ -8,14 +8,25 @@ error. V1 did not launch and unified output is unavailable.
 [Independent outcome review](v1-final60/outcome-review.md),
 [spending](v1-final60/spending.json), [raw retention](v1-final60/retention.json).
 
-Actual cumulative usage is412generation requests/28children. The single
+Actual cumulative usage is413generation requests/28children, including one
+subsequent local diagnostic (zero cloud requests/children). The single
 invocation is consumed; unused34requests/one child do not permit a retry.
+The [instruction-deferral checkpoint repair](instruction-deferral-checkpoint.md)
+reproduces a continuation defect against the exact saved checkpoint: deferred
+calls remained pending and invalidated the next otherwise-valid response. Eight
+new offline regressions pass after settling each deferral through existing
+persistence/acknowledgment barriers. The missing historical response still limits
+attribution; AC24 has not been rerun or completed.
 The [R1 offline repair and provider diagnosis](r1-completion-offline/report.md)
 now reject contradictory completion before acknowledgment, with same-ID repair
 feedback and unchanged sealing checks. The failed live result is unchanged;
 offline provider controls do not recover the missing historical response body.
 The [provider diagnostics observer](provider-diagnostics.md) is now integrated
 with seven maintained offline controls and a separately gated runner preparation.
+The [October29 dev sync](dev-sync-2026-10-29.md) resolves the PR's integration
+conflicts, preserves244 non-overlapping feature files, and records targeted
+checks plus pre-existing size-test failures. Normal PR CI must be checked on
+the resulting head; the earlier queued third-party review was not Actions CI.
 
 The [shutdown reconciliation guard](ci-followup/shutdown.md) and earlier
 [UI wait repair/Windows diagnostics](ci-followup/report.md) passed normal CI
@@ -68,7 +79,7 @@ provider call was repeated. See the [small preservation receipt](offline-repairs
 GitHub Actions status must be read from the normal PR runs on the resulting head;
 CodeRabbit's skipped review is not passing Actions CI.
 
-The current candidate is rebased again onto live dev
+The second integration candidate was rebased onto then-current dev
 `3efe8476cebf70eceafa605d1abed76a4aad4e0e`. This second sync had a real runtime
 overlap: it preserves upstream first-request schema builders, compact input
 budgets and recoverable disclosure refusals alongside review role/spawn gates.

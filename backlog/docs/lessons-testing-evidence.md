@@ -129,6 +129,24 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## Request-shape tests can miss stale continuation state (TASK-35582, 2026-10-29)
+
+**Incident.** The instruction-deferral regression exercised the real outgoing
+Console/provider request builder but returned plain `ModelTurn` objects without
+canonical checkpoints. It passed after correcting request fields. A later failed
+live run retained four pending reads with no dispatch between model requests.
+Offline replay of a valid local response against that exact checkpoint failed
+continuation validation. The deferral branch had sent protocol result stubs
+without terminalizing the canonical calls. Eight checkpoint-bearing regressions
+failed before settling the calls through normal persistence/acknowledgment and
+passed afterward. The old response was not retained, so exact historical error
+attribution remains limited.
+
+**What to do.** When testing a tool-result round trip, carry the real response
+checkpoint into the next request and response parser, including skipped or
+deferred tool calls. Assert terminal state and save/acknowledgment failures before
+the next request; valid outgoing JSON alone does not prove a valid round trip.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen

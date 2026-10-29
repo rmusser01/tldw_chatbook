@@ -2419,7 +2419,20 @@ def run_agent_loop(
                     except Exception:  # noqa: BLE001 - warning is best effort
                         logger.warning("project_instruction_warning_callback_failed")
             if preparation.status == "retry_with_context":
-                messages.extend(build_project_instruction_deferral_rows(calls))
+                deferrals = build_project_instruction_deferral_rows(calls)
+                # Deferred calls did not execute, but their protocol results must
+                # settle the canonical batch before another response is admitted.
+                if continuation_checkpoint is not None:
+                    for call, row in zip(calls, deferrals):
+                        content = row["content"]
+                        if not transition_call(
+                            call,
+                            "failed",
+                            ContinuationResult(content),
+                            model_result=content,
+                        ):
+                            return continuation_error()
+                messages.extend(deferrals)
                 messages.extend(
                     deepcopy(dict(row)) for row in preparation.ephemeral_rows
                 )
