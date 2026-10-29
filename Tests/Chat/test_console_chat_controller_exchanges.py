@@ -561,6 +561,7 @@ async def test_temporary_chat_resolves_capture_off_until_chosen_or_saved(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_temporary_chat_default_send_skips_the_capture_pause(
     monkeypatch,
 ) -> None:
@@ -653,6 +654,7 @@ async def test_temporary_capture_on_pauses_real_submit_before_gateway(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
     monkeypatch,
 ) -> None:
@@ -718,6 +720,7 @@ async def test_temporary_capture_on_attachment_only_pauses_before_gateway(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
     monkeypatch,
 ) -> None:
@@ -771,6 +774,7 @@ async def test_queued_temporary_capture_on_refuses_without_throwing_or_dispatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
     monkeypatch,
 ) -> None:
@@ -802,6 +806,7 @@ async def test_temporary_capture_cancel_removes_unsent_echo_and_preparation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # sends through the hooks/config admission
 async def test_save_and_send_refreshes_durable_authority_before_trace_admission(
     monkeypatch,
     tmp_path,
