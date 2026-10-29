@@ -673,7 +673,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR3303 retains all 1249 dev entries and appends four loss-guard entries.
 # PR3306 retains all 1253 dev entries and appends five character prompt nodes.
 # TASK-33621.53 (2026-10-29) appends 3 entries at the tail: the unreserved
-# commit-failure file (three unmounted cases, about 8 s locally) and two
+# commit-failure file (now four unmounted cases, about 11 s locally) and two
 # mounted cases of its recovery file as node ids (about 5-13 s each), so no
 # existing entry changes shard: dev's 1140 + 3 = 1143.
 # Rebased 2026-10-29 onto dev's 1141 entries (TASK-36611's +1): 1141 + 3 = 1144.
