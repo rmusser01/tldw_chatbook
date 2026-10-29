@@ -4185,6 +4185,34 @@ class NotesSyncRuntimeOwner:
         root_path = self._root_paths.get(root_id)
         return "" if not root_path else str(Path(root_path) / relative_path)
 
+    async def note_sync_bound(self, note_id: str) -> bool:
+        """Whether a sync folder still holds this note (TASK-34000.29 8b).
+
+        Delete forever asks this at confirm time and refuses a bound note.
+        Read live from the store, NOT through :meth:`note_file_location`:
+        that answers "" for a root whose path startup has not loaded yet,
+        and "" must never read as "safe to purge". Every binding state but
+        ``disconnected`` counts (``note_has_live_binding``).
+
+        Args:
+            note_id: The note about to be purged.
+
+        Returns:
+            ``True`` when a live binding names the note.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+            RuntimeError: While the runtime is closing -- it cannot say, so
+                the caller refuses rather than guesses.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        if self._closing:
+            raise RuntimeError("Lasting sync is closing and cannot be asked.")
+        return bool(
+            await self._maintenance_offload(self._store.note_has_live_binding, note_id)
+        )
+
     @producer_call
     async def attention_folder_ids(self) -> frozenset[str]:
         """Return the Notes folders whose sync root is held for attention.

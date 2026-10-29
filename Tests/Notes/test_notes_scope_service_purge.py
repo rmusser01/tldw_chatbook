@@ -33,6 +33,10 @@ from tldw_chatbook.Notes.notes_scope_service import (
 )
 from tldw_chatbook.RAG_Search import ingestion_indexing
 
+#: The interop service opens its per-user database through the real
+#: source-bound config readers (the Console library migration seed).
+pytestmark = pytest.mark.bootstrap_profile
+
 USER = "user-1"
 
 
@@ -153,7 +157,7 @@ async def test_purge_note_asks_lasting_sync_on_every_purge(tmp_path, removals) -
     The same service and runtime: a note bound since the first ask is
     refused on the second, with nothing purged.
     """
-    first = _Profile(tmp_path / "a")
+    first = _Profile(tmp_path)
     runtime = _Runtime(True)
     with pytest.raises(NotePurgeRefusedError):
         await _purge(first, runtime)
