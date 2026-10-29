@@ -152,6 +152,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29 (TASK-33621.17, owner decision 2026-10-04: raise the row
     # rather than squeeze unrelated code): +5, Save & Send's promoted Library
     # identity in _capture_turn_library_authority.
+    # identity in _capture_turn_library_authority; +6, a Temporary chat's
+    # Capture Off default at both capture resolutions (owner decision
+    # 2026-10-27).
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,

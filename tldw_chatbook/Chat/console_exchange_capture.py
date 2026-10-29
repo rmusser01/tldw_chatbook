@@ -320,6 +320,31 @@ def resolve_scoped_boolean(
     return global_default
 
 
+def temporary_chat_capture(
+    conversation: bool | None, *, ephemeral: bool
+) -> bool | None:
+    """Return a chat's conversation-scope Capture, Off for a Temporary chat.
+
+    TASK-33621.17 (owner decision 2026-10-27): a Temporary chat records no
+    traces unless someone turned Capture on for it, so its sends never pause
+    for Save & Send. The default lives here, at resolution, rather than as a
+    stored Off: saving the chat ("Save chat (enables capture)") must hand
+    Capture back to the global setting, and a stored Off would be saved with
+    the chat.
+
+    Args:
+        conversation: The chat's sparse Capture override, or None to inherit.
+        ephemeral: Whether the chat is still temporary.
+
+    Returns:
+        False for a temporary chat with no override; the override otherwise.
+    """
+
+    if ephemeral and conversation is None:
+        return False
+    return conversation
+
+
 @dataclass(frozen=True)
 class ExchangeCapture:
     """One provider call's captured request/response pair."""

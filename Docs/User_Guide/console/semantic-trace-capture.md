@@ -25,15 +25,25 @@ is shown as such; Console does not invent missing history.
 
 ## Capture On, Capture Off, and temporary chats
 
-Capture is on by default. Change the global default in **F4 > Console
-Behavior**, or press **c** in a live Trace to choose **Next send**, **This
-conversation**, or **Global default**. Capture Off affects future calls and does
-not delete existing trace history.
+Capture is on by default for saved chats. Change the global default in **F4 >
+Console Behavior**, or press **c** in a live Trace to choose **Next send**,
+**This conversation**, or **Global default**. Capture Off affects future calls
+and does not delete existing trace history.
 
-A Capture On call needs a durable owner before it can contact the provider. If
-the chat is temporary, Console offers **Save & Send**. That action saves the
-current lineage and its trace ownership, then sends. You can instead make an
-explicit one-shot send with Capture Off. Temporary trace and fork state can stay
+A temporary chat records no traces. Its sends go to the provider with Capture
+Off and never stop to ask, and the status strip shows **Temporary · traces
+off**. To capture, save the chat: activate that segment, or choose **Save chat
+(enables capture)** in the composer **Menu**. From its next send the saved chat
+follows your normal Capture setting; the sends it made while temporary keep no
+trace.
+
+If you turn Capture On for a chat that is still temporary (**This
+conversation** or **Next send** in Trace Privacy), each send pauses before the
+provider, because a Capture On call needs a durable owner. The transcript shows
+**Save chat to capture this send** with **Save & Send**, **Send without
+capture** and **Cancel send**. **Save & Send** saves the current lineage and
+its trace ownership, then sends that message; **Send without capture** sends
+that one message with Capture Off. Temporary trace and fork state can stay
 coherent while the app is running and while you switch chats, but it is not
 restart-durable until saved.
 

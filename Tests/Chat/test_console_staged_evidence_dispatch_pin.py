@@ -164,7 +164,14 @@ async def test_a_resumed_turn_does_not_take_evidence_staged_while_it_was_paused(
     searched = _library_search(monkeypatch)
 
     # Nothing is staged when the user sends. A temporary chat with Capture on
-    # (the shipped default) pauses on the Save / Send without capture card.
+    # pauses on the Save / Send without capture card. TASK-33621.17: Capture
+    # is off by default in a temporary chat, so this chat turns it on.
+    store.replace_session_trace_privacy_override(
+        session_id,
+        capture_enabled=True,
+        pii_redaction_enabled=None,
+        expected_policy_revision=store.capture_policy_state(session_id).policy_revision,
+    )
     # A paused send is not durably accepted, so the custody task reports it.
     with pytest.raises(RuntimeError, match="refused before durable acceptance"):
         await runtime.wait_for_turn(
