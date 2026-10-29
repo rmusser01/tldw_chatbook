@@ -194,7 +194,10 @@ _BUDGETS: dict[str, int] = {
     # (16,962 -> 16,999).
     # T5, the guarded import landing (_land_import, the intent serial and its
     # bumps, the literal landing toasts): +122 (16,999 -> 17,121).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17121,
+    # T5 fix round 1, the landing decides again after its own awaits, and a
+    # typed search, sort cycle or tag pick is a newer intent: +26
+    # (17,121 -> 17,147).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17147,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -242,7 +245,10 @@ _BUDGETS: dict[str, int] = {
     # Roleplay frame B2b (TASK-33910.4): Duplicate (T1), New Actor Pack (T2)
     # and Import Actor Pack (T4) leave the toolbar; T4 lowers the row to the
     # measurement (1,297 -> 1,246).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1246,
+    # T5 fix round 1, End is a newer move before the window it owes: +3
+    # (1,246 -> 1,249); owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26.
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1249,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

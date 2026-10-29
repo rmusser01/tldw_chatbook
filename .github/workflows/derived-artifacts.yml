@@ -460,8 +460,8 @@ jobs:
     # TASK-33620.15.1.4 appends the rail edge focus restyle file (two mounted
     # Console tests, ~18 s serial).
     # Roleplay frame B2b (TASK-33910.4, owner decision D7 of 2026-10-26)
-    # appends the mounted one-Import-picker file (bootstrap_profile; 39 cases,
-    # about 80 s serial).
+    # appends the mounted one-Import-picker file (bootstrap_profile; 44 cases,
+    # about 95 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
