@@ -3375,7 +3375,7 @@ class LibraryMediaController:
         self._library_media_confirming_delete = False
         self._library_media_highlights = []
         self._library_media_editing_analysis = False
-        self._library_media_saving_analysis = False  # see the field (N-6)
+        self._library_media_saving_analysis = None  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -3398,7 +3398,7 @@ class LibraryMediaController:
         self._library_media_editing = False
         self._library_media_edit_draft = None
         self._library_media_editing_analysis = False
-        self._library_media_saving_analysis = False  # see the field (N-6)
+        self._library_media_saving_analysis = None  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._close_library_media_find()
         self._library_media_content_mode = "raw"
@@ -5374,7 +5374,7 @@ class LibraryMediaController:
         """
         event.stop()
         self._library_media_editing_analysis = False
-        self._library_media_saving_analysis = False  # see the field (N-6)
+        self._library_media_saving_analysis = None  # see the field (N-6)
         self._library_media_analysis_draft = None
         self._sync_library_media_viewer_or_recompose()
 
@@ -5435,29 +5435,34 @@ class LibraryMediaController:
             else {}
         )
         content = str(detail.get("content") or "")
-        self._library_media_saving_analysis = True
+        token = object()  # this save's own claim on the guard (review R2 N2-2)
+        self._library_media_saving_analysis = token
         self._register_footer_shortcuts()
         work = self._run_library_media_analysis_form_save(
-            media_id, content=content, analysis_content=analysis_content
+            media_id, content=content, analysis_content=analysis_content, token=token
         )
         try:
             self.run_worker(work)
         except BaseException:
             # Never strand the guard on a worker that could not be scheduled.
             work.close()
-            self._library_media_saving_analysis = False
+            if self._library_media_saving_analysis is token:
+                self._library_media_saving_analysis = None
             raise
 
     async def _run_library_media_analysis_form_save(
-        self, media_id: str, *, content: str, analysis_content: str
+        self, media_id: str, *, content: str, analysis_content: str, token: object
     ) -> None:
-        """Run the form's save, releasing its in-flight guard on every path."""
+        """Run the form's save, releasing its in-flight guard on every path --
+        but only while the guard still holds THIS save's ``token``: a reset
+        may have cleared it and a newer save taken it (review R2 N2-2)."""
         try:
             await self._save_library_media_analysis(
                 media_id, content=content, analysis_content=analysis_content
             )
         finally:
-            self._library_media_saving_analysis = False
+            if self._library_media_saving_analysis is token:
+                self._library_media_saving_analysis = None
             self._register_footer_shortcuts()
 
     async def _fetch_library_media_analysis_detail(
@@ -5553,7 +5558,7 @@ class LibraryMediaController:
         self._media_state.edit_draft = None
         self._media_state.confirming_delete = False
         self._media_state.editing_analysis = False
-        self._media_state.saving_analysis = False  # see the field (N-6)
+        self._media_state.saving_analysis = None  # see the field (N-6)
         self._media_state.analysis_draft = None
         self._close_library_media_find()
         self._media_state.content_mode = "raw"
@@ -5613,7 +5618,7 @@ class LibraryMediaController:
             return
         if self._media_state.editing_analysis:
             self._media_state.editing_analysis = False
-            self._media_state.saving_analysis = False  # see the field (N-6)
+            self._media_state.saving_analysis = None  # see the field (N-6)
             self._media_state.analysis_draft = None
             self._sync_library_media_viewer_or_recompose()
             return
@@ -6432,7 +6437,7 @@ class LibraryMediaController:
         self._media_state.highlights = []
         self._media_state.editing = False
         self._media_state.editing_analysis = False
-        self._media_state.saving_analysis = False  # see the field (N-6)
+        self._media_state.saving_analysis = None  # see the field (N-6)
         # TASK-34000.22 fix round 1 (I-2): the forms go with the item they
         # were typed for -- a reset that cleared the flags but left the
         # drafts kept the dirty predicate true for a form nobody could see.
@@ -7329,7 +7334,7 @@ class LibraryMediaController:
                 self._media_state.composed_detail = None
                 self._media_state.highlights = []
                 self._media_state.editing_analysis = False
-                self._media_state.saving_analysis = False  # see the field (N-6)
+                self._media_state.saving_analysis = None  # see the field (N-6)
                 self._media_state.analysis_draft = None
                 self._close_library_media_find()
                 self._media_state.content_mode = "raw"
