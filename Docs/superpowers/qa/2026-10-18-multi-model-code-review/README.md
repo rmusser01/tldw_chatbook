@@ -10,8 +10,10 @@ error. V1 did not launch and unified output is unavailable.
 
 Actual cumulative usage is412generation requests/28children. The single
 invocation is consumed; unused34requests/one child do not permit a retry.
-Three offline controls reproduce the completion-consistency boundary while
-preserving strict seals. No further production change was made.
+The [R1 offline repair and provider diagnosis](r1-completion-offline/report.md)
+now reject contradictory completion before acknowledgment, with same-ID repair
+feedback and unchanged sealing checks. The failed live result is unchanged;
+offline provider controls do not recover the missing historical response body.
 
 The [shutdown reconciliation guard](ci-followup/shutdown.md) and earlier
 [UI wait repair/Windows diagnostics](ci-followup/report.md) passed normal CI

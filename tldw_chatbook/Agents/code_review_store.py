@@ -937,6 +937,18 @@ class ReviewStore:
             ):
                 raise ReviewRefused("unresolved_submission_rejections")
             self._validate_references(context, parsed)
+            if kind == "reviewer_complete" and parsed[0].empty_findings != (
+                not stream.local_keys
+            ):
+                refusal = ReviewRefused("invalid_record")
+                refusal.validation_errors = (
+                    {
+                        "field": ("records", 0, "empty_findings"),
+                        "type": "findings_mismatch",
+                        "expected": not stream.local_keys,
+                    },
+                )
+                raise refusal
             ledger = (
                 self.verification_ledger(context, binding)
                 if kind in {"dispositions", "verifier_complete"}
