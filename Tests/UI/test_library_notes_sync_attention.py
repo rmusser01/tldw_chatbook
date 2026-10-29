@@ -77,7 +77,6 @@ async def test_a_held_sync_folder_reads_needs_attention_until_recovery_heals_it(
             async with app.run_test(size=SIZE) as pilot:
                 screen = await _library(app, pilot)
                 screen.query_one("#library-row-browse-notes", Button).press()
-                await _wait_for_selector(screen, pilot, ".library-notes-folder-row")
 
                 # Tree and list: the held folder, never "Sync managed"/"Ready".
                 await _until(
