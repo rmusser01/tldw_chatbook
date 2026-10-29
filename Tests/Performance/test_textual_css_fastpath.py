@@ -332,7 +332,14 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
 #: own count rose 272 -> 273 between 7700c63a68 and 5b5920b8e2 (not B2a's),
 #: so the slice head measures 273 -> 270, the same three rules fewer; pinned
 #: at that measurement, still 4 below dev's 274.
-MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 270
+#: LOWERED 2026-10-29 (Roleplay frame B2b, TASK-33910.4; spec 2.12 item 1):
+#: the old stacked toolbar left PersonasLibraryPane, and with it its two
+#: counted rules (`#personas-library-toolbar Button, ...filterbar Button` and
+#: the stacked-controls pair). Its harness fallback keys on classes and an
+#: id. Measured 269 -> 267 on the slice head (dev 38c9d2edcf measures 269:
+#: dev's own count fell 270 -> 269 after 38623632e9, not B2b's); pinned at
+#: the measurement, as the spec asks.
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 267
 
 #: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
 #: missing, parse failure swallowed) must fail loudly, not pass at zero.

@@ -36,6 +36,7 @@ from Tests.UI.roleplay_frame_harness import (
     open_styled_roleplay,
     open_volume_db,
     painted_rows,
+    painted_text,
     roleplay_full_app,
     select_roleplay_item,
     settle,
@@ -388,6 +389,226 @@ async def test_enter_after_the_debounce_fired_lands_on_the_first_match_when_its_
             what="the first match under the cursor",
         )
         assert screen.focused is screen.query_one(RoleplayItemList)
+
+
+# ---- The one-row toolbar (frame slice B2b, spec 1.5.1; TASK-33787, RP-009) ----
+
+_KINDS = ("characters", "personas", "lore", "dictionaries")
+_TOOLBAR_PARTS = (
+    "#personas-library-search",
+    "#personas-library-import",
+    "#personas-library-sort",
+    "#personas-library-tag",
+    "#personas-library-new",
+)
+
+
+def _seed_every_kind(mock_app_instance, db) -> None:
+    """One item per kind whose name starts "Cha", so a "Cha" search keeps rows
+    in every kind (348 characters named "Character NNNN" come with ``db``)."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    WorldBookManager(db).create_world_book("Charted Isles")
+    service, _calls = _persona_service(
+        [
+            {
+                "id": "p-cha",
+                "name": "Chaplain",
+                "system_prompt": "Bless the voyage.",
+                "created_at": "2026-10-01T00:00:00",
+            }
+        ]
+    )
+    mock_app_instance.character_persona_scope_service = service
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service(
+        ("Chat slang", 2)
+    )
+
+
+async def _show_kind(pilot, screen, mode: str) -> None:
+    """Switch kind as a mode chip does, and wait for that kind's rows."""
+    kind = frame_state.KIND_FOR_MODE[mode]
+    await screen._apply_mode(mode)
+    await wait_until(
+        pilot,
+        lambda: (
+            bool(visible_item_ids(screen))
+            and all(i.startswith(f"{kind}:") for i in visible_item_ids(screen))
+        ),
+        what=f"the {mode} rows",
+    )
+    await settle(pilot)
+
+
+def _search_and_list(screen) -> tuple[int, int, int]:
+    """(search height, search content rows, the list's top row)."""
+    search = screen.query_one("#personas-library-search", Input)
+    return (
+        search.region.height,
+        search.content_region.height,
+        screen.query_one(RoleplayItemList).region.y,
+    )
+
+
+@pytest.mark.parametrize(
+    "size", [(80, 24), (120, 36), (160, 45)], ids=["80x24", "120x36", "160x45"]
+)
+async def test_the_focused_search_shows_what_you_type_and_nothing_moves(
+    size, mock_app_instance, volume_348
+):
+    """TASK-33787 AC#1-#3 and #5 in every kind: the search box is one row at
+    rest, focused, typed in and left, it paints the typed query, and the list
+    keeps its row throughout. On dev, focus stacked an Input:focus border onto
+    the one-row box: two rows tall, no content row, the typed text invisible
+    and the list one row lower (RP-009; B2b fixes it)."""
+    _seed_every_kind(mock_app_instance, volume_348)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=size, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        search = screen.query_one("#personas-library-search", Input)
+        item_list = screen.query_one(RoleplayItemList)
+        for mode in _KINDS:
+            await _show_kind(pilot, screen, mode)
+            rest = _search_and_list(screen)
+            search.focus()
+            await settle(pilot)
+            focused = _search_and_list(screen)
+            await pilot.press(*"Cha")
+            await wait_until(
+                pilot,
+                lambda: (
+                    screen.state.search_query == "Cha"
+                    and bool(visible_item_ids(screen))
+                ),
+                what=f"the {mode} search",
+            )
+            await settle(pilot)
+            typed = _search_and_list(screen)
+            painted = painted_text(screen, search.content_region)
+            item_list.focus()
+            await settle(pilot)
+            left = _search_and_list(screen)
+            assert rest == focused == typed == left, (mode, rest, focused, typed, left)
+            assert rest[:2] == (1, 1), mode
+            assert "Cha" in painted, (mode, painted)
+            search.value = ""
+            await wait_until(
+                pilot, lambda: screen.state.search_query == "", what="cleared"
+            )
+            await settle(pilot)
+
+
+@pytest.mark.parametrize(
+    "size",
+    [(80, 24), (120, 36), (160, 45), (220, 55)],
+    ids=["80x24", "120x36", "160x45", "220x55"],
+)
+async def test_every_toolbar_control_is_whole_and_inside_the_pane(
+    size, mock_app_instance, volume_348
+):
+    """TASK-33787 AC#4 and B2b AC#1 in every kind: each control and the search
+    box lie inside the pane with their whole label painted, the toolbar takes
+    at most 2 rows at 120 columns and 1 at 160 and wider, and Import sits on
+    the rail's title row (owner decision D2)."""
+    _seed_every_kind(mock_app_instance, volume_348)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=size, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        inside = pane.content_region
+        for mode in _KINDS:
+            await _show_kind(pilot, screen, mode)
+            rows = painted_rows(screen)
+            for selector in _TOOLBAR_PARTS:
+                widget = screen.query_one(selector)
+                if not widget.display:
+                    continue
+                region = widget.region
+                assert region.area and inside.contains_region(region), (
+                    mode,
+                    selector,
+                    region,
+                    inside,
+                )
+                if selector != "#personas-library-search":
+                    label = str(widget.label)
+                    assert rows[region.y][region.x : region.right] == label, (
+                        mode,
+                        selector,
+                    )
+            toolbar = screen.query_one("#personas-library-toolbar")
+            if size[0] >= 160:
+                assert toolbar.region.height == 1, mode
+            elif size[0] == 120:
+                assert toolbar.region.height <= 2, mode
+            header = pane.query_one(".console-rail-header")
+            assert screen.query_one("#personas-library-import").region.y == (
+                header.region.y
+            )
+
+
+async def test_the_server_runtime_toolbar_keeps_its_disabled_controls_whole(
+    mock_app_instance,
+):
+    """Review Focus 5: under the server runtime + New and Tag are disabled but
+    still take their cells, and the sort reads the server's order ("Server"
+    beside a 14-cell search at 160 columns), so the row still fits whole."""
+    records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 6)]
+
+    async def list_characters(*, mode, limit, offset):
+        return [dict(record) for record in records[offset : offset + limit]]
+
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=list_characters,
+        search_characters=AsyncMock(return_value=[]),
+        get_character=AsyncMock(return_value=dict(records[0])),
+    )
+    async with open_styled_roleplay("mock", mock_app_instance, size=(160, 45)) as pilot:
+        screen = pilot.app.screen
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 5, what="the server rows"
+        )
+        await settle(pilot)
+        rows = painted_rows(screen)
+        toolbar = screen.query_one("#personas-library-toolbar")
+        assert toolbar.region.height == 1
+        for part, label in (("sort", "Server"), ("tag", "Tag"), ("new", "+ New")):
+            button = screen.query_one(f"#personas-library-{part}", Button)
+            assert button.disabled is (part != "sort")
+            region = button.region
+            assert rows[region.y][region.x : region.right] == label
+        sort = screen.query_one("#personas-library-sort", Button)
+        assert str(sort.tooltip).startswith("Sort: Server order.")
+
+
+async def test_a_resize_refits_the_toolbar_without_mounting(
+    mock_app_instance, volume_348, work
+):
+    """Spec 2.13 "display-only layout": crossing 120 <-> 160 columns moves the
+    controls between one row and two by classes and labels alone: 0 mounts,
+    0 recomposes, no window read."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+
+        def toolbar_rows() -> int:
+            return screen.query_one("#personas-library-toolbar").region.height
+
+        assert toolbar_rows() == 2
+        for size, rows in (((160, 45), 1), ((120, 36), 2), ((160, 45), 1)):
+            work.reset()
+            work.armed = True
+            await pilot.resize_terminal(*size)
+            await settle(pilot)
+            work.armed = False
+            assert (work.mounts, work.recomposes) == (0, 0), size
+            assert toolbar_rows() == rows, size
+            assert work.windows == [], size
 
 
 # ---- Marks by id, the marks bar and the one delete modal (AC#5, R32; Task 5) ----
