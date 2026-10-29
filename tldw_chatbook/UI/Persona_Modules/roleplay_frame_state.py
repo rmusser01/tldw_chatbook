@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Literal, Protocol
 
 from rich.cells import cell_len
 
@@ -966,3 +966,54 @@ def new_chooser_options(
         )
         for choice_id, row_mode, label, hint in rows
     )
+
+
+# ---- Where an import lands (frame slice B2b, spec 1.4.6) ----
+
+#: The workbench mode that lists each kind (``KIND_FOR_MODE`` reversed).
+MODE_FOR_KIND: dict[str, str] = {kind: mode for mode, kind in KIND_FOR_MODE.items()}
+
+
+def import_landing(
+    *, clean: bool, intent_current: bool, presentation_current: bool
+) -> Literal["select", "toast"]:
+    """Whether an import that landed is selected, or only named in a toast.
+
+    Quick import is kept: the new item is selected (in its own kind, which
+    the screen switches to) only when nothing can be lost or overridden.
+
+    Args:
+        clean: Every Roleplay draft is clean (R24's aggregate predicate).
+        intent_current: No newer intent (a kind switch, a create, a load, a
+            cursor move) arrived since the picker opened.
+        presentation_current: The screen still shows (attached, on top).
+
+    Returns:
+        ``"select"`` when all three hold, else ``"toast"``.
+    """
+    if clean and intent_current and presentation_current:
+        return "select"
+    return "toast"
+
+
+def import_landed_toast(name: str, kind: str, *, existed: bool = False) -> str:
+    """R33's literal copy for where an import went: ``Imported <name> · in <Kind>``.
+
+    The screen paints it with markup off, so ``name`` goes in as typed (on
+    one line).
+
+    Args:
+        name: The imported item's name.
+        kind: Its entity kind (``ITEM_KINDS`` keys).
+        existed: A character card that was already in the library (the
+            importer returned the existing one).
+
+    Returns:
+        The toast text.
+    """
+    head = (
+        f"{_one_line(name)} already existed"
+        if existed
+        else f"Imported {_one_line(name)}"
+    )
+    return f"{head} {resolve_glyph(_SEPARATOR)} in {ITEM_KINDS[kind][2]}"

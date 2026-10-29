@@ -1349,6 +1349,10 @@ class PersonasScreen(BaseAppScreen):
         self._roleplay_import_running: bool = False
         # The New chooser is open (frame slice B2b).
         self._new_chooser_open: bool = False
+        # Bumped by every guarded transition, kind switch, create and item
+        # load; with the list's cursor moves it says whether a newer intent
+        # arrived since an import's picker opened (frame slice B2b).
+        self._import_intent: int = 0
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
@@ -4758,6 +4762,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_personas_rails()
 
     async def _apply_mode(self, mode: str) -> None:
+        self._bump_import_intent()
         self._advance_persona_buddy_session()
         if mode != "characters":
             self._clear_character_tts_profile_suggestion()
@@ -5590,6 +5595,7 @@ class PersonasScreen(BaseAppScreen):
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        self._bump_import_intent()
         self._console_changed_character_ids.discard(str(entity_id))
         self.conversations.close_conversation_preview()
         if self.size.width <= 60:
@@ -5675,6 +5681,7 @@ class PersonasScreen(BaseAppScreen):
         )
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
+        self._bump_import_intent()
         session_generation = self._advance_persona_buddy_session()
         source = self.persona_handler.current_mode()
         scope_service = getattr(
@@ -5742,6 +5749,7 @@ class PersonasScreen(BaseAppScreen):
         raise_on_mount_failure: bool = False,
     ) -> None:
         """Load one dictionary into the center detail; inspector shows the selection."""
+        self._bump_import_intent()
         self._advance_persona_buddy_session()
         service = self._dictionary_scope_service()
         if service is None:
@@ -5825,6 +5833,7 @@ class PersonasScreen(BaseAppScreen):
         *,
         raise_on_mount_failure: bool = False,
     ) -> None:
+        self._bump_import_intent()
         self._advance_persona_buddy_session()
         """Load one lore/world book into the center detail; inspector shows the selection."""
         manager = self._lore_manager()
@@ -14291,6 +14300,7 @@ class PersonasScreen(BaseAppScreen):
                     type(exc).__name__,
                 )
                 buddy_import_guard = None
+            intent = self._import_intent_now()
             picker = EnhancedFileOpen(
                 title=ROLEPLAY_IMPORT_TITLE,
                 filters=_roleplay_import_filters(),
@@ -14309,7 +14319,7 @@ class PersonasScreen(BaseAppScreen):
                 return
             try:
                 durable_import_started = await self._route_roleplay_import(
-                    Path(file_path), buddy_import_guard
+                    Path(file_path), buddy_import_guard, intent
                 )
             except Exception as exc:
                 logger.opt(exception=True).error(
@@ -14322,7 +14332,10 @@ class PersonasScreen(BaseAppScreen):
                 self._io_dialog_active = False
 
     async def _route_roleplay_import(
-        self, path: Path, buddy_import_guard: Callable[[], bool] | None
+        self,
+        path: Path,
+        buddy_import_guard: Callable[[], bool] | None,
+        intent: tuple[int, int],
     ) -> bool:
         """Sniff ``path`` and hand it to its kind's importer (spec 1.4.6).
 
@@ -14330,6 +14343,7 @@ class PersonasScreen(BaseAppScreen):
             path: The picked file.
             buddy_import_guard: The Buddy destination pinned when the picker
                 opened, or None when it could not be captured.
+            intent: ``_import_intent_now()`` when the picker opened.
 
         Returns:
             True when a durable character import took over the dialog slot
@@ -14381,11 +14395,11 @@ class PersonasScreen(BaseAppScreen):
             )
             return False
         if kind == "character":
-            return self._start_character_import(str(path)) is not None
+            return self._start_character_import(str(path), intent=intent) is not None
         if kind == "lore":
-            await self._import_world_book_from_path(str(path))
+            await self._import_world_book_from_path(str(path), intent=intent)
         elif kind == "dictionary":
-            await self._import_dictionary_from_path(str(path))
+            await self._import_dictionary_from_path(str(path), intent=intent)
         elif kind == "actor_pack":
             controller = getattr(
                 self.app_instance, "actor_pack_import_controller", None
@@ -14452,6 +14466,89 @@ class PersonasScreen(BaseAppScreen):
         )
         return picked if picked in _IMPORT_AS_LABELS else None
 
+    def _bump_import_intent(self) -> None:
+        """A newer user intent: an import in flight no longer auto-selects."""
+        self._import_intent += 1
+
+    def _import_intent_now(self) -> tuple[int, int]:
+        """The user's intent so far: screen transitions and list cursor moves."""
+        return self._import_intent, self._window_state.moves
+
+    def _import_presentation_is_current(self, kind: str) -> bool:
+        """Whether the screen still shows, so a landing may select (any kind)."""
+        return bool(
+            not self._closed
+            and self._parent is not None
+            and self.is_attached
+            and self.app.screen is self
+            and (kind != "character" or self._local_character_actions_allowed())
+        )
+
+    async def _land_import(
+        self, kind: str, item_id: str, name: str, intent: tuple[int, int]
+    ) -> bool:
+        """Select an import where it landed, when nothing is lost (spec 1.4.6).
+
+        Auto-select runs only when every Roleplay draft is clean (R24's
+        aggregate, broader than ``_run_guarded``'s test: it also counts
+        in-flight saves and staged attachments), no newer intent arrived since
+        the picker opened, and the screen still shows; a clean import of
+        another kind switches to that kind first. Otherwise the caller's
+        literal toast names where it went. On dev a character import
+        auto-selected whenever Characters showed (a draft started during the
+        import was replaced from view, survey PROBE2), lore and dictionary
+        imports whenever their kind showed, and a character import that
+        landed after a kind switch said nothing (PROBE3).
+
+        Args:
+            kind: ``character``, ``lore`` or ``dictionary``.
+            item_id: The imported item's id.
+            name: Its name.
+            intent: ``_import_intent_now()`` when the picker opened.
+
+        Returns:
+            True when the item was selected.
+        """
+        landing = frame_state.import_landing(
+            clean=self._aggregate_roleplay_draft_snapshot().is_clean,
+            intent_current=self._import_intent_now() == intent,
+            presentation_current=self._import_presentation_is_current(kind),
+        )
+        if landing != "select":
+            return False
+        mode = frame_state.MODE_FOR_KIND[kind]
+
+        async def select() -> None:
+            if self.state.active_mode != mode:
+                # Clean, so no draft is asked about; the new kind's list
+                # starts unfiltered.
+                await self._apply_mode(mode)
+            else:
+                # Clear an active search so the imported row is in the list.
+                self._cancel_search_debounce()
+                self.state.search_query = ""
+                try:
+                    self.query_one("#personas-library-search", Input).value = ""
+                except Exception:
+                    pass
+                if kind == "character":
+                    if self.state.sort_key == "relevance":
+                        self.state.sort_key = "name_asc"
+                    await self.character_handler.refresh_character_list()
+                elif kind == "lore":
+                    await self._render_lore_rows(query="")
+                else:
+                    await self._render_dictionary_rows(query="")
+            if kind == "character":
+                await self._select_character(item_id, name)
+            elif kind == "lore":
+                await self._select_lore_entry(item_id, name)
+            else:
+                await self._select_dictionary(item_id, name)
+
+        await self._run_guarded(select)
+        return True
+
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""
         for worker in self.app_instance.workers:
@@ -14463,7 +14560,9 @@ class PersonasScreen(BaseAppScreen):
                 return worker
         return None
 
-    def _start_character_import(self, path: str) -> Worker[None] | None:
+    def _start_character_import(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> Worker[None] | None:
         """Launch one durable character import owned by the application.
 
         The worker carries the path in its coroutine; no domain payload or
@@ -14477,22 +14576,33 @@ class PersonasScreen(BaseAppScreen):
         if active_worker is not None:
             return active_worker
         return self.app_instance.run_worker(
-            self._run_durable_character_import(path),
+            self._run_durable_character_import(path, intent),
             group=_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP,
         )
 
-    async def _run_durable_character_import(self, path: str) -> None:
+    async def _run_durable_character_import(
+        self, path: str, intent: tuple[int, int] | None = None
+    ) -> None:
         """Complete a character import and release the initiating dialog slot."""
         try:
             if not self._local_character_actions_allowed():
                 return
-            await self._import_character_from_path(path)
+            await self._import_character_from_path(path, intent=intent)
         finally:
             self._io_dialog_active = False
 
-    async def _import_character_from_path(self, path: str) -> None:
-        """Preflight one immutable card source, persist it, then apply TTS."""
+    async def _import_character_from_path(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> None:
+        """Preflight one immutable card source, persist it, then apply TTS.
 
+        Args:
+            path: The card file.
+            intent: ``_import_intent_now()`` when its picker opened; None
+                means now (a caller with no picker).
+        """
+        if intent is None:
+            intent = self._import_intent_now()
         if not self._local_character_actions_allowed():
             return
         file_type = Path(path).suffix.lower()
@@ -14599,24 +14709,6 @@ class PersonasScreen(BaseAppScreen):
                 voice_result = "cancelled"
 
         imported_id = str(outcome.character_id)
-        if not self._character_import_presentation_is_current():
-            return
-        # Clear any active search (state + Input, as _apply_mode does) so the
-        # imported character is in the refreshed list; selecting it loads
-        # through to its row wherever it sorts (spec 1.5.6 "Load-through").
-        self._cancel_search_debounce()
-        self.state.search_query = ""
-        if self.state.sort_key == "relevance":
-            self.state.sort_key = "name_asc"
-        try:
-            self.query_one("#personas-library-search", Input).value = ""
-        except Exception:
-            pass
-        await self.character_handler.refresh_character_list()
-        if not self._character_import_presentation_is_current():
-            # The user left Characters mode while the import ran; the list is
-            # refreshed but selection/center pane belong to the new mode.
-            return
         # Resolve the display name by id (the page cache may not hold this row).
         loaded = None
         try:
@@ -14628,13 +14720,11 @@ class PersonasScreen(BaseAppScreen):
                 "Could not resolve imported character name by id (category={}).",
                 type(error).__name__,
             )
-        if not self._character_import_presentation_is_current():
-            return
         name = str((loaded or {}).get("name") or "Imported character")
-        await self._select_character(imported_id, name)
-        # The selection changed outside _run_guarded; refresh the footer hints
-        # (attach is now available) and the header state.
-        self._sync_title_and_console_actions()
+        # Selected (and its search cleared, so it is in the list; it loads
+        # through to its row wherever it sorts, spec 1.5.6) only when nothing
+        # is lost; otherwise the toast says where it went (frame slice B2b).
+        selected = await self._land_import("character", imported_id, name, intent)
         # task-445: import swaps in the card view and inspector at the same
         # moment this notification appears, so the default 5s toast reads as
         # a flash against a screen that just changed everywhere else. Linger
@@ -14646,6 +14736,7 @@ class PersonasScreen(BaseAppScreen):
             imported_id,
             voice_result=voice_result,
             attachment_warning=inspection.warning_code,
+            landed=None if selected else name,
         )
 
     def _character_import_presentation_is_current(self) -> bool:
@@ -14729,15 +14820,25 @@ class PersonasScreen(BaseAppScreen):
         *,
         voice_result: str,
         attachment_warning: str | None,
+        landed: str | None = None,
     ) -> None:
+        """Say how a character import went.
+
+        Args:
+            outcome: The importer's outcome.
+            imported_id: The character's id.
+            voice_result: How its portable voice profile went.
+            attachment_warning: Set when the card's voice attachment was skipped.
+            landed: The character's name when it was not selected (frame slice
+                B2b): the toast then names where it went instead.
+        """
         if outcome.created:
-            lore_note = await self._imported_lorebook_note(imported_id)
-            message = f"Character imported.{lore_note}"
+            # " Lorebook 'X' attached (N entries)." or "".
+            note = await self._imported_lorebook_note(imported_id)
+            message = f"Character imported.{note}"
         else:
-            message = (
-                "Character already existed; selected it. "
-                "Re-importing does not update an existing character."
-            )
+            note = " Re-importing does not update an existing character."
+            message = f"Character already existed; selected it.{note}"
         # Reachable only when the observed profile is genuinely "unavailable"
         # (task-2450 amendment): an "unverified" legacy-provider profile now
         # auto-applies instead of landing here, so this copy never needs to
@@ -14770,6 +14871,18 @@ class PersonasScreen(BaseAppScreen):
             if attachment_warning is not None
             else ""
         )
+        if landed is not None:
+            # Not selected: say where it went (R33), then the same notes.
+            tail = f"{note}{voice_copy}{warning_copy}"
+            head = frame_state.import_landed_toast(
+                landed, "character", existed=not outcome.created
+            )
+            self._notify(
+                f"{head}.{tail}" if tail else head,
+                "information" if voice_result != "failed" else "warning",
+                timeout=6.0,
+            )
+            return
         self._notify(
             f"{message}{voice_copy}{warning_copy}",
             "information" if voice_result != "failed" else "warning",
@@ -14797,12 +14910,18 @@ class PersonasScreen(BaseAppScreen):
             return ""
         return format_imported_lorebook_note(ext.get("character_world_books"))
 
-    async def _import_world_book_from_path(self, path: str) -> None:
+    async def _import_world_book_from_path(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> None:
         """Validate + normalize a world-book file and import it; rename on clash.
 
         Args:
             path: Filesystem path to the ``.json`` file chosen via the picker.
+            intent: ``_import_intent_now()`` when its picker opened; None
+                means now (a caller with no picker).
         """
+        if intent is None:
+            intent = self._import_intent_now()
         manager = self._lore_manager()
         if manager is None:
             self._notify(
@@ -14859,21 +14978,26 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning(f"World-book import failed for {path}.")
             self._notify(f"Import failed: {exc}", "error")
             return
-        if self.state.active_mode != "lore":
-            self._notify(f"Imported '{name}' — open Lore to see it.", "information")
-            return
-        await self._render_lore_rows(query=self.state.search_query)
-        await self._select_lore_entry(str(new_id), name)
-        suffix = " Renamed to avoid a name clash." if name != base else ""
-        self._notify(f"Imported '{name}'.{suffix}", "information")
+        # Selected only when nothing is lost (frame slice B2b, spec 1.4.6); on
+        # dev it was selected whenever Lore showed, else "open Lore to see it".
+        await self._land_import("lore", str(new_id), name, intent)
+        landed = frame_state.import_landed_toast(name, "lore")
+        suffix = ". Renamed to avoid a name clash." if name != base else ""
+        self._notify(f"{landed}{suffix}", "information")
 
-    async def _import_dictionary_from_path(self, path: str) -> None:
+    async def _import_dictionary_from_path(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> None:
         """Import a dictionary file; on a name conflict, auto-rename and retry.
 
         Args:
             path: Filesystem path to the ``.json`` or ``.md``/``.markdown``
                 file to import, as chosen via the file picker.
+            intent: ``_import_intent_now()`` when its picker opened; None
+                means now (a caller with no picker).
         """
+        if intent is None:
+            intent = self._import_intent_now()
         service = self._dictionary_scope_service()
         if service is None:
             self._notify("Dictionaries service is not configured.", "error")
@@ -14968,17 +15092,11 @@ class PersonasScreen(BaseAppScreen):
                 "Import succeeded, but the dictionary could not be reloaded.", "warning"
             )
             return
-        if self.state.active_mode != "dictionaries":
-            # The user navigated away while the import ran; don't yank them back.
-            self._notify(
-                f"Imported '{record.get('name') or ''}' — open Dictionaries to see it.",
-                "information",
-            )
-            return
-        await self._render_dictionary_rows(query=self.state.search_query)
-        await self._select_dictionary(
-            str(record.get("id")), str(record.get("name") or "")
-        )
+        # Selected only when nothing is lost (frame slice B2b, spec 1.4.6); on
+        # dev it was selected whenever Dictionaries showed, with no toast.
+        name = str(record.get("name") or "")
+        await self._land_import("dictionary", str(record.get("id")), name, intent)
+        self._notify(frame_state.import_landed_toast(name, "dictionary"), "information")
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
@@ -16643,6 +16761,9 @@ class PersonasScreen(BaseAppScreen):
             or self._persona_visual_has_unsaved_authoring()
         ):
             await self._drain_actor_pack_creation()
+            # Every create, load, kind switch and delete runs here: a newer
+            # intent than an import in flight (frame slice B2b).
+            self._bump_import_intent()
             await continuation()
             # Guarded continuations are exactly the transitions that change
             # edit mode / selection, so the footer hints refresh here.
@@ -16664,6 +16785,7 @@ class PersonasScreen(BaseAppScreen):
             await self._drain_persona_shared_visual_identity_authoring()
             await self._drain_persona_visual_authoring()
             await self._drain_actor_pack_creation()
+            self._bump_import_intent()
             await continuation()
             self._sync_title_and_console_actions()
         finally:

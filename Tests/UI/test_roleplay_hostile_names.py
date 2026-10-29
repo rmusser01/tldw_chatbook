@@ -562,3 +562,58 @@ async def test_the_delete_modal_names_marked_and_open_items_literally(
         await pilot.press("escape")
         await settle(pilot)
         assert app.screen is screen
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_import_toast_paints_a_hostile_card_name_literally(
+    name, mock_app_instance, monkeypatch, tmp_path
+):
+    """Frame slice B2b (AC#7): a real import of a card named like markup, beside
+    a draft, so the import lands without auto-select and its toast names the
+    card (spec 1.4.6, R33): ``Imported <name> · in Characters``, painted as
+    typed and inert."""
+    import json
+
+    from textual.widgets import Input
+
+    from Tests.UI.roleplay_frame_harness import fake_file_picker
+    from Tests.UI.roleplay_import_fixtures import card_v2
+
+    card = tmp_path / "hostile.json"
+    card.write_text(json.dumps(card_v2(name)), encoding="utf-8")
+    db = CharactersRAGDB(tmp_path / "hostile_import.db", "test-client")
+    db.add_character_card({"name": "Abel Host", "description": "seed"})
+    fake_file_picker(monkeypatch, card)
+    try:
+        async with open_styled_roleplay(
+            "mock",
+            mock_app_instance,
+            size=SIZE,
+            app_class=_RecordingStyledApp,
+            character_db=db,
+            notifications=True,
+        ) as pilot:
+            screen = pilot.app.screen
+            await start_new(pilot)
+            await wait_until(
+                pilot, lambda: screen._edit_mode == "create", what="the draft"
+            )
+            draft = screen.query_one("#personas-char-editor-name", Input)
+            draft.focus()
+            await pilot.press(*"Draft Hero")
+            await wait_until(
+                pilot, lambda: screen.state.has_unsaved_changes, what="the dirty draft"
+            )
+            assert await pilot.click("#personas-library-import")
+            toast = f"Imported {name} · in Characters"
+            await wait_until(
+                pilot,
+                lambda: any(toast in row for row in painted_rows(screen)),
+                what="the painted toast",
+            )
+            assert name in [row["name"] for row in db.list_character_cards()]
+            # The toast is the only copy: the draft keeps the screen.
+            await _assert_literal_and_inert(pilot, name, at_least=1)
+            assert screen._edit_mode == "create"
+    finally:
+        db.close_connection()

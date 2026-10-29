@@ -644,8 +644,8 @@ jobs:
     # against a loopback server (ten cases, ~12 s) and one mounted Console
     # send to a Custom server that refuses streaming (~8 s serial).
     # Roleplay frame B2b (TASK-33910.4, owner decision D7 of 2026-10-26)
-    # appends the mounted one-Import-picker file (bootstrap_profile; 30 cases,
-    # 58 s serial).
+    # appends the mounted one-Import-picker file (bootstrap_profile; 39 cases,
+    # about 80 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap

@@ -1639,3 +1639,81 @@ async def test_a_disabled_choice_cannot_be_picked():
         await pilot.pause()
         # Up from Chat dictionary skips the disabled row.
         assert app.results == ["hinted"]
+
+
+# ---- Where an import lands (frame slice B2b, spec 1.4.6) ----
+#
+# Auto-select runs only when every Roleplay draft is clean (R24's aggregate),
+# no newer intent arrived since the import began, and the screen still shows
+# (attached, on top). Otherwise the import still lands and a literal toast
+# names where. On dev characters auto-selected whenever Characters showed
+# (a draft started during the import was replaced, survey PROBE2), lore and
+# dictionaries whenever their kind showed, and a mode switch left a character
+# import silent (PROBE3).
+
+
+@pytest.mark.parametrize(
+    ("clean", "intent_current", "presentation_current"),
+    [(c, i, p) for c in (True, False) for i in (True, False) for p in (True, False)],
+    ids=lambda flag: "yes" if flag else "no",
+)
+def test_import_landing_selects_only_when_clean_current_and_unchanged(
+    clean, intent_current, presentation_current
+):
+    landing = frame_state.import_landing(
+        clean=clean,
+        intent_current=intent_current,
+        presentation_current=presentation_current,
+    )
+    expected = (
+        "select" if clean and intent_current and presentation_current else "toast"
+    )
+    assert landing == expected
+
+
+@pytest.mark.parametrize(
+    ("kind", "toast"),
+    [
+        ("character", "Imported Wren Halloway · in Characters"),
+        ("persona", "Imported Wren Halloway · in Personas"),
+        ("lore", "Imported Wren Halloway · in Lore books"),
+        ("dictionary", "Imported Wren Halloway · in Chat dictionaries"),
+    ],
+)
+def test_the_landing_toast_names_the_item_and_its_kind(kind, toast):
+    assert frame_state.import_landed_toast("Wren Halloway", kind) == toast
+    assert frame_state.MODE_FOR_KIND[kind] in frame_state.KIND_FOR_MODE
+    assert frame_state.KIND_FOR_MODE[frame_state.MODE_FOR_KIND[kind]] == kind
+
+
+def test_the_landing_toast_keeps_names_on_one_line_and_follows_the_glyph_mode(
+    ascii_mode,
+):
+    assert (
+        frame_state.import_landed_toast("Wren\nHalloway\t ", "lore")
+        == "Imported Wren Halloway - in Lore books"
+    )
+    assert (
+        frame_state.import_landed_toast("Wren", "character", existed=True)
+        == "Wren already existed - in Characters"
+    )
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+def test_the_landing_toast_carries_a_hostile_name_unchanged(name):
+    """The toast is painted with markup off (``_notify``), so the name goes in as typed."""
+    assert frame_state.import_landed_toast(name, "character") == (
+        f"Imported {name} · in Characters"
+    )
+
+
+def test_every_user_move_counts_toward_the_import_intent():
+    """The list's cursor moves and selections end an import's claim to the cursor."""
+    state = frame_state.ListWindowState()
+    assert state.moves == 0
+    state.user_moved()
+    state.user_moved()
+    assert state.moves == 2
+    state.kind_switched()
+    state.reload_started()
+    assert state.moves == 2
