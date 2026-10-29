@@ -296,6 +296,51 @@ def test_held_warnings_reach_stderr_when_the_app_never_configures_logging() -> N
         assert notice in result.stderr
 
 
+_STDLIB_ERRORS_BEFORE_THE_TUI = r"""
+import logging, sys
+from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+quiet_startup_stderr()
+if sys.argv[1] == "other-handler":
+    class Other(logging.Handler):
+        def emit(self, record):
+            sys.stderr.write("OTHER " + record.getMessage() + "\n")
+    logging.getLogger().addHandler(Other(level=logging.ERROR))
+logging.getLogger("some.module").error("STDLIB ERROR pre-TUI")
+logging.getLogger("other.module").critical("STDLIB CRITICAL pre-TUI")
+logging.getLogger("third.module").warning("held stdlib warning")
+sys.stderr.write("--exit--\n")
+sys.stderr.flush()
+"""
+
+
+@pytest.mark.parametrize("handlers", ["none", "other-handler"])
+def test_a_stdlib_error_before_the_tui_still_reaches_stderr(handlers: str) -> None:
+    """Review R3 (TASK-34100.13): the holding handler on the root logger stops
+    ``logging.lastResort`` from printing held WARNINGs, but it dropped ERROR
+    and CRITICAL records outright -- printed by dev through lastResort, now
+    lost. Errors print when they happen, once, and only when no other handler
+    took them (lastResort's own rule); warnings are still held for the exit
+    flush."""
+    env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    result = subprocess.run(
+        [sys.executable, "-c", _STDLIB_ERRORS_BEFORE_THE_TUI, handlers],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    before, _, at_exit = result.stderr.partition("--exit--")
+    for message in ("STDLIB ERROR pre-TUI", "STDLIB CRITICAL pre-TUI"):
+        assert result.stderr.count(message) == 1, result.stderr
+        assert message in before
+    if handlers == "other-handler":
+        assert "OTHER STDLIB ERROR pre-TUI" in before
+    assert "held stdlib warning" not in before
+    assert "held stdlib warning" in at_exit
+
+
 _CONFIGURE_LOGGING = r"""
 import logging, warnings
 from types import SimpleNamespace
