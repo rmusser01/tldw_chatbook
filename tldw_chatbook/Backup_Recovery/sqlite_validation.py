@@ -5,7 +5,7 @@ entry checks SQLite content and owned BLOBs; it never opens those external paths
 """
 
 import sqlite3
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from contextvars import ContextVar
 from pathlib import Path
 from threading import Event
@@ -1226,10 +1226,27 @@ def _validate_candidate(
                             else None
                         )
                         try:
-                            for statement in statements:
-                                if restrictions.expired():
-                                    raise InterruptedError
-                                connection.execute(statement)
+                            # ALTER reparses other tables' CHECK expressions too.
+                            # Reuse the exact-catalog pure Canvas scope only for
+                            # these installed portrait steps, then retire it.
+                            schema_access = (
+                                _canvas_schema_access(
+                                    connection,
+                                    tuple(
+                                        row[3]
+                                        for row in _catalog(connection)
+                                        if row[3] is not None
+                                    ),
+                                    restrictions,
+                                )
+                                if restrictions.portrait_migration is not None
+                                else nullcontext()
+                            )
+                            with schema_access:
+                                for statement in statements:
+                                    if restrictions.expired():
+                                        raise InterruptedError
+                                    connection.execute(statement)
                         finally:
                             restrictions.portrait_migration = None
                         restrictions.migrating = False

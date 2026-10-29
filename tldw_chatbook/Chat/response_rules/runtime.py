@@ -507,7 +507,8 @@ class ResponseRuleRuntime:
             # Keep the displayed/durable assessment, retire execution authority.
             with self._lock:
                 source = self._sources.pop(session_id, None)
-                self._pinned.pop(source, None)
+                if source is not None:
+                    self._pinned.pop(source, None)
                 self._assessments = {
                     key: value
                     for key, value in self._assessments.items()
