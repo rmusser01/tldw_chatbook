@@ -106,7 +106,7 @@ _V81_SCRIPT = (
         "else:\n"
         " migrated=CharactersRAGDB(path,'hybrid-upgrade');migrated.close()\n"
         "with sqlite3.connect(path) as connection:\n"
-        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(85,)\n"
+        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(max(owner.schema_policy().versions),)\n"
         "case=sys.argv[2]",
     )
 )
@@ -146,7 +146,7 @@ for index,schema in enumerate(CHACHANOTES_V81_SCHEMAS):
  assert owner.validate(path)==(),(index,owner.validate(path))
  assert validate_candidate(owner,path,Event(),migrate=True)==()
  with sqlite3.connect(path) as connection:
-  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(85,)
+  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(max(owner.schema_policy().versions),)
   assert connection.execute("SELECT [unique] FROM pragma_index_list('canvas_revisions') WHERE name='idx_canvas_revisions_canvas_sequence'").fetchone()==(0,)
 print('retired and reopened')
 """

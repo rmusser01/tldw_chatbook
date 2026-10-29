@@ -23319,3 +23319,11 @@ fixture. Explicit empty/small/multiple-input-chunks IDs kept the identical bytes
 assertions and deadlines. The exact5 deflate/receipt retry cases passed in4.35s
 with JUnit evidence. Give large binary parameters concise explicit IDs; do not
 shrink their payloads or suppress pytest's environment handling to hide the failure.
+
+## Counted short sleeps do not establish a wall-clock deadline
+
+**TASK-34975 qualification, 2026-10-28.** The automatic trace-GC regression used 500 ten-millisecond sleeps as a nominal five-second wait. A passive monotonic probe measured only 1.828 seconds on Windows, before the third real physical-compaction attempt. Two actual five-second timeout scopes in the response-rule test passed while retaining the collector/compactor, reuse, epoch and reclamation assertions. A broader shared-helper conversion exposed a different native writer-wake boundary and was reverted. Measure the actual deadline and narrow the correction to the demonstrated contract; do not infer elapsed time by counting short sleeps.
+
+## Installed ALTER statements can reparse another table's pure CHECK
+
+**TASK-34975 qualification, 2026-10-28.** Twenty-one real restricted historical restores returned validation unavailable. An exception/authorizer probe identified an installed portrait ADD COLUMN reparsing the unrelated Canvas payload CHECK while trusted_schema was off. The existing exact-catalog pure-CHECK scope already handled validation but did not cover this installed migration. Reusing it only for the qualified portrait step made the causal success/deny/cancel controls pass, without changing authorizer permissions, catalogs or SQL. Pin authority inside the actual ALTER callback as well as before/after the scope, and retain direct-SQL denial and cancellation/rollback controls. A generic unavailable result is a reason to trace the refusal, not permission to weaken archive validation.
