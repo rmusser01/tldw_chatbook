@@ -6957,6 +6957,11 @@ class ConsoleSessionController:
             outcome = controller.preparation_outcome(preparation.preparation_id)
             code = getattr(outcome, "error_code", None)
             library["library_reason"] = library_pause_copy(code)
+        elif preparation is not None:  # TASK-33621.5: did it reach the provider?
+            contact = getattr(controller, "trace_call_provider_contact", None)
+            library["provider_contact"] = (
+                contact(preparation.preparation_id) if callable(contact) else None
+            )
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(

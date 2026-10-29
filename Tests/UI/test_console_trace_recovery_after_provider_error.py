@@ -125,6 +125,25 @@ def header_label(h) -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["unknown", "refused"])
+async def test_the_card_leads_with_the_provider_error_it_follows(
+    tmp_path, monkeypatch, kind
+):
+    """.5 AC#1/#2/#4: status and meaning first, the trace problem second."""
+    async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        posts: list[str] = []
+        callout = await paused_after_429(h, monkeypatch, kind, posts)
+
+        text = visible_text(h)
+        assert "provider was not contacted" not in text
+        assert "OpenAI returned HTTP 429 (rate limit exceeded)" in text
+        assert "Impact: OpenAI was contacted" in text
+        assert "the automatic retry was not sent" in text
+        retry = callout.query_one("#console-trace-retry", Button)
+        assert retry.display and str(retry.label) == "Retry"
+        assert retry.variant == "primary"
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["unknown", "refused"])
 async def test_send_without_capture_dispatches_the_turn(tmp_path, monkeypatch, kind):
     """.6 AC#2/#3: no false unknown-delivery panel; the turn is answered."""
     async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
