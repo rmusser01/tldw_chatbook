@@ -643,9 +643,14 @@ async def test_expanded_escape_clears_transcript_selection_before_focus_fallback
         )
         await console._sync_native_console_chat_ui()
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        # The row lands on a later tick, and select_message ignores an id the
+        # transcript does not hold yet. Esc then had nothing to clear, which
+        # since TASK-33622.4 returns to the composer instead.
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         transcript.focus()
         await pilot.pause()
+        assert transcript.selected_message_id == message.id
 
         await pilot.press("escape")
         await pilot.pause()
@@ -691,7 +696,13 @@ async def test_collapsed_stop_routes_native_run_control_without_expanding():
         console._stop_console_generation_from_visible_action = stop_run
 
         composer.query_one("#console-collapsed-stop-generation", Button).press()
-        await pilot.pause()
+        # Bounded wait, not one pause: under load the press could still be
+        # queued after a single pause (on dev too; more often with this
+        # branch's focus work as the collapse moves focus to the transcript).
+        for _ in range(40):
+            if stop_run.await_count:
+                break
+            await pilot.pause(0.05)
 
         stop_run.assert_awaited_once_with()
         assert composer.collapsed is True
