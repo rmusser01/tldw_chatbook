@@ -29,6 +29,7 @@ _UNSAVED_TOOLTIP = "Save before using this action; the selection has unsaved edi
 #: contract for every state these buttons can render in.
 _NO_SELECTION_EXPORT_TOOLTIP = "Select an item to export."
 _NO_SELECTION_DELETE_TOOLTIP = "Select an item to delete."
+_NO_SELECTION_DUPLICATE_TOOLTIP = "Select an item to duplicate."
 
 #: The one plain line a no-selection inspector shows (F-031): intent-first
 #: guidance instead of a wall of disabled controls and a false
@@ -51,6 +52,9 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9_-]")
 _CONSOLE_ACTION_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_JSON_APPLICABLE_KINDS = {"character", "persona"}
 _EXPORT_PNG_APPLICABLE_KINDS = {"character"}
+#: Frame slice B2b (spec 5.3, interim until B5b-2): the open item's Duplicate.
+#: Personas have no duplicate seam (R14's follow-up), as on dev's toolbar.
+_DUPLICATE_APPLICABLE_KINDS = {"character", "dictionary", "lore"}
 
 # Portrait thumb box in character cells. Must stay in sync with
 # #personas-inspector-avatar-thumb's CSS max-width/max-height below and with
@@ -322,6 +326,15 @@ class PersonasInspectorPane(VerticalScroll):
                 disabled=True,
                 classes="console-action-subdued actor-pack-export-action",
                 tooltip=_NO_SELECTION_EXPORT_TOOLTIP,
+            )
+            # Frame slice B2b (spec 5.3, interim until B5b-2): Duplicate left
+            # the library toolbar, which is one row now; the screen routes it.
+            yield Button(
+                "Duplicate",
+                id="personas-duplicate",
+                disabled=True,
+                classes="console-action-subdued",
+                tooltip=_NO_SELECTION_DUPLICATE_TOOLTIP,
             )
             yield Button(
                 "Delete",
@@ -1123,6 +1136,12 @@ class PersonasInspectorPane(VerticalScroll):
                 else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
             )
         )
+        # B2b: like Delete, Duplicate is enabled for any applicable selection;
+        # the screen's unsaved guard asks first when the open item is dirty.
+        duplicate_button = self.query_one("#personas-duplicate", Button)
+        duplicate_button.display = kind is None or kind in _DUPLICATE_APPLICABLE_KINDS
+        duplicate_button.disabled = not selected
+        duplicate_button.tooltip = None if selected else _NO_SELECTION_DUPLICATE_TOOLTIP
         delete_button = self.query_one("#personas-delete", Button)
         delete_button.disabled = not selected
         delete_button.tooltip = None if selected else _NO_SELECTION_DELETE_TOOLTIP
