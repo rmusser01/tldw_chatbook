@@ -78,6 +78,17 @@ before the app's own retries or maintenance pile up behind it. Match log
 fields independently (`grep phase=X | grep status=failed`). When a click does
 nothing, read the log's `ui_action` status before suspecting coordinates.
 
+**Second incident (review round, same day).** A bash loop polling the log every
+0.2 s and typing into the `sqlite3` shell over tmux took the lock 1.8 s after
+the send, by which time the proxy's fast 429 and the 1 s retry backoff had
+already let both retries reserve and POST (three 429s, no card); and
+`send-keys -l 'BEGIN EXCLUSIVE;'` still lost the `;`, leaving the shell at a
+`...>` continuation prompt holding nothing. A stdlib-only Python holder (no
+app imports) that tails the log every 20 ms, opens its own connection and runs
+`BEGIN EXCLUSIVE` on the first `provider_entry`/`entered` line, then `COMMIT`s
+on the `trace_reservation`/`failed` line, caught the window first time. Run
+it in its own tmux session so the send keystroke is not blocked behind it.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
