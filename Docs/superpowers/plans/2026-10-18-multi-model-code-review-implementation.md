@@ -1718,3 +1718,20 @@ or errors and existing lint findings reproduce on the original candidate and are
 not claimed repaired. See the [offline evidence](../qa/2026-10-18-multi-model-code-review/offline-repairs/report.md).
 AC24 remains unchecked, PR3286 draft, no new live requests/product children or
 budget request; no merge. This closes only the authorized offline repair scope.
+
+### Final single-run outcome (2026-10-29 UTC)
+
+The user authorized one final run capped at60 new requests/3fresh children after
+CI, with no automatic retry, broad repair cycle or merge. Required normal PR CI
+passed on0ab1e549f0; the separate Windows GGUF timeout remains disclosed.
+The runner ran once and failed `live_report_incomplete_V1`: both reviewers sealed
+and were presented, but the accepted fresh primary failed locally on its next
+request after a code_review_read model response, before physical request25 or V1
+launch. All24 actual sends returnedHTTP200; the UI400 classification is not a
+server400 receipt. Exact malformed field remains unproved by retained metadata.
+The accounting ledger subsequently paused usage_unknown; resource shutdown was
+clean. Actual new spend24requests/2children; cumulative338/23. The36unspent
+requests/1unlaunched child do not authorize another invocation. AC24 stays open,
+task InProgress, PR3286 draft. No new repair/live retry/budget request or merge.
+See QA/final60/report.md under the task's existing QA directory. Existing ADR281
+applies; no architectural change.

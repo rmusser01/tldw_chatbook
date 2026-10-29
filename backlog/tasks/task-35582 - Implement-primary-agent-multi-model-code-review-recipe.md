@@ -15,7 +15,7 @@ documentation:
 - Docs/superpowers/specs/2026-10-18-multi-model-code-review-design.md
 - backlog/decisions/281-primary-agent-multi-model-code-review.md
 - Docs/superpowers/plans/2026-10-18-multi-model-code-review-implementation.md
-updated_date: 2026-10-29 00:08
+updated_date: 2026-10-29 01:10
 ---
 
 ## Description
@@ -122,4 +122,5 @@ remains draft against dev. The original worktree/history and evidence are preser
 No merge is authorized.
 Current-dev follow-up: rebased onto live dev 3efe8476cebf70eceafa605d1abed76a4aad4e0e, preserving upstream first-request schema/compact-budget/disclosure behavior and existing review gates. The actual overlapping runtime changes pass 54 upstream, 34 review/continuation and five affected size controls. All 74 shared size ceilings retain the stricter parent limit; diagnostic inventory verifies after nine reviewed owner updates with privacy/sink sections unchanged. R2/V1 completion source/tests are unchanged. No provider requests, product children or new qualification; AC24 remains open and PR3286 remains draft. Exact current-dev receipts: /private/tmp/task35582-dev-sync/runtime-conflict-report.md; concise public notes: Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md.
 Normal PR CI on ef56ce83f6 passed all34 test jobs, including all eight size guards and28 UI shards, plus Perf Guard/Tool Recovery. The final derived job failed only the worker/DOM guard in five new review UI methods. Reproduced five mounted removal races with NoMatches and fixed the exact UI lifetime boundary;29 targeted tests and the exact static guard pass without a census change. Completed configuration saves survive panel removal; only retired UI publication is skipped. No new lint findings; compile/whitespace pass. Detailed evidence: /private/tmp/task35582-dev-sync/worker-dom-repair/report.md. No new architecture or ADR; existing ADR281 applies. No live requests/children/budget question; AC24 open, draft retained. The new source head requires its own normal PR CI result.
+Final single authorized run on0ab1e549f0 after successful required normal PR CI failed live_report_incomplete_V1. R1/R2 both sealed and presented; accepted fresh primary continuation failed locally after a code_review_read model response and before another physical request/V1 launch. All24 physical sends recordHTTP200; the UI400 classification is not proof of server400. Exact malformed field remains unproved. Native ledger paused usage_unknown after the local refusal; resource shutdown was clean. New24requests/2children, cumulative338/23;36requests/1child unspent but single invocation consumed. AC24 remains unchecked, task InProgress, PR3286 draft. Separate optional Windows GGUF timeout disclosed. No automatic retry, broad repair, additional budget ask or merge. Existing ADR281; concise evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/final60/report.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
