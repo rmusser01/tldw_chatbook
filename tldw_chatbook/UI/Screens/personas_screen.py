@@ -4316,6 +4316,11 @@ class PersonasScreen(BaseAppScreen):
         # Search does not change selection or center pane — no unsaved guard needed.
         previous_query = self.state.search_query
         self.state.search_query = message.query.strip()
+        if self.state.search_query != previous_query:
+            # The user's own search is a newer intent than an import in
+            # flight (frame slice B2b). A programmatic clear (a kind switch,
+            # an import's landing) sets the state first, so it never bumps.
+            self._bump_import_intent()
         now_searching = bool(self.state.search_query)
         was_searching = bool(previous_query)
         if (
@@ -4367,6 +4372,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def _cycle_sort(self) -> None:
         """Move ``sort_key`` to the next option and reload from row 0."""
+        self._bump_import_intent()  # the user's sort: a newer intent (B2b)
         cycle = [key for key, _ in self._character_sort_cycle()]
         current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
         self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
@@ -4411,6 +4417,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def _apply_tag_filter(self, tag: str | None) -> None:
         """Set the characters tag filter and reload (and recount) from row 0."""
+        self._bump_import_intent()  # the user's tag pick: a newer intent (B2b)
         self.state.tag_filter = tag
         self._count_cache_key = None  # (search, tag) changed → recount
         await self._reload_character_page()
@@ -14493,12 +14500,14 @@ class PersonasScreen(BaseAppScreen):
         aggregate, broader than ``_run_guarded``'s test: it also counts
         in-flight saves and staged attachments), no newer intent arrived since
         the picker opened, and the screen still shows; a clean import of
-        another kind switches to that kind first. Otherwise the caller's
-        literal toast names where it went. On dev a character import
-        auto-selected whenever Characters showed (a draft started during the
-        import was replaced from view, survey PROBE2), lore and dictionary
-        imports whenever their kind showed, and a character import that
-        landed after a kind switch said nothing (PROBE3).
+        another kind switches to that kind first. It decides again after its
+        own awaits (that switch, or the list refresh) and before it selects.
+        Otherwise the caller's literal toast names where it went. On dev a
+        character import auto-selected whenever Characters showed (a draft
+        started during the import was replaced from view, survey PROBE2),
+        lore and dictionary imports whenever their kind showed, and a
+        character import that landed after a kind switch said nothing
+        (PROBE3).
 
         Args:
             kind: ``character``, ``lore`` or ``dictionary``.
@@ -14509,20 +14518,30 @@ class PersonasScreen(BaseAppScreen):
         Returns:
             True when the item was selected.
         """
-        landing = frame_state.import_landing(
-            clean=self._aggregate_roleplay_draft_snapshot().is_clean,
-            intent_current=self._import_intent_now() == intent,
-            presentation_current=self._import_presentation_is_current(kind),
-        )
-        if landing != "select":
+
+        def landing(expected: tuple[int, int]) -> str:
+            return frame_state.import_landing(
+                clean=self._aggregate_roleplay_draft_snapshot().is_clean,
+                intent_current=self._import_intent_now() == expected,
+                presentation_current=self._import_presentation_is_current(kind),
+            )
+
+        if landing(intent) != "select":
             return False
         mode = frame_state.MODE_FOR_KIND[kind]
+        selected = False
 
         async def select() -> None:
+            nonlocal selected
+            # _run_guarded bumped the intent once for this transition; only
+            # a newer one may stop the select below.
+            expected = self._import_intent_now()
             if self.state.active_mode != mode:
                 # Clean, so no draft is asked about; the new kind's list
                 # starts unfiltered.
                 await self._apply_mode(mode)
+                # _apply_mode bumps it once more, at its head.
+                expected = (expected[0] + 1, expected[1])
             else:
                 # Clear an active search so the imported row is in the list.
                 self._cancel_search_debounce()
@@ -14539,15 +14558,22 @@ class PersonasScreen(BaseAppScreen):
                     await self._render_lore_rows(query="")
                 else:
                     await self._render_dictionary_rows(query="")
+            # A draft started, a row picked or the screen left while the
+            # switch or the refresh awaited wins: the caller toasts instead.
+            # On dev the character landing re-checked only that Characters
+            # still showed (a draft started during its refresh was replaced).
+            if landing(expected) != "select":
+                return
             if kind == "character":
                 await self._select_character(item_id, name)
             elif kind == "lore":
                 await self._select_lore_entry(item_id, name)
             else:
                 await self._select_dictionary(item_id, name)
+            selected = True
 
         await self._run_guarded(select)
-        return True
+        return selected
 
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""

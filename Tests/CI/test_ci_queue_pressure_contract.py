@@ -642,8 +642,8 @@ ADMISSION_2_TARGETS = (
     # bootstrap_profile, two tests, ~18 s).
     "Tests/UI/test_console_edge_focus_restyle_scope.py",
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
-    # one Import picker, mounted on real stores (bootstrap_profile; 39 cases,
-    # about 80 s serial).
+    # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,
+    # about 95 s serial).
     "Tests/UI/test_roleplay_import_app.py",
 )
 
