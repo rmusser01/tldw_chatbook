@@ -689,7 +689,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # stock send and an acknowledged-path send, one private-profile app run each)
 # and the composer's kept-rows rule (one widget case), so no existing entry
 # changes shard: dev's 1145 entries + 3 = 1148.
-MINIMUM_FILES = 1266
+# TASK-33620.15.26 review fix (2026-10-29) appends 2 more node ids at the
+# tail (a refused send's draft gets its rows back: a widget case and a
+# mounted unknown-command resize), so no existing entry changes shard:
+# 1148 + 2 = 1150.
+# PR3310, 2026-11-01: retain all1263 current-dev entries and append five reviewed nodes.
+MINIMUM_FILES = 1268
 
 
 def read_census(path: Path) -> list[str]:
