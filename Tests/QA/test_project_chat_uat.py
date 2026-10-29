@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import time
+import traceback
 import uuid
 
 import pytest
@@ -132,6 +133,28 @@ def painted_text(screen, region=None):
     return "\n".join(
         line[clipped.x : clipped.right] for line in lines[clipped.y : clipped.bottom]
     )
+
+
+def preparation_stacks():
+    """Capture suspended app coroutines as well as the native worker threads."""
+    from Tests.private_profile import _stacks_text
+
+    parts = [_stacks_text("at UAT preparation boundary")]
+    for task in asyncio.all_tasks():
+        parts.append(f"\n--- asyncio task {task.get_name()}\n")
+        awaiting = task.get_coro()
+        seen = set()
+        while awaiting is not None and id(awaiting) not in seen:
+            seen.add(id(awaiting))
+            frame = getattr(awaiting, "cr_frame", None) or getattr(
+                awaiting, "gi_frame", None
+            )
+            if frame is not None:
+                parts.extend(traceback.format_stack(frame, limit=1))
+            awaiting = getattr(awaiting, "cr_await", None) or getattr(
+                awaiting, "gi_yieldfrom", None
+            )
+    return "".join(parts)[:100000]
 
 
 @pytest.mark.asyncio
@@ -341,6 +364,9 @@ async def test_project_chat_uat(
                         nonlocal last_snapshot
                         if time.monotonic() - last_snapshot >= 10:
                             last_snapshot = time.monotonic()
+                            (artifacts / "task-stacks.txt").write_text(
+                                preparation_stacks(), encoding="utf-8"
+                            )
                             (artifacts / "viewport.txt").write_text(
                                 painted_text(app.screen), encoding="utf-8"
                             )

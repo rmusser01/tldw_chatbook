@@ -22,6 +22,8 @@ def test_project_chat_uat_is_required_without_extra_runners():
         "test_project_chat_uat_reports.py",
     ):
         assert f"Tests/QA/{name}" in run["run"]
+    assert "-x" in run["run"].split()
+    assert job["steps"][3] is run
     assert "--junitxml=project-chat-uat.xml" in run["run"]
     assert "--basetemp=project-chat-uat-pytest" in run["run"]
     assert run["env"] == {"TLDW_UAT_ARTIFACTS": "project-chat-uat"}
@@ -32,6 +34,7 @@ def test_project_chat_uat_is_required_without_extra_runners():
         == "python scripts/check_project_chat_uat.py --junit project-chat-uat.xml --artifacts project-chat-uat"
     )
     upload = steps["Retain project-chat UAT evidence"]
+    assert upload["with"]["include-hidden-files"] is True
     assert upload["if"] == "always()" and upload["with"]["if-no-files-found"] == "error"
     for artifact in (
         "project-chat-uat/",

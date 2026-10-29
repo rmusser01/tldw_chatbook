@@ -436,8 +436,8 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
     assert tuple(name for name, _ in steps) == (
         "pr-fast-lane: Run fast PR contract",
         "pr-fast-lane-admission: Run admission-sensitive suites",
-        "pr-fast-lane-admission-2: Run admission-sensitive suites 2",
         "pr-fast-lane-admission-2: Run project-chat UAT",
+        "pr-fast-lane-admission-2: Run admission-sensitive suites 2",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
         "dreams-boundary: Run Dreams and Guardian boundary contracts",

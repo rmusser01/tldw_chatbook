@@ -961,8 +961,8 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     # TASK-37270 adds bounded UAT, report validation, negative control, and artifacts to
     # the existing second job; the original serial invocation stays in place.
     assert len(fast["steps"]) == (8 if job_name == "pr-fast-lane-admission-2" else 4)
-    assert fast["steps"][3]["name"] == test_step
-    assert "if" not in fast["steps"][3]
+    assert fast["steps"][-1]["name"] == test_step
+    assert "if" not in fast["steps"][-1]
 
     setup = next(
         step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
