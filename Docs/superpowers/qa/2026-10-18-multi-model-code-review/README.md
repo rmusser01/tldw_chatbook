@@ -1,32 +1,25 @@
 # TASK-35582 delivery evidence
 
-AC24 remains open. The [single final run on the repaired candidate](final60/report.md)
-failed before the verifier launched. Both reviewers sealed and presented their
-reports; the accepted continuation failed locally before its next physical
-request. Required CI passed on source `0ab1e549f0c02b9621ce9be295baa969e0cb9e75`.
-PR #3286 remains draft. The separate Windows GGUF timeout is disclosed in the report.
+AC24 remains open. The [latest single qualification](continuation-final60/report.md)
+ran after all CI passed on `a1b4b8dac95eed4d38186423ee06b71b3c555346`.
+Both reviewers sealed/presented, and the repaired continuation launched Haiku
+under native [2,1]. All three original findings have accepted dispositions and
+readable unified output, but V1 resubmitted accepted units with changed content,
+then ended without a seal after `disposition_conflict`. The result gate exited 2.
+PR #3286 remains draft; no new source defect was established.
 
-## Current boundary
+Actual latest usage: **48/60 requests, 3/3 children**. Cumulative usage:
+**386 generation requests / 26 children**. Accounting settled and cleanup
+completed. The invocation is consumed; no qualification retry or budget request.
+See the [outcome review](continuation-final60/outcome-review.md) and
+[spending receipt](continuation-final60/spending.json).
 
-The [offline continuation repair](continuation-offline/report.md) now fixes both
-reproduced shape defects: fenced-only names on native deferrals and internal
-instruction-delivery keys leaking into prepared provider rows. The complete
-runtime-to-strict-builder regression passes; scoped review found no issues.
-This changes no prior live outcome. No new live run or budget request occurred.
-
-
-The final run used 24 of 60 approved requests and two of three children:
-**338 cumulative requests / 23 children**. The single invocation is consumed;
-no automatic retry or additional budget request was made. AC24 is unchecked.
-See the [outcome report](final60/report.md) for the request-validation boundary,
-accounting pause, exact CI outcomes and retained evidence.
-
-The earlier [bounded run](bounded-final/report.md) and its
-[independent assessment](bounded-final/outcome-review.md) remain failed historical
-evidence. Its R2/V1 completion problems and eight size failures received the
-[offline repairs](offline-repairs/report.md). Those checks and reviews remain
-valid within their scope; the latest run establishes reviewer completion but
-cannot validate the unlaunched verifier. Earlier unused capacity is not revived.
+The [offline continuation repair](continuation-offline/report.md) now has live
+evidence through the previously rejected local request and verifier launch.
+The older [final60 failure](final60/report.md), [bounded run](bounded-final/report.md),
+and their reviews remain historical failures. Their raw evidence is preserved.
+The R2/V1 [offline repairs](offline-repairs/report.md) and scripted fault controls
+retain their stated scope; they do not establish live V1 completion.
 
 ## Existing evidence reused
 

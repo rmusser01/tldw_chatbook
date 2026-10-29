@@ -1752,3 +1752,18 @@ findings; scoped review has no actionable findings. See the task QA directory's
 continuation-offline/report.md. ADR required: no new ADR; ADR-069 and ADR-281 apply.
 No live calls, children, budget request or retry; AC24 remains open and PR draft.
 The original live request-body attribution remains unproved.
+
+### Continuation-repaired final qualification outcome (2026-10-29 UTC)
+
+All CI passed on a1b4b8dac9 after one explicitly authorized performance-job
+rerun. One live qualification used48requests/3children (cumulative386/26),
+with native[2,1], both originals presented and the local continuation repaired.
+Haiku's first3dispositions were accepted, then its changed new-ID resubmission
+was refused disposition_conflict; completion refused unresolved rejections.
+V1 stayed unsealed despite complete mapping and readable unified pages, so
+the runner exited2 and AC24 remains unchecked. Supplied checkpoint guidance
+was verified; no new source defect established. One narrow existing conflict
+control passed; scoped outcome review agrees. Accounting settled and cleanup
+completed. Preserve PR3286 draft/InProgress; no retry, new budget or merge.
+See QA/continuation-final60/report.md under the task's QA directory. Existing
+ADR281 applies; no architectural change.
