@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
 from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
+from tldw_chatbook.Agents.project_instruction_runtime import PROJECT_INSTRUCTION_ROW_KEY
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
@@ -74,7 +75,9 @@ MEMORY_SAFETY_COPY = (
 
 RequestOwner = Literal["system", "memory", "mandatory", "compactable", "active"]
 WireStyle = Literal["distinct_roles", "single_preamble"]
-LimitSource = Literal["detected", "estimated", "provider_input_cap", "user_override", "unknown"]
+LimitSource = Literal[
+    "detected", "estimated", "provider_input_cap", "user_override", "unknown"
+]
 
 
 def freeze_json(value: Any) -> Any:
@@ -1322,6 +1325,7 @@ def _serialize_messages(
                 IDLE_REQUEST_OWNER_KEY,
                 PERSISTED_MESSAGE_ID_KEY,
                 PERSISTED_CONVERSATION_ID_KEY,
+                PROJECT_INSTRUCTION_ROW_KEY,
                 EXCHANGE_CONTINUATION_KEY,
                 LOCAL_TOOL_RESULT_KEY,
             }

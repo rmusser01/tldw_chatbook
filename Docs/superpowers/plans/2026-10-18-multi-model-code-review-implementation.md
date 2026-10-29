@@ -1735,3 +1735,20 @@ requests/1unlaunched child do not authorize another invocation. AC24 stays open,
 task InProgress, PR3286 draft. No new repair/live retry/budget request or merge.
 See QA/final60/report.md under the task's existing QA directory. Existing ADR281
 applies; no architectural change.
+
+### Verified offline continuation repair (2026-10-29)
+
+The authorized narrow follow-up reproduces the continuation request rejection
+through the actual loop, Console preparation, dispatcher projection and strict
+custom-hosted payload builder. Native deferrals now omit the fenced-only name;
+the prepared serializer also drops the internal instruction-delivery row key
+without mutating canonical rows. Each defect has a retained failing control;
+the complete path now defers without dispatch, executes the reissued read once
+and completes. No validation/permission/accounting/budget policy changed.
+
+The final targeted selection has 191 passes and three independently reproduced
+pre-existing profile-selection failures. Formatting/whitespace pass; no new lint
+findings; scoped review has no actionable findings. See the task QA directory's
+continuation-offline/report.md. ADR required: no new ADR; ADR-069 and ADR-281 apply.
+No live calls, children, budget request or retry; AC24 remains open and PR draft.
+The original live request-body attribution remains unproved.
