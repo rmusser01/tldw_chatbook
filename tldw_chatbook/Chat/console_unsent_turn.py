@@ -20,7 +20,8 @@ it if the send pauses again (the card covers every re-pause), drops it once
 the send is accepted or Cancel has put it back in the composer with its
 attachments, and offers it again otherwise.
 
-Imported lazily: it runs only when a paused turn is released or acted on.
+Imported lazily: when a custodied send settles, and when a paused turn is
+released or acted on -- never at boot.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from __future__ import annotations
 from typing import Any
 
 from tldw_chatbook.Chat.console_turn_preparation import (
+    CARD_OWNED_PAUSES,
     SHELF_RELEASABLE_PAUSES,
     ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
@@ -80,7 +82,55 @@ def trace_card_returns_draft(preparation: Any, preparation_id: str) -> bool:
         and getattr(preparation, "pause_kind", None) in TRACE_CARD_PAUSES
     )
 
+def card_owns_refusal(controller: Any, preparation_id: str | None) -> bool:
+    """Whether a refused send waits on its own card, so it leaves no unsent turn.
 
+    TASK-34350 kept the compaction hold off the shelf; TASK-33621.18 adds the
+    capture and trace pauses (``CARD_OWNED_PAUSES``). Their card is the only
+    thing that ends them, and a shelf entry beside it survived the card's
+    Send without capture or Save & Send and then offered Restore for an
+    answered prompt.
+
+    Args:
+        controller: The Console chat controller that refused the send.
+        preparation_id: The refused send's preparation id, if it made one.
+
+    Returns:
+        True when that preparation is held at the compaction threshold, or is
+        PAUSED in a card-owned pause.
+    """
+    if preparation_id is None:
+        return False
+    if controller.context_compaction_hold(preparation_id) is not None:
+        return True
+    lookup = getattr(getattr(controller, "store", None), "preparation_by_id", None)
+    preparation = lookup(preparation_id) if callable(lookup) else None
+    return (
+        getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
+        and getattr(preparation, "pause_kind", None) in CARD_OWNED_PAUSES
+    )
+
+
+def clear_answered_draft(store: Any, composer: Any, session_id: str, sent: str) -> None:
+    """Empty the composer a card-sent turn left holding its own prompt.
+
+    TASK-33621.18 AC#6: a composer send keeps showing its text until the turn
+    is accepted, and a card action (Send without capture, Save & Send, Retry)
+    accepts it outside the send's own intake, which is what clears it. The
+    answered prompt stayed, so one more Enter sent it again. Only that exact
+    text is cleared: a follow-up typed meanwhile is the user's.
+
+    Args:
+        store: The Console chat store.
+        composer: The composer showing ``session_id``'s draft.
+        session_id: The accepted turn's session.
+        sent: The text the accepted turn carried.
+    """
+    if not sent.strip() or composer.draft_text().strip() != sent.strip():
+        return
+    composer.load_draft("")
+    if store.session_draft(session_id).strip() == sent.strip():
+        store.set_session_draft(session_id, "")
 def release_unsent_turn_preparation(
     controller: Any, session_id: str, preparation_id: str
 ) -> bool:

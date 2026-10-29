@@ -10,6 +10,9 @@ TASK-33621.17 / TASK-33621.18, found live on dev 38c9d2edcf (2026-10-29):
   configuration), so it stayed green.
 - Every send in a Temporary tab paused on that card (owner decision
   2026-10-27: a Temporary chat resolves Capture Off instead).
+- With Capture On chosen, the paused send also left an "unsent turn" on the
+  shelf; after Send without capture and the reply the shelf still offered
+  Restore for it, and the composer still held the answered prompt.
 
 These drive the real ChatScreen, runtime, controller, store and a
 file-backed database. Only the provider call is a double.
@@ -20,6 +23,7 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.test_console_library_auto_outcome import _shelf_offers_unsent_turn
 from Tests.UI.test_console_received_intent_feedback import (
     _received_console_case,
     _send,
@@ -173,3 +177,61 @@ async def test_save_and_send_saves_the_chat_and_its_send_gets_a_reply(monkeypatc
         assert run.status is ConsoleRunStatus.COMPLETED, run
         assert "Validating" not in run.visible_copy
         assert "Preparing" not in run.visible_copy
+
+
+def _unsent_turns(runtime, session_id: str) -> list:
+    """Every unsent turn the runtime keeps for the chat, offered or not."""
+    return [
+        entry
+        for entry in runtime._turn_recoveries.values()
+        if entry.session_id == session_id
+    ]
+
+
+async def test_a_capture_pause_leaves_no_shelf_entry_and_no_answered_prompt(
+    monkeypatch,
+):
+    """TASK-33621.18 AC#1-#3, #5, #6 on the stock received path."""
+    async with _received_console_case(
+        monkeypatch, "temporary-capture-shelf", durable=True
+    ) as case:
+        session_id = await _temporary_tab(case)
+        await _turn_capture_on(case, session_id)
+        sent = "Answer me once"
+        await _send_draft(case, sent)
+        assert await _until(lambda: _paused_for_capture(case, session_id), 15)
+        send_without = case.console.query_one("#console-trace-send-without", Button)
+        assert await _until(
+            lambda: send_without.display and not send_without.disabled, 10
+        )
+        composer = case.console._console_composer_or_none()
+        runtime = case.console._console_runtime()
+        # The live precondition: a composer send keeps its text until accepted.
+        assert composer.draft_text() == sent
+        # The refused send has left the runtime's intake custody, which is
+        # when dev recorded its unsent turn (the shelf then shows it).
+        assert await _until(
+            lambda: all(
+                row.session_id != session_id for row in runtime._turn_custody.values()
+            ),
+            10,
+        )
+        # AC#1: the card owns this pause; the shelf holds no second entry.
+        assert _unsent_turns(runtime, session_id) == []
+        assert not _shelf_offers_unsent_turn(case.console)
+
+        send_without.press()
+
+        assert await _until(lambda: _replied(case, session_id), 20), (
+            case.controller.run_state_for(session_id)
+        )
+        assert len(case.provider_calls) == 1
+        # AC#2/#3: nothing left to restore once the turn was answered.
+        assert _unsent_turns(runtime, session_id) == []
+        assert runtime.recoveries_for_session(session_id) == ()
+        assert await _until(lambda: not _shelf_offers_unsent_turn(case.console), 5)
+        # AC#6: and the composer no longer holds the answered prompt.
+        assert await _until(lambda: composer.draft_text() == "", 5), (
+            composer.draft_text()
+        )
+        assert case.store.session_draft(session_id) == ""

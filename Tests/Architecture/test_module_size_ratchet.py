@@ -694,11 +694,15 @@ _BUDGETS: dict[str, int] = {
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6991,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
     # docstring says so.
+    # 2026-10-29, TASK-33621.18 (owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): 6990 -> 6994. A card action that
+    # sends a paused turn clears the answered prompt from the composer.
+    # TASK-33621.18: the card-owned refusal check moved to console_unsent_turn.
+    "tldw_chatbook/UI/Console_Modules/session.py": 6995,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.

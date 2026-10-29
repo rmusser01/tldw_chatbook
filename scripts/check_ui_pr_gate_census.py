@@ -699,7 +699,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # while no PR lane ran them, so no existing entry changes shard.
 # The floor now equals the entry count, which also absorbs any lag in
 # dev's floor (tail entries a merge added without raising it).
-MINIMUM_FILES = 1276
+# TASK-33621.17/.18 (2026-10-29) appends 1 whole-file entry at the tail: a
+# Temporary chat's sends on the stock received path (three cases, about 25 s
+# locally), so no existing entry changes shard: dev's 1144 + 1 = 1145 (the
+# earlier 1145 assignment, which the 1144 one overrides, moves with it).
+# Rebased 2026-10-30 onto dev's 1149 (TASK-33626.1/.2 landed): 1149 + 1 = 1150.
+# PR3318 integration: preserve all 1276 dev entries and append the source entry.
+MINIMUM_FILES = 1277
 
 
 def read_census(path: Path) -> list[str]:
