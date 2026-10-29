@@ -36,6 +36,9 @@ from textual.widgets import Button
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.css.Themes.themes import ALL_THEMES, _contrast_ratio
+from tldw_chatbook.Skills_Interop.project_skills_discovery import (
+    discover_project_skills,
+)
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
 )
@@ -55,6 +58,9 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
     ConsoleRewindModal,
     RewindPromptRow,
 )
+from tldw_chatbook.Widgets.project_skills_import_modal import (
+    ProjectSkillsImportModal,
+)
 
 #: The modal modules import guarded config readers at collection time; the
 #: per-test sandbox redirect would then fail admission at setup with
@@ -63,6 +69,13 @@ pytestmark = pytest.mark.bootstrap_profile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONSOLE_WIDGETS = REPO_ROOT / "tldw_chatbook" / "Widgets" / "Console"
+#: Modals the Console raises whose modules live outside ``Widgets/Console``.
+#: The project-skills offer opens from the Console's workspace flow
+#: (``Console_Modules/workspace.py`` -> ``maybe_offer_project_skills_import``)
+#: and shipped the same ``border: tall gray; background: black`` frame.
+CONSOLE_REACHABLE_MODULES = (
+    REPO_ROOT / "tldw_chatbook" / "Widgets" / "project_skills_import_modal.py",
+)
 
 # ---------------------------------------------------------------------------
 # AC#4: the source ratchet
@@ -115,33 +128,83 @@ def literal_colours_in_css(css: str) -> list[tuple[str, str]]:
     return found
 
 
-def console_widget_literal_colours(root: Path = CONSOLE_WIDGETS):
+#: Stands in for an f-string's ``{...}`` field. It reads as a theme variable,
+#: so only the literal text around a field is judged.
+_INTERPOLATED = "$__interpolated__"
+#: Reported for CSS the scan cannot read as text (a name, a concatenation):
+#: failing closed, so a literal cannot hide behind an indirection.
+UNREADABLE_CSS = "unreadable: CSS is not a string or f-string literal"
+
+
+def _css_source_text(value: ast.expr) -> str | None:
+    """The scannable text of a class-level CSS value, or None if unreadable.
+
+    A plain string is returned as-is. An f-string's literal parts are kept and
+    each ``{...}`` field becomes ``_INTERPOLATED``, so ``background: black``
+    written around a field is still caught (console_settings_modal.py's
+    ``DEFAULT_CSS`` is an f-string).
+    """
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    if isinstance(value, ast.JoinedStr):
+        return "".join(
+            part.value
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            else _INTERPOLATED
+            for part in value.values
+        )
+    return None
+
+
+def module_literal_colours(path: Path) -> set[tuple[str, str, str]]:
+    """Literal colour declarations in one module's class-level CSS.
+
+    Args:
+        path: A Python source file.
+
+    Returns:
+        ``(file name, class name, "property: value")`` triples; a CSS
+        attribute whose value is not a string or f-string literal yields
+        ``UNREADABLE_CSS`` instead.
+    """
+    hits: set[tuple[str, str, str]] = set()
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for statement in node.body:
+            if not (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and statement.targets[0].id in _CSS_ATTRIBUTES
+            ):
+                continue
+            css = _css_source_text(statement.value)
+            if css is None:
+                hits.add((path.name, node.name, UNREADABLE_CSS))
+                continue
+            for prop, value in literal_colours_in_css(css):
+                hits.add((path.name, node.name, f"{prop}: {value}"))
+    return hits
+
+
+def console_widget_literal_colours(
+    root: Path = CONSOLE_WIDGETS,
+    extra: tuple[Path, ...] = CONSOLE_REACHABLE_MODULES,
+):
     """Every literal colour declaration in a Console widget's class CSS.
 
     Args:
         root: Directory to scan (recursively) for Python sources.
+        extra: Further modules to scan (Console-reachable modals elsewhere).
 
     Returns:
         ``(file name, class name, "property: value")`` triples, sorted.
     """
     hits: set[tuple[str, str, str]] = set()
-    for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ClassDef):
-                continue
-            for statement in node.body:
-                if not (
-                    isinstance(statement, ast.Assign)
-                    and len(statement.targets) == 1
-                    and isinstance(statement.targets[0], ast.Name)
-                    and statement.targets[0].id in _CSS_ATTRIBUTES
-                    and isinstance(statement.value, ast.Constant)
-                    and isinstance(statement.value.value, str)
-                ):
-                    continue
-                for prop, value in literal_colours_in_css(statement.value.value):
-                    hits.add((path.name, node.name, f"{prop}: {value}"))
+    for path in [*sorted(root.rglob("*.py")), *extra]:
+        hits |= module_literal_colours(path)
     return sorted(hits)
 
 
@@ -162,6 +225,28 @@ def test_detector_flags_keywords_hex_and_functions_but_not_theme_variables() -> 
         ("background", "rgb(0, 0, 0)"),
         ("scrollbar-color", "Red"),
     ]
+
+
+def test_scan_reads_f_string_css_and_fails_closed_on_indirection(tmp_path) -> None:
+    """Review follow-up: the scan used to skip anything but a plain string, so
+    a literal in an f-string ``DEFAULT_CSS`` (or CSS built from a name) was
+    invisible to the ratchet."""
+    source = tmp_path / "sample_modal.py"
+    source.write_text(
+        "WIDTH = 40\n"
+        "SHARED = '#x { background: black; }'\n"
+        "class FString:\n"
+        "    DEFAULT_CSS = f'#a {{ width: {WIDTH}; background: black; color: $text; }}'\n"
+        "class Interpolated:\n"
+        "    DEFAULT_CSS = f'#b {{ border: tall {WIDTH}; background: $panel; }}'\n"
+        "class Indirect:\n"
+        "    DEFAULT_CSS = SHARED\n",
+        encoding="utf-8",
+    )
+    assert module_literal_colours(source) == {
+        ("sample_modal.py", "FString", "background: black"),
+        ("sample_modal.py", "Indirect", UNREADABLE_CSS),
+    }
 
 
 def test_console_widget_css_uses_theme_colours_only() -> None:
@@ -343,7 +428,23 @@ def _rewind_prompts() -> tuple[RewindPromptRow, ...]:
     )
 
 
-async def _measure_all(app, pilot, failures: list[str]) -> list[str]:
+def _skills_discovery(root: Path):
+    """A project with two ``.SKILLS/`` entries for the project-skills offer."""
+    for name in ("alpha-skill", "beta-skill"):
+        folder = root / ".SKILLS" / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "SKILL.md").write_text(
+            f"---\ndescription: Notes helper for {name}\n---\nBody\n",
+            encoding="utf-8",
+        )
+    return discover_project_skills(root)
+
+
+async def _never_import(entry) -> None:
+    raise AssertionError("the theme check never imports a skill")
+
+
+async def _measure_all(app, pilot, failures: list[str], project: Path) -> list[str]:
     """Push each modal the review named, measure it, pop it."""
     lines: list[str] = []
     theme = app.current_theme.name
@@ -448,12 +549,32 @@ async def _measure_all(app, pilot, failures: list[str]) -> list[str]:
         failures.append(f"{label}: selecting a row showed no summary copy")
     lines.append(f"{label}: " + "; ".join(parts))
     await close()
+
+    # Project skills offer: raised from the Console's workspace flow
+    # (review follow-up; it kept the same black frame outside Widgets/Console).
+    screen = await show(
+        ProjectSkillsImportModal(
+            discovery=_skills_discovery(project),
+            installed_names=frozenset(),
+            importer=_never_import,
+        )
+    )
+    label = f"{theme} {size} project-skills"
+    lines.append(
+        f"{label}: "
+        + _frame_report(app, screen, screen.query_one("#project-skills-modal"), label, failures)
+        + "; "
+        + _copy_report(screen, screen.query_one("#project-skills-provenance"), label, failures)
+    )
+    await close()
     return lines
 
 
 @pytest.mark.parametrize("size", SIZES, ids=SIZE_IDS)
 @pytest.mark.parametrize("theme", THEMES)
-async def test_console_modals_paint_theme_frames_and_readable_copy(theme, size) -> None:
+async def test_console_modals_paint_theme_frames_and_readable_copy(
+    theme, size, tmp_path
+) -> None:
     """AC#1-#3 and #5, measured from the compositor under each theme."""
     app = _ModalThemeApp()
     async with app.run_test(size=size) as pilot:
@@ -461,6 +582,6 @@ async def test_console_modals_paint_theme_frames_and_readable_copy(theme, size) 
         await _settle(pilot)
         assert app.current_theme.name == theme
         failures: list[str] = []
-        lines = await _measure_all(app, pilot, failures)
+        lines = await _measure_all(app, pilot, failures, tmp_path)
     print("\n" + "\n".join(lines))
     assert failures == [], "\n".join(failures)
