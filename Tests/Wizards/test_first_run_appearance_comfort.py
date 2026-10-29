@@ -266,24 +266,67 @@ def test_summary_shows_the_startup_and_motion_row() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("config", "detail"),
+    [
+        ({"splash_screen": {"enabled": False}}, "no splash"),
+        (
+            {"appearance": {"ascii_glyphs": True}},
+            f"full splash ({float(DEFAULT_SPLASH_DURATION_SECONDS):g} s)"
+            " · plain ASCII marks",
+        ),
+        (
+            {
+                "splash_screen": {"enabled": False},
+                "appearance": {"reduce_motion": True, "ascii_glyphs": True},
+            },
+            "no splash · motion reduced · plain ASCII marks",
+        ),
+    ],
+)
+def test_summary_shows_splash_off_and_ascii_marks(config, detail) -> None:
+    """T-G13-2: each Appearance choice reaches the Summary row -- "Off" as
+    "no splash" and the ASCII choice as "plain ASCII marks"."""
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(config, {}, rag_deps_installed=True)
+    }
+    row = rows["Startup and motion"]
+    assert row.state == wizard_state.ROW_CONFIGURED
+    assert row.detail == detail
+
+
 # -- AC#14: theme names and the whole shortlist ---------------------------------
 
 
 @pytest.mark.asyncio
 async def test_theme_rows_use_display_names_with_a_tone_tag_and_hide_no_row() -> None:
+    """T-G13-1: the step is shown (``active``) before the list is measured --
+    hidden, every region is 0x0 and "nothing scrolls" held for any height."""
     _wizard, step = _step({})
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        step.add_class("active")
+        await pilot.pause()
         await pilot.pause()
         radio_set = step.query_one("#setup-theme-choice", RadioSet)
         buttons = list(radio_set.query(RadioButton))
         labels = {getattr(b, "_theme_name", ""): str(b.label) for b in buttons}
         hidden = radio_set.max_scroll_y
+        list_height = radio_set.region.height
+        rows = radio_set.content_region
+        outside = [
+            getattr(b, "_theme_name", "")
+            for b in buttons
+            if not b.region.height or not rows.contains_region(b.region)
+        ]
     assert labels["textual-dark"] == "Default dark"
     assert labels["textual-light"] == "Default light"
     assert labels["nord"] == "Nord · dark"
     assert labels["tokyo-night"] == "Tokyo Night · dark"
     assert len(buttons) >= 6
+    assert list_height > 0, "the step was not shown, so nothing was measured"
     assert hidden == 0, "a shortlist row sits below the list's visible rows"
+    assert outside == [], f"shortlist rows outside the list's visible rows: {outside}"
 
 
 def test_summary_theme_row_uses_the_display_name() -> None:
