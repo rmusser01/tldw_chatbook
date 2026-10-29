@@ -581,6 +581,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     #: Raised 7024 -> 7039 on 2026-10-27 by TASK-33620.2, owner rule (a fix
+    #: Raised 7043 -> 7058 on 2026-10-29 by TASK-33620.2, owner rule (a fix
     #: over a size ratchet raises the row with a dated comment; never move or
     #: reflow code to make it fit): the vision block gets its own typed
     #: `attachment_block` slot in `sync_action_state` (signature, docstring,
@@ -588,6 +589,7 @@ _BUDGETS: dict[str, int] = {
     #: into "choose a model" and the first-run wizard link. The row and its
     #: actions live in Console_Modules/composer_run_controls.py. Dev
     #: f9baac8706 measures 7024; with the fix, 7039, the exact measurement.
+    #: d36affec9b measures 7043; with the fix, 7058, the exact measurement.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
