@@ -169,12 +169,7 @@ async def test_original_maintenance_drain_waits_for_coalesced_actual_tab_publica
             type(projection) is spend.ConsoleReadinessConfigProjection
             and projection.max_age == 1.0
         )
-        assert await _settle(
-            pilot,
-            lambda: not projection.pending
-            and not console._console_sync_in_progress
-            and not getattr(console, "_console_control_bar_replay_whole_sync", False),
-        )
+        assert await _quiet(pilot, console, projection)
         surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
         assert type(surface._session_sync_lock) is asyncio.Lock
         entry = _OriginalSurfaceEntry(console, surface)
@@ -185,6 +180,9 @@ async def test_original_maintenance_drain_waits_for_coalesced_actual_tab_publica
         entry.start()
         try:
             controller.switch_session(target.id)
+            # No await since `_quiet`; re-check that the switch queued
+            # nothing for the screen's pump before taking the lock.
+            assert _publication_quiet(console, projection)
             # Hold the actual original Surface await, because current cold
             # readiness correctly returns False instead of blocking FULL.
             await surface._session_sync_lock.acquire()
@@ -192,13 +190,13 @@ async def test_original_maintenance_drain_waits_for_coalesced_actual_tab_publica
             whole = asyncio.create_task(console._sync_native_console_chat_ui())
             entry.task = whole
             warming = asyncio.create_task(projection.warm())
-            assert await _settle(pilot, entry.entered.is_set)
-            assert await _settle(
-                pilot, read_gate.entered.is_set
+            assert await _loop_wait(entry.entered.is_set)
+            assert await _loop_wait(
+                read_gate.entered.is_set
             ), "original stock reader not admitted"
             assert console._console_sync_in_progress
             coalesced = asyncio.create_task(console._sync_native_console_chat_ui())
-            assert await _settle(pilot, lambda: console._console_session_tabs_sync_calls >= 2)
+            assert await _loop_wait(lambda: console._console_session_tabs_sync_calls >= 2)
             assert not coalesced.done() and surface._session_sync_lock.locked()
             console._console_sync_maintenance_close_admission()
             read_gate.release.set()
@@ -270,25 +268,21 @@ async def test_original_maintenance_waits_for_actual_tabs_with_idle_whole_pass(r
         controller.switch_session(keeper)
         await _show_tabs(console, pilot, {keeper, target.id})
         projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
-        assert await _settle(
-            pilot,
-            lambda: not projection.pending
-            and not console._console_sync_in_progress
-            and not getattr(console, "_console_control_bar_replay_whole_sync", False),
-        )
+        assert await _quiet(pilot, console, projection)
         surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
         assert type(surface._session_sync_lock) is asyncio.Lock
         entry = _OriginalSurfaceEntry(console, surface)
         entry.start()
         try:
+            assert _publication_quiet(console, projection)
             await surface._session_sync_lock.acquire()
             lock_owned = True
             publication = asyncio.create_task(
                 console._sync_console_native_session_tabs()
             )
             entry.task = publication
-            assert await _settle(
-                pilot, entry.entered.is_set
+            assert await _loop_wait(
+                entry.entered.is_set
             ), "actual original surface was not reached"
             assert not publication.done() and not console._console_sync_in_progress
             console._console_sync_maintenance_close_admission()
@@ -319,28 +313,84 @@ async def test_original_maintenance_waits_for_actual_tabs_with_idle_whole_pass(r
         assert entry.restored
 
 
-async def _quiet(pilot, console, projection) -> bool:
-    """Wait out the screen's own mount and resume syncs, not just a gap.
+def _awaiting(task) -> list[str]:
+    """Qualified names along ``task``'s await chain, innermost last."""
+    names = []
+    awaitable = task.get_coro() if task is not None else None
+    while (code := getattr(awaitable, "cr_code", None)) is not None:
+        names.append(code.co_qualname)
+        awaitable = awaitable.cr_await
+    return names
 
-    The resume schedules a whole sync for after the next refresh; a test that
-    takes the session lock between two such syncs blocks the queued one, and
-    with it the screen's messages (``WaitForScreenTimeout``: 1 of 4 runs on
-    dev 5b5920b8e2, every run once a Library-activity read hops to a worker,
-    TASK-33620.15.4). Quiet means idle across three drained pauses.
+
+def _publication_quiet(console, projection) -> bool:
+    """Nothing is left that would publish tabs on the screen's own pump.
+
+    A test may take a session lock only when this holds. TASK-36611 measured
+    why "no sync in progress" is not enough: the first whole sync that
+    completes the attach ends by scheduling ``_reconcile_console_after_attach``
+    with ``call_after_refresh``, and that reconciliation queues one more whole
+    sync the same way (``_start_console_view_after_reconciliation``). Textual
+    runs every after-refresh callback on the screen's message pump and awaits
+    it there. A test that took the lock in that gap parked the screen's pump
+    behind its own lock and then waited on Pilot, which waits for that pump:
+    ``WaitForScreenTimeout`` (dev 5b5920b8e2, 1 run in 4). A queued callback
+    sits first in the screen's message queue (``InvokeLater``), then in its
+    after-refresh list, then in a local copy while earlier callbacks run, so
+    quiet asks for the screen's pump itself to be waiting for a message with
+    none queued, besides the attach reconciled, no sync running, owed or
+    replaying, and no Console worker still running.
+
+    This covers the screen's pump only, not pending timers. Textual runs a
+    ``set_timer`` callback on the timer's own task, off the screen's pump, so
+    a timer cannot park the pump. These pins wait with ``_loop_wait`` while
+    they hold the lock, so a timer that started a publication after the lock
+    was taken would fail the pin after 10 s instead of hanging it. Nothing
+    here proves that no view-start timer publishes tabs. The coalesced
+    control-bar replay is the one timer path checked above, through
+    ``_console_control_bar_replay_whole_sync``.
+
+    The pump reads lean on Textual 8.x internals (``_message_queue``,
+    ``_next_callbacks``, ``_callbacks``, ``_task`` and the
+    ``MessagePump._get_message`` qualname). If Textual renames one, this
+    raises or never holds, so ``_quiet`` fails loudly instead of passing.
     """
-
-    def idle() -> bool:
-        return (
-            not projection.pending
-            and not console._console_sync_in_progress
-            and not getattr(console, "_console_control_bar_replay_whole_sync", False)
+    return (
+        console._console_attach_reconciled
+        and not console._console_attach_reconcile_running
+        and console._message_queue.empty()
+        and not console._next_callbacks
+        and not console._callbacks
+        and "MessagePump._get_message" in _awaiting(console._task)
+        and not console._console_sync_requested
+        and not console._console_sync_in_progress
+        and not console._console_session_tabs_sync_calls
+        and not getattr(console, "_console_control_bar_replay_whole_sync", False)
+        and not projection.pending
+        and not any(
+            worker.node is console and not worker.is_finished
+            for worker in console.app.workers
         )
+    )
 
-    for _ in range(3):
-        if not await _settle(pilot, idle):
-            return False
-        await pilot.pause()
-    return await _settle(pilot, idle)
+
+async def _quiet(pilot, console, projection) -> bool:
+    """Wait for ``_publication_quiet``; it still holds when this returns True."""
+    return await _settle(pilot, lambda: _publication_quiet(console, projection))
+
+
+async def _loop_wait(predicate, *, timeout: float = 10.0) -> bool:
+    """Poll on the event loop alone, for waits made while a lock is held.
+
+    Pilot's waits need every mounted pump, the screen's included, and a
+    screen pump parked on a lock the waiter holds never answers them.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await asyncio.sleep(0.01)
+    return bool(predicate())
 
 
 @pytest.mark.asyncio
@@ -371,11 +421,19 @@ async def test_admitted_real_tab_publication_rechecks_replaced_controller(reques
         entry = _OriginalSurfaceEntry(console, surface)
         entry.start()
         try:
+            # `_quiet` returned with nothing queued and no await since, so
+            # this acquire does not suspend and no other publication can be
+            # waiting for the lock.
+            assert _publication_quiet(console, projection)
             await surface._session_sync_lock.acquire()
             lock_owned = True
             publication = asyncio.create_task(console._sync_console_native_session_tabs())
             entry.task = publication
-            assert await _settle(pilot, entry.entered.is_set)
+            assert await _loop_wait(entry.entered.is_set), (
+                "publication never reached the surface await; another publication "
+                "holds the tab lock: "
+                f"{console._console_session_tabs_sync_calls} tab publications open"
+            )
             assert not publication.done()
             assert original.run_marker_for(session_id) is ConsoleRunMarker.NONE
             console._console_sync_maintenance_close_admission()
@@ -391,6 +449,8 @@ async def test_admitted_real_tab_publication_rechecks_replaced_controller(reques
             button = surface.query_one(f"#console-session-tab-{session_id}")
             assert "waiting for approval" in str(button.tooltip), str(button.tooltip)
             assert console._console_session_tabs_sync_calls == 0
+            # Released, the screen answers Pilot again: a stall would raise here.
+            await pilot.pause()
         finally:
             if lock_owned:
                 surface._session_sync_lock.release()
