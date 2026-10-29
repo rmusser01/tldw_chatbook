@@ -560,6 +560,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
+    back_cue_label,
     build_library_shell_state,
 )
 from ...Notes.note_folder_models import NoteFolderChildPage
@@ -3498,8 +3499,15 @@ class LibraryNotesController:
             await self._exit_library_notes_lasting_sync()
             return
         if self._library_notes_view == "import":
+            # TASK-34000.40 N-34 (AC#5): Escape is "‹ Notes" -- a navigation
+            # key may not stop a half-imported folder. A running import keeps
+            # running; the toolbar's "View import" re-enters it, progress and
+            # "Cancel import" included. Ruling T10-c: a running CHECK still
+            # cancels, because one that finished while the user was away would
+            # be lost (Add from files ▸ Import once starts a new selection) and
+            # a check writes nothing.
             phase = self._library_note_import_controller.snapshot.phase
-            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
+            if phase is NoteImportPhase.CHECKING:
                 self._library_note_import_controller.cancel()
                 return
             self._library_notes_view = "list"
@@ -3731,7 +3739,7 @@ class LibraryNotesController:
             "import_receipt_available": (
                 self._library_note_import_controller.snapshot.can_revisit_receipt
             ),
-            "lasting_sync_snapshot": self._library_notes_lasting_sync_snapshot,
+            "lasting_sync_snapshot": self._library_notes_lasting_snapshot_for_canvas(),
             "tree_projection": tree_projection,
             "tree_selected_placement_id": getattr(
                 self, "_library_notes_tree_selected_placement_id", ""
@@ -6591,6 +6599,19 @@ class LibraryNotesController:
             _sync_library_canvas(self, "notes")
             return
         await self._exit_library_notes_lasting_sync()
+    def _library_notes_lasting_snapshot_for_canvas(
+        self,
+    ) -> LibraryNotesLastingSyncSnapshot | None:
+        """The lasting-sync snapshot, its back control named for the route in.
+
+        TASK-34000.40 N-34 (AC#6): a review opened from Manage sync folders
+        goes back there (``handle_library_notes_lasting_back``), yet its back
+        control read "‹ Notes" on every route.
+        """
+        snapshot = self._library_notes_lasting_sync_snapshot
+        if snapshot is None or self._library_notes_lasting_origin != "roots":
+            return snapshot
+        return dataclasses.replace(snapshot, back_label=back_cue_label("Sync folders"))
     async def _exit_library_notes_lasting_sync(self) -> bool:
         """Settle provisional authority before leaving a lasting-sync canvas."""
 

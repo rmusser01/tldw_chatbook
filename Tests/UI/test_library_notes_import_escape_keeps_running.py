@@ -56,6 +56,7 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
@@ -212,9 +213,14 @@ def _batch_of_one(controller) -> None:
 async def _open_import_once_on_the_folder(host, screen, pilot, folder: Path) -> None:
     """Notes ▸ Add from files… ▸ Import once, the picker answering ``folder``."""
 
-    def push_screen(dialog, callback=None):
+    original_push_screen = screen.app.push_screen
+
+    def push_screen(dialog, callback=None, *args, **kwargs):
+        if not isinstance(dialog, FileOpen):
+            return original_push_screen(dialog, callback, *args, **kwargs)
         if callback is not None:
             screen.run_worker(callback(folder))
+        return None
 
     screen.app.push_screen = push_screen
     await _press(host, screen, pilot, "#library-row-browse-notes")
@@ -243,7 +249,9 @@ async def _f1_shortcuts(host, screen, pilot) -> tuple[tuple[str, str], ...]:
     """Open F1, read the rows it lists, close it again."""
     await pilot.press("f1")
     await _until(
-        pilot, lambda: isinstance(host.screen, WorkbenchHelpPanel), "F1 to open help"
+        pilot,
+        lambda: isinstance(host.screen, WorkbenchHelpPanel),
+        lambda: f"F1 to open help: stack={host.screen_stack!r}",
     )
     shortcuts = tuple(host.screen.state.shortcuts)
     await pilot.press("escape")
@@ -292,6 +300,8 @@ async def test_escape_during_an_import_keeps_it_running(
             shortcuts = await _f1_shortcuts(host, screen, pilot)
             assert ("esc", "notes") in shortcuts, shortcuts
             assert ("esc", "cancel") not in shortcuts, shortcuts
+            # F1 still lists the pane key the footer's global cluster carries.
+            assert ("F6", "next pane") in shortcuts, shortcuts
 
             await pilot.press("escape")
             await _until(

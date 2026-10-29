@@ -300,6 +300,10 @@ _ROOT_PAGE_SIZE = 20
 # machinery on demand), so it counts as available alongside "active".
 _SETUP_READY_STATUSES = frozenset({"active", "not_configured"})
 _LIFECYCLE_EPOCH_MAX = 2**63 - 1
+#: TASK-34000.40 N-34: staged choices are kept for at most this many folder
+#: observations (least recently staged dropped first) -- memory hygiene only;
+#: a review only ever shows the choices of its own observation token.
+_KEPT_SELECTION_OBSERVATIONS = 3
 _CHOICES_BY_LABEL = {
     "Keep file": NotesSyncConflictChoice.KEEP_FILE,
     "Keep note": NotesSyncConflictChoice.KEEP_NOTE,
@@ -332,6 +336,11 @@ class LibraryNotesSyncController:
         self._review_labels: dict[str, RuntimeConflictLabel] = {}
         self._review_binding_labels: dict[str, RuntimeBindingLabel] = {}
         self._selections: dict[tuple[str, str], NotesSyncConflictChoice] = {}
+        #: TASK-34000.40 N-34: observation token -> the root it was staged
+        #: on, least recently staged first. Staged choices outlive leaving the
+        #: review; this is what lets one root's apply or control forget only
+        #: its own, and bounds what is kept (_KEPT_SELECTION_OBSERVATIONS).
+        self._selection_roots: dict[str, str] = {}
         self._apply_in_flight: set[tuple[str, str]] = set()
         self._activate_in_flight: set[tuple[str, str]] = set()
         self._comparison_generation = 0
@@ -373,6 +382,35 @@ class LibraryNotesSyncController:
             for (token, binding_id), choice in sorted(self._selections.items())
             if token == plan.observation_token
         )
+
+    def _drop_selection_observations(self, tokens: set[str]) -> None:
+        for token in tokens:
+            self._selection_roots.pop(token, None)
+        for key in [key for key in self._selections if key[0] in tokens]:
+            del self._selections[key]
+
+    def _forget_root_selections(self, root_id: str) -> None:
+        """Drop one root's staged choices: its intent was consumed or voided.
+
+        TASK-34000.40 N-34 (ruling T10-b): an apply, a stale review and a
+        root control (pause, resume, retarget, disconnect, recover, activate,
+        undo) end what was staged on that root, and only that root. Leaving
+        the review does not: the observation token keeps a staged choice to
+        the folder state it was made against, and the token's payload names
+        the root (``notes_sync_reconciler._observation_token``).
+        """
+        self._drop_selection_observations(
+            {token for token, owner in self._selection_roots.items() if owner == root_id}
+        )
+
+    def _staged_choice_line(self) -> str:
+        """The status line for the current review's staged choices, or ""."""
+        count = len(self._current_selections())
+        if count == 0:
+            return ""
+        if count == 1:
+            return "Choice staged. No changes yet."
+        return f"{count} choices staged. No changes yet."
 
     def _project_review(
         self,
@@ -546,7 +584,8 @@ class LibraryNotesSyncController:
             if not self._lifecycle_is_current(expected_root_id, epoch):
                 return None
             if reset_ephemeral:
-                self._selections.clear()
+                # An apply's fresh review: what it applied was consumed.
+                self._forget_root_selections(plan.root_id)
                 self._clear_comparison()
             self._review_labels.clear()
             self._review_binding_labels.clear()
@@ -567,7 +606,7 @@ class LibraryNotesSyncController:
         if expected_root_id is None:
             self._projection_root_id = plan.root_id
         if reset_ephemeral:
-            self._selections.clear()
+            self._forget_root_selections(plan.root_id)
             self._clear_comparison()
         selections = self._selections_for_plan(plan)
         self._review_labels = labels
@@ -612,12 +651,19 @@ class LibraryNotesSyncController:
             self._state = replace(self._state, comparison=None)
 
     def _clear_ephemeral_review(self) -> None:
-        self._selections.clear()
+        # TASK-34000.40 N-34: staged choices are not ephemeral to a review's
+        # projection -- opening another root keeps them, and that root's own
+        # observation token never matches them.
         self._clear_comparison()
         self._project_review()
 
     def _invalidate_review_authority(self) -> None:
-        self._selections.clear()
+        # TASK-34000.40 N-34 (AC#6): every leave and re-entry ends here
+        # (abandon_setup, return_to_roots, Add from files, a re-check, a
+        # remount), and it used to empty ``_selections`` -- re-entering an
+        # unchanged folder read "No choice selected.". The choices stay; the
+        # token filter in ``_selections_for_plan`` shows them only to a
+        # review of the same observation. Nothing is applied without Apply.
         self._review_labels.clear()
         self._review_binding_labels.clear()
         self._clear_comparison()
@@ -694,6 +740,8 @@ class LibraryNotesSyncController:
         else:
             self._advance_lifecycle()
             self._invalidate_receipt_history()
+        # A root control changes that root: what was staged on it is void.
+        self._forget_root_selections(root_id)
         self._invalidate_review_authority()
         return self._lifecycle_epoch
 
@@ -702,6 +750,7 @@ class LibraryNotesSyncController:
             self._switch_projection_root(root_id)
         else:
             self._advance_lifecycle()
+        self._forget_root_selections(root_id)
         self._invalidate_review_authority()
         return self._lifecycle_epoch
 
@@ -1127,7 +1176,9 @@ class LibraryNotesSyncController:
         self._state = replace(
             self._state,
             phase="review",
-            status_line=(
+            # TASK-34000.40 N-34: a re-entry that finds kept choices says so.
+            status_line=self._staged_choice_line()
+            or (
                 (
                     # TASK-34000.16 fix round 1 (I-2): a migrated candidate the
                     # walk could not read holds Activate; say which and why.
@@ -1194,7 +1245,8 @@ class LibraryNotesSyncController:
         self._state = replace(
             self._state,
             phase="review",
-            status_line=(
+            status_line=self._staged_choice_line()
+            or (
                 "Review setup effects before activating this root."
                 if installed
                 else "Conflict details are unavailable. Check the folder again."
@@ -1360,7 +1412,8 @@ class LibraryNotesSyncController:
                 return
             if not self._lifecycle_is_current(root_id, epoch):
                 return
-            self._selections.clear()
+            # The folder moved on since the review: its choices are void.
+            self._forget_root_selections(root_id)
             self._clear_comparison()
             self._project_review(stale=True)
             self._state = replace(
@@ -1374,7 +1427,8 @@ class LibraryNotesSyncController:
         except Exception as error:
             if not self._lifecycle_is_current(root_id, epoch):
                 return
-            self._selections.clear()
+            # Apply ran and its outcome is unknown: Check again starts over.
+            self._forget_root_selections(root_id)
             self._clear_comparison()
             self._project_review(stale=True)
             status_line = self._record_root_failure(root_id, error, verb="Apply")
@@ -1417,7 +1471,7 @@ class LibraryNotesSyncController:
         applied = result.safe_completed + result.conflicts_resolved
         receipt_suffix = " · receipts unavailable" if receipts_unavailable else ""
         if result.partial or result.needs_recovery or result.fresh_plan is None:
-            self._selections.clear()
+            self._forget_root_selections(root_id)
             self._clear_comparison()
             self.refresh_roots(publish=False)
             self._state = replace(
@@ -1572,7 +1626,8 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 phase="review",
-                status_line=f"Manual check finished. {pending} {noun} to review.",
+                status_line=self._staged_choice_line()
+                or f"Manual check finished. {pending} {noun} to review.",
             )
         elif next_action == "sync_now":
             self._state = replace(
@@ -1655,10 +1710,18 @@ class LibraryNotesSyncController:
             return
         token = review.observation_token
         self._selections[(token, item_id)] = typed_choice
+        # Most recently staged last; past the bound, the oldest observation's
+        # choices go (never this review's own).
+        self._selection_roots.pop(token, None)
+        self._selection_roots[token] = review.root_id
+        if len(self._selection_roots) > _KEPT_SELECTION_OBSERVATIONS:
+            self._drop_selection_observations(
+                set(list(self._selection_roots)[:-_KEPT_SELECTION_OBSERVATIONS])
+            )
         self._project_review()
         self._state = replace(
             self._state,
-            status_line="Choice staged. No changes yet.",
+            status_line=self._staged_choice_line(),
         )
         self._publish()
 
@@ -1716,7 +1779,7 @@ class LibraryNotesSyncController:
                 )
                 self._publish()
                 return
-            self._selections.clear()
+            self._forget_root_selections(root_id)
             self._clear_comparison()
             self._project_review(stale=True)
             self._state = replace(

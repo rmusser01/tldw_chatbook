@@ -444,6 +444,10 @@ def _f1_fake(
     pushed = []
     fake = SimpleNamespace(
         _library_footer_shortcuts_for_current_state=lambda: footer_shortcuts,
+        # TASK-34000.40 ruling T10-e (2026-10-29): F1 starts from the footer
+        # the screen paints (the Notes tiers' seam, which is the generic set
+        # outside Notes); this fake paints the same set it was given.
+        _library_notes_footer_shortcuts=lambda: footer_shortcuts,
         _active_library_binding_shortcuts=lambda: binding_extras,
         _library_selected_row_id=row_id,
         app=SimpleNamespace(push_screen=pushed.append),

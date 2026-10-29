@@ -8980,8 +8980,12 @@ class LibraryScreen(BaseAppScreen):
             )
         if region == "import":
             phase = self._library_note_import_controller.snapshot.phase
-            if phase in {NoteImportPhase.CHECKING, NoteImportPhase.IMPORTING}:
+            # TASK-34000.40 (rulings T10-c/T10-e): Escape leaves a running
+            # import for Notes and cancels only a running check.
+            if phase is NoteImportPhase.CHECKING:
                 return (("esc", "cancel"),)
+            if phase is NoteImportPhase.IMPORTING:
+                return (("esc", "notes"),)
             return (("esc", "back to notes"),)
         return self._library_footer_shortcuts_for_current_state()
 
@@ -27650,8 +27654,20 @@ class LibraryScreen(BaseAppScreen):
         # TASK-34000.40 ruling T9-h: F1 lists keys. A status-only footer entry
         # (an empty key: "typing in field", the "after esc:" verbs, a review
         # progress line) rendered as a keyless "- : …" row.
-        footer_shortcuts = tuple(
-            pair for pair in self._library_footer_shortcuts_for_current_state() if pair[0]
+        # Ruling T10-e: F1 starts from the footer the screen PAINTS --
+        # ``_library_notes_footer_shortcuts``, registered on every refresh,
+        # which is the generic set outside the Notes workflow. Reading the
+        # generic set alone listed "escape: Back" during an import whose
+        # footer said "esc cancel". The generic set's other keys follow, so
+        # F6 stays listed inside Notes too (RC-10).
+        painted = tuple(
+            pair for pair in self._library_notes_footer_shortcuts() if pair[0]
+        )
+        painted_keys = {_canonical_shortcut_key(key) for key, _label in painted}
+        footer_shortcuts = painted + tuple(
+            pair
+            for pair in self._library_footer_shortcuts_for_current_state()
+            if pair[0] and _canonical_shortcut_key(pair[0]) not in painted_keys
         )
         # (task-3312 #1) Dedupe on the CANONICAL key, not the raw string:
         # the shared footer sets spell the exit key "esc" while BINDINGS
