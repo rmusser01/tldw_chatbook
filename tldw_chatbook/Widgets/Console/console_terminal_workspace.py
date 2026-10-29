@@ -48,6 +48,8 @@ _ACTION_LABELS: dict[str, tuple[str, str]] = {
     "jump-live": ("Jump live", "Live"),
     "return": ("Return to transcript", "Return"),
 }
+#: Textual's Button ``line-pad`` (one cell each side of the label).
+_LABEL_LINE_PAD = 1
 _RELEASE_KEY = "ctrl+right_square_bracket"
 _WORKSPACE_GRID_COLUMNS = 6
 _FIXED_KEY_BYTES = {
@@ -590,7 +592,9 @@ class ConsoleTerminalWorkspace(Static):
 
         TASK-33625.3: the 1fr grid cells shrink with the Console's width, and
         a Button pads its label by ``line-pad`` on each side, so at 80x24 the
-        tabs read "Ter" and the actions "Ren / Focu / Clos / Jum".
+        tabs read "Ter" and the actions "Ren / Focu / Clos / Jum". A cell too
+        tight even for the compact word (beside a reclaimed rail, "Renam")
+        gives up its one-cell side pad before the word loses a letter.
         """
         if not self.is_mounted:
             return
@@ -603,8 +607,12 @@ class ConsoleTerminalWorkspace(Static):
                 button = self.query_one(f"#{button_id}", Button)
             except NoMatches:
                 continue
-            budget = button.size.width - 2 * int(button.styles.line_pad or 0)
-            label = full if budget <= 0 or cell_len(full) <= budget else compact
+            width = button.size.width
+            padded = width - 2 * _LABEL_LINE_PAD
+            label = full if width <= 0 or cell_len(full) <= padded else compact
+            pad = _LABEL_LINE_PAD if width <= 0 or cell_len(label) <= padded else 0
+            if button.styles.line_pad != pad:
+                button.styles.line_pad = pad
             if str(button.label) != label:
                 button.label = label
 
