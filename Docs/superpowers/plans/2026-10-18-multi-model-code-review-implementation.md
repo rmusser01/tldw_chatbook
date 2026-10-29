@@ -1767,3 +1767,16 @@ control passed; scoped outcome review agrees. Accounting settled and cleanup
 completed. Preserve PR3286 draft/InProgress; no retry, new budget or merge.
 See QA/continuation-final60/report.md under the task's QA directory. Existing
 ADR281 applies; no architectural change.
+
+### Final handoff qualification outcome (2026-10-29 UTC)
+
+Normal same-head CI passed onffe3cfdf5a after one authorized UI25 rerun.
+The one approved60-request/3-child qualification used44requests/3children,
+cumulative457/31, under native[2,1]. Both reviewer reports sealed and were
+presented; V1 accepted four dispositions then became stuck after three consecutive
+invalid_source_range reads, before the overall deadline. V1 never sealed; final
+expansion/unified reads refused. The later primary stream lacked a terminal
+marker and its last usage reservation remained uncertain. AC24/DoD stay open,
+PR3286 draft, no retry or merge. The16unused requests retire and the follow-up
+was deleted. See QA/final-handoff60/report.md and its independent outcome review.
+Existing ADR281; no new architectural decision or production repair.
