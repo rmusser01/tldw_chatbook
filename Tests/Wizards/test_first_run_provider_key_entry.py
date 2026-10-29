@@ -27,6 +27,7 @@ from Tests.Wizards.provider_step_harness import (
     resumed_on_provider,
     static_text,
     wait_for_step,
+    wait_until,
 )
 from tldw_chatbook.UI.Wizards.first_run_provider_key_entry import (
     clean_api_key,
@@ -137,14 +138,16 @@ async def test_a_bracketed_paste_is_cleaned_whole_and_echoed(monkeypatch):
     async with app.run_test(size=SIZE) as pilot:
         provider, field = await _mounted_on_openai(pilot, wizard)
         app.post_message(events.Paste("“sk-abc123​def\nghij1234”"))
-        await pilot.pause()
-        assert field.value == "sk-abc123defghij1234"
+        # One pause proves nothing under load (pre-merge review, minor 3):
+        # wait for the paste, then the blur, to be handled.
+        await wait_until(pilot, lambda: field.value == "sk-abc123defghij1234")
         note = static_text(provider, "#setup-provider-key-note")
         assert "Pasted 20 characters, ending …1234." in note
         assert "invisible character" in note and "quotes" in note
         provider_list(provider).focus()  # blur clears the echo
-        await pilot.pause()
-        assert static_text(provider, "#setup-provider-key-note") == ""
+        await wait_until(
+            pilot, lambda: static_text(provider, "#setup-provider-key-note") == ""
+        )
 
 
 @pytest.mark.asyncio
