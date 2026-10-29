@@ -304,6 +304,32 @@ the hosted runner's extra invocation was not stack-traced.
 
 **What to do.** When a change hides or disables a focus target, grep every caller of its focus helper and every footer or hint string that names it. Give each caller a new destination, or drop the hint. Add a mounted test that presses each surviving key and asserts both where focus lands and what the footer says.
 
+## A second traced call in one turn is only proven with trace capture on (TASK-37421 review, 2026-10-29)
+
+**Incident.** TASK-37421's one-time non-streaming retry reserves its own
+trace call on the `llama_fallback` route. Thirteen tests drove it through the
+real gateway, `chat_api_call`, the real adapters and a mounted ChatScreen,
+for Custom, vLLM and a named custom endpoint (`custom-ep:box`), and an
+independent review re-ran them red and green. All of those harnesses run with
+trace capture off (the loopback bridge tests use a capture-off admission, and
+the screen harness sets `exchange_capture = false` because it has no full
+trace schema). Live, with capture on (the default), the custom-ep retry ended
+"Run: Blocked — capture failed": the hosted engine's calls record their
+traced surface as a `provider_overlay` omission (`alignment_mismatch`, on dev
+too), so the retry's reservation raised `surface_replacement_checkpoint_unavailable`.
+Custom and vLLM recorded the saved revision and their retry traced fine. The
+log only names `exception_type=ValueError`; the message came from a temporary
+diagnostic write in the worktree, reverted by edit before any commit.
+
+**What to do.** When a change adds a provider call inside a turn (a retry, a
+fallback, a repair), prove it once with capture on, for each adapter family
+it covers (legacy handler, hosted engine, llama.cpp): live through
+`tools/launch.sh`, or in `Tests/Chat/test_console_project_instruction_traces.py`'s
+`_project_console` harness, which uses the real `ConsoleTraceBoundaryFactory`.
+Then read `console_trace_surface_nodes` and `console_trace_calls` for the run.
+A green capture-off test says nothing about the second call's trace
+reservation.
+
 ## One provider call's usage has three readers; a saved-row test sees one (TASK-37421, 2026-10-29)
 
 **Incident.** TASK-37421's non-streaming retry is a second provider call
