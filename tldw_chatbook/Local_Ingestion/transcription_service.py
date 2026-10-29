@@ -308,22 +308,26 @@ def _openai_key_for_endpoint(api_endpoint: str) -> str:
     """The OpenAI provider's key, for a remote-whisper endpoint at https://api.openai.com.
 
     TASK-34100.13: setup's cloud dictation choice reuses the key the user
-    already gave the OpenAI provider (config, its environment variable or the
-    legacy ``[API] openai_api_key``) instead of storing a second copy under
-    ``[transcription.remote_whisper]``. Any other endpoint gets nothing, and
-    neither does plain http (review F6): a key is never sent to a host it was
-    not issued for, or in clear text.
+    already gave the OpenAI provider instead of storing a second copy under
+    ``[transcription.remote_whisper]``. The key is the one Console's own
+    readiness resolves (``provider_readiness.resolve_provider_credential``
+    over the loaded ``[api_settings.openai]``, which carries a legacy ``[API]
+    openai_api_key`` already), so a ``credential_source`` or a named
+    ``api_key_env_var`` decides here too (review R2). Any other endpoint gets
+    nothing, and neither does plain http (review F6): a key is never sent to a
+    host it was not issued for, or in clear text.
 
     Args:
         api_endpoint: The configured remote-whisper URL.
 
     Returns:
         The key, or "" when the endpoint is not OpenAI's over https or no key
-        exists.
+        resolves.
     """
     from urllib.parse import urlsplit
 
-    from ..config import get_cli_setting, resolve_openai_provider_key
+    from ..Chat.provider_readiness import resolve_provider_credential
+    from ..config import ProviderSettingsError, load_settings, provider_settings_for_key
 
     try:
         parts = urlsplit(str(api_endpoint))
@@ -331,14 +335,11 @@ def _openai_key_for_endpoint(api_endpoint: str) -> str:
         return ""
     if parts.scheme.lower() != "https" or (parts.hostname or "").lower() != "api.openai.com":
         return ""
-    return (
-        resolve_openai_provider_key(
-            get_cli_setting("api_settings.openai", {}),
-            get_cli_setting("API", "openai_api_key", None),
-            os.environ,
-        )
-        or ""
-    )
+    try:
+        table = provider_settings_for_key(load_settings().get("api_settings"), "openai")
+    except ProviderSettingsError:
+        return ""
+    return resolve_provider_credential("openai", table, environ=os.environ)[0] or ""
 
 
 class _LegacyTranscriptionBackend:

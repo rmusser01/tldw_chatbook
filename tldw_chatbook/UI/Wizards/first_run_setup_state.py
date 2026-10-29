@@ -2381,11 +2381,12 @@ def build_summary_rows(
         speech_prefill.provider_id == engines.REMOTE_WHISPER_PROVIDER
         and coerce_wizard_flag(remote.get("enabled"))
     ):
-        # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice.
+        # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice,
+        # or a Whisper server of the user's own (named by host, review R1).
         speech_row = SummaryRow(
             "Speech transcription",
             ROW_CONFIGURED,
-            "OpenAI Whisper (cloud; for audio and video files)",
+            engines.remote_whisper_summary(remote),
         )
     elif not speech_configured and speech_prefill.provider_id in installed_stt:
         # An engine already installed here (the template's platform pick, or

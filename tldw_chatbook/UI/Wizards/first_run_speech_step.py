@@ -225,6 +225,8 @@ class SpeechSetupStep(SetupStep):
         self._engine = engine or engines.saved_engine(
             wizard_state_sections(self.wizard), self._engine_facts
         )
+        # Review R1: only a choice made this run writes (a caller's engine is one).
+        self._engine_chosen = engine is not None
         self._advanced_expanded = False
 
     def compose_step(self) -> ComposeResult:
@@ -293,7 +295,7 @@ class SpeechSetupStep(SetupStep):
         key = (event.pressed.id or "").removeprefix("setup-speech-engine-")
         if key == self._engine or not key or speech_layout.engine_locked(self):
             return
-        self._engine = key
+        self._engine, self._engine_chosen = key, True
         speech_layout.show_engine_choice(self)  # in place: review F7
         if key == engines.ENGINE_PARAKEET:
             self._ensure_loaded()
@@ -1522,7 +1524,9 @@ class SpeechSetupStep(SetupStep):
         if self._engine != engines.ENGINE_PARAKEET:
             # voice-speech-15: "No dictation for now" writes nothing; the
             # installed and cloud engines write [transcription] only when this
-            # run changed it.
+            # run changed it. An untouched re-run writes nothing at all.
+            if not self._engine_chosen:
+                return True, ""
             mutation = engines.build_engine_commit(
                 self._engine,
                 facts=self._engine_facts,
