@@ -443,8 +443,8 @@ class ProviderCheckStep(ProviderListStep):
             unavailable = check if keyed else " Connection testing is unavailable for this provider."
         env_name = readiness.env_var or self._setup_facts(self.selected_provider_key).env_var
         env_var = env_name or "the configured environment variable"
-        if source == "stored":
-            outranks = f" It's used instead of {env_var}." if self._env_key_present(env_name) else ""
+        if source == "stored":  # Console only: engine presets elsewhere read env first
+            outranks = f" Console uses it instead of {env_var}." if self._env_key_present(env_name) else ""
             return f"An API key is already configured for this provider.{outranks}{unavailable}"
         if source == "environment":
             if self._key_field().display:  # 'Store a different key' was chosen
