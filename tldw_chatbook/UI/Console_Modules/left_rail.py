@@ -145,6 +145,8 @@ CharacterAvatarPrerenderJob = Callable[
 
 def rail_focus_shortcuts(
     shortcuts: tuple[tuple[str, str], ...],
+    *,
+    home: str = "composer",
 ) -> tuple[tuple[str, str], ...]:
     """Return the Console footer hints for focus inside either rail.
 
@@ -157,6 +159,8 @@ def rail_focus_shortcuts(
     Args:
         shortcuts: The footer's ``(key label, description)`` hints, in the
             order the footer shows them.
+        home: Where Esc lands -- ``"terminal"`` while the Console Terminal
+            owns the center and the composer is collapsed (TASK-33622.5).
 
     Returns:
         The rail-exit hint, then ``shortcuts`` without the F6/Esc hints and
@@ -168,7 +172,7 @@ def rail_focus_shortcuts(
     keys = ("Alt+I", "Alt+A", "Alt+C")
     at = max([i + 1 for i, p in enumerate(rest) if p[0] in keys] or [len(rest)])
     rest[at:at] = [p for p in shortcuts if p in later]
-    return (("Esc", "composer · F6 panes"), *rest)
+    return (("Esc", f"{home} · F6 panes"), *rest)
 
 
 @dataclass(frozen=True, slots=True)

@@ -1182,3 +1182,57 @@ async def test_rail_toggles_still_open_a_rail_over_a_narrow_terminal(
         )
 
     manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_escape_from_a_rail_returns_to_the_open_terminal(
+    tmp_path: Path,
+) -> None:
+    """TASK-33622.5: with the composer collapsed, a rail's Esc exit names and
+    reaches the Terminal.
+
+    Collapsing the composer left the TASK-32322 rail exit dead: the footer
+    still taught "Esc composer" while Esc moved focus nowhere.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    session_id = _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        right = console.query_one("#console-right-rail")
+        if not right.display:
+            await pilot.press("alt+i")
+            await _wait_until(pilot, lambda: right.display is True)
+        console.action_open_console_terminal()
+        await _wait_for_selector(
+            console, pilot, "#console-terminal-viewport", timeout=10.0
+        )
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        await _wait_until(pilot, lambda: pilot.app.focused is viewport)
+
+        for _ in range(4):
+            await pilot.press("f6")
+            await pilot.pause()
+            if console._console_rail_focus_active():
+                break
+        assert console._console_rail_focus_active(), pilot.app.focused
+        _source, shortcuts = console._footer_shortcut_registration
+        assert ("Esc", "terminal · F6 panes") in shortcuts, shortcuts
+        assert not any("composer" in label for _key, label in shortcuts), shortcuts
+
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is viewport,
+            detail=lambda: pilot.app.focused,
+        )
+        assert viewport.input_focused is True
+        composer = console.query_one("#console-native-composer")
+        assert composer.display is False
+        await pilot.press("l", "s")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, session_id) == b"ls"
+
+    manager.finalize_shutdown()

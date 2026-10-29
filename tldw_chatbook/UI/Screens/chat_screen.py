@@ -5078,7 +5078,8 @@ class ChatScreen(BaseAppScreen):
         if self._console_inspector_active():
             shortcuts = (("n/p", "Sections"), *shortcuts)
         if self._console_rail_focus_active():  # TASK-32322: the rail's exits
-            shortcuts = rail_focus_shortcuts(shortcuts)
+            home = "terminal" if self._console_terminal_open else "composer"
+            shortcuts = rail_focus_shortcuts(shortcuts, home=home)
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
 
@@ -5958,6 +5959,9 @@ class ChatScreen(BaseAppScreen):
         if self._dismiss_console_command_popup():
             return
         if self._dismiss_console_conversation_action_menus():
+            return
+        if self._console_terminal_open:  # TASK-33622.5: composer collapsed
+            self._focus_open_console_terminal()
             return
         self._focus_console_composer_if_needed(force=True)
 
