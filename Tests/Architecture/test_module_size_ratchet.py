@@ -578,7 +578,12 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    # 2026-10-29, TASK-33622.1 (same owner rule: a fix over a size ratchet
+    # raises the row with a dated comment): 7043 -> 7074 (+31). Enter steps
+    # only the token the caret is on, Esc and caret moves answer a pending
+    # confirm, a click puts the caret on its token, and chips/confirms name
+    # the token and its keys.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7074,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
