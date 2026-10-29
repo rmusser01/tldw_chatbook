@@ -427,6 +427,12 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
+    # TASK-33622.4 (2026-10-27, owner rule: a fix raises the row with a dated
+    # comment): Esc stops only when it cleared something, the clear binding is
+    # gated on the same test, and a focused action parks focus on the
+    # transcript (+31). Dev b5150753eb already measures 8,821 against this
+    # row's 8,353; the row moves by this fix's +31 only and does not absorb
+    # dev's overrun, so it stays red exactly as on dev.
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
