@@ -3432,12 +3432,14 @@ class ConsoleProviderGateway:
         """Record one call's outcome for trace recovery (TASK-33621.5/.6).
 
         ``rejection`` is its definitive HTTP refusal; ``None`` means it
-        answered, or failed without proof of refusal. Bookkeeping only.
+        answered, or failed without proof of refusal, which also retires an
+        earlier refusal as the run's last word. Bookkeeping only.
         """
         with contextlib.suppress(Exception):
             scope = self._trace_preparation_scope(signals)
             if scope is not None and rejection is None:
                 scope.provider_answered = True
+                scope.last_rejection = None
             elif scope is not None:
                 scope.provider_rejections += 1
                 scope.last_rejection = rejection
