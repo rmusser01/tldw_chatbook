@@ -130,6 +130,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     # here they are dictionary hits.
     "tldw_chatbook.UI.Console_Modules.config_sync",
     "tldw_chatbook.emergency_stop",
+    "tldw_chatbook.UI.Console_Modules.emergency_stop_hold",  # TASK-33620.1
     "tldw_chatbook.Chat.console_voice_input",
 )
 
