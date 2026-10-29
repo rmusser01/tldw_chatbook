@@ -280,6 +280,12 @@ async def test_a_sentence_typed_on_the_status_line_does_not_crash_the_console() 
     only on some runs (it renders from a shallower Python stack), so the
     stack itself is what this pins: the depth that crashed can no longer be
     built.
+
+    TASK-33622.3 (ADR-031 refinement 2026-10-27) changed where that sentence
+    goes: its first letter, which the line has no use for, moves focus to
+    the composer, so the rest of it -- spaces included -- is typed into the
+    draft and never activates the segment. Bursts of the activation keys
+    themselves stay pinned by the one-dialog-per-burst cases below.
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -298,22 +304,24 @@ async def test_a_sentence_typed_on_the_status_line_does_not_crash_the_console() 
         assert host.focused is line
         assert line._cursor_name == "system-prompt"
 
-        _send_key_burst(
-            host,
+        sentence = (
             "What do my notes say about the project plan and the next steps "
-            "for it? Reply in one short sentence please.",
+            "for it? Reply in one short sentence please."
         )
-        host._driver.send_message(events.Key("enter", "\r"))
+        _send_key_burst(host, sentence)
         await _settle(pilot)
 
         # A crashed app has already exited: its error is the failure to report.
         assert host._exception is None, repr(host._exception)
         assert host.is_running
         dialogs = _dialogs_over(host, console)
-        assert [type(screen) for screen in dialogs] == [ConsoleSystemPromptModal], (
+        assert dialogs == [], (
             f"stacked {len(dialogs)} dialogs: "
             f"{[type(screen).__name__ for screen in dialogs]}"
         )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.draft_text() == sentence
+        assert composer.draft_has_focus
 
 
 #: Every status-line segment whose activation opens a dialog over the

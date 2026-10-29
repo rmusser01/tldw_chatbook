@@ -1160,8 +1160,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Alt+A", "approval"),
     ("Alt+C", "context rail"),
     ("Ctrl+P", "palette"),
-    ("Y", "trace"),  # Y/Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C (33004.7)
-    ("Enter", "send / queue"),
+    ("Enter", "send / queue"),  # Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C
     ("Shift+F6", "previous pane"),
 )
 
@@ -1244,6 +1243,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("Alt+C", "open or close the Context rail"),
             ("Handle badges", "'N appr' = N approvals pending; 'art' = artifact ready"),
             ("Escape", "return to the composer"),
+            ("Any other key", "types into the composer unless the focused pane uses it"),
         ),
     ),
     (
@@ -1255,6 +1255,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("e", "edit the selected message"),
             ("f", "fork from the selected message"),
             ("r", "regenerate the selected message"),
+            ("y", "open Trace for this chat (transcript keys only)"),
             ("More…", "Save as, feedback, delete, and diagnostics"),
             ("Escape", "clear the selection, then return to the composer"),
         ),
@@ -1932,6 +1933,8 @@ class ChatScreen(BaseAppScreen):
             )
         if action == "stop_console_run":
             return run_controls.stop_available(self)
+        if action == "open_trajectory_view":  # TASK-33622.3: list mode only
+            return run_controls.focus_in_transcript(self.focused)
         if action == "exit_console_hands_free":
             # One-line delegation (wave-2 console decomposition, task 1).
             # See `ConsoleHandsFreeController.console_hands_free_exit_
@@ -14089,7 +14092,9 @@ class ChatScreen(BaseAppScreen):
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:
             return
-        composer.can_focus = not blocking and not self._console_composer_collapsed
+        composer.set_draft_focusable(
+            not blocking and not self._console_composer_collapsed
+        )
         if blocking and self._is_descendant_or_self(self.app.focused, composer):
             if self._resume_navigation_startup_in_progress:
                 self.set_focus(None)
@@ -21733,6 +21738,7 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         run_controls.claim_arrival_key(self, composer, event)
+        run_controls.type_to_compose(self, composer, event)  # TASK-33622.3
         if not self._should_capture_console_input(composer):
             return
         if run_controls.route_composer_control_key(self, composer, event):

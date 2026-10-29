@@ -630,7 +630,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-33622.3/.4 (2026-10-27) appends 3 node entries at the tail (the Console
+# key-ownership P1 regressions), so no existing entry changes shard.
+# Rebased 2026-10-29 onto dev's 1142 entries: 1142 + 3 = 1145.
+# Rebased again 2026-10-29 onto dev's 1145 entries (its two stacked
+# MINIMUM_FILES lines, 1145 then 1144, folded into this one):
+# 1145 + 3 = 1148.
+MINIMUM_FILES = 1166
 
 
 def read_census(path: Path) -> list[str]:

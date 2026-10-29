@@ -222,9 +222,13 @@ tool, code, and link styling keeps priority over immersive coloring.
 - When the app starts on the Console, you can type as soon as it appears.
   For up to a couple of seconds after that first frame, the nav bar's Home
   button still holds focus, but letters typed then land in the draft, in
-  order, and the caret moves there with the first one. Keys still go where
-  you put focus yourself, to an open dialog, or to the setup card while it
-  is showing.
+  order, and the caret moves there with the first one. Keys still go to an
+  open dialog, to the setup card while it is showing, and to a text field,
+  the transcript or the Terminal when you put focus there yourself.
+- Typing also reaches the draft from a control that has no use for the key:
+  a letter typed on a status-strip segment, a rail or header button or a tab
+  moves focus to the draft and lands there (Space still presses a focused
+  button). While focus is elsewhere the draft area says **Esc to type**.
 - **Enter sends or queues.** During an accepted agent turn, **Send** becomes
   **Queue** and Enter adds the exact text draft after that turn. For a newline
   inside the draft use **Ctrl+J** (works in
@@ -595,7 +599,9 @@ slot, that action.
 
 While the transcript has keyboard focus its single letters are commands,
 and the footer says so: it leads with "Transcript keys · Esc to type",
-then **j/k** select and **Y** trace. **Esc** clears one thing at a time —
+then **j/k** select and **Y** trace. **Y** opens Trace for the chat only
+from the transcript; from anywhere else a typed **y** is just a letter in
+your draft. **Esc** clears one thing at a time —
 keyboard text selection first, then the selected message — and once there
 is nothing left to clear it returns you to the composer, so the next thing
 you type lands in your draft.
@@ -843,6 +849,7 @@ Transcript:
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
 | c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
+| y | Open Trace for this chat |
 | Esc | Clear the selection; with nothing selected, return to the composer |
 
 ## Related settings & docs

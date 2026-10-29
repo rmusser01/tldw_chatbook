@@ -26,6 +26,10 @@ from __future__ import annotations
 import time
 
 import pytest
+from textual.app import App, ComposeResult
+from textual.events import Key
+from textual.screen import Screen
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -33,6 +37,12 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.UI.Console_Modules import composer_run_controls as run_controls
+from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
+    CONSOLE_WORKBENCH_SHORTCUTS,
+    ChatScreen,
+)
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_transcript import (
@@ -41,6 +51,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 
 pytestmark = pytest.mark.bootstrap_profile
 
+#: The cue the composer shows while focus is elsewhere (TASK-33622.3 AC#4).
+_COMPOSER_CUE = "Esc to type"
 #: The transcript's announcement while it holds focus (TASK-33622.4 AC#3).
 _TRANSCRIPT_ANNOUNCEMENT = "Transcript keys · Esc to type"
 
@@ -141,6 +153,10 @@ async def _focus_transcript_with_f6(console, pilot, transcript) -> None:
         await pilot.press("f6")
         await pilot.pause()
     assert console.focused is transcript, f"F6 never reached it: {console.focused!r}"
+
+
+def _draft_render(composer) -> str:
+    return composer.query_one("#console-command-visible-text", Static).renderable.plain
 
 
 def _footer_text(console) -> str:
@@ -297,3 +313,254 @@ async def test_a_focused_transcript_announces_its_keys_and_the_way_back():
             lambda: _TRANSCRIPT_ANNOUNCEMENT not in _footer_text(console),
             lambda: f"footer after Esc: {_footer_text(console)!r}",
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-33622.3: typed text reaches the composer; bare 'y' only in the list mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_typing_after_dismissing_help_lands_in_the_draft():
+    """AC#1 / AC#6 (1): click header Help, Esc, type a sentence.
+
+    Dismissing the dialog returns focus to the Help button (TASK-16211); on
+    the pre-fix code every key typed there was dropped.
+    """
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, _transcript = await _mounted(host, pilot)
+        trace = _spy_trace(console)
+        await pilot.click("#console-control-help")
+        await _wait_for(
+            pilot,
+            lambda: host.screen_stack[-1] is not console,
+            "Help did not open",
+        )
+        await pilot.press("escape")
+        await _wait_for(
+            pilot, lambda: host.screen_stack[-1] is console, "Help did not close"
+        )
+        await pilot.pause()
+
+        await _type(pilot, "say hello world")
+        assert composer.draft_text() == "say hello world"
+        assert composer.draft_has_focus
+        assert trace == []
+        assert host.screen_stack[-1] is console
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        "#console-status-text",  # the status strip (the Library chip's successor)
+        "#console-control-help",  # a header action
+        "#console-terminal-open",  # a left-rail button
+        "alt+i",  # the Inspect rail's first control, reached by its key
+    ],
+)
+@pytest.mark.asyncio
+async def test_y_on_a_non_text_control_types_instead_of_opening_trace(control):
+    """AC#2, AC#3 and AC#6 (2): 'y' on a status-strip, header or rail control
+    moves focus to the composer and types there; it never opens Trace."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, _transcript = await _mounted(host, pilot)
+        composer.load_draft("sa")
+        await pilot.pause()
+        trace = _spy_trace(console)
+        if control.startswith("#"):
+            target = console.query_one(control)
+            target.focus()
+            await _wait_for(
+                pilot, lambda: console.focused is target, f"{control} never focused"
+            )
+        else:
+            await pilot.press(control)
+            await _wait_for(
+                pilot,
+                lambda: console._console_inspector_active(),
+                "Alt+I did not focus the Inspect rail",
+            )
+
+        await pilot.press("y")
+        await pilot.pause()
+        assert trace == [], f"'y' on {control} opened Trace"
+        assert composer.draft_has_focus, f"'y' left focus on {console.focused!r}"
+        assert composer.draft_text() == "say"
+        assert host.screen_stack[-1] is console
+
+
+@pytest.mark.asyncio
+async def test_y_from_the_transcript_still_opens_trace_and_f1_lists_it():
+    """AC#3: Trace stays reachable by its documented key from the transcript,
+    and F1 help lists that key."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, _composer, transcript = await _mounted(host, pilot)
+        trace = _spy_trace(console)
+        await _focus_transcript_with_f6(console, pilot, transcript)
+        await pilot.press("y")
+        await pilot.pause()
+        assert trace == ["trace"]
+
+    transcript_keys = dict(dict(CONSOLE_WORKBENCH_SHORTCUT_GROUPS)["Transcript"])
+    assert "y" in transcript_keys, transcript_keys
+    assert "trace" in transcript_keys["y"].lower()
+    # The general footer no longer advertises a key that only the
+    # transcript honours (ADR-031 rule 4).
+    assert ("Y", "trace") not in CONSOLE_WORKBENCH_SHORTCUTS
+
+
+@pytest.mark.asyncio
+async def test_bound_keys_text_fields_and_space_keep_their_keys():
+    """AC#2's 'with no binding': keys a focused control owns stay there."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, _transcript = await _mounted(host, pilot)
+        composer.load_draft("keep")
+        await pilot.pause()
+
+        # Space belongs to a focused button (the ARIA activation key); it
+        # never starts typing into the draft.
+        help_button = console.query_one("#console-control-help", Button)
+        help_button.focus()
+        await _wait_for(pilot, lambda: console.focused is help_button, "no Help focus")
+        await pilot.press("space")
+        await pilot.pause()
+        assert composer.draft_text() == "keep"
+        assert not composer.draft_has_focus
+
+        # A text field owns every printable key. One key is enough: it is the
+        # only one type-to-compose could take (focus would have moved), and a
+        # second key would race the rail tray's rebuild of its search field,
+        # which can swallow it (TASK-33622.6, a separate defect).
+        rail_filter = console.query_one("#console-workspace-conversation-search", Input)
+        rail_filter.focus()
+        await _wait_for(
+            pilot, lambda: console.focused is rail_filter, "no filter focus"
+        )
+        await _type(pilot, "a")
+        await pilot.pause()
+        assert composer.draft_text() == "keep"
+        assert not composer.draft_has_focus
+        current = console.query_one("#console-workspace-conversation-search", Input)
+        assert current.value == "a"
+
+
+@pytest.mark.asyncio
+async def test_the_composer_shows_a_cue_while_focus_is_elsewhere():
+    """AC#4: an unfocused composer says how to get back to typing."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, transcript = await _mounted(host, pilot)
+        assert _COMPOSER_CUE not in _draft_render(composer)
+
+        await _focus_transcript_with_f6(console, pilot, transcript)
+        await _wait_for(
+            pilot,
+            lambda: _COMPOSER_CUE in _draft_render(composer),
+            lambda: f"unfocused empty composer shows {_draft_render(composer)!r}",
+        )
+
+        composer.load_draft("half a thought")
+        await _wait_for(
+            pilot,
+            lambda: (
+                _COMPOSER_CUE in _draft_render(composer)
+                and "half a thought" in _draft_render(composer)
+            ),
+            lambda: (
+                f"unfocused composer with a draft shows {_draft_render(composer)!r}"
+            ),
+        )
+
+        composer.focus()
+        await _wait_for(
+            pilot,
+            lambda: _COMPOSER_CUE not in _draft_render(composer),
+            lambda: f"focused composer still shows {_draft_render(composer)!r}",
+        )
+
+
+class _RowList(Static, can_focus=True):
+    """A focusable list control that owns one row key in its own BINDINGS."""
+
+    BINDINGS = [("s", "star", "Star")]
+    starred = 0
+
+    def action_star(self) -> None:
+        self.starred += 1
+
+
+class _TypeToComposeScreen(Screen):
+    """The attributes `type_to_compose` reads from the Console screen."""
+
+    _resume_navigation_startup_in_progress = False
+    _console_terminal_workspace = None
+    _is_descendant_or_self = staticmethod(ChatScreen._is_descendant_or_self)
+
+    def compose(self) -> ComposeResult:
+        yield _RowList("rows", id="rows")
+        yield Input(id="field")
+        yield ConsoleComposerBar(id="console-native-composer")
+
+
+class _TypeToComposeApp(App[None]):
+    def on_mount(self) -> None:
+        self.push_screen(_TypeToComposeScreen())
+
+
+@pytest.mark.asyncio
+async def test_type_to_compose_leaves_keys_a_binding_or_text_field_owns():
+    """AC#2's 'with no binding': the policy itself, without the full Console.
+
+    A key the focused control binds stays with it, a text field keeps every
+    key, and only an unclaimed printable moves focus to the draft.
+    """
+    app = _TypeToComposeApp()
+    async with app.run_test(size=(120, 20)) as pilot:
+        screen = app.screen
+        rows = screen.query_one("#rows", _RowList)
+        field = screen.query_one("#field", Input)
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+
+        rows.focus()
+        await pilot.pause()
+        run_controls.type_to_compose(screen, composer, Key("s", "s"))
+        assert screen.focused is rows, "a bound row key left its control"
+        run_controls.type_to_compose(screen, composer, Key("space", " "))
+        assert screen.focused is rows, "Space left a focused control"
+        run_controls.type_to_compose(screen, composer, Key("x", "x"))
+        assert composer.draft_has_focus, "an unclaimed letter did not move"
+
+        field.focus()
+        await pilot.pause()
+        run_controls.type_to_compose(screen, composer, Key("x", "x"))
+        assert screen.focused is field, "a text field lost a typed key"
+
+
+@pytest.mark.asyncio
+async def test_type_to_compose_leaves_the_arrival_window_to_the_arrival_claim():
+    """TASK-33620.15.17 compatibility: while the activation's arrival window
+    is open (focus still where the activation found it), only
+    `claim_arrival_key` decides where a typed key goes. It refuses when the
+    restore would pick another pane or the setup card is about to block --
+    including before the card's first sync has made the draft unfocusable --
+    and type-to-compose must not take that key to the draft behind it."""
+    app = _TypeToComposeApp()
+    async with app.run_test(size=(120, 20)) as pilot:
+        screen = app.screen
+        rows = screen.query_one("#rows", _RowList)
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+        rows.focus()
+        await pilot.pause()
+
+        screen._console_arrival_focus = rows
+        run_controls.type_to_compose(screen, composer, Key("x", "x"))
+        assert screen.focused is rows, "type-to-compose claimed an arrival key"
+
+        # Once the window has closed, the same key composes.
+        screen._console_arrival_focus = None
+        run_controls.type_to_compose(screen, composer, Key("x", "x"))
+        assert composer.draft_has_focus

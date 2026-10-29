@@ -584,9 +584,16 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
+    # TASK-33622.3 (2026-10-27, owner rule: a fix raises the row with a dated
+    # comment): the draft area's "Esc to type" cue while focus is outside
+    # the composer, measured into the row count so it is never cropped, and
+    # set_draft_focusable, which repaints it when the setup card blocks
+    # typing (+54). Dev b5150753eb measures 7,024; with the fix, 7,078.
+    # Rebased 2026-10-29 onto dev 7b9fb3d555 (7,043 after TASK-33620.15.22):
+    # 7,043 + 54 = 7,097.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,

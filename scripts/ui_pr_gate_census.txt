@@ -1634,3 +1634,11 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-33622.3/.4 (2026-10-27): the Console key-ownership P1 regressions, as
+# three node entries at the tail (the whole file runs ~55 s locally, over the
+# lane's per-file budget): F6/j/Esc/Esc returns to the composer, typing after
+# Help's dismissal reaches the draft, and 'y' on the status strip types
+# instead of opening Trace (3-6 s each locally). Existing slots stay fixed.
+Tests/UI/test_console_key_ownership.py::test_f6_j_esc_esc_returns_to_the_composer_and_prose_types_there
+Tests/UI/test_console_key_ownership.py::test_typing_after_dismissing_help_lands_in_the_draft
+Tests/UI/test_console_key_ownership.py::test_y_on_a_non_text_control_types_instead_of_opening_trace[#console-status-text]

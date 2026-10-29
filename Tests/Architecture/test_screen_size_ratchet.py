@@ -216,7 +216,19 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24329 -> 24335 (methods unchanged) 2026-10-27 by TASK-33622.3,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment): 'y' opens Trace only from the transcript (a check_action
+    #: branch), type-to-compose (one call in on_key), two F1 help rows, and
+    #: the setup block repaints the composer's focus cue; the footer drops its
+    #: Y hint (-1). The policy lives in composer_run_controls.py. TASK-33622.4
+    #: (Esc from the transcript, two call lines) fit the 2 lines of slack dev
+    #: left under the row. Dev b5150753eb measures 24327/737; with both
+    #: fixes, 24335/737, the exact measurement.
+    #: Re-measured 2026-10-29 after rebasing onto dev 7b9fb3d555, which
+    #: measures 24329/737 against its own 24331 row: with both fixes,
+    #: 24337/737, the exact measurement (same owner rule).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24337, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

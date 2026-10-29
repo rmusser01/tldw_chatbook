@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Console_Modules.review_selection import (
     _build_trajectory_snapshot,
 )
 from tldw_chatbook.UI.Console_Modules.wiring import _present_console_trajectory
+from tldw_chatbook.UI.Console_Modules.composer_run_controls import TRANSCRIPT_KEYS_FOOTER
 from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
@@ -318,7 +319,10 @@ def test_follow_binding_registered_and_hints_stay_one_to_one():
 def test_console_binds_single_letter_trajectory_launch():
     bindings = {b.key: b.action for b in ChatScreen.BINDINGS}
     assert bindings.get("y") == "open_trajectory_view"
-    assert ("Y", "trace") in CONSOLE_WORKBENCH_SHORTCUTS
+    # TASK-33622.3: 'y' acts only from the transcript (the announced list
+    # mode), so only the transcript's footer variant advertises it.
+    assert ("Y", "trace") in TRANSCRIPT_KEYS_FOOTER
+    assert ("Y", "trace") not in CONSOLE_WORKBENCH_SHORTCUTS
     assert hasattr(ChatScreen, "action_open_trajectory_view")
     # 'j' stays owned by the focused transcript (next-message selection in
     # console_transcript.on_key); the launch key must not collide with it.

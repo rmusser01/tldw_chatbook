@@ -267,6 +267,57 @@ def sync_transcript_keys_footer(screen: Any, focused: Any) -> None:
         screen._register_console_footer_shortcuts()
 
 
+def type_to_compose(screen: Any, composer: ConsoleComposerBar, event: Key) -> None:
+    """Focus the draft for a printable key that no focused control claims.
+
+    TASK-33622.3 (owner ruling 2026-10-27, the ADR-031 refinement): a
+    status-strip chip, rail button or header action has no use for a letter,
+    and the Console's one text target is the composer. Keys typed there were
+    dropped, and a bare ``y`` opened Trace. Runs in `ChatScreen.on_key` just
+    before the capture check: once the draft has focus, the capture path
+    types this key and every key after it there.
+
+    A key keeps its normal route when:
+
+    * it is Space (a focused control's activation key), a modified chord, or
+      not printable;
+    * focus is already in the composer, in the transcript (the announced list
+      mode, whose letters are commands), in the Terminal workspace, or in a
+      text field (``check_consume_key``);
+    * an active binding in the focus chain claims it (a tree's row keys);
+    * the composer is collapsed or an explicit Resume owns focus;
+    * the activation's arrival window is open: `claim_arrival_key` (called
+      just before) already decided, and it refuses on purpose (the setup
+      card, even before its first sync, or a restore aimed elsewhere).
+
+    Args:
+        screen: The Console screen routing the key.
+        composer: The mounted composer.
+        event: The key being routed.
+    """
+
+    focused = screen.focused
+    if (
+        focused is None
+        or focused is getattr(screen, "_console_arrival_focus", None)
+        or event.key == "space"
+        or not ConsoleComposerBar.is_text_entry_key(event)
+        or composer.collapsed
+        or screen._resume_navigation_startup_in_progress
+        or screen._is_descendant_or_self(focused, composer)
+        or focus_in_transcript(focused)
+        or screen._is_descendant_or_self(
+            focused, getattr(screen, "_console_terminal_workspace", None)
+        )
+        or focused.check_consume_key(event.key, event.character)
+    ):
+        return
+    binding = screen.active_bindings.get(event.key)
+    if binding is not None and binding.enabled:
+        return
+    composer.focus_draft_from(focused)
+
+
 def hand_paste_to_draft(screen: Any, composer: ConsoleComposerBar) -> None:
     """Focus the draft before a captured paste lands in it.
 
