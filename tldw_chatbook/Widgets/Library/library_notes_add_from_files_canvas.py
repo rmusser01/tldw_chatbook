@@ -24,6 +24,7 @@ from tldw_chatbook.Library.library_shell_state import (
     library_disabled_reason_line,
 )
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    LASTING_SYNC_BACK_TO_ROOTS_LABEL,
     LastingSyncApplyBlocker,
     LastingSyncHistoryRow,
     LastingSyncReview,
@@ -1189,12 +1190,16 @@ class LibraryNotesAddFromFilesCanvas(Vertical):
             # history is disabled after a setup activation, so the only control
             # was ‹ Notes, and a second folder meant finding the toolbar again.
             # The toolbar's own label, so one name for one place.
-            yield Button(
-                "Manage sync folders",
-                id="notes-sync-manage-roots",
-                classes="library-canvas-action",
-                compact=True,
-            )
+            # TASK-34000.40 fix round 1 (review R0 M-1): a review opened from
+            # Manage sync folders already goes back there ("‹ Sync folders"),
+            # so the receipt does not offer a second door to the same place.
+            if self.snapshot.back_label != LASTING_SYNC_BACK_TO_ROOTS_LABEL:
+                yield Button(
+                    "Manage sync folders",
+                    id="notes-sync-manage-roots",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
             yield Button(
                 self.snapshot.back_label,
                 id="notes-sync-back",
