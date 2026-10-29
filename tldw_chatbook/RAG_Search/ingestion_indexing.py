@@ -1505,40 +1505,89 @@ def _media_post_delete_hook(db: Any, media_id: int, media_uuid: Optional[str]) -
         logger.warning(f"RAG post-delete hook failed for media_id={media_id}: {e}")
 
 
-def submit_note_index_removal(
-    note_id: str, *, source_path: Optional[Path] = None
-) -> bool:
-    """Queue a purged note's semantic projection for removal (TASK-34000.29 8b).
+def remove_purged_note_projection(note_id: str) -> int:
+    """Remove a note deleted for good from every semantic index on this device.
 
-    The note twin of ``_media_post_delete_hook``, and the same guard: a
-    disabled or unavailable RAG runtime is never initialized just to delete,
-    and the source purge never depends on this. A backfill indexes notes as
-    ``note_<id>`` documents carrying their text and title, which semantic
-    search returns as snippets; Delete forever must take them too.
+    TASK-34000.29 (8b; review R0, I-1). A backfill indexes a note as a
+    ``note_<id>`` document carrying its text and title, which semantic search
+    returns as snippets; Delete forever takes them too. Unlike Media's
+    post-delete hook this ignores ``[AppRAGSearchConfig.rag.indexing].enabled``:
+    that switch stops NEW indexing, but Library semantic search still reads
+    whatever an earlier backfill wrote, and no backfill ever reconciles a
+    note orphan. Nothing here builds the RAG service or loads a model:
+
+    1. A runtime already built in this process drops the document from its own
+       store (in-memory or Chroma) and its cached answers.
+    2. With the embeddings deps installed and the active profile's Chroma
+       store on disk, the document is deleted from EVERY collection there.
+    3. The indexing-state row goes too, when that database exists.
+
+    When no store exists there is nothing to remove: an in-memory store dies
+    with its runtime, and a persist directory without ``chroma.sqlite3``
+    holds no vectors. Runs in the purge's worker thread, never on the event
+    loop, and never raises -- the purge has already committed, and Library
+    search drops any note hit whose note is gone (the liveness check in
+    ``library_local_rag_search_service``), so a removal that fails, or never
+    runs because the app quit, cannot bring the note back.
 
     Args:
         note_id: The note just deleted for good.
-        source_path: The Notes database the note lived in.
 
     Returns:
-        ``True`` when a removal was queued.
+        How many stores the delete ran in (0 when there were none).
     """
-    try:
-        if peek_shared_rag_service() is None and not semantic_indexing_available():
-            return False
-        return bool(
-            get_ingestion_indexer().submit_removal(
-                IndexRemoval(
-                    item_id=str(note_id),
-                    item_type=ITEM_TYPE_NOTE,
-                    document_id=f"note_{note_id}",
-                    source_path=source_path,
-                )
+    document_id = f"note_{note_id}"
+    removed = 0
+    service = peek_shared_rag_service()
+    if service is not None:
+        try:
+            service.vector_store.delete_document(document_id)
+            removed += 1
+            clear = getattr(getattr(service, "cache", None), "clear", None)
+            if callable(clear):
+                clear()
+        except Exception as e:
+            logger.warning(
+                "Removing a purged note from the running index failed: {}",
+                type(e).__name__,
             )
-        )
+    try:
+        if embeddings_rag_deps_installed():
+            # Loaded here, in the purge's worker, only for a device that has
+            # the deps: the purge itself never needs the RAG stack.
+            from .simplified.active_config import resolve_active_rag_config
+            from .simplified.collection_indexes import (
+                delete_document_from_every_index,
+            )
+
+            config = resolve_active_rag_config()
+            persist = config.persist_directory
+            if str(config.vector_store_type) == "chroma" and persist is not None:
+                removed += delete_document_from_every_index(persist, document_id)
     except Exception as e:
-        logger.warning("RAG removal of a purged note failed: {}", type(e).__name__)
-        return False
+        logger.warning(
+            "Removing a purged note from the stored index failed: {}",
+            type(e).__name__,
+        )
+    try:
+        from ..config import get_rag_indexing_db_path
+
+        tracking_path = Path(get_rag_indexing_db_path())
+        if tracking_path.is_file():
+            tracking = _open_indexing_db(tracking_path)
+            if tracking is not None:
+                from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+                try:
+                    tracking.remove_indexed_item(str(note_id), ITEM_TYPE_NOTE)
+                finally:
+                    if type(tracking) is RAGIndexingDB:
+                        RAGIndexingDB.close(tracking)
+    except Exception as e:
+        logger.warning(
+            "Removing a purged note's indexing record failed: {}", type(e).__name__
+        )
+    return removed
 
 
 def install_media_ingest_hook(

@@ -2028,6 +2028,21 @@ class NotesInteropService:
             )
         )
 
+    def live_note_ids(self, user_id: str, note_ids: Sequence[str]) -> set[str]:
+        """Return which of ``note_ids`` are live notes (TASK-34000.29, I-1).
+
+        Args:
+            user_id: User identity used to select the unified DB client.
+            note_ids: Candidate note ids from one search result page.
+
+        Returns:
+            The ids whose note exists and is not deleted.
+
+        Raises:
+            CharactersRAGDBError: If the database operation fails.
+        """
+        return set(self._get_db(user_id).live_note_ids(note_ids))
+
     def search_notes(
         self,
         user_id: str,

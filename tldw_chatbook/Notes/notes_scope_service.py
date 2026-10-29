@@ -1850,8 +1850,9 @@ class NotesScopeService:
         folder still holds the note -- never from the row the Trash painted
         (ruling T8b-c) -- and a check it cannot answer refuses (fail closed).
         The purge itself is ``CharactersRAGDB.hard_delete_note``, off the
-        event loop; the note's semantic-index projection is then queued for
-        removal through the indexer's own seam.
+        event loop; the note's semantic-index projection is then removed
+        from every store on this device, also off the loop and whatever the
+        indexing switch says (``remove_purged_note_projection``).
 
         Args:
             scope: Note scope; only ``local_note`` is supported.
@@ -1906,20 +1907,47 @@ class NotesScopeService:
                 reason_code="not_deleted", user_message=PURGE_REFUSED_NOT_DELETED
             ) from error
         if purged:
-            # Imported here (ADR-097): RAG is never loaded for a Library visit.
+            # Function-level so this module never imports RAG at load time.
+            # ``ingestion_indexing`` itself is light (the Library screen
+            # already imports it); the removal loads the heavy RAG modules
+            # only on a device with the embeddings deps, in this worker.
             from tldw_chatbook.RAG_Search import ingestion_indexing
 
-            ingestion_indexing.submit_note_index_removal(
-                key, source_path=self._local_notes_db_path(local_user_id)
+            await self._run_folder_repository(
+                ingestion_indexing.remove_purged_note_projection, key
             )
         return purged
 
-    def _local_notes_db_path(self, user_id: str) -> Any:
-        """The local Notes database file, or ``None`` when it cannot be named."""
-        try:
-            return getattr(self.local_notes_service._get_db(user_id), "db_path", None)
-        except Exception:  # noqa: BLE001 - a label for the index removal only
-            return None
+    async def live_local_note_ids(
+        self, note_ids: Sequence[str], *, user_id: Optional[str] = None
+    ) -> set[str]:
+        """Return which of ``note_ids`` are live local notes (TASK-34000.29, I-1).
+
+        Library semantic search asks this once per result page and drops any
+        note hit outside the answer: a note deleted for good, or one in
+        Recently deleted. One query, off the event loop.
+
+        Args:
+            note_ids: Candidate note ids from one result page.
+            user_id: Local Notes user identity.
+
+        Returns:
+            The ids whose note exists and is not deleted.
+
+        Raises:
+            ValueError: If ``user_id`` is missing.
+            CharactersRAGDBError: If the database cannot answer.
+        """
+        self._enforce_policy(self._note_action_id(ScopeType.LOCAL_NOTE, "list"))
+        local_user_id = self._require_user_id(user_id)
+        ids = [str(note_id) for note_id in note_ids]
+        if not ids:
+            return set()
+        return set(
+            await self._run_folder_repository(
+                self.local_notes_service.live_note_ids, local_user_id, ids
+            )
+        )
 
     def _enqueue_local_note_upsert(
         self,
