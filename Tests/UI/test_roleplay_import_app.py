@@ -17,6 +17,7 @@ database, and the Actor Pack import service and controller.
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import os
 import threading
@@ -28,6 +29,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button, Input
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
@@ -61,6 +63,7 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
 )
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.UI.Persona_Modules import buddy_conversion
+from tldw_chatbook.UI.Screens import personas_screen as personas_screen_module
 from tldw_chatbook.Widgets import enhanced_file_picker as efp
 from tldw_chatbook.Widgets.Persona_Widgets.actor_pack_import_review import (
     ActorPackImportReviewDialog,
@@ -918,3 +921,184 @@ async def test_an_import_while_a_save_is_in_flight_does_not_auto_select(
         assert import_env.lore_books() == ["Kepler Atlas"]
         assert screen.state.active_mode == "characters"
         assert notices == ["Imported Kepler Atlas · in Lore books"]
+
+
+def _hold_the_landing_refresh(
+    monkeypatch, screen
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """Hold the landing's own character-list refresh until ``gate`` is set."""
+    entered, gate = asyncio.Event(), asyncio.Event()
+    landing = False
+    real_land = screen._land_import
+    real_refresh = screen.character_handler.refresh_character_list
+
+    async def land(*args, **kwargs):
+        nonlocal landing
+        landing = True
+        try:
+            return await real_land(*args, **kwargs)
+        finally:
+            landing = False
+
+    async def refresh(*args, **kwargs):
+        if landing and not entered.is_set():
+            entered.set()
+            await gate.wait()
+        return await real_refresh(*args, **kwargs)
+
+    monkeypatch.setattr(screen, "_land_import", land)
+    monkeypatch.setattr(screen.character_handler, "refresh_character_list", refresh)
+    return entered, gate
+
+
+@pytest.mark.parametrize("meanwhile", ["draft", "leave"])
+async def test_what_happens_while_the_landing_refreshes_its_list_wins(
+    meanwhile, import_env, mock_app_instance, monkeypatch
+):
+    """The landing decides, then awaits its own list refresh (a full-library
+    read) or kind switch before it selects; it decides again after them, so
+    a draft started in that window is kept, a screen left in it is not
+    selected on, and the import toasts. On dev the character landing
+    re-checked only that Characters still showed after its refresh, so a
+    draft started during it was replaced (exists on dev, wider there; B2b
+    fixes it); B2b's first cut dropped dev's re-check, so a screen left
+    mid-refresh was selected on (new with B2b, fixed here)."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_notices(monkeypatch, screen)
+        loaded = screen.state.selected_entity_id
+        entered, gate = _hold_the_landing_refresh(monkeypatch, screen)
+        await _press_import(pilot)
+        await wait_until(pilot, entered.is_set, what="the landing's refresh")
+        if meanwhile == "draft":
+            name = await _dirty_character_draft(pilot)
+        else:
+            await pilot.app.push_screen(Screen())
+            await settle(pilot)
+        gate.set()
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await settle(pilot)
+        assert "Wren Halloway" in import_env.characters()
+        assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+        if meanwhile == "draft":
+            assert pilot.app.screen is screen
+            assert _draft_kept(screen, name)
+        else:
+            assert pilot.app.screen is not screen
+            assert screen.state.selected_entity_id == loaded
+
+
+async def test_end_with_rows_still_unloaded_during_an_import_keeps_the_cursor(
+    import_env, mock_app_instance, monkeypatch
+):
+    """End on a list whose rows are not all loaded owes a window before it
+    moves; it is a newer move all the same, so the import must not pull the
+    cursor back to its row (the cursor-move test's list is fully loaded).
+    On dev every import selected (exists on dev; B2b fixes it)."""
+    monkeypatch.setattr(personas_screen_module, "PERSONAS_LIBRARY_PAGE_SIZE", 3)
+    for index in range(9):
+        import_env.db.add_character_card(
+            {"name": f"Zed {index:02d}", "description": "seed"}
+        )
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            item_list = screen.query_one("#personas-library-rows")
+            await settle(pilot)
+            assert screen._window_state.more_available
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            loaded = screen.state.selected_entity_id
+            item_list.focus()
+            await pilot.press("end")
+            await wait_until(
+                pilot,
+                lambda: (
+                    not screen._window_state.more_available
+                    and item_list.highlighted == item_list.option_count - 1
+                ),
+                what="the cursor on the list's last row",
+            )
+            moved_to = item_list.highlighted
+            release.set()
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await settle(pilot)
+            assert "Wren Halloway" in import_env.characters()
+            assert screen.state.selected_entity_id == loaded
+            assert item_list.highlighted == moved_to
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_search_typed_during_an_import_is_kept_and_the_import_toasts(
+    import_env, mock_app_instance, monkeypatch
+):
+    """A search typed after the picker opened is a newer intent: the landing
+    leaves it and toasts. On dev the character landing cleared it and
+    selected (exists on dev); for lore and dictionaries dev kept the query,
+    so clearing it there would have been new with B2b. B2b fixes both."""
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    with _slow_character_import(monkeypatch) as (entered, release):
+        async with open_styled_roleplay(
+            "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+        ) as pilot:
+            screen = pilot.app.screen
+            notices = _record_notices(monkeypatch, screen)
+            await _press_import(pilot)
+            await wait_until(pilot, entered.is_set, what="the import in its thread")
+            loaded = screen.state.selected_entity_id
+            search = screen.query_one("#personas-library-search", Input)
+            search.focus()
+            await pilot.press(*"Abel")
+            await wait_until(
+                pilot,
+                lambda: screen.state.search_query == "Abel",
+                what="the typed search",
+            )
+            release.set()
+            await wait_until(
+                pilot, lambda: _import_idle(screen), what="the import done"
+            )
+            await settle(pilot)
+            assert "Wren Halloway" in import_env.characters()
+            assert search.value == "Abel"
+            assert screen.state.search_query == "Abel"
+            assert screen.state.selected_entity_id == loaded
+            assert notices[-1:] == ["Imported Wren Halloway · in Characters"]
+
+
+async def test_a_sort_cycle_and_a_tag_pick_are_newer_intents(
+    import_env, mock_app_instance
+):
+    """The user's sort cycle (``s`` on the list) and tag pick (the picker's
+    only way to apply one) end an import's claim to the cursor, like a
+    typed search. A programmatic search clear does not: the landing's own
+    clear must still select (test_personas_workbench's
+    ``test_import_success_refreshes_selects_and_clears_search``)."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one("#personas-library-rows")
+        item_list.focus()
+        await settle(pilot)
+        before = screen._import_intent_now()
+        sort_before = screen.state.sort_key
+        await pilot.press("s")
+        await wait_until(
+            pilot, lambda: screen.state.sort_key != sort_before, what="the sort"
+        )
+        await settle(pilot)
+        after_sort = screen._import_intent_now()
+        await screen._apply_tag_filter("hero")
+        await settle(pilot)
+        assert after_sort != before
+        assert screen._import_intent_now() != after_sort

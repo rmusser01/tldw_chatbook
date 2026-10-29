@@ -479,11 +479,14 @@ class RoleplayItemList(OptionList):
         self._check_near_end()
 
     def action_last(self) -> None:
-        """End: load every remaining window first when rows are not all loaded."""
+        """End: load every remaining window first when rows are not all loaded.
+
+        A newer move either way, before the End it owes (frame slice B2b).
+        """
+        self._window.user_moved()
         if self._window.more_available:
             self._request_window("end", None, self._window.want("end", read=True))
             return
-        self._window.user_moved()
         super().action_last()
 
     # A cursor key, or Enter on a row, is a newer move: an End or a
