@@ -2176,12 +2176,11 @@ class LifecycleMixin:
         unsent draft, a Temporary chat, a staged attachment or a parked turn
         asks too, not only live runs and queued prompts.
         """
-        from .UI.Console_Modules import loss_inventory
-
         self._console_quit_approved_revision = None
         runtime = getattr(self, "console_runtime", None)
         if getattr(runtime, "chat_controller", None) is None:
             return True
+        from .UI.Console_Modules import loss_inventory
 
         while True:
             impact = loss_inventory.console_quit_impact(runtime)
