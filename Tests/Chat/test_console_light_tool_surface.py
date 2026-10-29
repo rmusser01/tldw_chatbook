@@ -502,6 +502,65 @@ def test_a_hallucinated_runtime_tool_never_reaches_its_confirm_card(
     ]
 
 
+@pytest.mark.parametrize("full_agent_tools", [False, True], ids=["off", "on"])
+async def test_the_served_mobile_companion_plans_the_light_set(
+    tmp_path, full_agent_tools
+):
+    """Pre-merge review (2026-10-29): the served mobile companion built its
+    own ``ConsoleAgentBridge`` with no light-surface reader, and a bridge
+    without one keeps the full agent surface. Every phone send got
+    ``spawn_subagent`` and the rest of the agent surface whatever Full agent
+    tools said. Driven through ``MobileChatService.send`` and the real
+    engine it builds, as the phone's HTTP layer does."""
+    import asyncio
+
+    from Tests.console_provider_doubles import AgentModeGateway
+    from Tests.Web_Server.test_mobile_service import _shutdown, _subscribe, _wait_for
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+
+    class _NamesGateway(AgentModeGateway):
+        """Records every advertised tool name; calls a light tool, then answers."""
+
+        def __init__(self):
+            super().__init__(tool_name="get_current_datetime")
+            self.names_seen: list[set[str]] = []
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.names_seen.append(
+                {tool["function"]["name"] for tool in kwargs.get("tools") or ()}
+            )
+            async for item in super().stream_chat(resolution, messages, **kwargs):
+                yield item
+
+    if full_agent_tools:
+        assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    gateway = _NamesGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="phone")
+        await service.send(session["id"], "Reply with just: hi")
+        await _wait_for(
+            lambda: any(event.type == "run_completed" for event in got),
+            timeout=30,
+            what="run_completed event",
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+    assert gateway.names_seen, "the provider was never called"
+    if full_agent_tools:
+        assert "spawn_subagent" in gateway.names_seen[0], sorted(gateway.names_seen[0])
+    else:
+        # The light set less ``ask_user``: the headless phone engine has no
+        # view to show a question card on, so it never registers that tool
+        # (``ConsoleChatController._ask_user_wiring``), light or full.
+        assert gateway.names_seen[0] == LIGHT - {"ask_user"}, sorted(
+            gateway.names_seen[0]
+        )
+
+
 def test_a_skill_turn_keeps_the_agent_surface(tmp_path):
     """Review round 1 (C-F2): a message that names a skill (``$skill``) gets
     the agent surface for that turn -- skills run as sub-agents."""
