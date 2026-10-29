@@ -643,6 +643,9 @@ jobs:
     # TASK-37421 appends the refused-stream retry pins: real adapters
     # against a loopback server (ten cases, ~12 s) and one mounted Console
     # send to a Custom server that refuses streaming (~8 s serial).
+    # Roleplay frame B2b (TASK-33910.4, owner decision D7 of 2026-10-26)
+    # appends the mounted one-Import-picker file (bootstrap_profile; 30 cases,
+    # 58 s serial).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -819,6 +822,7 @@ jobs:
             Tests/UI/test_console_refused_stream_retry_screen.py \
             Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls \
             Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume \
+            Tests/UI/test_roleplay_import_app.py \
             --timeout=300 \
             --tb=short
 

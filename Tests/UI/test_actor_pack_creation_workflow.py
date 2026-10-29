@@ -25,7 +25,12 @@ from Tests.UI.test_personas_workbench import (
     stub_characters as _stub_characters,  # noqa: F401 - registers fixture
     stub_scope_service as _stub_scope_service,  # noqa: F401 - registers fixture
 )
-from Tests.UI.roleplay_frame_harness import start_new, wait_for_chooser
+from Tests.UI.roleplay_frame_harness import (
+    fake_file_picker,
+    start_new,
+    wait_for_chooser,
+    wait_until,
+)
 from tldw_chatbook.Actor_Packs.creation import (
     ActorPackCreationError,
     ActorPackCreationResult,
@@ -93,11 +98,14 @@ async def test_new_actor_pack_is_distinct_and_reuses_character_editor(
         assert portrait.display is False
 
 
-async def test_import_actor_pack_is_distinct_from_legacy_character_import(
-    mock_app_instance, _stub_characters
+async def test_an_actor_pack_picked_in_the_one_import_says_when_packs_are_unavailable(
+    mock_app_instance, _stub_characters, monkeypatch, tmp_path
 ) -> None:
+    """Frame slice B2b: the one Import takes Actor Packs (dev had a separate
+    Import Actor Pack button); the review flow's own refusal still speaks."""
     mock_app_instance.actor_pack_import_controller = None
     mock_app_instance.actor_pack_import_service = None
+    fake_file_picker(monkeypatch, tmp_path / "incoming.tldw-actor-pack")
     app = PersonasTestApp(mock_app_instance)
     notifications: list[tuple[str, str]] = []
     app.notify = lambda message, severity="information", **_: notifications.append(
@@ -105,14 +113,15 @@ async def test_import_actor_pack_is_distinct_from_legacy_character_import(
     )
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
-        legacy = screen.query_one("#personas-library-import", Button)
-        actor_pack = screen.query_one("#personas-library-import-actor-pack", Button)
-
-        assert str(legacy.label) == "Import"
-        assert str(actor_pack.label) == "Import Actor Pack"
-        assert actor_pack.region.width > 0 and actor_pack.region.height > 0
-        await pilot.click("#personas-library-import-actor-pack")
-        await pilot.pause()
+        assert not screen.query("#personas-library-import-actor-pack")
+        import_button = screen.query_one("#personas-library-import", Button)
+        assert str(import_button.label) == "Import"
+        await pilot.click("#personas-library-import")
+        await wait_until(
+            pilot,
+            lambda: bool(notifications) and not screen._io_dialog_active,
+            what="the refusal",
+        )
 
         assert notifications[-1] == ("Actor Pack import is unavailable.", "error")
 

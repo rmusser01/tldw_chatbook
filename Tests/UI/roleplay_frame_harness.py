@@ -585,6 +585,50 @@ async def start_new(
     await pilot.pause()
 
 
+def fake_file_picker(
+    monkeypatch: pytest.MonkeyPatch, *picks: Path | str | None
+) -> list[dict[str, Any]]:
+    """Answer the shared file picker with ``picks``, like a user's choices (B2b).
+
+    Roleplay imports ``EnhancedFileOpen`` inside its workers, so patching the
+    module attribute replaces every picker it opens: a modal that dismisses
+    with the next pick (the last one repeats) after its first refresh, as the
+    Buddy review test's ``ChosenArchive`` does. The screen's code after the
+    pick (the sniff, "Import as:", the review dialogs) runs for real.
+
+    Args:
+        monkeypatch: The test's monkeypatch.
+        *picks: What each opened picker returns (None is Cancel).
+
+    Returns:
+        The keyword arguments of every picker constructed, in order (``title``,
+        ``filters``, ``context``, ...).
+    """
+    from textual.screen import ModalScreen
+
+    import tldw_chatbook.Widgets.enhanced_file_picker as picker_module
+
+    opened: list[dict[str, Any]] = []
+    queue = list(picks) or [None]
+
+    class _PickedFile(ModalScreen[object]):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__()
+            opened.append(kwargs)
+            self._pick = queue.pop(0) if len(queue) > 1 else queue[0]
+
+        def on_mount(self) -> None:
+            def pick() -> None:
+                # Not awaited: awaiting dismiss() from this screen's own
+                # message pump raises ScreenError.
+                self.dismiss(self._pick)
+
+            self.call_after_refresh(pick)
+
+    monkeypatch.setattr(picker_module, "EnhancedFileOpen", _PickedFile)
+    return opened
+
+
 @asynccontextmanager
 async def roleplay_full_app(
     *,

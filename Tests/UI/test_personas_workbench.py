@@ -1306,7 +1306,7 @@ class TestPersonasMode:
             assert screen.query_one("#personas-service-error", Static)
             assert not visible_item_ids(screen)
 
-    async def test_personas_mode_empty_state_copy_unchanged(
+    async def test_personas_mode_empty_state_copy_offers_new_and_import(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         stub_scope_service.list_persona_profiles.return_value = {
@@ -1319,7 +1319,12 @@ class TestPersonasMode:
             screen = await self._enter_personas_mode(pilot)
 
             empty = screen.query_one("#personas-library-empty", Static)
-            assert str(empty.renderable) == "No personas yet - use New to add one."
+            # Frame slice B2b: Import is offered in Personas too (an Actor
+            # Pack can be a persona); dev said "use New".
+            assert (
+                str(empty.renderable)
+                == "No personas yet - use New or Import to add one."
+            )
             assert not list(screen.query("#personas-service-error"))
 
     async def test_profile_selection_shows_card(
@@ -2165,7 +2170,9 @@ class TestImportExport:
 
                 return _noop()
 
-            screen._import_dialog_worker = counting_worker
+            # Frame slice B2b: the one Import picker's worker (dev opened
+            # Characters' own picker here).
+            screen._roleplay_import_worker = counting_worker
             screen._io_dialog_active = True
             screen.post_message(PersonaActionRequested(action="import"))
             await pilot.pause()
@@ -3637,30 +3644,10 @@ class TestImportExport:
                 for message, severity in notifications
             )
 
-    async def test_import_requires_characters_mode(
-        self, mock_app_instance, stub_characters, stub_scope_service, monkeypatch
-    ):
-        import_card = Mock()
-        monkeypatch.setattr(
-            character_handler_module,
-            "import_character_card_with_outcome",
-            import_card,
-        )
-        app = PersonasTestApp(mock_app_instance)
-        notifications = self._capture_notifications(app)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            await pilot.click("#personas-mode-personas")
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            screen.post_message(PersonaActionRequested(action="import"))
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            import_card.assert_not_called()
-            assert not any(severity == "error" for _, severity in notifications)
+    # Frame slice B2b: dev's test_import_requires_characters_mode pinned
+    # "Import does nothing in Personas"; the one Import picker opens in every
+    # kind, pinned by test_roleplay_import_app.py's
+    # test_import_is_offered_in_every_kind.
 
 
 class _FtsStubDB:
@@ -8623,9 +8610,11 @@ class TestServerCharacterSourceIsolation:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
+            # Import stays offered while browsing server characters (frame
+            # slice B2b, OQ14): a card is refused when picked, a lore book or
+            # a chat dictionary goes to the local store.
             for control_id in (
                 "#personas-library-new",
-                "#personas-library-import",
                 "#personas-library-tag",
                 "#personas-card-edit-character",
                 "#personas-export-json",
@@ -8761,29 +8750,28 @@ class TestServerCharacterSourceIsolation:
             await pilot.pause()
 
             begin_create_impl = screen._begin_create_character
-            open_import_impl = screen._open_import_dialog
             duplicate_impl = screen._duplicate_selected_character
             begin_create = AsyncMock()
-            open_import = AsyncMock()
             duplicate = AsyncMock()
             screen._begin_create_character = begin_create
-            screen._open_import_dialog = open_import
             screen._duplicate_selected_character = duplicate
-            for action in ("create", "import", "duplicate"):
+            # Frame slice B2b (OQ14): Import is no longer refused here; the
+            # one picker opens and a picked card is refused (pinned by
+            # test_roleplay_import_app.py). The card import seam itself
+            # still fails closed (below).
+            for action in ("create", "duplicate"):
                 await screen._handle_action_requested(
                     PersonaActionRequested(action=action)
                 )
             begin_create.assert_not_awaited()
-            open_import.assert_not_awaited()
             duplicate.assert_not_awaited()
             screen._begin_create_character = begin_create_impl
-            screen._open_import_dialog = open_import_impl
             screen._duplicate_selected_character = duplicate_impl
 
             run_worker = Mock()
             screen.run_worker = run_worker
             await begin_create_impl()
-            await open_import_impl()
+            assert screen._start_character_import("/tmp/remote-card.json") is None
             await duplicate_impl()
             assert screen._edit_mode == "view"
             run_worker.assert_not_called()
@@ -13386,7 +13374,7 @@ class TestImportExportFilters:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             picker = await self._capture_picker(
-                pilot, screen, screen._import_dialog_worker
+                pilot, screen, screen._roleplay_import_worker
             )
             self._assert_filters_callable(picker.filters)
 
@@ -13399,7 +13387,7 @@ class TestImportExportFilters:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             picker = await self._capture_picker(
-                pilot, screen, screen._import_dialog_worker
+                pilot, screen, screen._roleplay_import_worker
             )
             filter_by_name = {
                 name: picker.filters[filter_id]
@@ -13407,47 +13395,47 @@ class TestImportExportFilters:
             }
 
             # Markdown stays importable via its own dedicated sub-filter, but
-            # is NOT part of the broad "Character Cards" default (task-431
-            # AC#1): a plain docs folder full of .md files should not read
-            # as a folder of character cards.
-            assert "Markdown Files" in filter_by_name
-            assert filter_by_name["Character Cards"](Path("character.md")) is False
-            assert (
-                filter_by_name["Character Cards"](Path("character.markdown")) is False
-            )
-            assert filter_by_name["Markdown Files"](Path("character.md")) is True
-            assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
-            assert filter_by_name["Markdown Files"](Path("character.json")) is False
+            # is NOT part of the broad default (task-431 AC#1): a plain docs
+            # folder full of .md files should not read as a folder of
+            # character cards. Frame slice B2b: one picker for every kind,
+            # "Roleplay files" by default (owner decision D3).
+            assert list(filter_by_name) == ["Roleplay files", "Markdown", "All Files"]
+            assert filter_by_name["Roleplay files"](Path("character.md")) is False
+            assert filter_by_name["Roleplay files"](Path("character.markdown")) is False
+            assert filter_by_name["Markdown"](Path("character.md")) is True
+            assert filter_by_name["Markdown"](Path("character.markdown")) is True
+            assert filter_by_name["Markdown"](Path("character.json")) is False
 
     async def test_import_filters_character_cards_accepts_webp_not_md(
         self, mock_app_instance, stub_characters
     ):
-        """task-431 AC#1: primary filter accepts .webp, drops .md as a card."""
+        """task-431 AC#1: the default filter accepts .webp, drops .md as a card.
+
+        Frame slice B2b: it also lists both pack formats (owner decision D3);
+        dev's "Card Images (PNG/WebP)" sub-filter is gone with the one picker.
+        """
         from pathlib import Path
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             picker = await self._capture_picker(
-                pilot, screen, screen._import_dialog_worker
+                pilot, screen, screen._roleplay_import_worker
             )
             filter_by_name = {
                 name: picker.filters[filter_id]
                 for name, filter_id in picker.filters.selections
             }
 
-            character_cards = filter_by_name["Character Cards"]
-            assert character_cards(Path("x.webp")) is True
-            assert character_cards(Path("x.png")) is True
-            assert character_cards(Path("x.json")) is True
-            assert character_cards(Path("README.md")) is False
-            assert character_cards(Path("x.markdown")) is False
-
-            assert "Card Images (PNG/WebP)" in filter_by_name
-            card_images = filter_by_name["Card Images (PNG/WebP)"]
-            assert card_images(Path("x.png")) is True
-            assert card_images(Path("x.webp")) is True
-            assert card_images(Path("x.json")) is False
+            roleplay_files = filter_by_name["Roleplay files"]
+            assert roleplay_files(Path("x.webp")) is True
+            assert roleplay_files(Path("x.png")) is True
+            assert roleplay_files(Path("x.json")) is True
+            assert roleplay_files(Path("x.tldw-actor-pack")) is True
+            assert roleplay_files(Path("x.tldw-persona-vpack")) is True
+            assert roleplay_files(Path("README.md")) is False
+            assert roleplay_files(Path("x.markdown")) is False
+            assert roleplay_files(Path("x.txt")) is False
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters
@@ -13513,11 +13501,11 @@ class TestImportExportFilters:
                 assert "image" not in editor.get_character_data()
 
 
-async def test_character_import_filters_helper_accepts_webp_not_md():
+async def test_roleplay_import_filters_helper_accepts_webp_not_md():
     """Unit-level guard on the module-level filter helper itself (task-431 AC#1).
 
-    Exercises ``_character_import_filters`` directly (no screen mount) so the
-    primary "Character Cards" tester's behavior is pinned independently of
+    Exercises ``_roleplay_import_filters`` directly (no screen mount) so the
+    primary "Roleplay files" tester's behavior is pinned independently of
     the dialog-worker integration test in ``TestImportExportFilters``. Marked
     ``async`` (with no ``await``) only to match this module's file-wide
     ``pytestmark = pytest.mark.asyncio`` and avoid its inapplicable-mark
@@ -13525,17 +13513,17 @@ async def test_character_import_filters_helper_accepts_webp_not_md():
     """
     from pathlib import Path
 
-    filters = personas_screen_module._character_import_filters()
+    filters = personas_screen_module._roleplay_import_filters()
     filter_by_name = {
         name: filters[filter_id] for name, filter_id in filters.selections
     }
-    character_cards = filter_by_name["Character Cards"]
+    roleplay_files = filter_by_name["Roleplay files"]
 
-    assert character_cards(Path("x.webp")) is True
-    assert character_cards(Path("x.png")) is True
-    assert character_cards(Path("x.json")) is True
-    assert character_cards(Path("README.md")) is False
-    assert character_cards(Path("x.markdown")) is False
+    assert roleplay_files(Path("x.webp")) is True
+    assert roleplay_files(Path("x.png")) is True
+    assert roleplay_files(Path("x.json")) is True
+    assert roleplay_files(Path("README.md")) is False
+    assert roleplay_files(Path("x.markdown")) is False
 
 
 # --- Roleplay UAT: character rows were identified only by a date ---

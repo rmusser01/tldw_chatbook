@@ -698,6 +698,10 @@ ADMISSION_2_TARGETS = (
     # TASK-37600: character launch selection and modal resume (bootstrap_profile).
     "Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls",
     "Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume",
+    # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
+    # one Import picker, mounted on real stores (bootstrap_profile; 30 cases,
+    # 58 s serial).
+    "Tests/UI/test_roleplay_import_app.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
