@@ -1634,3 +1634,21 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-34000.28/.31/.40 (polish-1a, PR #3259; rebased 2026-10-31 onto dev
+# 804dc00231's 1163 entries): the Notes tree's keyboard walk, the folder
+# picker listing every folder, Move note's false-conflict fix, and the filter
+# fast path with its kept draft (five gated Pilot files, each at most 30 s alone),
+# appended at the tail; existing slots stay fixed.
+Tests/UI/test_library_notes_tree_keys.py
+Tests/UI/test_library_notes_folder_picker_lists_every_folder.py
+Tests/UI/test_library_notes_move_never_false_conflicts.py
+Tests/UI/test_library_notes_filter_fast_path_and_draft.py
+Tests/UI/test_library_notes_filter_fast_path_and_draft_extended.py
+# 2026-10-26, TASK-34000.28 (polish-1a final review M-6): five boot-free,
+# fake-backed navigator pins as node ids -- the file carries ~10 pre-existing
+# reds, so it cannot be listed whole; appended at the tail, no slot moves.
+Tests/UI/test_library_notes_folder_navigator.py::test_locating_a_folder_loads_its_placements_slice_too
+Tests/UI/test_library_notes_folder_navigator.py::test_each_folder_conflict_names_what_changed_and_offers_refresh
+Tests/UI/test_library_notes_folder_navigator.py::test_refresh_is_offered_only_beside_a_folder_conflict_sentence
+Tests/UI/test_library_notes_folder_navigator.py::test_a_move_out_of_unfiled_reloads_the_unfiled_slice
+Tests/UI/test_library_notes_folder_navigator.py::test_the_next_successful_folder_operation_withdraws_the_conflict
