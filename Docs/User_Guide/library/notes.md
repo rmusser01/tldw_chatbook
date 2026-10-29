@@ -1561,6 +1561,9 @@ view keeps what it shows, says "Couldn't load recently deleted notes." and
 offers **Retry**.
 
 **Delete forever** (x) removes a note for good after a confirm that names it.
+It shows on the focused row only, so every other row keeps its whole title;
+with the mouse, click a row's title to focus that row (this restores nothing),
+then click its **Delete forever**.
 A note kept in sync with a folder is refused with "This note is kept in sync
 with a folder, so it can't be deleted forever here."; this release has no way
 to take one note out of its folder's sync. The confirm opens on **Cancel**,

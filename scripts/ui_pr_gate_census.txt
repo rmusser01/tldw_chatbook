@@ -1379,3 +1379,4 @@ Tests/UI/test_library_ctrl_s_chip_follows_save_state.py
 Tests/UI/test_library_ctrl_s_refusals.py
 Tests/UI/test_library_notes_import_escape_keeps_running.py
 Tests/UI/test_library_notes_trash_pages_and_purges_extended.py
+Tests/UI/test_library_notes_trash_focused_row_purge.py

@@ -18,7 +18,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.events import Blur, Focus, Key, Resize
+from textual.events import Blur, Click, Focus, Key, Resize
 from textual.message import Message
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
@@ -3161,7 +3161,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         ADR-055 Pattern B -- a confirm that names the note and says it
         cannot be undone, and no receipt afterwards. It is not a Tab stop:
         a row is one stop (its Restore), and ``x`` deletes the focused row
-        forever as ``r`` restores it, so a 20-row page stays 20 Tabs.
+        forever as ``r`` restores it, so a 20-row page stays 20 Tabs. It
+        shows on the focused row only (review R0, I-2; the
+        ``.library-notes-trash-row:focus-within`` rule), so every other row
+        keeps its whole title; a click on a title focuses its row.
         """
         trash = self.trash or LibraryNotesTrashState()
         yield Static(
@@ -3263,6 +3266,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     purge.note_version = row.version
                     yield purge
             yield from self._compose_trash_pager(trash)
+
+    @on(Click, ".library-notes-trash-row-copy")
+    def _trash_title_click_focuses_its_row(self, event: Click) -> None:
+        """A click on a Trash row's title or age focuses that row's Restore.
+
+        TASK-34000.29 (review R0, I-2): Delete forever shows on the focused
+        row only, so the mouse reaches it in two clicks -- the title, then
+        Delete forever -- and the first one restores nothing: it focuses the
+        row's one Tab stop, never presses it.
+
+        Args:
+            event: The click on one row's title copy.
+        """
+        row = event.widget.parent if event.widget is not None else None
+        if row is None:
+            return
+        restore = next(iter(row.query(".library-notes-trash-restore")), None)
+        if restore is None:
+            return
+        event.stop()
+        restore.focus()
 
     def _compose_trash_failure(self) -> ComposeResult:
         """One failure line and a Retry (review R1 N-2, ruling T8-i).
