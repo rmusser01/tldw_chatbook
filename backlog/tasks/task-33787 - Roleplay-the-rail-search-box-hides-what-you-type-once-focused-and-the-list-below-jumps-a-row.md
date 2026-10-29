@@ -47,3 +47,9 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 - [ ] #4 At the widths where the rail stacks its toolbars today (including 80x24 and 120x36), the last toolbar action (Tag) still lies inside the pane.
 - [ ] #5 Regression tests assert at 120x36 and 160x45 that the focused search box has at least one content row and that the first list row's position is the same before focus, while focused and after typing; they fail on the current code.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+- 2026-10-29 (Roleplay frame B2b): absorbed by TASK-33910.4 (spec 5.5, S): still To Do on dev at B2b's start, so its AC#1-#5 are TASK-33910.4's AC#19-#23, delivered by B2b's one-row toolbar (Task 7) and the placeholder lift (Task 8). It stays To Do until B2b's close-out sets it Done with the evidence.
+<!-- SECTION:NOTES:END -->
