@@ -442,3 +442,25 @@ def test_a_purge_keeps_the_cancelled_receipt_unreplayable(tmp_path) -> None:
         after = value_traces(connection, _needles(seed.note_id))
     assert guard[0] == f"purged:{_GUARD_RECEIPT}" and guard[1] == "{}" and guard[2]
     assert not [where for where in after if where.startswith("note_sync_publication")]
+
+
+def test_note_ids_present_names_live_and_soft_deleted_rows_but_not_a_purged_one(
+    tmp_path,
+) -> None:
+    """Final review C-1: the Sync v2 push's existence seam, one statement.
+
+    A live note and a soft-deleted note have a row; a note deleted for good
+    has none, and an id the database never held is absent too. Blank ids
+    are ignored, and the deleted-or-not contrast with ``live_note_ids`` is
+    pinned beside it so the two never drift into one another.
+    """
+    seed = _Purgeable(tmp_path, backlinked=False)
+    db = seed.db
+    trash = db.add_note("Trash note", "kept for now")
+    db.soft_delete_note(trash, db.get_note_by_id(trash)["version"])
+    assert db.hard_delete_note(seed.note_id, expected_version=seed.version) is True
+
+    asked = [seed.keeper, trash, seed.note_id, "never-existed", ""]
+    assert db.note_ids_present(asked) == {seed.keeper, trash}
+    assert db.live_note_ids(asked) == {seed.keeper}
+    assert db.note_ids_present([]) == set()
