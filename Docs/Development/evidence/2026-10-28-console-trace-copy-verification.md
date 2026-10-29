@@ -285,3 +285,25 @@ premature match and the fixed wait for settled readiness. All three controls
 pass, as do Ruff/format and whitespace checks. Windows reports the POSIX fixture's
 `supports_writes()` as false, so the unchanged real sync/storage journey remains
 subject to its required Linux CI rather than a claimed local end-to-end pass.
+
+### Reviewed diagnostic inventory refresh
+
+At `67406398ad`, all 37 other checks passed, including PR Fast Lane and the real
+Linux UI Fast Lane (9) Notes journey. The final derived-artifact job
+`123303260197` found only a stale diagnostic inventory owner row. The official
+`--statements` report against the pin's commit `a9e14bf08c78e5ac4750033e477b1f13bc322e84`
+shows two added warnings (trace-copy and note-save failures, each logging a fixed
+label plus `type(error).__name__`) and removal of the old note warning with title
+length and `exc_info=True`. No user payload, exception message, secret, path or
+traceback is added; no sink topology changes. Independent review confirmed that
+privacy assessment before regeneration.
+
+Ran the official builder/checker on an owned clean projection of 2830 tracked
+Python/marker/inventory inputs, preserving the unrelated untracked AppleDouble
+files in the working checkout. The generated artifact changes only
+`review_selection.py`'s count **4 → 5** and digest
+**bf1a8f227f525815cf81 → d879ccad115704b3f0a4**. Structural checks prove every
+other owner and top-level field unchanged. The official `--diff` check reports
+no drift: 701 owners, 1053 TASK-492 calls, 56 TASK-31551 calls, 7767 TASK-494 calls
+and 16 sink files. Copied that generated artifact into the checkout only after
+those checks. No product code, sink policy or test assertion changed.

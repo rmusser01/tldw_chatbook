@@ -244,3 +244,15 @@ under deterministic delayed-row and pruning controls; static checks and an
 independent review pass. The real POSIX sync journey is verified by Linux CI;
 the Windows host correctly reports that writable fixture unsupported. No product
 behavior changed. Disarmed and synchronized the PR before this test-only fix.
+
+The real Linux Notes journey and all 37 non-artifact checks passed at
+`67406398ad`. The last derived-artifact gate identified the reviewed diagnostic
+inventory's stale selection-controller row. Official statement comparison shows
+two fixed-label/exception-type-only warnings replacing the old note warning
+with traceback logging; no payload, secret, path or sink was added. Independent
+review confirmed the change before regeneration. The official builder/checker
+on a clean tracked-source projection passed with only that owner's count/digest
+updated (4→5, bf1a8f227f525815cf81→d879ccad115704b3f0a4); all other inventory
+fields remain identical. No product behavior or assertion changed, and unrelated
+untracked scanner inputs were preserved. Disarmed/synchronized before this pin
+refresh and retained required CI for the new head.
