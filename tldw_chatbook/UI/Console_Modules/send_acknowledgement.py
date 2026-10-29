@@ -230,8 +230,8 @@ class ConsoleSendAcknowledgement:
         next row (the reply placeholder, a hook or block notice), the echo
         stops being a plain row, or the turn's custody ends. The echo has no
         "Sending…" line, so swapping it in alone moved every row above it,
-        and the placeholder moved them all again 120-300 ms later: now both
-        land in one layout pass.
+        and the placeholder moved them all again 120-150 ms later (headless,
+        160x45): now both land in one layout pass.
 
         Args:
             session_id: The session the rows belong to.
