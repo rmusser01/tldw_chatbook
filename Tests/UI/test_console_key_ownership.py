@@ -825,10 +825,12 @@ async def test_a_closed_row_menu_does_not_eat_a_later_esc(kind):
 
 
 @pytest.mark.asyncio
-async def test_the_focus_cue_never_grows_the_composer():
+async def test_focus_leaving_the_composer_never_resizes_it():
     """TASK-33622.3 review: the 'Esc to type' cue rides on the draft's last
     row only where it fits there, so focus leaving the composer (F6, a rail
-    click) never adds a row to the bar; where it fits, it still shows."""
+    click) never adds a row to the bar; where it fits, it still shows. (It
+    also fills the row the focused caret cell reserves at an exactly-full
+    last row, which dev gives back on blur.)"""
     app = _TypeToComposeApp()
     async with app.run_test(size=(120, 20)) as pilot:
         screen = app.screen
