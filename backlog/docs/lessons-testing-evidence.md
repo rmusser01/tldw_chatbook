@@ -62,6 +62,7 @@ row; single-line ellipsis preserves their identifying prefix.
 click outcome, especially on one-row controls. Reuse the design language's
 non-obscuring focus contract; a successful event alone does not prove a person
 can identify its target.
+
 ## An after-content Stop test must receive real content first (TASK-37270, 2026-10-28)
 
 **Incident.** The heartbeat regression used the real llama.cpp native-tools dispatch
