@@ -3311,8 +3311,8 @@ class ConsoleRuntime:
 
         Not while its paused send's card is acting on it (held), and not once
         that send has been accepted: either way Restore would send it twice.
-        Other states are not a signal: a durable-commit failure leaves its
-        preparation COMMITTING, and its turn must stay restorable.
+        Other states are not a signal: a failed durable commit is paused, or
+        COMMITTING under another owner, and its turn must stay restorable.
         """
         preparation_id = entry.preparation_id
         if preparation_id is None:

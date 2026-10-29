@@ -671,8 +671,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # with no model chosen the vision row stays hidden under the setup strip.
 # Dev's 1141 + 3 = 1144.
 # PR3303 retains all 1249 dev entries and appends four loss-guard entries.
-MINIMUM_FILES = 1258
 # PR3306 retains all 1253 dev entries and appends five character prompt nodes.
+# TASK-33621.53 (2026-10-29) appends 3 entries at the tail: the unreserved
+# commit-failure file (three unmounted cases, about 8 s locally) and two
+# mounted cases of its recovery file as node ids (about 5-13 s each), so no
+# existing entry changes shard: dev's 1140 + 3 = 1143.
+# Rebased 2026-10-29 onto dev's 1141 entries (TASK-36611's +1): 1141 + 3 = 1144.
+# Rebased 2026-10-29 onto dev's 1145 entries (TASK-33620.15.20's +2): 1145 + 3 = 1148.
+MINIMUM_FILES = 1261
 
 
 def read_census(path: Path) -> list[str]:

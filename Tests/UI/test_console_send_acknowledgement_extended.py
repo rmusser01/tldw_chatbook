@@ -120,6 +120,8 @@ async def test_turn_refused_before_its_echo_releases_the_row_and_offers_recovery
 @pytest.mark.asyncio
 async def test_failed_durable_commit_releases_the_row_and_restores_send():
     """AC#3: a durable-commit failure leaves no "Sending…" and offers the turn."""
+    # TASK-33621.53: replacing the store's commit wholesale fails it before
+    # the store's own reservation -- the path that used to jam the chat.
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
@@ -149,15 +151,20 @@ async def test_failed_durable_commit_releases_the_row_and_restores_send():
                 # The durable commit comes after provider validation.
                 gateway.validation_release.set()
             await until(lambda: not console._console_runtime().has_custodied_turns())
-            await until(lambda: paint_state(host).header_idle)
+            # TASK-33621.53: the failed send pauses as "send not saved". It
+            # used to stay COMMITTING behind an idle header, and no card or
+            # shelf action could end it, so the chat refused every later send.
+            not_saved = "Run: Blocked — send not saved"
+            await until(lambda: not_saved in "\n".join(_painted_lines(host)))
             await pilot.pause()
             settled = paint_state(host)
             painted = "\n".join(_painted_lines(host))
-            assert not settled.sending and not settled.run_chip, settled
-            assert settled.header_idle, settled
-            # Send is Send again, and the shelf offers the refused turn back
+            assert not settled.sending and not settled.header_idle, settled
+            assert "Running" not in painted and "Preparing..." not in painted
+            # The card says so, and the shelf offers the refused turn back
             # (measured: "Not sent: Couldn't save the prepared turn. Retry
             # or…" with Restore and Discard).
+            assert "Send could not be saved; your message was not sent" in painted
             assert "Sending" not in painted
             assert "Not sent: " in painted and "Restore" in painted, painted
             assert not console._console_send_ack.active_for(store.active_session_id)
