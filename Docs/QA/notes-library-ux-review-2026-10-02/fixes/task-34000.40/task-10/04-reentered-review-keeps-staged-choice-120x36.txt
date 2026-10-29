@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐  N    N   Add files to Library notes.                                                  │
+│ │ Navigat…    Collapse      │  a    o   Choice staged. No changes yet.                                               │
+│ │     Import…               │  v    t   0 safe · 1 need attention · 0 skipped · 0 folder moves                       │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e   Syncs .md, .markdown and .txt only; other files are left alone.              │
+│ │ ▊ Search Library…   ▎▊x▎  │       s   Both file and note changed (1)                                               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │           quotes.md · Both file and note changed · VSync                               │
+│ │                           │           quotes                                                                       │
+│ │ ────────────────────────  │             View comparison                                                            │
+│ │ Browse               ▾    │           Selected: Keep both                                                          │
+│ │    Media (0)              │<---         ✓ Keep both                                                                │
+│ │    Conversations (0)      │           preserve an unbound note copy                                                │
+│ │  ▸ Notes (601)            │           then update the bound note.                                                  │
+│ │    Prompts (0) — reuse    │             Keep file                                                                  │
+│ │    Skills (1)             │     --->  update the Library note                                                      │
+│ │    Collections (0)        │             Keep note                                                                  │
+│ │    Search / RAG           │           replace the folder file                                                      │
+│ │ ────────────────────────  │             Skip for now                                                               │
+│ │ Artifacts            ▾    │           make no changes                                                              │
+│ │    All artifacts        ▁ │<---                                                                                    │
+│ │    Chatbooks              │                                                                                        │
+│ │    Reports                │                                                                                        │
+│ │    Dreams                 │                                                                                        │
+│ │ ────────────────────────  │                                                                                        │
+│ │ Create               ▾    │                                                                                        │
+│ │    New note               │                                                                                        │
+│ │    New prompt             │                                                                                        │
+│ │  ▾ scroll for more        │                                                                                        │
+│ └───────────────────────────┘              Apply reviewed     Resolution history     ‹ Sync folders                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
