@@ -19,10 +19,17 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.Notes.notes_sync_tail_edit_support import (
     TAIL_EDIT as _TAIL_EDIT,
+)
+from Tests.Notes.notes_sync_tail_edit_support import (
     Vault as _Vault,
+)
+from Tests.Notes.notes_sync_tail_edit_support import (
     build_owner as _owner,
+)
+from Tests.Notes.notes_sync_tail_edit_support import (
     wedge_root as _wedge,
 )
 from Tests.UI.app_factory import _build_test_app
@@ -33,9 +40,8 @@ from Tests.UI.library_quit_guard_support import (
     _settings_without_splash,
     _until,
 )
-from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
 from Tests.UI.test_library_notes_sync_delete_restore import LIST, _live_button
-from Tests.app_module_patches import patch_app_global
+from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
 
 #: The user-visible copy, spelled out so a RED run fails on behaviour.
 NOTES_TREE_SYNC_ATTENTION_STATUS = "⚠ Needs attention"
