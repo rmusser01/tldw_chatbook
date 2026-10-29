@@ -185,6 +185,9 @@ class SummaryStep(SetupStep):
         note = posture_mod.quick_defaults_note(
             posture_mod.tools_posture(all_tool_gates(config=config)),
             auto_retrieve=read_auto_retrieve(config),
+            default_theme=not wizard_state.theme_is_custom(
+                wizard_state.read_wizard_prefill(config).default_theme
+            ),
         )
         # TASK-34100.5.3 (kept in the rebase): called after an await, so
         # query() -- a removed subtree is a no-op, not a NoMatches.
