@@ -831,9 +831,7 @@ def _rows(first: int, last: int, kind: str = "character") -> tuple[LibraryRow, .
 
 async def _host(pilot, rows: tuple[LibraryRow, ...], *, total: int | None = None):
     pane = pilot.app.query_one(PersonasLibraryPane)
-    await pane.update_rows(
-        rows, total=len(rows) if total is None else total, noun="characters"
-    )
+    await pane.update_rows(rows, total=len(rows) if total is None else total)
     await pilot.pause()
     return pane, pane.item_list
 
@@ -944,7 +942,7 @@ async def test_a_mark_column_click_on_a_row_that_just_left_does_nothing():
     B2a (dev's ListView had no mark column); fixed here."""
     async with _PaneHost().run_test(size=(120, 36)) as pilot:
         pane, item_list = await _host(pilot, _rows(1, 3))
-        await pane.update_rows(_rows(1, 1), total=1, noun="characters")
+        await pane.update_rows(_rows(1, 1), total=1)
         await pilot.pause()
         x = item_list.gutter.left + frame_state.gutter_mark_columns().start
         y = item_list.gutter.top
@@ -1036,7 +1034,7 @@ async def test_the_cursor_comes_back_by_id_after_set_options():
     async with _PaneHost().run_test(size=(120, 36)) as pilot:
         pane, item_list = await _host(pilot, _rows(1, 50))
         await select_roleplay_item(pilot, pilot.app.screen, "character:30", load=False)
-        await pane.update_rows(_rows(10, 60), total=51, noun="characters")
+        await pane.update_rows(_rows(10, 60), total=51)
         await pilot.pause()
         assert highlighted_item_id(pilot.app.screen) == "character:30"
 
@@ -1101,7 +1099,7 @@ async def test_a_kind_switch_forgets_the_window_state():
         item_list.set_more_available(True)
         assert pane.mark_active_row("character", "300") is False
         pane.set_mode("lore")
-        await pane.update_rows(_rows(1, 5, kind="lore"), total=5, noun="lore books")
+        await pane.update_rows(_rows(1, 5, kind="lore"), total=5)
         await pilot.pause()
         assert not item_list.more_available
         item_list.focus()
@@ -1112,7 +1110,7 @@ async def test_a_kind_switch_forgets_the_window_state():
         assert highlighted_item_id(pilot.app.screen) == "lore:5"
         assert pilot.app.wanted == []
         pane.set_mode("characters")
-        await pane.update_rows(_rows(1, 200), total=348, noun="characters")
+        await pane.update_rows(_rows(1, 200), total=348)
         item_list.append_rows(_rows(201, 348))
         await pilot.pause()
         assert highlighted_item_id(pilot.app.screen) != "character:300"
@@ -1519,11 +1517,11 @@ async def test_marks_survive_a_search_and_count_the_hidden_ones():
         pane, item_list = await _host(pilot, _rows(1, 10))
         item_list.focus()
         await _mark(pilot, "character:1", "character:2", "character:3")
-        await pane.update_rows(_rows(3, 10), total=10, noun="characters", filtered=True)
+        await pane.update_rows(_rows(3, 10), total=10, filtered=True)
         await pilot.pause()
         assert _bar_text(pilot).startswith("✓ 3 marked (2 hidden) · Export…")
         assert item_at(pilot.app.screen, "character:3").marked
-        await pane.update_rows(_rows(1, 10), total=10, noun="characters")
+        await pane.update_rows(_rows(1, 10), total=10)
         await pilot.pause()
         assert _bar_text(pilot).startswith("✓ 3 marked · Export…")
         assert [item_at(pilot.app.screen, i).marked for i in range(4)] == [
@@ -1555,12 +1553,12 @@ async def test_marks_are_kept_per_kind_across_a_kind_switch():
         item_list.focus()
         await _mark(pilot, "character:4")
         pane.set_mode("lore")
-        await pane.update_rows(_rows(1, 3, kind="lore"), total=3, noun="lore books")
+        await pane.update_rows(_rows(1, 3, kind="lore"), total=3)
         await pilot.pause()
         assert _bar_text(pilot) == ""
         assert pilot.app.marks[-1] == ()
         pane.set_mode("characters")
-        await pane.update_rows(_rows(1, 10), total=10, noun="characters")
+        await pane.update_rows(_rows(1, 10), total=10)
         await pilot.pause()
         assert _bar_text(pilot).startswith("✓ 1 marked")
         assert pilot.app.marks[-1] == (("character", "4", "Row 0004"),)
@@ -1911,3 +1909,117 @@ def test_every_user_move_counts_toward_the_import_intent():
     state.kind_switched()
     state.reload_started()
     assert state.moves == 2
+
+
+# ---- Empty, no match, loading (frame slice B2b, spec 1.5.4; TASK-33788) ----
+
+
+@pytest.mark.parametrize(
+    ("kind", "found"),
+    [
+        ("character", 'No characters match "kepler".'),
+        ("persona", 'No personas match "kepler".'),
+        ("lore", 'No lore books match "kepler".'),
+        ("dictionary", 'No chat dictionaries match "kepler".'),
+    ],
+)
+def test_no_match_view_names_the_query_the_total_and_how_to_clear(kind, found):
+    """TASK-33788 AC#1: what found nothing, the total, and the way out. On dev
+    every kind said "No <kind> yet - use New or Import to add one." here."""
+    view = frame_state.no_match_view(kind, query="kepler", tag=None, total=28)
+    assert view.lines == (found, "28 in total · esc clears the search")
+
+
+def test_a_tag_only_no_match_names_the_tag():
+    assert frame_state.no_match_view(
+        "character", query="", tag="fantasy", total=28
+    ).lines == (
+        'No characters have the tag "fantasy".',
+        "28 in total · esc clears the tag",
+    )
+    assert frame_state.no_match_view(
+        "character", query="zzqx", tag="fantasy", total=28
+    ).lines == (
+        'No characters match "zzqx" with the tag "fantasy".',
+        "28 in total · esc clears the search and tag",
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["kepler\nevil\tline", "a" * 60, "界" * 30, "[b]x\n[/]"],
+    ids=["multiline", "long", "wide", "markup"],
+)
+def test_a_long_or_multiline_query_is_cut_to_one_line_literally(query):
+    """The query is untrusted (R33): one line, at most 24 cells, as typed."""
+    found = frame_state.no_match_view(
+        "character", query=query, tag=None, total=3
+    ).lines[0]
+    echoed = found.removeprefix('No characters match "').removesuffix('".')
+    assert "\n" not in found and "\t" not in found
+    assert cell_len(echoed) <= frame_state.NO_MATCH_ECHO_MAX_CELLS
+    one_line = " ".join(query.split())
+    if cell_len(one_line) <= frame_state.NO_MATCH_ECHO_MAX_CELLS:
+        assert echoed == one_line
+    else:
+        assert echoed.endswith("…") and one_line.startswith(echoed[:-1])
+
+
+def test_unknown_total_omits_in_total(ascii_mode):
+    """A server search has no unfiltered total (OQ14): no "N in total"."""
+    assert frame_state.no_match_view(
+        "character", query="kepler", tag=None, total=None
+    ).lines == ('No characters match "kepler".', "esc clears the search")
+    assert frame_state.no_match_view("lore", query="kepler", tag=None, total=2).lines[
+        1
+    ] == ("2 in total - esc clears the search")
+
+
+async def test_empty_kind_copy_only_when_the_unfiltered_total_is_zero():
+    """TASK-33788 AC#2: "No X yet" only for a kind that holds nothing; a search
+    or tag that empties the list says what it searched instead."""
+    app = _ToolbarHost()
+    async with app.run_test(size=(60, 30)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        await pane.update_rows((), total=0)
+        assert _status_lines(pane) == (
+            "empty",
+            ("No characters yet - use New or Import to add one.",),
+        )
+        await pane.update_rows((), total=12, filtered=True, query="zzqx")
+        assert _status_lines(pane) == (
+            "no_match",
+            ('No characters match "zzqx".', "12 in total · esc clears the search"),
+        )
+        pane.set_mode("dictionaries")
+        await pane.update_rows((), total=0)
+        assert _status_lines(pane) == (
+            "empty",
+            ("No chat dictionaries yet - use New or Import to add one.",),
+        )
+        await pane.update_rows(_rows(1, 2, kind="dictionary"), total=2)
+        await pilot.pause()
+        assert _status_lines(pane) == ("rows", ())
+
+
+def test_loading_copy_names_the_kind(ascii_mode):
+    assert frame_state.loading_text("lore") == "Loading lore books..."
+    set_ascii_glyph_mode(False)
+    assert frame_state.loading_text("character") == "Loading characters…"
+    assert frame_state.LOADING_DELAY_SECONDS == 0.25
+
+
+def _status_lines(pane) -> tuple[str, tuple[str, ...]]:
+    """Which status the pane shows beside its list, and its painted lines."""
+    status = pane.query_one("#personas-library-status")
+    no_match = pane.query_one("#personas-library-nomatch")
+    if status.display and status.children:
+        static = status.children[0]
+        state = "empty" if static.id == "personas-library-empty" else "recovery"
+        return state, (str(static.render()),)
+    if no_match.display:
+        return "no_match", tuple(
+            str(line.render())
+            for line in no_match.query(".personas-library-status-copy")
+        )
+    return "rows", ()

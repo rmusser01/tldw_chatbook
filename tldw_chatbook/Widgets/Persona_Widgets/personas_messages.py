@@ -39,6 +39,7 @@ PersonaAction = Literal[
     "save",
     "cancel",
     "refresh",
+    "retry",  # frame slice B2b: read the failed items list again (spec 1.5.4)
 ]
 PersonaBuddyAction = Literal["use", "show", "close", "disable"]
 PersonaBuddySource = Literal["local", "server"]

@@ -28,6 +28,7 @@ from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.events import Resize
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
@@ -713,6 +714,10 @@ class PersonasLibraryPane(Vertical):
         self._mode = "characters"
         self._sort_key = "name_asc"
         self._toolbar_fit: frame_state.ToolbarFit | None = None
+        # The delayed "Loading <kind>…" (spec 1.5.4): its timer, and a serial
+        # that a stop bumps, so a callback already queued says nothing.
+        self._loading_timer: Timer | None = None
+        self._loading_serial = 0
 
     @property
     def item_list(self) -> RoleplayItemList:
@@ -854,6 +859,39 @@ class PersonasLibraryPane(Vertical):
         status = Vertical(id="personas-library-status")
         status.display = False
         yield status
+        # A failed read's way back (spec 1.5.4 "Failure"): shown with the
+        # recovery copy, in every kind (frame slice B2b; dev had none).
+        retry = Button(
+            Content("Retry"),
+            id="personas-library-retry",
+            tooltip="Read this list again.",
+            classes="console-action-secondary",
+            compact=True,
+        )
+        retry.display = False
+        yield retry
+        # The no-match message (spec 1.5.4): composed once and updated in
+        # place, so a keystroke that keeps the list empty mounts nothing; the
+        # query it echoes is untrusted, so both lines paint with markup off.
+        no_match = Vertical(id="personas-library-nomatch")
+        no_match.display = False
+        with no_match:
+            for part in ("line", "hint"):
+                yield Static(
+                    "",
+                    id=f"personas-library-nomatch-{part}",
+                    classes="personas-library-status-copy",
+                    markup=False,
+                )
+        # "Loading <kind>…", only once a kind's read takes 250 ms (spec 1.5.4).
+        loading = Static(
+            "",
+            id="personas-library-loading",
+            classes="personas-library-status-copy",
+            markup=False,
+        )
+        loading.display = False
+        yield loading
         yield RoleplayItemList(
             id="personas-library-rows", window_state=self._window_state
         )
@@ -908,13 +946,14 @@ class PersonasLibraryPane(Vertical):
         rows: tuple[LibraryRow, ...],
         *,
         total: int,
-        noun: str,
         filtered: bool = False,
         matched: int | None = None,
         title: str | None = None,
         recovery_copy: str | None = None,
         recovery_id: str = "personas-library-recovery",
         anchor: frame_state.ListAnchor | None = None,
+        query: str = "",
+        tag: str | None = None,
     ) -> None:
         """Replace the visible rows (one ``set_options``) and the border titles.
 
@@ -925,9 +964,9 @@ class PersonasLibraryPane(Vertical):
             rows: Selectable library rows to render when no recovery state is
                 active (for characters: the loaded windows, spec 1.5.6).
             total: The kind's total: the title's count when unfiltered, the
-                "of M" when filtered, and the density rule's item count.
-            noun: User-facing noun used in the empty copy.
-            filtered: Whether a search or tag narrows the list.
+                "of M" when filtered (and the no-match line's "N in total"),
+                and the density rule's item count.
+            filtered: Whether a search or tag narrows the list's count.
             matched: The narrowed list's COUNT (default: ``len(rows)`` when
                 filtered, else ``total``): the M of the bottom border's
                 ``#N of M``.
@@ -937,6 +976,9 @@ class PersonasLibraryPane(Vertical):
                 pane shows it instead of list or empty rows.
             recovery_id: Stable DOM id for the recovery copy widget.
             anchor: Where the list stood before a reload from the anchor.
+            query: The search these rows answer; with ``tag``, an empty list
+                says what found nothing instead of "No <kind> yet" (spec 1.5.4).
+            tag: The tag these rows answer.
 
         Returns:
             None.
@@ -955,16 +997,27 @@ class PersonasLibraryPane(Vertical):
             visible_rows, kind_total=total, anchor=anchor
         ):
             logger.debug("PersonasLibraryPane dropped a duplicate row id {}", dropped)
+        no_match: frame_state.NoMatchView | None = None
+        status: tuple[str, str] | None = None
         if recovery_copy:
-            status: tuple[str, str] | None = (recovery_id, recovery_copy)
-        elif not visible_rows:
-            status = (
-                "personas-library-empty",
-                f"No {noun} yet - use New or Import to add one.",
+            status = (recovery_id, recovery_copy)
+        elif visible_rows:
+            pass
+        elif query or tag:
+            # TASK-33788: dev said "No <kind> yet" for a search that matched
+            # nothing; "N in total" only where the count says it (filtered).
+            no_match = frame_state.no_match_view(
+                item_list.kind, query=query, tag=tag, total=total if filtered else None
             )
         else:
-            status = None
+            status = (
+                "personas-library-empty",
+                frame_state.empty_kind_text(item_list.kind),
+            )
+        self._stop_loading()
         await self._sync_status(status)
+        self._show_no_match(no_match)
+        self._show_retry(bool(recovery_copy))
         if title is None:
             title = frame_state.items_border_title(
                 item_list.kind,
@@ -991,6 +1044,62 @@ class PersonasLibraryPane(Vertical):
             )
         container.display = status is not None
         self._status_key = status
+
+    def _show_no_match(self, view: frame_state.NoMatchView | None) -> None:
+        """Show or hide the no-match message; updated in place, never mounted."""
+        if view is not None:
+            for part, text in zip(("line", "hint"), view.lines):
+                self.query_one(f"#personas-library-nomatch-{part}", Static).update(text)
+        self.query_one("#personas-library-nomatch", Vertical).display = view is not None
+
+    def no_match_showing(self) -> bool:
+        """Whether the no-match message shows: a search or tag listed nothing."""
+        return bool(self.query_one("#personas-library-nomatch", Vertical).display)
+
+    def _show_retry(self, shown: bool) -> None:
+        """Show Retry with the recovery copy; a hidden Retry hands its focus to the list (I1)."""
+        retry = self.query_one("#personas-library-retry", Button)
+        if not shown and retry.has_focus:
+            self.item_list.focus()
+        retry.display = shown
+
+    async def show_loading(self) -> None:
+        """A kind's first read started: blank the old kind's rows now, and say
+        ``Loading <kind>…`` only if the read takes 250 ms (spec 1.5.4).
+
+        On dev the previous kind's rows and title stayed up until the new
+        kind's read landed, and Personas said "No personas yet" meanwhile.
+        The next ``update_rows`` ends the wait.
+        """
+        self._stop_loading()
+        self.item_list.show_rows((), kind_total=0)
+        self._list_total = None
+        self._filtered = False
+        await self._sync_status(None)
+        self._show_no_match(None)
+        self._show_retry(False)
+        self.set_title(frame_state.items_border_title(self.item_list.kind, total=None))
+        serial = self._loading_serial
+        self._loading_timer = self.set_timer(
+            frame_state.LOADING_DELAY_SECONDS, lambda: self._loading_due(serial)
+        )
+
+    def _loading_due(self, serial: int) -> None:
+        """The read is still running after the delay: say so (a stopped timer's late call says nothing)."""
+        if serial != self._loading_serial:
+            return
+        self._loading_timer = None
+        loading = self.query_one("#personas-library-loading", Static)
+        loading.update(frame_state.loading_text(self.item_list.kind))
+        loading.display = True
+
+    def _stop_loading(self) -> None:
+        """The wait ended (rows, an empty kind or a failure arrived)."""
+        self._loading_serial += 1
+        if self._loading_timer is not None:
+            self._loading_timer.stop()
+            self._loading_timer = None
+        self.query_one("#personas-library-loading", Static).display = False
 
     def mark_active_row(
         self,
@@ -1253,6 +1362,12 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
+
+    @on(Button.Pressed, "#personas-library-retry")
+    def _retry_pressed(self, event: Button.Pressed) -> None:
+        """Read the failed list again (spec 1.5.4 "Failure")."""
+        event.stop()
+        self.post_message(PersonaActionRequested(action="retry"))
 
     @on(Button.Pressed, "#personas-library-sort")
     def _sort_pressed(self, event: Button.Pressed) -> None:

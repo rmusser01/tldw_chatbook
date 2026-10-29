@@ -1164,3 +1164,74 @@ def fit_items_toolbar(mode: str, *, width: int, sort_key: str) -> ToolbarFit:
     widest = max(CONTROL_GAP_CELLS + cell_len(label) for label in full.values())
     labels = full if widest <= width else short
     return fit(1 + len(controls), labels, width, True)
+
+
+# ---- Empty, no match, loading (frame slice B2b, spec 1.5.4) ----
+
+#: ``Loading <kind>…`` shows only once a kind's read has taken this long.
+LOADING_DELAY_SECONDS = 0.25
+#: The echoed query or tag is cut to this many cells, on one line (R33).
+NO_MATCH_ECHO_MAX_CELLS = 24
+
+
+def empty_kind_text(kind: str) -> str:
+    """The list's line when the kind holds nothing at all (its unfiltered total is 0).
+
+    It keeps the New/Import hint until frame slice B5b-2's kind empty state
+    takes the explanation (spec R25), in the canonical nouns.
+    """
+    return f"No {ITEM_KINDS[kind][1]} yet - use New or Import to add one."
+
+
+def loading_text(kind: str) -> str:
+    """``Loading characters…`` (spec 1.5.4)."""
+    return f"Loading {ITEM_KINDS[kind][1]}{resolve_glyph(_ELLIPSIS)}"
+
+
+@dataclass(frozen=True)
+class NoMatchView:
+    """What the list says when a search or tag leaves it empty (spec 1.5.4).
+
+    Attributes:
+        lines: What found nothing (``No characters match "kepler".``) and the
+            way out (``28 in total · esc clears the search``). Plain text: the
+            pane paints it with markup off (the query and tag are untrusted).
+    """
+
+    lines: tuple[str, str]
+
+
+def no_match_view(
+    kind: str, *, query: str, tag: str | None, total: int | None
+) -> NoMatchView:
+    """The no-match message for a search, a tag, or both (spec 1.5.4, RP-022).
+
+    Args:
+        kind: The list's entity kind (``ITEM_KINDS`` keys).
+        query: The search as typed (cut to one line of
+            ``NO_MATCH_ECHO_MAX_CELLS`` cells).
+        tag: The active tag, if any (cut the same way).
+        total: The kind's unfiltered total; None when it is unknown (a
+            server search), which leaves ``N in total`` out.
+
+    Returns:
+        The two lines.
+    """
+    noun = ITEM_KINDS[kind][1]
+
+    def echo(text: str) -> str:
+        return ellipsize_cells(_one_line(text), NO_MATCH_ECHO_MAX_CELLS)
+
+    if query and tag:
+        found = f'No {noun} match "{echo(query)}" with the tag "{echo(tag)}".'
+        cleared = "the search and tag"
+    elif tag:
+        found = f'No {noun} have the tag "{echo(tag)}".'
+        cleared = "the tag"
+    else:
+        found = f'No {noun} match "{echo(query)}".'
+        cleared = "the search"
+    way_out = f"esc clears {cleared}"
+    if total is not None:
+        way_out = f"{total} in total {resolve_glyph(_SEPARATOR)} {way_out}"
+    return NoMatchView((found, way_out))

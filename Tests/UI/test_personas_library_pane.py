@@ -54,7 +54,7 @@ async def test_pane_renders_search_toolbar_and_empty_state():
         assert pilot.app.query_one("#personas-library-search", Input)
         assert pilot.app.query_one("#personas-library-new", Button)
         assert pilot.app.query_one("#personas-library-import", Button)
-        await pane.update_rows((), total=0, noun="characters")
+        await pane.update_rows((), total=0)
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         assert "No characters yet" in str(empty.renderable)
@@ -68,7 +68,7 @@ async def test_update_rows_renders_rows_and_count():
             LibraryRow(item_id="1", kind="character", name="Detective Sam"),
             LibraryRow(item_id="2", kind="character", name="Tutor"),
         )
-        await pane.update_rows(rows, total=2, noun="characters")
+        await pane.update_rows(rows, total=2)
         await pilot.pause()
         assert len(visible_item_ids(pilot.app.screen)) == 2
         # OBSOLETE (D14-A): spec 1.5.3 (R24) drops the list's unsaved marker;
@@ -87,7 +87,6 @@ async def test_unfiltered_count_line_stays_empty():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         assert str(pane.border_title) == "Characters 1"
@@ -103,7 +102,6 @@ async def test_singular_filtered_count_uses_singular_noun():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Only One"),),
             total=1,
-            noun="dictionaries",
             filtered=True,
         )
         await pilot.pause()
@@ -118,7 +116,6 @@ async def test_filtered_count_shows_n_of_m():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=12,
-            noun="characters",
             filtered=True,
         )
         await pilot.pause()
@@ -140,7 +137,6 @@ async def test_row_press_posts_persona_entity_selected():
         await pane.update_rows(
             (LibraryRow(item_id="7", kind="character", name="Detective Sam"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         await select_roleplay_item(pilot, pilot.app.screen, "character:7", via="click")
@@ -183,7 +179,6 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pane.mark_active_row("character", "2")
@@ -207,7 +202,6 @@ async def test_toolbar_and_rows_carry_shared_flat_button_classes():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         # SEMANTIC (D14-A): rows are option lines styled by the list's
@@ -235,7 +229,6 @@ async def test_active_row_keeps_subdued_and_is_active_markers():
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pane.mark_active_row("character", "1")
@@ -266,7 +259,7 @@ async def test_import_is_shown_in_every_mode_and_the_empty_copy_names_it():
         assert not pilot.app.query("#personas-library-duplicate")
         assert not pilot.app.query("#personas-library-new-actor-pack")
         pane.set_mode("personas")
-        await pane.update_rows((), total=0, noun="personas")
+        await pane.update_rows((), total=0)
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         assert (
@@ -280,8 +273,8 @@ async def test_update_rows_twice_in_same_tick_does_not_crash():
         pane = pilot.app.query_one(PersonasLibraryPane)
         rows_a = (LibraryRow(item_id="1", kind="character", name="First"),)
         rows_b = (LibraryRow(item_id="2", kind="character", name="Second"),)
-        await pane.update_rows(rows_a, total=1, noun="characters")
-        await pane.update_rows(rows_b, total=1, noun="characters")
+        await pane.update_rows(rows_a, total=1)
+        await pane.update_rows(rows_b, total=1)
         await pilot.pause()
         assert visible_item_ids(pilot.app.screen) == ("character:2",)
         assert item_at(pilot.app.screen, 0).name == "Second"
@@ -307,7 +300,6 @@ async def test_arrow_navigation_and_enter_selects():
                 LibraryRow(item_id="3", kind="character", name="Navigator"),
             ),
             total=3,
-            noun="characters",
         )
         await pilot.pause()
         pilot.app.query_one("#personas-library-rows").focus()
@@ -348,7 +340,6 @@ async def test_search_enter_jumps_to_results():
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         search = pilot.app.query_one("#personas-library-search", Input)
@@ -372,7 +363,7 @@ async def test_search_enter_with_no_rows_does_not_crash():
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
-        await pane.update_rows((), total=0, noun="characters")
+        await pane.update_rows((), total=0)
         await pilot.pause()
         search = pilot.app.query_one("#personas-library-search", Input)
         search.focus()
@@ -400,7 +391,6 @@ async def test_highlighted_row_carries_textual_highlight_class():
                 LibraryRow(item_id="2", kind="character", name="Beta"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pilot.app.query_one("#personas-library-rows").focus()
@@ -432,7 +422,6 @@ async def test_is_active_and_highlight_can_coexist():
                 LibraryRow(item_id="2", kind="character", name="Beta"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pilot.app.query_one("#personas-library-rows").focus()
@@ -465,7 +454,6 @@ async def test_colliding_item_ids_render_without_crash():
                 LibraryRow(item_id="a b", kind="character", name="Spaced"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         ids = visible_item_ids(pilot.app.screen)
@@ -486,7 +474,6 @@ async def _two_character_rows(pane: PersonasLibraryPane) -> None:
             LibraryRow(item_id="2", kind="character", name="Lab Assistant"),
         ),
         total=2,
-        noun="characters",
     )
 
 
@@ -548,7 +535,6 @@ async def test_marks_survive_rows_vanishing_on_refresh():
         await pane.update_rows(
             (LibraryRow(item_id="2", kind="character", name="Lab Assistant"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         assert received[-1] == (("character", "1", "Detective Sam"),)

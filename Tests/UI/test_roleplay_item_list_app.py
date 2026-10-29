@@ -33,6 +33,8 @@ from Tests.UI.roleplay_frame_harness import (
     StyledRoleplayMockApp,
     highlighted_item_id,
     item_at,
+    list_state,
+    no_match_lines,
     open_styled_roleplay,
     open_volume_db,
     painted_rows,
@@ -2831,16 +2833,26 @@ async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
     """AC#7, the real suspend path: Roleplay left while a replace paints its
     rows. A paint yields only where ``update_rows`` swaps the pane's status
     line, that is when the list goes from empty (or recovery) to rows or
-    back, so the case built here is the reachable one: a search with no
-    match, then the search cleared. The hold sits exactly at that swap and
-    only when the status really changes. B2a counted the painting rows as
-    landed, so the return reloaded nothing, and the paint the leave
-    cancelled never said rows lay past the new list's end: End stopped at
-    row 200 for good. Now the return reloads the list, and End loads
-    through."""
+    back (frame slice B2b's no-match message updates in place and yields
+    nothing), so the case built here is the reachable one: a failed read's
+    recovery row, then the read again (Retry's path). The hold sits exactly
+    at that swap and only when the status really changes. B2a counted the
+    painting rows as landed, so the return reloaded nothing, and the paint
+    the leave cancelled never said rows lay past the new list's end: End
+    stopped at row 200 for good. Now the return reloads the list, and End
+    loads through."""
     painting, release = asyncio.Event(), asyncio.Event()
     armed = False
     sync_status = PersonasLibraryPane._sync_status
+    page = personas_screen_module.get_character_page_for_ui
+    fail = {"on": False}
+
+    def window(db, **kwargs):
+        if fail["on"]:
+            raise RuntimeError("disk I/O error")
+        return page(db, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", window)
 
     async def held(self, status):
         nonlocal armed
@@ -2861,13 +2873,13 @@ async def test_a_leave_inside_a_replaces_paint_reloads_on_the_return(
         app = pilot.app
         screen = app.screen
         item_list = screen.query_one(RoleplayItemList)
-        screen.state.search_query = "zzzz"
+        fail["on"] = True
         await screen._reload_character_page()
         await settle(pilot)
         assert visible_item_ids(screen) == () and not item_list.more_available
-        assert screen.query("#personas-library-empty")
+        assert screen.query("#personas-library-recovery")
         armed = True
-        screen.state.search_query = ""
+        fail["on"] = False
         reload = asyncio.create_task(screen._reload_character_page())
         try:
             await wait_until(pilot, painting.is_set, what="the replace's paint")
@@ -3172,16 +3184,22 @@ class _HeldSearch:
         self.read = held
 
 
-def _record_escapes(monkeypatch, gate: threading.Event) -> list[bool]:
-    """Every Escape the screen handles, with whether the held read was released."""
+def _record_spaces(monkeypatch, gate: threading.Event) -> list[bool]:
+    """Every space the list handles, with whether the held read was released.
+
+    Space on a character row does nothing, so it probes "a key is handled at
+    once" without changing the find. B2a probed with Escape, which since
+    frame slice B2b clears the active search from the list (spec 4.5 rung 8,
+    owner decision D4) and so ends the find itself.
+    """
     handled: list[bool] = []
-    escape = PersonasScreen.action_personas_escape
+    toggle = RoleplayItemList.action_toggle_highlighted
 
     def record(self) -> None:
         handled.append(gate.is_set())
-        escape(self)
+        toggle(self)
 
-    monkeypatch.setattr(PersonasScreen, "action_personas_escape", record)
+    monkeypatch.setattr(RoleplayItemList, "action_toggle_highlighted", record)
     return handled
 
 
@@ -3198,7 +3216,7 @@ async def test_the_four_key_find_opens_the_first_match_after_a_read_slower_than_
     target = volume_348.get_character_card_by_name("Character 0042")
     target_id = f"character:{target['id']}"
     held = _HeldSearch()
-    escapes = _record_escapes(monkeypatch, held.release)
+    spaces = _record_spaces(monkeypatch, held.release)
     if debounce == "pending":
         monkeypatch.setattr(
             personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 60.0
@@ -3229,8 +3247,8 @@ async def test_the_four_key_find_opens_the_first_match_after_a_read_slower_than_
             assert screen._search_debounce_timer is None
             assert screen.focused is item_list
             # AC#1: a key right after Enter is handled while the read is held.
-            await pilot.press("escape")
-            assert escapes == [False]
+            await pilot.press("space")
+            assert spaces == [False]
             # AC#3: Enter on the list opens nothing, and the landing stays owed.
             await pilot.press("enter")
             await _pause_without_settling(pilot)
@@ -3293,7 +3311,9 @@ async def test_the_four_key_find_opens_the_first_match_after_a_slow_server_searc
         try:
             await wait_until(pilot, searching.is_set, what="the held server search")
             assert screen.focused is item_list
-            await pilot.press("escape")  # AC#1: handled while the search is held
+            # AC#1: handled while the search is held (space: Escape clears
+            # the search since frame slice B2b, spec 4.5 rung 8).
+            await pilot.press("space")
             await pilot.press("enter")  # AC#3: nothing to open yet
             await pilot.pause(2.4)
             assert screen.state.selected_entity_id == opened_before
@@ -3760,3 +3780,439 @@ async def test_enter_with_no_new_query_waits_for_a_sort_reload_in_flight(
         await settle(pilot)
         assert not screen._window_state.landing_owed()
         assert highlighted_item_id(screen) == visible_item_ids(screen)[0]
+
+
+# ---- Empty, no match, loading and failure (frame slice B2b, spec 1.5.4; TASK-33788) ----
+
+
+async def _search_settled(pilot, screen, query: str) -> None:
+    """Type ``query`` into the search box and wait until its rows are in."""
+    screen.query_one("#personas-library-search", Input).value = query
+    await wait_until(
+        pilot,
+        lambda: (
+            screen.state.search_query == query
+            and not screen._search_rows_pending(screen._list_fence())
+            and screen._search_debounce_timer is None
+        ),
+        what=f"the {query!r} search",
+    )
+    await settle(pilot)
+
+
+async def test_a_no_match_search_says_nothing_matches(mock_app_instance, volume_348):
+    """TASK-33788 AC#1 in every kind: what found nothing, the kind's total and
+    the way out. On dev each kind said "No <kind> yet - use New or Import to
+    add one." over a library that held items."""
+    _seed_every_kind(mock_app_instance, volume_348)
+    expected = {
+        "characters": ("characters", 349),
+        "personas": ("personas", 1),
+        "lore": ("lore books", 1),
+        "dictionaries": ("chat dictionaries", 1),
+    }
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        for mode in _KINDS:
+            await _show_kind(pilot, screen, mode)
+            await _search_settled(pilot, screen, "zzqx")
+            noun, total = expected[mode]
+            state = list_state(screen)
+            assert (mode, state.state, visible_item_ids(screen)) == (
+                mode,
+                "no_match",
+                (),
+            )
+            assert state.text == (
+                f'No {noun} match "zzqx".\n{total} in total · esc clears the search'
+            ), mode
+
+
+async def test_a_no_match_tag_filter_in_characters_says_so(
+    mock_app_instance, volume_348
+):
+    """TASK-33788 AC#5: a tag plus a query that match nothing name both."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await screen._apply_tag_filter("fantasy")
+        await settle(pilot)
+        await _search_settled(pilot, screen, "zzqx")
+        pane = screen.query_one("#personas-library-pane")
+        assert str(pane.border_title) == "Characters 0 of 349 · tag fantasy"
+        assert list_state(screen).text == (
+            'No characters match "zzqx" with the tag "fantasy".\n'
+            "349 in total · esc clears the search and tag"
+        )
+
+
+async def test_no_x_yet_appears_only_when_the_kind_is_empty(
+    mock_app_instance, volume_348
+):
+    """TASK-33788 AC#2: "No X yet" for a kind that holds nothing (Lore books
+    here: the database has none), never over a search of a kind that holds
+    items; the dictionary noun is the canonical one (OQ7)."""
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service()
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _search_settled(pilot, screen, "zzqx")
+        assert list_state(screen).state == "no_match"
+        assert "yet" not in list_state(screen).text
+        for mode, noun in (
+            ("lore", "lore books"),
+            ("dictionaries", "chat dictionaries"),
+        ):
+            await screen._apply_mode(mode)
+            await wait_until(
+                pilot,
+                lambda: list_state(screen).state == "empty",
+                what=f"the empty {mode} list",
+            )
+            assert list_state(screen).text == (
+                f"No {noun} yet - use New or Import to add one."
+            )
+
+
+async def test_the_centre_never_says_pick_a_character_while_the_search_shows_nothing(
+    mock_app_instance, volume_348
+):
+    """TASK-33788 AC#4 (spec 1.5.4): with nothing open, a search that lists
+    nothing leaves the centre on the kind's line, without "pick one on the
+    left" and without the truly-empty New/Import copy; the rows coming back
+    bring "Pick a character" back. On dev the centre kept "Pick a character
+    from the list to see it here." over the empty list."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await screen._apply_mode("lore")
+        await settle(pilot)
+        await _show_kind(pilot, screen, "characters")
+        centre = screen.query_one("#personas-characters-empty", Static)
+        assert screen.state.selected_entity_id is None and centre.display
+        assert str(centre.render()) == "Pick a character from the list to see it here."
+        await _search_settled(pilot, screen, "zzqx")
+        assert visible_item_ids(screen) == () and centre.display
+        assert str(centre.render()) == "Characters — who the AI plays."
+        await _search_settled(pilot, screen, "Character 00")
+        assert str(centre.render()) == "Pick a character from the list to see it here."
+
+
+async def test_no_match_keystrokes_mount_nothing(mock_app_instance, volume_348, work):
+    """The no-match message is composed once and updated in place (PERF-22):
+    three more keystrokes that keep the list empty mount nothing, though each
+    echoes a new query."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _search_settled(pilot, screen, "zzq")
+        assert list_state(screen).state == "no_match"
+        work.armed = True
+        for query in ("zzqx", "zzqxy", "zzqxyz"):
+            await _search_settled(pilot, screen, query)
+            assert no_match_lines(screen)[0] == f'No characters match "{query}".'
+        work.armed = False
+        assert (work.mounts, work.recomposes) == (0, 0)
+
+
+async def test_escape_in_the_list_clears_the_search_then_the_marks(
+    mock_app_instance, volume_348
+):
+    """Spec 4.5 rung 8 (owner decision D4, ahead of B3): Escape in the list
+    clears an active search or tag first, keeping the marks; the next Escape
+    clears the marks (rung 9). On dev Escape in the list cleared only marks,
+    so the no-match line's "esc clears the search" would have been false."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        item_list = screen.query_one(RoleplayItemList)
+        await _mark_rows(pilot, screen, visible_item_ids(screen)[:2])
+        await _search_settled(pilot, screen, "zzqx")
+        item_list.focus()
+        intent = screen._import_intent
+        await pilot.press("escape")
+        await wait_until(
+            pilot,
+            lambda: str(pane.border_title) == "Characters 349",
+            what="the search cleared",
+        )
+        assert screen.query_one("#personas-library-search", Input).value == ""
+        assert screen.state.search_query == "" and len(screen._marked_rows) == 2
+        assert screen.focused is item_list
+        # The user's clear is a newer intent than an import in flight, like a
+        # typed search (B2b Task 5's ruling): the import then toasts.
+        assert screen._import_intent > intent
+        await screen._apply_tag_filter("noir")
+        await settle(pilot)
+        item_list.focus()
+        intent = screen._import_intent
+        await pilot.press("escape")
+        await wait_until(
+            pilot,
+            lambda: (
+                screen.state.tag_filter is None
+                and str(pane.border_title) == "Characters 349"
+            ),
+            what="the tag cleared",
+        )
+        assert len(screen._marked_rows) == 2
+        assert screen._import_intent > intent
+        await pilot.press("escape")
+        await settle(pilot)
+        assert screen._marked_rows == ()
+
+
+async def test_escape_in_the_search_box_clears_a_search_that_matches_nothing(
+    mock_app_instance, volume_348
+):
+    """Owner decision D9 (2026-10-29): while the no-match message shows,
+    Escape in the search box clears the search (rung 8 runs before the focus
+    move), so the message's "esc clears the search" holds where it is read.
+    On dev the first Escape in the box moved focus to the list and clearing
+    took a second press; B2b changes that only while nothing matches."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        search = screen.query_one("#personas-library-search", Input)
+        search.focus()
+        await _search_settled(pilot, screen, "zzqx")
+        assert list_state(screen).state == "no_match"
+        assert screen.focused is search
+        intent = screen._import_intent
+        await pilot.press("escape")
+        await wait_until(
+            pilot,
+            lambda: str(pane.border_title) == "Characters 349",
+            what="the search cleared",
+        )
+        assert search.value == "" and screen.state.search_query == ""
+        assert no_match_lines(screen) == () and visible_item_ids(screen)
+        assert screen.focused is search
+        assert screen._import_intent > intent  # a user's clear: newer intent
+
+
+async def test_escape_in_the_search_box_with_matches_moves_focus_to_the_list(
+    mock_app_instance, volume_348
+):
+    """D9's control: while rows are listed, Escape in the search box moves
+    focus to the list and keeps the search, as on dev."""
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        search = screen.query_one("#personas-library-search", Input)
+        item_list = screen.query_one(RoleplayItemList)
+        search.focus()
+        await _search_settled(pilot, screen, "Character 00")
+        assert no_match_lines(screen) == () and visible_item_ids(screen)
+        await pilot.press("escape")
+        await wait_until(
+            pilot, lambda: screen.focused is item_list, what="focus on the list"
+        )
+        assert search.value == "Character 00"
+        assert screen.state.search_query == "Character 00"
+
+
+async def _poll(predicate, what: str, timeout: float = 15.0) -> None:
+    """Wait on the event loop alone: ``pilot.pause`` waits for every message
+    pump, and a kind switch's handler is still awaiting its read."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+        await asyncio.sleep(0.02)
+
+
+async def test_loading_shows_only_after_250_ms_and_never_the_previous_kinds_rows(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Spec 1.5.4 "Loading" (owner decision D5): a kind switch blanks the old
+    kind's rows at once and paints "Loading lore books…" only from a 250 ms
+    timer armed while it was still hidden. On dev the Characters rows and
+    title stayed up until the lore read landed. The switch is the ``l`` key:
+    a mode chip's click runs the switch inside the screen's own handler, so
+    the screen paints nothing until the read ends (on dev too; not fixed)."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    WorldBookManager(volume_348).create_world_book("Kepler Atlas")
+    reading, release = threading.Event(), threading.Event()
+    real_read = PersonasScreen._list_world_books_with_counts
+
+    def held_read(manager):
+        reading.set()
+        release.wait(timeout=30)
+        return real_read(manager)
+
+    monkeypatch.setattr(
+        PersonasScreen, "_list_world_books_with_counts", staticmethod(held_read)
+    )
+    armed: list[tuple[float, bool, tuple[str, ...]]] = []
+    set_timer = PersonasLibraryPane.set_timer
+
+    def spied_set_timer(self, delay, callback=None, **kwargs):
+        loading = self.query_one("#personas-library-loading")
+        armed.append((delay, loading.display, self.item_list.loaded_ids()))
+        return set_timer(self, delay, callback, **kwargs)
+
+    monkeypatch.setattr(PersonasLibraryPane, "set_timer", spied_set_timer)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        screen.query_one(RoleplayItemList).focus()
+        await settle(pilot)
+        # The key's handler awaits the switch, so the press ends with the read.
+        press = asyncio.create_task(pilot.press("l"))
+        try:
+            await _poll(reading.is_set, "the lore read")
+            assert visible_item_ids(screen) == ()
+            assert str(pane.border_title) == "Lore books (…)"
+            await _poll(
+                lambda: "Loading lore books…" in "\n".join(painted_rows(screen)),
+                "the painted loading line",
+            )
+            assert list_state(screen).state == "loading"
+            assert armed == [(0.25, False, ())]
+            assert "Character 0" not in "\n".join(painted_rows(screen))
+        finally:
+            release.set()
+            await press
+        await wait_until(
+            pilot, lambda: bool(visible_item_ids(screen)), what="the lore rows"
+        )
+        await settle(pilot)
+        assert [item.name for item in list_state(screen).items] == ["Kepler Atlas"]
+        assert list_state(screen).state == "rows"
+
+
+async def test_a_failed_character_read_shows_the_recovery_row_and_retry_reloads(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Spec 1.5.4 "Failure" (owner decision D5): a character read that fails
+    shows the recovery row with Retry, and Retry reads the list again. On dev
+    the list said "No characters yet - use New or Import to add one." under
+    "Characters (?)", with no way back but a kind switch."""
+    page = personas_screen_module.get_character_page_for_ui
+    fail = {"on": False}
+
+    def window(db, **kwargs):
+        if fail["on"]:
+            raise RuntimeError("disk I/O error")
+        return page(db, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", window)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        fail["on"] = True
+        await screen._reload_character_page()
+        await settle(pilot)
+        assert (list_state(screen).state, list_state(screen).text) == (
+            "recovery",
+            "Characters could not be loaded.",
+        )
+        retry = screen.query_one("#personas-library-retry", Button)
+        assert str(pane.border_title) == "Characters (?)" and retry.display
+        fail["on"] = False
+        assert await pilot.click("#personas-library-retry")
+        await wait_until(
+            pilot,
+            lambda: len(visible_item_ids(screen)) == 200,
+            what="the reloaded rows",
+        )
+        await settle(pilot)
+        assert list_state(screen).state == "rows" and not retry.display
+        assert str(pane.border_title) == "Characters 349"
+
+
+def _failing_read(mode: str, mock_app_instance, db, monkeypatch, fail: dict) -> str:
+    """Make ``mode``'s list read raise while ``fail["on"]``; returns its one name."""
+    if mode == "lore":
+        from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+        WorldBookManager(db).create_world_book("Kepler Atlas")
+        real = PersonasScreen._list_world_books_with_counts
+
+        def books(manager):
+            if fail["on"]:
+                raise RuntimeError("disk I/O error")
+            return real(manager)
+
+        monkeypatch.setattr(
+            PersonasScreen, "_list_world_books_with_counts", staticmethod(books)
+        )
+        return "Kepler Atlas"
+    if mode == "dictionaries":
+        service = _dictionary_service(("Kepler slang", 2))
+        listed = service.list_dictionaries
+
+        async def dictionaries(**kwargs):
+            if fail["on"]:
+                raise RuntimeError("disk I/O error")
+            return await listed(**kwargs)
+
+        service.list_dictionaries = dictionaries
+        mock_app_instance.chat_dictionary_scope_service = service
+        return "Kepler slang"
+    record = {
+        "id": "p-kepler",
+        "name": "Kepler Pilot",
+        "system_prompt": "Fly the route.",
+        "created_at": "2026-10-01T00:00:00",
+    }
+    service, _calls = _persona_service([record])
+    listed = service.list_persona_profiles
+
+    async def profiles(**kwargs):
+        if fail["on"]:
+            raise RuntimeError("disk I/O error")
+        return await listed(**kwargs)
+
+    service.list_persona_profiles = profiles
+    mock_app_instance.character_persona_scope_service = service
+    return "Kepler Pilot"
+
+
+@pytest.mark.parametrize("mode", ["lore", "dictionaries", "personas"])
+async def test_retry_reloads_a_failed_list_in_every_kind(
+    mock_app_instance, volume_348, monkeypatch, mode
+):
+    """Owner decision D5: a failed read shows the recovery row with Retry in
+    every kind, not only Characters, and Retry reads that kind's list again.
+    Dev had no Retry in any kind: its copy said to switch modes and back."""
+    fail = {"on": True}
+    name = _failing_read(mode, mock_app_instance, volume_348, monkeypatch, fail)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        retry = screen.query_one("#personas-library-retry", Button)
+        assert await pilot.click(f"#personas-mode-{mode}")
+        await wait_until(pilot, lambda: retry.display, what="the Retry button")
+        assert list_state(screen).state == "recovery"
+        if mode == "personas":
+            # The persona recovery row is dev's service-error copy.
+            assert screen.query("#personas-service-error")
+        fail["on"] = False
+        assert await pilot.click("#personas-library-retry")
+        await wait_until(
+            pilot,
+            lambda: [item.name for item in list_state(screen).items] == [name],
+            what=f"the reloaded {mode} list",
+        )
+        await settle(pilot)
+        assert list_state(screen).state == "rows" and not retry.display
+        assert not screen.query("#personas-service-error")
