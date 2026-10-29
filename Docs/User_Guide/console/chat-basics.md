@@ -387,10 +387,15 @@ It has two separate gates:
    accept the danger confirmation, and save. This writes
    `raw_cli_permitted = true` under `[console]` in `config.toml`; the default is
    `false`.
-2. Press **Arm host access** and accept the second confirmation. Arming exists
-   only in process memory. Every Chatbook launch starts unarmed even when the
-   saved unlock remains on; locking, disarming, or leaving the app cancels
-   active raw commands with bounded best-effort cleanup.
+2. Arm it for this launch: press **Arm raw CLI** there, or choose **Arm…** in
+   the composer (see below), and accept the second confirmation. That
+   confirmation also says that while raw CLI is armed, models get the
+   host-shell tool `shell_exec` when local tools are on. A model must ask
+   before it runs a command: you can run it once, allow shell commands for
+   that Console session, or deny. Arming exists only in process memory. Every Chatbook launch starts
+   unarmed even when the saved unlock remains on; locking, disarming, or
+   leaving the app cancels active raw commands with bounded best-effort
+   cleanup.
 
 To run a command, physically type the exact prefix `! ` (exclamation mark,
 space), then type or paste the command body and send. Pasting the prefix cannot
@@ -398,10 +403,21 @@ select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
 Start with `\! ` to send an ordinary chat message beginning with literal `! `;
 it is sent without the backslash and leaves the composer like any message.
-When raw mode is recognized, the composer turns red and identifies host access
-before you send. Enter, **Send** and the Workbench's send all take the command
-out of the composer; if Console refuses it (raw CLI locked or not armed, for
-example), the exact draft comes back once.
+When raw mode is recognized, the composer turns red and its status names the
+raw CLI state before you send:
+
+- **RAW CLI · HOST ACCESS**: armed. The primary action reads **Run**.
+- **RAW CLI · NOT ARMED**: unlocked but not armed for this launch. The primary
+  action reads **Arm…**. Enter, **Arm…** and the Workbench's send open the arm
+  confirmation, with **Cancel** focused. Confirming arms raw CLI for this
+  launch and leaves the command in the composer; press Enter (or **Run**) again
+  to run it. Cancelling changes nothing.
+- **RAW CLI · LOCKED**: the saved unlock is off. The primary action reads
+  **Locked**; unlock raw CLI in Settings first.
+
+Enter, **Run** and the Workbench's send all take an armed command out of the
+composer. If Console refuses it (raw CLI locked, for example), the exact draft
+comes back once, however many times you press Enter.
 
 Console raw commands use automatic shell selection. The shared executor
 supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed

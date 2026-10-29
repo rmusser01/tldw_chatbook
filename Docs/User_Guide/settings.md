@@ -1677,9 +1677,11 @@ The exception is the unmistakable **DANGER!!! RAW CLI HOST ACCESS** section.
 command has the OS user's full filesystem, process, and network authority, may
 read credential files despite the scrubbed environment, may leave detached
 descendants after cleanup, and persists bounded command/output locally. Confirm
-and **Save** before **Arm host access** becomes available. Arm asks again and
-applies only to this launch; it is never written to config, and restart always
-returns to Unlocked/not armed. **Disarm host access** is immediate. Saving the
+and **Save** before **Arm host access** becomes available. Arm asks again (the
+same confirmation the Console composer's **Arm…** opens on an unarmed `! `
+command; it also says that arming makes the model-facing `shell_exec` tool
+eligible) and applies only to this launch; it is never written to config, and
+restart always returns to Unlocked/not armed. **Disarm host access** is immediate. Saving the
 unlock Off also disarms and starts bounded cleanup of any active raw command.
 
 Unlocking and arming also makes the model-facing `shell_exec` tool eligible,

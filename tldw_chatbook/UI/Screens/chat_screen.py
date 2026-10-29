@@ -15230,6 +15230,9 @@ class ChatScreen(BaseAppScreen):
                 sendable_attachment_provider=(
                     lambda: self._console_pending_image_attachment() is not None
                 ),
+                raw_cli_authority_provider=lambda: raw_cli_ui.raw_cli_authority(
+                    self.app_instance.raw_cli_runtime
+                ),
             )
             # TASK-1364: the composer shares the screen's prompt-history
             # store with the controller (which records accepted sends) so
@@ -22935,6 +22938,8 @@ class ChatScreen(BaseAppScreen):
         apply_status_chips_position(self)
         # Settings can save while this cached Console is outside the screen stack.
         self._refresh_console_background_effects()
+        if (composer := self._console_composer_or_none()) is not None:
+            composer.refresh_raw_cli_authority()  # TASK-33622.9: Settings' arm
         # TASK-31520: re-arm what on_screen_suspend quiesced. mount() is
         # idempotency-guarded, so the first visit's mount+resume pair does
         # the wiring once. A run left active while the user was away needs

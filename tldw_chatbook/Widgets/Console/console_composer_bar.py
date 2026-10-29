@@ -430,9 +430,33 @@ _SEND_BUTTON_LABEL_VARIANTS = (
     "Queue",
     "Queue | $",
     "Run",
+    "Arm…",
+    "Locked",
     "Queue full",
     "Preparing...",
 )
+
+
+#: TASK-33622.9: a trusted ``! `` draft's (status, primary label, Send tooltip)
+#: for each raw-CLI authority; only an armed one reads "Run".
+_RAW_CLI_PRESENTATION = {
+    "armed": (
+        "RAW CLI · HOST ACCESS",
+        "Run",
+        "Run this raw command with host-user authority.",
+    ),
+    "unarmed": (
+        "RAW CLI · NOT ARMED",
+        "Arm…",
+        "Raw CLI is not armed for this launch. Arm it here, behind its danger "
+        "disclosure.",
+    ),
+    "locked": (
+        "RAW CLI · LOCKED",
+        "Locked",
+        "Raw CLI is Locked. Unlock it in Settings > Privacy & Security.",
+    ),
+}
 
 
 def send_button_width_for(label: str) -> int:
@@ -730,6 +754,7 @@ class ConsoleComposerBar(Horizontal):
         send_price_tooltip_provider: Callable[[str], str | None] | None = None,
         send_price_available_provider: Callable[[str], bool] | None = None,
         sendable_attachment_provider: Callable[[], bool] | None = None,
+        raw_cli_authority_provider: Callable[[], str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -744,6 +769,9 @@ class ConsoleComposerBar(Horizontal):
         #: empty draft, asked live of the screen's send gate predicate. The
         #: attachment label is presentation and never makes Send ready.
         self._sendable_attachment_provider = sendable_attachment_provider
+        #: TASK-33622.9: "armed" / "unarmed" / "locked" for a raw draft; a
+        #: composer nobody wired reads as locked (never "Run").
+        self._raw_cli_authority_provider = raw_cli_authority_provider
         #: Whether the last `sync_action_state` decided a price tooltip
         #: exists. Gates the hover handlers so they never overwrite a
         #: blocked/idle Send tooltip.
@@ -822,7 +850,7 @@ class ConsoleComposerBar(Horizontal):
         # syncs. `None` never equals a real value, so the first pass after
         # mount always runs in full.
         self._improvement_recovery_visible: bool | None = None
-        self._raw_cli_status_visible: bool | None = None
+        self._raw_cli_status_visible: str | None = None
         self._hidden_input_mirror: str | None = None
         self._send_button_width = 6
         self._send_label = "Send"
@@ -1126,6 +1154,32 @@ class ConsoleComposerBar(Horizontal):
         self._raw_cli_prefix_stage_one = False
         self._raw_cli_prefix_typed = False
 
+    def raw_cli_draft_authority(self) -> str | None:
+        """Return the raw-CLI authority for a trusted ``! `` draft, else None.
+
+        TASK-33622.9: "armed", "unarmed" or "locked", read live from the
+        screen's provider; no provider, or one that fails, reads as locked.
+        """
+        if not (self._raw_cli_prefix_typed and self.draft_text().startswith("! ")):
+            return None
+        provider = self._raw_cli_authority_provider
+        try:
+            authority = provider() if provider is not None else "locked"
+        except Exception:  # noqa: BLE001 -- presentation fails closed
+            authority = "locked"
+        return authority if authority in {"armed", "unarmed"} else "locked"
+
+    def _raw_cli_status_label(self) -> str:
+        """Return the raw-mode status copy for the current authority, or ''."""
+        authority = self.raw_cli_draft_authority()
+        return "" if authority is None else _RAW_CLI_PRESENTATION[authority][0]
+
+    def refresh_raw_cli_authority(self) -> None:
+        """Repaint a raw draft after the arm changed elsewhere (TASK-33622.9)."""
+        if self.raw_cli_draft_authority() is not None:
+            self._sync_raw_cli_state()
+            self._sync_current_action_state()
+
     def _sync_raw_cli_state(self) -> None:
         """Project trusted raw mode into one persistent, text-labeled danger state."""
         active = self._raw_cli_prefix_typed and self.draft_text().startswith("! ")
@@ -1133,20 +1187,21 @@ class ConsoleComposerBar(Horizontal):
             self._raw_cli_prefix_typed = False
         self.set_class(active, "console-raw-cli-danger")
         self._sync_collapsed_presentation()
+        label = self._raw_cli_status_label() if active else ""
         # task-24453: `active` is False for every keystroke that is not part of
         # a raw-CLI draft, which is nearly all of them. The status row's
         # content and geometry below are a pure function of it, so re-asserting
         # them per keypress only bought a `Static.update` and four style writes
         # on an already-hidden row.
-        if active == self._raw_cli_status_visible:
+        if label == self._raw_cli_status_visible:
             return
         try:
             status = self.query_one("#console-raw-cli-status", Static)
         except NoMatches:
             return
-        self._raw_cli_status_visible = active
+        self._raw_cli_status_visible = label
         status.set_class(active, "console-raw-cli-danger")
-        status.update(Content("RAW CLI · HOST ACCESS" if active else ""))
+        status.update(Content(label))
         status.styles.display = "block" if active else "none"
         status.remove_class(*(name for name in status.classes if name.startswith("w-")))
         status.set_styles(width=None)
@@ -2562,7 +2617,14 @@ class ConsoleComposerBar(Horizontal):
         if price_available:
             price_available = self._send_price_is_available()
         self._send_price_available = price_available
-        displayed_send_label = "Run" if raw_cli_ready else normalized_send_label
+        raw_presentation = (
+            _RAW_CLI_PRESENTATION[self.raw_cli_draft_authority() or "locked"]
+            if raw_cli_ready
+            else None
+        )
+        displayed_send_label = (
+            raw_presentation[1] if raw_presentation else normalized_send_label
+        )
         if price_available:
             displayed_send_label = f"{normalized_send_label} | $"
 
@@ -2589,8 +2651,8 @@ class ConsoleComposerBar(Horizontal):
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
         send_button.variant = "primary" if send_ready else "default"
-        if raw_cli_ready:
-            send_button.tooltip = "Run this raw command with host-user authority."
+        if raw_presentation:
+            send_button.tooltip = raw_presentation[2]
         elif effective_send_blocked and dispatch_recovery_blocked:
             send_button.tooltip = "Resolve the response recovery above before sending."
         elif effective_send_blocked and wake_turn_active:
@@ -3559,7 +3621,7 @@ class ConsoleComposerBar(Horizontal):
     def _collapsed_status_text(self) -> str:
         """Build presence-only status copy without exposing retained content."""
         if self._raw_cli_prefix_typed and self.draft_text().startswith("! "):
-            return "RAW CLI · HOST ACCESS"
+            return self._raw_cli_status_label()
         parts = ["Composer hidden"]
         if self._run_active:
             parts.append("Generating")
