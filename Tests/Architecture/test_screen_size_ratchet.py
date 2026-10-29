@@ -226,8 +226,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: clear-attachment handler's selector. Dev f9baac8706 measures
     #: 24319/736; with the fix, 24323/736, the exact measurement.
     #: Rebased 2026-10-29 onto dev 3efe8476ce, which measures 24329/737;
-    #: with the same +4, 24333/737, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24333, 737),
+    #: with the same +4, 24333/737. Rebased again 2026-10-29 onto dev
+    #: b5150753eb, which measures 24327/737 (its row kept 24329); with the
+    #: same +4, 24331/737, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
