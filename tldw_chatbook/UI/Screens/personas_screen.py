@@ -580,37 +580,49 @@ def _whole_count(value: Any) -> int | None:
         return None
 
 
-def _character_import_filters() -> Any:
-    """Build the file-picker filters for the Character Cards import dialog.
+#: The one Import picker's title (frame slice B2b, spec 1.4.6): every format it
+#: takes, in words. Never "[": the shared picker's border title parses markup
+#: (TASK-34401, open; "[/]" raises MarkupError on dev).
+ROLEPLAY_IMPORT_TITLE = (
+    "Import a card (PNG, WebP, JSON, Markdown), lore book, chat dictionary, "
+    "Actor Pack or Buddy"
+)
+#: The default filter's formats: every Roleplay format but Markdown.
+_ROLEPLAY_IMPORT_SUFFIXES = (
+    ".png",
+    ".webp",
+    ".json",
+    ".tldw-actor-pack",
+    ".tldw-persona-vpack",
+)
+#: "Import as:" row words for the kinds a JSON or Markdown file can be.
+_IMPORT_AS_LABELS = {
+    "character": "Character card",
+    "lore": "Lore book",
+    "dictionary": "Chat dictionary",
+}
 
-    Module-level (rather than inline in ``_import_dialog_worker``) so the
-    primary "Character Cards" tester can be unit-tested without mounting the
-    screen. ``import_and_save_character_from_file`` only extracts embedded
-    card JSON from ``.png``/``.webp`` images and reads ``.json``/``.md`` as
-    text (task-431 AC#1): the broad "Character Cards" default matches the
-    image formats plus JSON, but deliberately excludes Markdown so a plain
-    docs folder doesn't read as a folder of character cards. Markdown import
-    stays available via its own dedicated sub-filter.
+
+def _roleplay_import_filters() -> Any:
+    """Build the one Import picker's filters (frame slice B2b, owner decision D3).
+
+    Module-level so the default tester can be unit-tested without mounting
+    the screen. "Roleplay files" (the default) lists card images, JSON and
+    both pack formats, and deliberately leaves Markdown out (task-431 AC#1):
+    a plain docs folder must not read as a folder of character cards.
+    Markdown and All Files stay available as sub-filters; the sniff decides
+    what a picked file is. On dev Characters, Lore, Dictionaries and Actor
+    Packs each had a picker with its own filters (Dictionaries' default held
+    Markdown, which "Roleplay files" does not).
     """
     from ...Widgets.enhanced_file_picker import Filters
 
     return Filters(
         (
-            "Character Cards",
-            lambda p: (
-                p.suffix.lower() in (".json", ".png", ".webp", ".tldw-persona-vpack")
-            ),
+            "Roleplay files",
+            lambda p: p.suffix.lower() in _ROLEPLAY_IMPORT_SUFFIXES,
         ),
-        ("Buddy Packs", lambda p: p.suffix.lower() == ".tldw-persona-vpack"),
-        ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-        (
-            "Card Images (PNG/WebP)",
-            lambda p: p.suffix.lower() in (".png", ".webp"),
-        ),
-        (
-            "Markdown Files",
-            lambda p: p.suffix.lower() in (".md", ".markdown"),
-        ),
+        ("Markdown", lambda p: p.suffix.lower() in (".md", ".markdown")),
         ("All Files", lambda p: True),
     )
 
@@ -1332,6 +1344,9 @@ class PersonasScreen(BaseAppScreen):
         # set_result on a cancelled future (InvalidStateError on Textual
         # 8.2.7), so a second request is ignored instead.
         self._io_dialog_active: bool = False
+        # The one Import picker's worker is running (frame slice B2b): a
+        # second Import says an import is in progress.
+        self._roleplay_import_running: bool = False
         # The New chooser is open (frame slice B2b).
         self._new_chooser_open: bool = False
         # Same refuse-reentry idiom for the delete confirmation dialog.
@@ -3646,9 +3661,11 @@ class PersonasScreen(BaseAppScreen):
             and not self._local_character_actions_allowed()
         )
         try:
+            # Import stays offered (frame slice B2b, OQ14): a picked card is
+            # refused by name, a lore book or chat dictionary goes to the
+            # local store. Dev disabled it here.
             for selector in (
                 "#personas-library-new",
-                "#personas-library-import",
                 "#personas-library-tag",
             ):
                 self.query_one(selector, Button).disabled = server_characters
@@ -5260,48 +5277,22 @@ class PersonasScreen(BaseAppScreen):
             self._io_dialog_active = False
 
     @on(ActorPackImportRequested)
-    async def _handle_actor_pack_import(
-        self, message: ActorPackImportRequested
-    ) -> None:
-        """Open the dedicated review-first Actor Pack import flow."""
+    def _handle_actor_pack_import(self, message: ActorPackImportRequested) -> None:
+        """An Actor Pack import opens the one Import picker (frame slice B2b).
 
+        On dev it opened a picker of its own (``.tldw-actor-pack`` only,
+        folder ``actor_pack_import``), from the toolbar's Import Actor Pack.
+        """
         message.stop()
-        if self._io_dialog_active or self._actor_pack_import_operation is not None:
-            return
-        controller = getattr(self.app_instance, "actor_pack_import_controller", None)
-        importer = getattr(self.app_instance, "actor_pack_import_service", None)
-        if controller is None or importer is None:
-            self._notify("Actor Pack import is unavailable.", "error")
-            return
-        self._io_dialog_active = True
-        self.run_worker(
-            self._actor_pack_import_dialog_worker(controller, importer),
-            group="personas-io",
-        )
+        self._open_roleplay_import()
 
-    async def _actor_pack_import_dialog_worker(
-        self, controller: object, importer: object
+    async def _import_actor_pack_from_path(
+        self, selected: Path | str, controller: object, importer: object
     ) -> None:
-        """Pick, inspect, review, confirm, and activate without retaining paths."""
-
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+        """Inspect, review, confirm, and activate one picked pack without retaining paths."""
 
         review: ActorPackImportReview | None = None
         try:
-            selected = await self.app.push_screen_wait(
-                EnhancedFileOpen(
-                    title="Import Actor Pack",
-                    filters=Filters(
-                        (
-                            "Actor Packs",
-                            lambda path: path.suffix.lower() == ".tldw-actor-pack",
-                        ),
-                    ),
-                    context="actor_pack_import",
-                )
-            )
-            if not selected:
-                return
             archive_path = Path(selected).resolve()
             while True:
                 request = controller.create_request(archive_path)
@@ -7859,14 +7850,7 @@ class PersonasScreen(BaseAppScreen):
         elif message.action == "create_actor_pack":
             await self._run_guarded(self._begin_create_actor_pack)
         elif message.action == "import":
-            if self.state.active_mode == "characters":
-                if not self._local_character_actions_allowed():
-                    return
-                await self._run_guarded(self._open_import_dialog)
-            elif self.state.active_mode == "dictionaries":
-                await self._run_guarded(self._open_dictionary_import_dialog)
-            elif self.state.active_mode == "lore":
-                await self._run_guarded(self._open_lore_import_dialog)
+            self._open_roleplay_import()
         elif message.action == "duplicate":
             if self.state.active_mode == "characters":
                 if not self._local_character_actions_allowed():
@@ -14259,35 +14243,59 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._io_dialog_active = False
 
-    async def _open_import_dialog(self) -> None:
-        """Continuation for the guarded import action: launch the dialog worker."""
-        if not self._local_character_actions_allowed():
-            return
-        if self._active_character_import_worker() is not None:
-            self._notify("A character import is already in progress.", "information")
+    def _open_roleplay_import(self) -> None:
+        """Import in any kind opens the one Import picker (frame slice B2b, spec 1.4.6).
+
+        Unguarded (owner decision D1, 2026-10-26): a dirty draft stays open
+        and the import lands beside it. On dev Import asked the unsaved guard
+        before its picker, each kind opened a picker of its own, Personas had
+        none, and a press during a lore or dictionary import was ignored
+        without a word; B2b changes all four.
+        """
+        if self._import_in_progress():
+            self._notify("An import is already in progress.", "information")
             return
         if self._io_dialog_active:
-            logger.debug(
-                "Import/export dialog already active; ignoring import request."
-            )
+            logger.debug("A file dialog is already open; ignoring the import request.")
             return
         self._io_dialog_active = True
-        self.run_worker(self._import_dialog_worker(), group="personas-io")
+        self._roleplay_import_running = True
+        self.run_worker(self._roleplay_import_worker(), group="personas-io")
 
-    async def _import_dialog_worker(self) -> None:
-        # Same dialog family as the legacy CCP import route
-        # (ccp_character_handler.handle_import).
+    def _import_in_progress(self) -> bool:
+        """Whether an import holds the one picker: its worker, a durable
+        character import, or an Actor Pack inspection or activation."""
+        return bool(
+            self._roleplay_import_running
+            or self._active_character_import_worker() is not None
+            or self._actor_pack_import_operation is not None
+        )
+
+    async def _roleplay_import_worker(self) -> None:
+        """Pick one file in the one Import picker, then route it to its kind."""
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen
         from ..Persona_Modules.buddy_conversion import capture_buddy_import_guard
 
         durable_import_started = False
         try:
-            if not self._local_character_actions_allowed():
-                return
-            buddy_import_guard = capture_buddy_import_guard(self)
+            buddy_import_guard: Callable[[], bool] | None
+            try:
+                # Pinned before the picker opens, as on dev's Characters picker.
+                buddy_import_guard = capture_buddy_import_guard(self)
+            except (ValueError, OSError, RuntimeError) as exc:
+                # The profile folder cannot be read. On dev this escaped the
+                # Characters picker's worker and closed the app; the one picker
+                # serves every kind, so only a Buddy pick is refused (B2b).
+                logger.warning(
+                    "Buddy import destination unavailable (category={}).",
+                    type(exc).__name__,
+                )
+                buddy_import_guard = None
             picker = EnhancedFileOpen(
-                title="Import Character Card or Buddy",
-                filters=_character_import_filters(),
+                title=ROLEPLAY_IMPORT_TITLE,
+                filters=_roleplay_import_filters(),
+                # One remembered folder for every kind (OQ3 iv): Characters'
+                # (dev kept four; lore, dictionary and Actor Pack's go unused).
                 context="character_import",
             )
             try:
@@ -14297,35 +14305,152 @@ class PersonasScreen(BaseAppScreen):
                     "Could not show the import file dialog."
                 )
                 return
-            if file_path:
-                if not self._local_character_actions_allowed():
-                    return
-                if self._active_character_import_worker() is not None:
-                    self._notify(
-                        "A character import is already in progress.", "information"
-                    )
-                    return
-                if Path(file_path).suffix.lower() == ".tldw-persona-vpack":
-                    from ..Persona_Modules.buddy_conversion import (
-                        review_buddy_character,
-                    )
-
-                    if not buddy_import_guard():
-                        self._notify(
-                            "Destination changed. Start a fresh Buddy import.",
-                            "warning",
-                        )
-                        return
-                    await review_buddy_character(
-                        self, archive=True, archive_path=Path(file_path)
-                    )
-                    return
-                durable_import_started = (
-                    self._start_character_import(str(file_path)) is not None
+            if not file_path:
+                return
+            try:
+                durable_import_started = await self._route_roleplay_import(
+                    Path(file_path), buddy_import_guard
                 )
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    "Unexpected error in the Roleplay import worker."
+                )
+                self._notify(f"Import failed: {exc}", "error")
         finally:
+            self._roleplay_import_running = False
             if not durable_import_started:
                 self._io_dialog_active = False
+
+    async def _route_roleplay_import(
+        self, path: Path, buddy_import_guard: Callable[[], bool] | None
+    ) -> bool:
+        """Sniff ``path`` and hand it to its kind's importer (spec 1.4.6).
+
+        Args:
+            path: The picked file.
+            buddy_import_guard: The Buddy destination pinned when the picker
+                opened, or None when it could not be captured.
+
+        Returns:
+            True when a durable character import took over the dialog slot
+            (it releases the slot when it ends).
+        """
+        # Lazy: not on the Roleplay route's pre-import path (spec 5.10).
+        from ..Persona_Modules.roleplay_import_sniff import sniff_import_file
+
+        name = path.name
+        try:
+            sniffed = await asyncio.to_thread(
+                sniff_import_file, path, max_bytes=PERSONAS_CHARACTER_IMPORT_MAX_BYTES
+            )
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "Import file refused before the sniff (category={}).",
+                type(exc).__name__,
+            )
+            self._notify(f"{name} could not be imported: {exc}", "error")
+            return False
+        if sniffed.verdict == "too_large":
+            # Dev's character path said only "verify the file and retry".
+            self._notify(
+                f"{name} is larger than "
+                f"{PERSONAS_CHARACTER_IMPORT_MAX_BYTES // (1024 * 1024)} MB; "
+                "nothing was imported.",
+                "error",
+            )
+            return False
+        if sniffed.verdict == "not_roleplay":
+            self._notify(
+                f"{name} is not a Roleplay file; nothing was imported.", "error"
+            )
+            return False
+        if sniffed.verdict == "ask":
+            kind = await self._ask_import_kind(name, sniffed.kinds, sniffed.preselect)
+            if kind is None:
+                return False
+        else:
+            kind = sniffed.kinds[0]
+        if (
+            kind in ("character", "buddy")
+            and not self._local_character_actions_allowed()
+        ):
+            # Both land as a local character; the list shows the server's.
+            self._notify(
+                f"{frame_state.SERVER_CHARACTERS_READ_ONLY} {name} was not imported.",
+                "warning",
+            )
+            return False
+        if kind == "character":
+            return self._start_character_import(str(path)) is not None
+        if kind == "lore":
+            await self._import_world_book_from_path(str(path))
+        elif kind == "dictionary":
+            await self._import_dictionary_from_path(str(path))
+        elif kind == "actor_pack":
+            controller = getattr(
+                self.app_instance, "actor_pack_import_controller", None
+            )
+            importer = getattr(self.app_instance, "actor_pack_import_service", None)
+            if controller is None or importer is None:
+                self._notify("Actor Pack import is unavailable.", "error")
+                return False
+            await self._import_actor_pack_from_path(path, controller, importer)
+        elif kind == "buddy":
+            from ..Persona_Modules.buddy_conversion import review_buddy_character
+
+            if buddy_import_guard is None:
+                self._notify("Buddy source or destination is unavailable.", "error")
+                return False
+            if not buddy_import_guard():
+                self._notify(
+                    "Destination changed. Start a fresh Buddy import.", "warning"
+                )
+                return False
+            await review_buddy_character(self, archive=True, archive_path=path)
+        return False
+
+    async def _ask_import_kind(
+        self, name: str, kinds: tuple[str, ...], preferred: str | None = None
+    ) -> str | None:
+        """Ask "Import as:" for a file that fits more than one kind (spec 1.4.6).
+
+        Args:
+            name: The file name the title quotes.
+            kinds: The candidate kinds, in row order.
+            preferred: The row to open on when it is enabled (the sniff's
+                ``preselect``, owner decision D8); else the first enabled row.
+
+        Returns:
+            The picked kind, or None (Escape).
+        """
+        from ...Widgets.Persona_Widgets.roleplay_choice_modal import (
+            ChoiceOption,
+            RoleplayChoiceModal,
+        )
+
+        local = self._local_character_actions_allowed()
+        options = [
+            ChoiceOption(
+                kind,
+                _IMPORT_AS_LABELS[kind],
+                None,
+                enabled=kind != "character" or local,
+                reason=(
+                    None
+                    if kind != "character" or local
+                    else frame_state.SERVER_CHARACTERS_READ_ONLY
+                ),
+            )
+            for kind in kinds
+        ]
+        enabled = [option.id for option in options if option.enabled]
+        if not enabled:
+            return None
+        preselect = preferred if preferred in enabled else enabled[0]
+        picked = await self.app.push_screen_wait(
+            RoleplayChoiceModal(f"Import {name} as:", options, preselect=preselect)
+        )
+        return picked if picked in _IMPORT_AS_LABELS else None
 
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""
@@ -14672,46 +14797,6 @@ class PersonasScreen(BaseAppScreen):
             return ""
         return format_imported_lorebook_note(ext.get("character_world_books"))
 
-    async def _open_lore_import_dialog(self) -> None:
-        """Continuation for the guarded lore-import action."""
-        if self._io_dialog_active:
-            logger.debug(
-                "Import/export dialog already active; ignoring import request."
-            )
-            return
-        self._io_dialog_active = True
-        self.run_worker(self._lore_import_dialog_worker(), group="personas-io")
-
-    async def _lore_import_dialog_worker(self) -> None:
-        """Show the import file picker and hand the chosen path off to import."""
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
-
-        try:
-            picker = EnhancedFileOpen(
-                title="Import World Book",
-                filters=Filters(
-                    ("World books (JSON)", lambda p: p.suffix.lower() == ".json"),
-                    ("All Files", lambda p: True),
-                ),
-                context="lore_import",
-            )
-            try:
-                file_path = await self.app.push_screen_wait(picker)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not show the world-book import dialog."
-                )
-                return
-            if file_path:
-                await self._import_world_book_from_path(str(file_path))
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Unexpected error in the world-book import worker."
-            )
-            self._notify(f"Import failed: {exc}", "error")
-        finally:
-            self._io_dialog_active = False
-
     async def _import_world_book_from_path(self, path: str) -> None:
         """Validate + normalize a world-book file and import it; rename on clash.
 
@@ -14781,54 +14866,6 @@ class PersonasScreen(BaseAppScreen):
         await self._select_lore_entry(str(new_id), name)
         suffix = " Renamed to avoid a name clash." if name != base else ""
         self._notify(f"Imported '{name}'.{suffix}", "information")
-
-    async def _open_dictionary_import_dialog(self) -> None:
-        """Continuation for the guarded dictionaries-import action."""
-        if self._io_dialog_active:
-            logger.debug(
-                "Import/export dialog already active; ignoring import request."
-            )
-            return
-        self._io_dialog_active = True
-        self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
-
-    async def _dictionary_import_dialog_worker(self) -> None:
-        """Show the import file picker and hand the chosen path off to import."""
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
-
-        try:
-            picker = EnhancedFileOpen(
-                title="Import Dictionary",
-                filters=Filters(
-                    (
-                        "Dictionaries",
-                        lambda p: p.suffix.lower() in (".json", ".md", ".markdown"),
-                    ),
-                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-                    (
-                        "Markdown Files",
-                        lambda p: p.suffix.lower() in (".md", ".markdown"),
-                    ),
-                    ("All Files", lambda p: True),
-                ),
-                context="dictionary_import",
-            )
-            try:
-                file_path = await self.app.push_screen_wait(picker)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not show the dictionary import dialog."
-                )
-                return
-            if file_path:
-                await self._import_dictionary_from_path(str(file_path))
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Unexpected error in the dictionary import worker."
-            )
-            self._notify(f"Import failed: {exc}", "error")
-        finally:
-            self._io_dialog_active = False
 
     async def _import_dictionary_from_path(self, path: str) -> None:
         """Import a dictionary file; on a name conflict, auto-rename and retry.

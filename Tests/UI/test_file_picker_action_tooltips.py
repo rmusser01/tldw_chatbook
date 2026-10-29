@@ -208,8 +208,10 @@ async def test_character_import_picker_actions_explain_open_and_cancel(
         _assert_button_tooltips(
             picker,
             {
-                "select": "Import the selected character card.",
-                "cancel": "Close without importing a character card.",
+                # Frame slice B2b: Roleplay's one Import picker takes every
+                # Roleplay format, so the copy names no kind.
+                "select": "Import the selected file.",
+                "cancel": "Close without importing.",
             },
         )
         assert str(picker.query_one("#select", Button).label) == "Import"

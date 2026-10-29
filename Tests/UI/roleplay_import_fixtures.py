@@ -70,6 +70,27 @@ EXPECTED_KINDS: dict[str, str] = {
     "dictionary_flat.json": "dictionary",
     "dictionary.md": "dictionary",
 }
+#: Fixture file name -> the name it imports under (measured through dev's
+#: per-kind handlers, B2b batch 2). Packs open a review dialog instead.
+EXPECTED_NAMES: dict[str, str] = {
+    "card_v1.json": "Corwin Ash",
+    "card_v2.json": "Wren Halloway",
+    "card_v3.json": "Ilse Varn",
+    "card.png": "Wren Halloway",
+    "card.webp": "Wren Halloway",
+    "card_frontmatter.md": "Mara Quill",
+    "card_json_block.markdown": "Odo Fenn",
+    "card_frontmatter.yaml": "Tam Reyes",
+    "lore_tldw_export.json": "Kepler Atlas",
+    "lore_entries_list.json": "Harbour Lore",
+    # SillyTavern's World Info object has no name: the importer's default.
+    "lore_sillytavern.json": "Imported world book",
+    "dictionary_export.json": "Medical Abbrev",
+    "dictionary_data.json": "Ward Shorthand",
+    "dictionary_flat.json": "Ship Talk",
+    # A Markdown dictionary is named after its file's stem.
+    "dictionary.md": "dictionary",
+}
 
 
 def card_v2(name: str = "Wren Halloway") -> dict:
@@ -245,6 +266,7 @@ def write_nested_json(path: Path, nbytes: int, *, opener: str = "[") -> Path:
 __all__ = [
     "ACTOR_PACK_GOLDEN",
     "EXPECTED_KINDS",
+    "EXPECTED_NAMES",
     "card_v2",
     "png_card_bytes",
     "webp_card_bytes",

@@ -144,17 +144,19 @@ async def test_first_list_item_sits_right_under_the_unchanged_band(
     left the stacked toolbar for the Inspector and New Actor Pack for the New
     chooser, two rows less (row 17 at 120x36, row 16 at 80x24). At 160 and
     wider the shorter toolbar fits one row, unstacked, so its search box
-    takes back its 3-row border: row 16 there."""
+    takes back its 3-row border: row 16 there. Import Actor Pack then left
+    for the one Import picker, one row less again where the toolbar stacks
+    (row 16 at 120x36, row 15 at 80x24; still row 16 at 160 and wider)."""
     async with open_styled_roleplay(
         styled_tier, mock_app_instance, size=roleplay_size
     ) as pilot:
         screen = pilot.app.screen
         nav_bottom, header_bottom = chrome_bottoms(screen)
         assert header_bottom == nav_bottom + 1
-        # Stacked at 120 (search 1 + toolbar 3 + filterbar 2); compact 80x24
-        # has one row less chrome; one row each at >=160 (search 3 + 1 + 1).
+        # Stacked below 160 (search 1 + toolbar 2 + filterbar 2), compact
+        # 80x24 one row less chrome; one row each at >=160 (search 3 + 1 + 1).
         width = roleplay_size[0]
-        band = 12 if PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH < width < 160 else 11
+        band = 10 if width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH else 11
         assert first_list_item(screen).region.y == header_bottom + band
 
 
