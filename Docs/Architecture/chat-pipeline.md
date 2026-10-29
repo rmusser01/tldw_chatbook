@@ -30,6 +30,8 @@ Private provider exchanges and binary attachments never enter the projection.
 A request serial prevents an older formatter worker from publishing over a
 newer trace request. The app's clipboard revision also invalidates pending
 traces when another in-app copy occurs, including a copy of identical text.
+That revision is maintained by the already-inherited `TextualAppGuards`
+aggregate in `Utils/text_selection_crash_guard.py`; `app.py` adds no members.
 Clipboard publication uses the existing UI-thread callback and OSC 52 transport;
 notification means sent, not terminal acceptance.
 Selection-menu requests also carry the captured user/assistant message path,

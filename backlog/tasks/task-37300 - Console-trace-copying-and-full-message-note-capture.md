@@ -157,7 +157,8 @@ Five confirmed P2 issues were fixed with regression coverage:
 - Response More actions remain visible/reachable through scrolling and resize
   cycles in a short terminal.
 
-Additional core file: `app.py` owns the shared clipboard revision. The guide's
+Additional core seam: the App owns the shared clipboard revision (moved to its
+existing `TextualAppGuards` aggregate during CI closeout below). The guide's
 remaining obsolete note-cap wording was corrected. The real-screen handoff
 test qualifies the real saved snapshot through Notes before Library's UI load
 deadline, isolating exact-note projection from cold-read latency; no production
@@ -201,3 +202,27 @@ journey also passed under native `WindowsDriver` (5.77s); the independent real
 Console/Notes copy, paste, save and exact-ID Library journey passed in 70.55s.
 Both changed Python files pass Ruff and formatting; CSS reproduction and diff
 whitespace checks pass. Existing full-suite/platform limitations remain recorded.
+
+### Required CI size-budget fix
+
+The completed original-head PR Fast Lane had one failure and 3256 passes:
+`app.py` exceeded its 5712-line budget by the 14 new clipboard member lines.
+Moved those unchanged members to the already-inherited `TextualAppGuards`
+aggregate in `Utils/text_selection_crash_guard.py`, the existing home for
+cross-cutting App guards without new boot imports or App bases. `app.py` is
+again exactly 5712 lines; no budget was raised. Both member ASTs are unchanged,
+and the independent follow-up review confirmed the MRO still delegates exactly
+once to the existing clipboard transport. No new ADR is required for this move.
+
+The two targeted App budget/slack checks pass. Real-App ordinary-copy race and
+existing selection/Windows-driver guard cases also pass in the broader run.
+That run returned 153 passed, 9 failed, 1 skipped: seven over-budget modules are
+unchanged from `dev`; `console_transcript.py` was already 299 lines over its pin
+on `dev` and contains 169 additional approved feature lines; the whole-tree
+scanner still encounters unrelated invalid-UTF-8 AppleDouble files. Those
+broader baseline debts remain recorded, not described as a green module sweep.
+No size pins were changed in this feature.
+
+The user explicitly approved substituting independent review/UAT for Qodo on
+PR #3291 only. Auto-merge was disarmed and the branch synchronized before this
+CI fix, as required by the enabled merge queue workflow; re-arm after publication.

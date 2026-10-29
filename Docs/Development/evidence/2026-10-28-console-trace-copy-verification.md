@@ -226,3 +226,29 @@ model or full-app startup. Native OSC 52 payload publication is observed; OS
 clipboard acceptance is not acknowledged by that protocol. Scratch plugin,
 manifests, exported Markdown and SVG/PNG inspection frames stay under the owned,
 ignored `.superpowers/sdd/2026-10-28-console-trace-copy-pr-review/uat-evidence/`.
+
+### Required CI correction
+
+The original-head PR Fast Lane job `123255335816` completed with **3256 passed,
+1 failed, 3 skipped**: `app.py` measured 5726 lines against its 5712 pin. Moved
+the unchanged `clipboard_revision` and `copy_to_clipboard` members to the existing
+`TextualAppGuards` aggregate. This uses its existing App inheritance, creates no
+boot import or base-class change, and leaves `app.py` at exactly 5712 lines.
+Both extracted function ASTs are identical; independent MRO review found no new
+issue. Scoped guard lint has no new diagnostics. No budget was changed.
+
+The exact App ceiling/slack checks pass (**2 passed**, 1.25s). A broader targeted
+run of module ratchets, real-App copy races, selection guards and native driver
+contracts returned **153 passed, 9 failed, 1 skipped**. Seven failing module
+counts are identical to `origin/dev`; Console transcript's existing base
+overshoot is 299 lines, with 169 additional feature lines in this branch. The
+remaining scanner failure is the already recorded unrelated AppleDouble input.
+This wider result is preserved; the required CI failure was the App pin, not
+these unenrolled baseline ratchet cases. The real-App copy and guard cases pass.
+
+The user explicitly approved the Qodo exception for this PR and use of the merge
+queue subject to required CI. The queue was armed, then disarmed and the branch
+pulled with rebase before applying this CI fix. The initial stale-head pipeline
+was cancelled only after confirming its branch/SHA and retaining its failed job
+log, allowing the current-head pipeline to start. Future updates keep the same
+disarm/synchronize/push/re-arm discipline.

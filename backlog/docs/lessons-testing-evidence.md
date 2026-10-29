@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
+
+**Incident.** PR #3291 passed its focused Console/Notes journeys and screen
+ratchets, but required CI rejected 14 clipboard-revision member lines in
+`app.py` (5726 versus 5712). The existing `TextualAppGuards` aggregate explicitly
+owns cross-cutting App guards without adding App lines or boot imports. Moving
+the unchanged members there passed the exact App ceiling/slack checks and the
+real-App clipboard race tests without raising a pin or changing transport.
+
+**What to do.** Include the module-size ratchet node for the composition root
+when a UI feature touches it; screen-size checks are a different census. Put
+new App-level guards in the existing aggregate and verify the actual App MRO.
+
 ## Reachable geometry can still paint over a focused label (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291's short-terminal More-menu test kept the last button inside
