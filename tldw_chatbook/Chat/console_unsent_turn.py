@@ -29,7 +29,16 @@ from typing import Any
 
 from tldw_chatbook.Chat.console_turn_preparation import (
     SHELF_RELEASABLE_PAUSES,
+    ConsolePreparationPauseKind,
     ConsoleTurnPreparationState,
+)
+
+#: The trace-blocked pauses whose card offers Cancel send (TASK-33621.6).
+TRACE_CARD_PAUSES = frozenset(
+    {
+        ConsolePreparationPauseKind.TRACE_CALL,
+        ConsolePreparationPauseKind.TRACE_PROVENANCE,
+    }
 )
 
 
@@ -49,6 +58,26 @@ def shelf_releasable(preparation: Any, preparation_id: str) -> bool:
         getattr(preparation, "preparation_id", None) == preparation_id
         and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
         and getattr(preparation, "pause_kind", None) in SHELF_RELEASABLE_PAUSES
+    )
+
+
+def trace_card_returns_draft(preparation: Any, preparation_id: str) -> bool:
+    """Whether Cancel on this send's trace card gives its message back.
+
+    TASK-33621.6: Cancel on "Trace capture blocked" ended the send but left
+    the composer empty; the typed message was only in the transcript.
+
+    Args:
+        preparation: The session's current preparation, if any.
+        preparation_id: The paused send's preparation id.
+
+    Returns:
+        True only for that preparation, PAUSED on a trace card.
+    """
+    return (
+        getattr(preparation, "preparation_id", None) == preparation_id
+        and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
+        and getattr(preparation, "pause_kind", None) in TRACE_CARD_PAUSES
     )
 
 

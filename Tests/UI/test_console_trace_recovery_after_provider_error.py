@@ -204,3 +204,25 @@ async def test_retry_reshows_the_capture_error_when_the_reservation_is_unknown(
             what=f"the send did not complete: {h.controller.run_state}",
         )
         assert len(posts) == 2, posts
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["unknown", "refused"])
+async def test_cancel_send_discards_the_turn_and_returns_the_draft(
+    tmp_path, monkeypatch, kind
+):
+    """.6 AC#1: Cancel works even when the reservation status is unknown."""
+    async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        posts: list[str] = []
+        callout = await paused_after_429(h, monkeypatch, kind, posts)
+        h.console._console_composer_or_none().load_draft("")
+
+        await press(h, callout, "cancel")
+
+        assert not callout.display
+        assert "Trace reservation status is unavailable" not in visible_text(h)
+        assert h.console._console_composer_or_none().draft_text() == DRAFT
+        assert len(posts) == 1
+        assert h.controller.trace_call_recovery_preparation() is None
+        assert h.store.dispatch_recovery_for_presentation(h.session.id) is None
+        assert h.controller.run_state.status is ConsoleRunStatus.STOPPED
+        assert header_label(h) != "Blocked"
