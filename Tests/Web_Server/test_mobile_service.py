@@ -87,6 +87,19 @@ def _bound_workspace(service: MobileChatService, tmp_path: Path) -> str:
     return WORKSPACE_ID
 
 
+def _full_agent_tools_on() -> None:
+    """Turn on Full agent tools, which the ``fs_list`` agent runs need.
+
+    TASK-34100.5.3: phone sends are plain Console chat, so by default they
+    get the light tool surface (no workspace ``fs_*`` tools); a model that
+    names ``fs_list`` anyway is refused. The bootstrap profile's config is
+    restored after each test (TASK-36478), so this does not leak.
+    """
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+
+
 async def _shutdown(service: MobileChatService, subscriber: asyncio.Task) -> None:
     subscriber.cancel()
     try:
@@ -280,6 +293,7 @@ class _LoopSafeGate:
 
 
 async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
+    _full_agent_tools_on()
     gateway = AgentModeGateway()
     service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
     # Two subscribers: the first holds its own queue (fan-out sanity), the
@@ -341,8 +355,10 @@ async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
             m["role"] == "assistant" and FINAL_ANSWER in m["content"]
             for m in messages["messages"]
         )
-        # The tool really ran: the provider saw the fs_list result.
+        # The tool really ran: the provider saw the fs_list result, not a
+        # refusal (a light-surface send refuses fs_list after its card).
         assert gateway.tool_result_messages, "fs_list result never reached provider"
+        assert "not permitted" not in str(gateway.tool_result_messages)
 
         deltas = [e for e in got if e.type == "delta" and e.session_id == session["id"]]
         assert deltas, "no streaming deltas observed during the run"
@@ -567,6 +583,7 @@ async def test_second_agent_step_not_stalled_by_parked_provider_call(
             async for chunk in super().stream_chat(resolution, messages, **kwargs):
                 yield chunk
 
+    _full_agent_tools_on()
     gateway = _ParkedFirstCallGateway()
     service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
     got: list[Any] = []
@@ -632,6 +649,7 @@ async def test_second_agent_step_not_stalled_by_parked_provider_call(
             )
         assert second_call_seen
         assert gateway.tool_result_messages, "fs_list result never reached provider"
+        assert "not permitted" not in str(gateway.tool_result_messages)
     finally:
         gateway.gate.release()  # never leave the parked turn holding shutdown
         await _shutdown(service, subscriber)
@@ -705,6 +723,26 @@ async def test_shutdown_retires_chachanotes_handles_once_without_close_errors(
         ]
     assert leases == []
     assert getattr(db._local, "conn", None) is None
+
+
+async def test_folder_tools_badge_follows_full_agent_tools(tmp_path: Path) -> None:
+    """TASK-34100.5.3 review: ``has_folder_tools`` is the phone's "folder
+    tools" badge. Phone sends are plain Console chat, which gets the
+    workspace ``fs_*`` tools only with Full agent tools on, so a bound
+    folder alone no longer earns the badge."""
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=AgentModeGateway())
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        session = await service.create_session(
+            title="bound folder", workspace_id=workspace_id
+        )
+        assert session["has_folder_tools"] is False
+        assert service.sessions[0]["has_folder_tools"] is False
+
+        _full_agent_tools_on()
+        assert service.sessions[0]["has_folder_tools"] is True
+    finally:
+        await asyncio.wait_for(service.shutdown(), timeout=15)
 
 
 async def test_messages_cursor(tmp_path: Path) -> None:
@@ -1152,6 +1190,7 @@ async def test_pump_scans_only_live_sessions(tmp_path: Path) -> None:
     behavior verified against the base commit and out of this task's
     scope.)
     """
+    _full_agent_tools_on()
     gateway = AgentModeGateway()
     service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
     got: list[Any] = []
