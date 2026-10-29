@@ -129,6 +129,12 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## The common Console send harness never takes the received-intent path (TASK-33620.1, 2026-10-29)
+
+**Incident.** The triage said an emergency-stop send "is refused" because `send_refusal_copy` checks the stop. Live on origin/dev 38c9d2edcf the send reached the provider and got a reply: Enter takes the received-intent fast path (PR #3023), which never calls `send_refusal_copy`. The first regression test, built on `_console_app` (`_configure_native_ready_console`), passed on dev: its injected config makes `capture_console_received_configuration_preparation` return `None`, so every Enter falls back to the dispatch path, where the gate works. Only `_received_console_case(..., durable=True)` (Tests/UI/test_console_received_intent_feedback.py) reproduced the live bypass; its non-durable mode failed earlier, on the conversation database.
+
+**What to do.** For anything that must gate or observe a Console send, check which path the harness's Enter takes (trace `receive_console_visible_intent`'s return) and test the received-intent path with the durable received case. Count provider calls, not refusal copy: a refusal can appear on one path while the other path sends.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
