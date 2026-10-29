@@ -26,6 +26,12 @@ including creation paths that activate inside `store.create_session`. Exercise a
 modal round trip and assert the active chat, its scope and registry together;
 checking only the model written to the origin misses the navigation failure.
 
+## A modal's focus restore is deferred, so a same-tick hand-back loses to it: disable what you hide (TASK-33620.2, 2026-10-29)
+
+**Incident.** The Console's vision-block row has a Switch model button that opens the model picker. Its sync handed focus to the draft when picking a vision model hid the row, and a mounted test passed. Live, after a mouse click on Switch model and a pick, every typed key vanished: focus sat on the hidden button. A harness probe that logged each `ChatScreen.set_focus` with its caller showed the order in two of three runs. First, `Widgets/modal_dismissal.py::_restore_focus_after_dismissal` found the opener still displayed and called `opener.focus()`, which Textual runs later through `call_later`. Then the model change's sync hid the row and called `set_focus(composer)`. Last, the deferred focus landed on the hidden button. A first regression test that called the sync before the restore passed on the broken code, because it replayed the order I had assumed, not the one the log showed. Hiding the row with inline `display` would not have helped either: the row really was displayed when the restore checked it. The fix disables the row whenever it is hidden (`row.disabled = block is None`, and `disabled=True` at compose). A disabled widget is not `focusable`, so the deferred `set_focus` is refused. The same harness probe then handed focus to the draft 3 of 3 times.
+
+**What to do.** When a sync hides a control that can be a modal's opener, or can already be focused, make it unfocusable as well as invisible. Disable it, or its container. A synchronous hand-back cannot beat a `focus()` that is already queued. Before writing a regression test for a focus race, log the real order with callers, and replay that order.
+
 ---
 
 ## Moving a stale-scope check onto the worker leaves the hop to the UI loop open (TASK-33620.15.1.6, 2026-10-27)

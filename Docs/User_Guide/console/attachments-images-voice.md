@@ -95,7 +95,8 @@ disabled and a row above the status line names the model and the cause —
   stays.
 - **Switch model** opens Switch model (**Alt+M**); your draft and the image
   stay staged, and Send is ready again once you pick a model that reads
-  images.
+  images. The row goes away and the keyboard is back in your draft, so you
+  can keep typing or press Enter to send.
 
 From the composer, **Shift+Tab** reaches **Switch model**, then **Remove
 image**; **Enter** presses the focused one.
