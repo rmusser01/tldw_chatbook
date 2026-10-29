@@ -413,6 +413,9 @@ class ConsoleSelectionMenu(Vertical):
         #: nothing was focused (or the capture raced teardown), so unmount
         #: falls back to the composer.
         self._previous_focus: Widget | None = None
+        #: False once a dismissal says focus has already moved on deliberately
+        #: (`dismiss_menu`); unmount then leaves it where it is.
+        self._restore_focus_on_unmount = True
         # TASK-21119: register BEFORE any mount can happen. Textual delivers
         # ``Mount`` asynchronously (the widget's own message pump), so an
         # ``on_mount`` registration would leave a window in which the menu is
@@ -735,6 +738,20 @@ class ConsoleSelectionMenu(Vertical):
         """Escape dismissal: the owning transcript clears the selection UI."""
 
     def action_dismiss(self) -> None:
+        self.dismiss_menu()
+
+    def dismiss_menu(self, *, restore_focus: bool = True) -> None:
+        """Close the menu and clear the selection UI, as Escape does.
+
+        Same keyword as the row menus' ``dismiss_menu``, so a caller can fold
+        any focus-taking Console menu the same way.
+
+        Args:
+            restore_focus: False when focus has already moved on deliberately
+                -- a typed letter took it to the draft (TASK-33622.3) -- so
+                unmount must not pull it back to the pre-menu holder.
+        """
+        self._restore_focus_on_unmount = restore_focus
         self._post(self.Dismissed())
         self.remove()
 
@@ -760,7 +777,8 @@ class ConsoleSelectionMenu(Vertical):
         # ``selection_menus_on_screen`` re-checks attachment, and the weak
         # reference expires on its own if this hook is skipped in teardown.
         _LIVE_SELECTION_MENUS.discard(self)
-        self._restore_previous_focus()
+        if self._restore_focus_on_unmount:
+            self._restore_previous_focus()
 
     def _restore_previous_focus(self) -> None:
         """Return focus to the widget that held it before the menu mounted.

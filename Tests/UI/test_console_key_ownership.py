@@ -37,6 +37,8 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_conversation_actions import ConversationMenuTarget
+from tldw_chatbook.Chat.console_workspace_actions import WorkspaceMenuTarget
 from tldw_chatbook.UI.Console_Modules import composer_run_controls as run_controls
 from tldw_chatbook.UI.Screens.chat_screen import (
     CONSOLE_WORKBENCH_SHORTCUT_GROUPS,
@@ -45,8 +47,20 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 )
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
+    ConsoleConversationActionMenu,
+)
+from tldw_chatbook.Widgets.Console.console_message_more_menu import (
+    message_more_menus_on_screen,
+)
+from tldw_chatbook.Widgets.Console.console_selection_menu import (
+    selection_menus_on_screen,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleTranscriptActionButton,
+)
+from tldw_chatbook.Widgets.Console.console_workspace_action_menu import (
+    ConsoleWorkspaceActionMenu,
 )
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -153,6 +167,64 @@ async def _focus_transcript_with_f6(console, pilot, transcript) -> None:
         await pilot.press("f6")
         await pilot.pause()
     assert console.focused is transcript, f"F6 never reached it: {console.focused!r}"
+
+
+def _menus(console) -> list:
+    """The in-screen popup menus still attached, removal not yet scheduled."""
+    return [
+        menu
+        for menu in (
+            *message_more_menus_on_screen(console),
+            *selection_menus_on_screen(console),
+        )
+        if not getattr(menu, "_pruning", False)
+    ]
+
+
+def _focus_in(console, menu) -> bool:
+    focused = console.focused
+    return focused is not None and (focused is menu or menu in focused.ancestors)
+
+
+async def _open_message_menu(console, pilot, transcript, kind: str):
+    """Open one of the transcript's focus-taking menus from the keyboard.
+
+    ``more``: F6, j, the selected message's More action, Enter.
+    ``selection``: F6, j, ``s`` (keyboard text selection), ``l l``, Enter.
+
+    Returns:
+        The opened menu, once it holds focus.
+    """
+    await _focus_transcript_with_f6(console, pilot, transcript)
+    await pilot.press("j")
+    await _wait_for(
+        pilot, lambda: transcript.selected_message_id is not None, "j selected nothing"
+    )
+    if kind == "more":
+        selector = f"#console-message-action-more-{transcript.selected_message_id}"
+        await _wait_for(
+            pilot, lambda: bool(transcript.query(selector)), "no More action shown"
+        )
+        more = transcript.query_one(selector, Button)
+        more.focus()
+        await _wait_for(pilot, lambda: console.focused is more, "More never focused")
+        await pilot.press("enter")
+        menus = lambda: message_more_menus_on_screen(console)  # noqa: E731
+    else:
+        await pilot.press("s")
+        await _wait_for(
+            pilot,
+            lambda: transcript._kb_selection_row is not None,
+            "s did not arm keyboard text selection",
+        )
+        await pilot.press("l", "l", "enter")
+        menus = lambda: selection_menus_on_screen(console)  # noqa: E731
+    await _wait_for(
+        pilot,
+        lambda: bool(menus()) and _focus_in(console, menus()[0]),
+        lambda: f"{kind} menu never took focus: {console.focused!r}",
+    )
+    return menus()[0]
 
 
 def _draft_render(composer) -> str:
@@ -564,3 +636,149 @@ async def test_type_to_compose_leaves_the_arrival_window_to_the_arrival_claim():
         screen._console_arrival_focus = None
         run_controls.type_to_compose(screen, composer, Key("x", "x"))
         assert composer.draft_has_focus
+
+
+# ---------------------------------------------------------------------------
+# Popup menus: Esc closes them first; a typed letter folds them and types
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["more", "selection"])
+@pytest.mark.asyncio
+async def test_esc_closes_an_open_message_menu_before_returning_to_the_composer(
+    kind,
+):
+    """TASK-33622.4 AC#2: Esc folds an open message menu (a message's More
+    menu, the text-selection menu) and clears the selection before it
+    returns to the composer -- one layer per press."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, transcript = await _mounted(host, pilot)
+        await _open_message_menu(console, pilot, transcript, kind)
+
+        await pilot.press("escape")
+        await _wait_for(
+            pilot, lambda: not _menus(console), f"Esc left the {kind} menu open"
+        )
+        await pilot.pause()
+        assert transcript.selected_message_id is not None, "Esc cleared two layers"
+        assert not composer.draft_has_focus, "Esc skipped the selection"
+
+        await pilot.press("escape")
+        await _wait_for(
+            pilot,
+            lambda: transcript.selected_message_id is None,
+            "the second Esc did not clear the selection",
+        )
+        await pilot.pause()
+        assert console.focused is transcript
+
+        await pilot.press("escape")
+        await _wait_for(
+            pilot,
+            lambda: composer.draft_has_focus,
+            lambda: f"the last Esc left focus on {console.focused!r}",
+        )
+
+
+@pytest.mark.parametrize("kind", ["more", "selection"])
+@pytest.mark.asyncio
+async def test_a_letter_typed_in_an_open_message_menu_folds_it_and_types(kind):
+    """TASK-33622.3 review: a menu that takes focus has no use for a letter.
+    The letter lands in the draft AND the menu folds -- it must not float on
+    without focus, out of Esc's reach (Esc from the composer does not close
+    these menus). Focus stays in the draft: the selection menu's unmount
+    restore must not pull it back to the transcript."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, transcript = await _mounted(host, pilot)
+        trace = _spy_trace(console)
+        await _open_message_menu(console, pilot, transcript, kind)
+
+        await pilot.press("x")
+        await pilot.pause()
+        assert composer.draft_has_focus, f"'x' left focus on {console.focused!r}"
+        assert composer.draft_text() == "x"
+        await _wait_for(
+            pilot,
+            lambda: not _menus(console),
+            lambda: f"the {kind} menu stayed open: {_menus(console)!r}",
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert composer.draft_has_focus, (
+            f"closing the {kind} menu moved focus to {console.focused!r}"
+        )
+
+        await _type(pilot, "yz")
+        assert composer.draft_text() == "xyz"
+        assert trace == []
+        assert transcript.selection_manager.state.selection is None, (
+            "the text-selection highlight outlived its menu"
+        )
+
+
+def _row_menu(kind: str):
+    """A real row action menu: the Workspaces tree's or a conversation row's."""
+    if kind == "workspace":
+        return ConsoleWorkspaceActionMenu(
+            target=WorkspaceMenuTarget(workspace_id="w1", name="One"),
+            opener_id="rows",
+            screen_x=0,
+            screen_y=0,
+        )
+    return ConsoleConversationActionMenu(
+        target=ConversationMenuTarget(conversation_id="c1", title="One"),
+        opener_id="rows",
+        screen_x=0,
+        screen_y=0,
+    )
+
+
+class _RowMenuScreen(_TypeToComposeScreen):
+    """The policy harness plus one real row action menu."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self._kind = kind
+
+    def compose(self) -> ComposeResult:
+        yield from super().compose()
+        yield _row_menu(self._kind)
+
+
+class _RowMenuApp(App[None]):
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self._kind = kind
+
+    def on_mount(self) -> None:
+        self.push_screen(_RowMenuScreen(self._kind))
+
+
+@pytest.mark.parametrize("kind", ["workspace", "conversation"])
+@pytest.mark.asyncio
+async def test_type_to_compose_folds_a_row_menu_without_handing_focus_back(kind):
+    """TASK-33622.3 review: the conversation- and workspace-row menus fold the
+    same way, and their dismissal does not hand focus back to the opener."""
+    app = _RowMenuApp(kind)
+    async with app.run_test(size=(120, 20)) as pilot:
+        screen = app.screen
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+        menu_type = (
+            ConsoleWorkspaceActionMenu
+            if kind == "workspace"
+            else ConsoleConversationActionMenu
+        )
+        menu = screen.query_one(menu_type)
+        await _wait_for(
+            pilot, lambda: _focus_in(screen, menu), "the row menu never took focus"
+        )
+
+        run_controls.type_to_compose(screen, composer, Key("x", "x"))
+        assert composer.draft_has_focus, "an unclaimed letter did not move"
+        await _wait_for(
+            pilot, lambda: not screen.query(menu_type), "the row menu stayed open"
+        )
+        await pilot.pause()
+        assert composer.draft_has_focus, "the menu handed focus back to its opener"
