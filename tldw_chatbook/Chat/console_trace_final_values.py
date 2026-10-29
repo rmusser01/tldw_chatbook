@@ -449,6 +449,26 @@ def replacement_descriptor_count(
     return 1
 
 
+def _replacement_witness(
+    completed_tool_turn: object, rewritten_tail: object
+) -> CompletedToolTurnWitness | RewrittenTailWitness | None:
+    """Return the one typed witness, each checked against its own field.
+
+    Raises:
+        ValueError: ``surface_delta_shape`` if both fields are set or either
+            holds anything but its own witness type.
+    """
+    if completed_tool_turn is not None and rewritten_tail is not None:
+        raise ValueError("surface_delta_shape")
+    if completed_tool_turn is not None:
+        if type(completed_tool_turn) is not CompletedToolTurnWitness:
+            raise ValueError("surface_delta_shape")
+        return completed_tool_turn
+    if rewritten_tail is not None and type(rewritten_tail) is not RewrittenTailWitness:
+        raise ValueError("surface_delta_shape")
+    return rewritten_tail
+
+
 @dataclass(frozen=True, slots=True)
 class SurfaceDeltaAdmission:
     """Preparation-owned declaration containing only newly admitted descriptors."""
@@ -480,13 +500,10 @@ class SurfaceDeltaAdmission:
             raise ValueError("surface_delta_admission")
         if not self.descriptors and self.predecessor_surface_head_id is None:
             raise ValueError("surface_delta_admission")
-        witness = self.completed_tool_turn or self.rewritten_tail
+        witness = _replacement_witness(self.completed_tool_turn, self.rewritten_tail)
         if witness is not None:
             if (
-                (self.completed_tool_turn is not None)
-                == (self.rewritten_tail is not None)
-                or type(witness) not in {CompletedToolTurnWitness, RewrittenTailWitness}
-                or self.replacement_range is None
+                self.replacement_range is None
                 or self.replacement_range.component_name != "messages_payload"
                 or self.route_identity not in {"agent_first", "fresh"}
                 or not witness.matches_descriptors(self.descriptors)
@@ -521,13 +538,10 @@ class VerifiedSurfaceDelta:
             or not self.preparation_identity
         ):
             raise ValueError("surface_delta_identity")
-        witness = self.completed_tool_turn or self.rewritten_tail
+        witness = _replacement_witness(self.completed_tool_turn, self.rewritten_tail)
         if witness is not None:
             if (
-                (self.completed_tool_turn is not None)
-                == (self.rewritten_tail is not None)
-                or type(witness) not in {CompletedToolTurnWitness, RewrittenTailWitness}
-                or self.replacement is None
+                self.replacement is None
                 or len(self.items) != witness.descriptor_count - 1
                 or self.route_identity not in {"agent_first", "fresh"}
                 or self.replacement.item.component_name != "messages_payload"

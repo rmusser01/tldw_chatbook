@@ -119,7 +119,7 @@ def _restart_trace_runtime(harness) -> None:
     harness.factory = ConsoleTraceBoundaryFactory(harness.db)
 
 
-async def _three_long_turns(harness) -> list:
+async def _four_long_turns(harness) -> list:
     results = []
     for index in range(4):
         result, sent, reserved = await _send(harness, f"q{index}: {_LONG}")
@@ -144,7 +144,7 @@ async def test_captured_sends_after_compact_now_keep_trace_capture(harness, rest
             summary_max_tokens=100,
         ),
     )
-    await _three_long_turns(harness)
+    await _four_long_turns(harness)
 
     succeeded, copy = await harness.controller.compact_context_now(SESSION)
     assert succeeded is True, copy
@@ -181,7 +181,7 @@ async def test_captured_sends_after_edit_and_resend_keep_trace_capture(
 ):
     """AC#1/#5 of TASK-33621.7: send, Edit & resend, send again."""
 
-    turns = await _three_long_turns(harness)
+    turns = await _four_long_turns(harness)
     edited = turns[-1] if anchor == "last" else turns[1]
 
     resent = await harness.controller.edit_and_resend_message(
