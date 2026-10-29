@@ -185,7 +185,13 @@ _BUDGETS: dict[str, int] = {
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    # 2026-10-29 (TASK-33621.53 review follow-up, owner decision: a fix over
+    # a size ratchet raises the row): 22338 -> 22346 (+8) -- the store owns
+    # pause_unreserved_failed_commit, a thin method over its body in
+    # console_native_commit.py, so the controller no longer reads the
+    # store's private commit-owner maps.
+    # PR3309 integration 2026-11-01: user size waiver; 22361 dev + 8 = 22369.
+    "tldw_chatbook/Chat/console_chat_store.py": 22369,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).

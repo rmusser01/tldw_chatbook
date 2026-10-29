@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+from loguru import logger
 
 from Tests.Chat.test_console_durable_commit_diagnostics import ReadyGateway
 from Tests.private_profile import private_profile_test
@@ -61,15 +62,38 @@ def _held(store):
     return store.preparation_for_session(store.active_session_id)
 
 
+_PAUSE_EVENT = "console_durable_turn_commit_failed_before_reservation"
+
+
+async def _submit_recording_warnings(controller, draft):
+    """Submit once, returning the result and every WARNING message logged."""
+    messages: list[str] = []
+    sink_id = logger.add(
+        lambda message: messages.append(message.record["message"]),
+        level="WARNING",
+    )
+    try:
+        result = await controller.submit_draft(draft)
+    finally:
+        logger.remove(sink_id)
+    return result, messages
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_a_commit_that_fails_before_its_reservation_pauses_for_persistence(
     request: pytest.FixtureRequest,
 ) -> None:
-    """Before the fix the preparation stayed COMMITTING."""
+    """Before the fix the preparation stayed COMMITTING.
+
+    The store records the pause once, as it does for a commit that fails
+    after its reservation, so a diagnostic reader can tell the two apart.
+    """
     controller, store = _controller(lambda _store, _preparation_id: None)
 
-    result = await controller.submit_draft("capital of Japan?")
+    result, warnings = await _submit_recording_warnings(
+        controller, "capital of Japan?"
+    )
 
     assert result.accepted is False
     assert "Couldn't save the prepared turn" in (result.visible_copy or "")
@@ -77,6 +101,7 @@ async def test_a_commit_that_fails_before_its_reservation_pauses_for_persistence
     assert held is not None
     assert held.state is ConsoleTurnPreparationState.PAUSED, held.state
     assert held.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+    assert warnings.count(_PAUSE_EVENT) == 1, warnings
 
 
 @pytest.mark.asyncio
@@ -97,12 +122,15 @@ async def test_a_commit_another_owner_holds_is_left_committing(
 
     controller, store = _controller(claim)
 
-    result = await controller.submit_draft("capital of Japan?")
+    result, warnings = await _submit_recording_warnings(
+        controller, "capital of Japan?"
+    )
 
     assert result.accepted is False
     held = _held(store)
     assert held is not None
     assert held.state is ConsoleTurnPreparationState.COMMITTING, held.state
+    assert _PAUSE_EVENT not in warnings
 
 
 @pytest.mark.asyncio
@@ -132,10 +160,13 @@ async def test_a_newer_attempt_of_the_failed_send_is_left_alone(
 
     controller, store = _controller(supersede)
 
-    result = await controller.submit_draft("capital of Japan?")
+    result, warnings = await _submit_recording_warnings(
+        controller, "capital of Japan?"
+    )
 
     assert result.accepted is False
     held = _held(store)
     assert held is not None
     assert held.attempt_id == "attempt-newer"
     assert held.state is ConsoleTurnPreparationState.COMMITTING, held.state
+    assert _PAUSE_EVENT not in warnings
