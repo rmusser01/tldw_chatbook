@@ -958,9 +958,9 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     # admission-sensitive suites in their own pytest invocation (their
     # keep_bootstrap_profile enrollment poisons sandboxed suites sharing a
     # process); TASK-34916 moved that invocation to its own job.
-    # TASK-37270 adds a bounded UAT step plus report validation/artifacts to
+    # TASK-37270 adds bounded UAT, report validation, negative control, and artifacts to
     # the existing second job; the original serial invocation stays in place.
-    assert len(fast["steps"]) == (7 if job_name == "pr-fast-lane-admission-2" else 4)
+    assert len(fast["steps"]) == (8 if job_name == "pr-fast-lane-admission-2" else 4)
     assert fast["steps"][3]["name"] == test_step
     assert "if" not in fast["steps"][3]
 

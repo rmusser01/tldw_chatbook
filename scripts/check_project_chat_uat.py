@@ -58,13 +58,59 @@ def check_reports(junit: Path, artifacts: Path) -> None:
             ), f"missing viewport: {path}"
 
 
+def check_negative_control(junit: Path, artifacts: Path) -> None:
+    """The deliberately damaged README must fail after a real file-tool result."""
+    reason = "README read did not supply a verification code"
+    cases = list(ET.parse(junit).iter("testcase"))
+    assert len(cases) == 1 and cases[0].get("name") == "test_project_chat_uat[fenced]"
+    assert (
+        cases[0].find("error") is None and cases[0].find("skipped") is None
+    ), "negative control has a teardown error or skip"
+    failure = cases[0].find("failure")
+    assert failure is not None and reason in (
+        failure.get("message", "") + (failure.text or "")
+    ), "negative control failed for another reason"
+    receipts = list(artifacts.glob("*/receipt.json"))
+    assert len(receipts) == 1, "negative control receipt missing or duplicated"
+    row = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert row.get("variant") == "fenced" and row.get("status") == "failed"
+    assert (
+        row.get("negative_control") == "missing-readme"
+        and row.get("phase") == "await-answer"
+    )
+    assert row.get("blocked_destinations") == []
+    errors = row.get("model_errors", [])
+    assert errors and all(
+        error == "AssertionError: " + reason for error in errors
+    ), "negative control protocol failure was unexpected"
+    messages = [
+        message
+        for payload in row.get("requests", [])
+        for message in payload.get("messages", [])
+    ]
+    assert any(
+        message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and message["content"].startswith("Tool result for fs_read:")
+        and "README deliberately lacks verification evidence." in message["content"]
+        for message in messages
+    ), "negative control never reached its file read"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--junit", required=True, type=Path)
     parser.add_argument("--artifacts", required=True, type=Path)
+    parser.add_argument("--negative-control", action="store_true")
     args = parser.parse_args()
-    check_reports(args.junit, args.artifacts)
-    print("Project-chat UAT: all four cases passed with complete receipts.")
+    if args.negative_control:
+        check_negative_control(args.junit, args.artifacts)
+        print(
+            "Project-chat UAT: missing README evidence correctly rejected after fs_read."
+        )
+    else:
+        check_reports(args.junit, args.artifacts)
+        print("Project-chat UAT: all four cases passed with complete receipts.")
 
 
 if __name__ == "__main__":

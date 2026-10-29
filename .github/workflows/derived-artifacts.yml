@@ -579,6 +579,19 @@ jobs:
       - name: Require complete project-chat UAT evidence
         if: always()
         run: python scripts/check_project_chat_uat.py --junit project-chat-uat.xml --artifacts project-chat-uat
+      - name: Prove missing project evidence fails UAT
+        timeout-minutes: 5
+        env:
+          TLDW_UAT_ARTIFACTS: project-chat-negative
+          TLDW_UAT_NEGATIVE_CONTROL: missing-readme
+        run: |
+          status=0
+          pytest 'Tests/QA/test_project_chat_uat.py::test_project_chat_uat[fenced]' \
+            -q -o addopts= --timeout=240 --tb=short \
+            --basetemp=project-chat-negative-pytest --junitxml=project-chat-negative.xml || status=$?
+          test "$status" -eq 1
+          python scripts/check_project_chat_uat.py --negative-control \
+            --junit project-chat-negative.xml --artifacts project-chat-negative
       - name: Retain project-chat UAT evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -592,6 +605,11 @@ jobs:
             project-chat-uat-pytest/**/pytest.log
             project-chat-uat-pytest/**/stacks.txt
             project-chat-uat-pytest/**/tldw_cli_app.log
+            project-chat-negative/
+            project-chat-negative.xml
+            project-chat-negative-pytest/**/pytest.log
+            project-chat-negative-pytest/**/stacks.txt
+            project-chat-negative-pytest/**/tldw_cli_app.log
 
   ui-fast-lane:
     # TASK-32908. Until now `Tests/UI` -- 25,917 collected tests, the biggest

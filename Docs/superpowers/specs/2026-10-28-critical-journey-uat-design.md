@@ -451,3 +451,16 @@ evidence with `if: always()`. No runner or job-timeout increase (ADR-103). The b
 job took 12m16s in run 40779693441, leaving headroom under its existing 35-minute cap.
 Qualification results will be added after the actual pilot passes; writing a test
 or enrolling it is not proof that the journey works.
+
+The CI job also runs the missing-evidence negative control after the normal gate.
+It requires pytest exit 1, the precise missing-code failure, and an actual `fs_read`
+result from the damaged README. A startup/network failure cannot satisfy this
+control. Its artifacts are kept separately in `project-chat-negative`.
+
+Independent implementation review found and fixed three additional false-green
+paths: wrong/missing outbound model identity, tool calls that compensate for absent
+argument schemas, and a run linked to the wrong saved assistant message. Ten focused
+negative cases cover these defects. Review fixtures and gate checks passed locally;
+full Linux pilot qualification remains pending. Direct SHA/dependency-version fields
+in individual receipts are deferred; CI artifacts remain associated with their run
+and tested head.

@@ -41,3 +41,14 @@ def test_project_chat_uat_is_required_without_extra_runners():
         "tldw_cli_app.log",
     ):
         assert artifact in upload["with"]["path"]
+
+    negative = steps["Prove missing project evidence fails UAT"]
+    assert "if" not in negative and not negative.get("continue-on-error")
+    assert negative["timeout-minutes"] == 5
+    assert negative["env"] == {
+        "TLDW_UAT_ARTIFACTS": "project-chat-negative",
+        "TLDW_UAT_NEGATIVE_CONTROL": "missing-readme",
+    }
+    assert 'test "$status" -eq 1' in negative["run"]
+    assert "scripts/check_project_chat_uat.py --negative-control" in negative["run"]
+    assert "project-chat-negative/" in upload["with"]["path"]
