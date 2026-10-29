@@ -805,7 +805,12 @@ def read_review_source(
             or end < start_line
             or end > document.line_count
         ):
-            raise ReviewRefused("invalid_source_range")
+            refusal = ReviewRefused("invalid_source_range")
+            refusal.source_range_details = {
+                "source_ref": source_ref,
+                "line_count": document.line_count,
+            }
+            raise refusal
         selection = {
             "op": "content",
             "source_ref": source_ref,

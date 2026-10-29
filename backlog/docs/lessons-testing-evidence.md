@@ -129,6 +129,22 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## A correct refusal still needs a usable recovery path (TASK-35582, 2026-10-29)
+
+**Incident.** After accepting four dispositions, the live verifier requested lines
+1–10 from captured seven/five-line files three times and became stuck. Strict
+range validation was correct, but the tool returned only `invalid_source_range`;
+the runtime also discarded detailed error content for reads. An offline replay
+of those arguments reached the consecutive failed-tool-call guard, correcting
+the initial attribution to the separate permission-denial guard. Bounded retry
+arguments passed through actual native/fenced model messages let scripted turns
+recover and complete with the original sealing checks intact.
+
+**What to do.** Reproduce the precise call sequence through the runtime before
+changing a safety limit. Check that actionable, capacity-bounded recovery feedback
+actually reaches the model and that ignoring it still stops. Scripted compliance
+proves the recovery contract, not that a live model will follow it.
+
 ## Request-shape tests can miss stale continuation state (TASK-35582, 2026-10-29)
 
 **Incident.** The instruction-deferral regression exercised the real outgoing

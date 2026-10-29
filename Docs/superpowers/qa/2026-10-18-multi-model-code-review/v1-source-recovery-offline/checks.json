@@ -1,0 +1,87 @@
+{
+  "base_commit": "2b544776f91a6b972784e9f387785b9a32b34f8d",
+  "scope": "Offline scripted controls; not live qualification",
+  "red": {
+    "failed": 6,
+    "passed": 5,
+    "expected_failures": "Missing actionable source-range feedback in direct and native/fenced runtime paths"
+  },
+  "new_regressions": {
+    "passed": 11
+  },
+  "targeted_regressions": {
+    "passed": 205,
+    "paths": [
+      "Tests/Agents/test_code_review_source_recovery.py",
+      "Tests/Agents/test_code_review_source.py",
+      "Tests/Agents/test_code_review_tool_provider.py",
+      "Tests/Agents/test_code_review_completion_recovery.py",
+      "Tests/Agents/test_code_review_conflict_recovery.py",
+      "Tests/Agents/test_code_review_reports.py",
+      "Tests/Agents/test_code_review_verification.py",
+      "Tests/Agents/test_code_review_reviewer_completion.py"
+    ]
+  },
+  "accounting": {
+    "passed": 15,
+    "path": "Tests/DB/test_agent_run_budget_accounting.py"
+  },
+  "static": {
+    "tldw_chatbook/Agents/agent_runtime.py": {
+      "baseline_warnings": 21,
+      "new_warnings": false,
+      "format_debt_unchanged": true
+    },
+    "tldw_chatbook/Agents/code_review_source.py": {
+      "baseline_warnings": 3,
+      "new_warnings": false,
+      "format_debt_unchanged": true
+    },
+    "tldw_chatbook/Agents/code_review_tool_provider.py": {
+      "baseline_warnings": 0,
+      "new_warnings": false,
+      "format_debt_unchanged": true
+    },
+    "tldw_chatbook/Agents/code_review_service.py": {
+      "baseline_warnings": 3,
+      "new_warnings": false,
+      "format_debt_unchanged": true
+    }
+  },
+  "clean_ruff_check_and_format": [
+    "Tests/Agents/test_code_review_source_recovery.py",
+    "tldw_chatbook/Agents/code_review_tool_provider.py"
+  ],
+  "whitespace": "git diff --check passed",
+  "review": "review.md; no actionable findings",
+  "live": {
+    "new_generation_requests": 0,
+    "new_product_children": 0,
+    "cumulative_generation_requests": 457,
+    "cumulative_product_children": 31,
+    "AC24": "open",
+    "pr_draft": true
+  },
+  "local_logs": {
+    "red": {
+      "path": "/private/tmp/task35582-source-recovery-red-exact.log",
+      "sha256": "26c09179d1f5f70c7ee78dce63daac67edd2bf8e60ebef2340cc78ca0aec4821"
+    },
+    "green": {
+      "path": "/private/tmp/task35582-source-recovery-green-role.log",
+      "sha256": "2afbad3a7e638c20c542a462180860a8144d848b4edd402fef8cfe3ef32174d3"
+    },
+    "regressions": {
+      "path": "/private/tmp/task35582-source-recovery-regression.log",
+      "sha256": "91a1ff507b45b06f4ce6c54856e335c0d274af339b46d8359edf9b4e32a73d9f"
+    },
+    "accounting": {
+      "path": "/private/tmp/task35582-source-recovery-accounting.log",
+      "sha256": "6abd9c6fca21ff47716f3b3073f480edcc05796b172dbd97bb5848b2800d520e"
+    },
+    "static": {
+      "path": "/private/tmp/task35582-source-recovery-static.json",
+      "sha256": "1b17efff357e781bd4991703c56528e8e474ae014ea56fdc3d4b7392b262a0fa"
+    }
+  }
+}
