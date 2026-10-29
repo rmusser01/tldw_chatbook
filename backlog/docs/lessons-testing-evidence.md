@@ -62,6 +62,26 @@ row; single-line ellipsis preserves their identifying prefix.
 click outcome, especially on one-row controls. Reuse the design language's
 non-obscuring focus contract; a successful event alone does not prove a person
 can identify its target.
+## An after-content Stop test must receive real content first (TASK-37270, 2026-10-28)
+
+**Incident.** The heartbeat regression used the real llama.cpp native-tools dispatch
+and found SSE comments/event fields rendered as prose. The surrounding hosted
+Stop tests also needed their actual guarded configuration profile. Once that setup
+was correct, migrated byte-stream adapters exposed old `iter_lines`-only fixtures.
+The Anthropic case had previously passed its close assertion after receiving a
+synthetic provider error because its fixture used an OpenAI payload and ignored
+`decode_unicode`.
+
+**What to do.** For after-content Stop tests, feed each real adapter its own
+byte-level wire shape and assert actual assistant content before closing the
+stream. Then require exactly one response close; closing alone cannot show that
+content delivery worked. Keep a separate before-content cancellation test for
+keep-alive-only streams: Stop must still finish with no assistant content and
+exactly one transport close. The final six-case local streaming matrix passed;
+the original three control-frame regressions failed with the old local SSE guard
+restored in memory.
+
+
 ## A real-app UAT must honor consent and trace privacy (TASK-37270, 2026-10-28)
 
 **Incident.** The first project-chat UAT reached Send but made no model request.
@@ -22359,3 +22379,23 @@ boundaries before testing successful post-refusal execution on a supported host.
 The corrected native Windows selection passed 72 cases with 20 explicit POSIX
 skips and no failure or teardown error. Run the actual command controls on Linux;
 Windows refusal evidence cannot qualify them.
+
+## A click does not prove the new chat owns the composer (PR #3288, 2026-10-28)
+
+The Windows project-chat pilot captured the active session immediately after
+`pilot.click` on New chat. Two actual variants and the missing-evidence control
+later reached the project-instruction dialog with a different session ID: the
+async handler had created the chat after the pilot captured the old one. Wait
+for a previously unseen active session in the requested workspace and its
+composer binding before typing; keep the later exact disclosure ownership check.
+Click delivery and handler completion are separate observations.
+
+## Inventory drift calls for statement review, not an automatic rewrite (PR #3288)
+
+On 2026-10-28, every source test lane passed, but the required diagnostic-inventory
+check found one added Strata debug statement. The statement comparison showed it
+interpolated the raw unsupported reasoning-effort setting. Two synthetic-value
+regressions reproduced that output. Removing the unnecessary diagnostic made all
+48 Strata tests pass and restored the original inventory without changing its pin.
+Review the added statement before regenerating a census; a passing behavior test
+does not establish that its diagnostics are appropriate to persist.

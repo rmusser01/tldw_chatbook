@@ -1,11 +1,11 @@
 ---
 id: TASK-37270
 title: Gate real project-chat journeys with an executable UAT pilot
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-28 23:58'
-updated_date: '2026-10-29 02:23'
+updated_date: '2026-10-29 05:49'
 labels: []
 dependencies: []
 priority: high
@@ -25,24 +25,32 @@ Prevent project-chat feature failures from passing component-only checks by exer
 - [x] #4 Only the owned loopback provider can be contacted; private profile isolation, bounded waits, and failure/cleanup artifacts are verified.
 - [x] #5 The exact pilot variants are enrolled in an existing required CI lane with complete no-skip result checking and retained diagnostic artifacts after targeted qualification.
 - [x] #6 Documentation records exact commands and measured platform coverage, distinguishing scripted Windows/Linux runs from unperformed live Fedora qualification.
+- [x] #7 All four project-chat UAT variants pass on Windows with the original authority boundaries and bounded waits intact.
+- [x] #8 Local compatible-provider stream control frames never enter assistant prose, while genuine content, tools, reasoning and errors retain their behavior.
+- [x] #9 Strata and PolyStrata are supported through verified local-provider configuration, discovery and inference paths with focused compatibility coverage and honest live-model limitations.
+- [x] #10 Actionable PR3288 review findings are resolved and every required check passes on the final head.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-ADR required: no. ADR path: N/A; existing ADR-069/174/241/253 apply. Review and tighten the design, then write the implementation plan. Build the HTTP script and independent oracle tests first, exercise real startup and UI creation/send in the pilot, qualify negative controls, and enroll exact cases with retained artifacts in the existing CI gate. No full-suite run or live model is part of this first pilot.
+ADR required: no; existing ADR-069/174/241/253 govern the original pilot, ADR-002/006/012/066/179 govern external provider support, and ADR-126 authority remains intact. Follow the linked project-chat UAT plan. Diagnose Windows timing with native evidence, remove notification polling churn, and correct the proven Windows-only 180-second agent-budget exhaustion using bounded measured test budgets; qualify all four variants and document performance limits. Preserve real native checks and evidence oracles. Fix invisible SSE control checkpoints and Stop, add independently configured Strata/PolyStrata discovery/inference with metadata-gated tools, resolve review findings and keep PR3288 open until final-head required checks pass. No merge is authorized.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the reviewed critical-journey catalog and a real TldwCli project-chat pilot with four scripted-provider variants. UI actions create the workspace/binding/chat, accept project-instruction disclosure and the built-in listing approval when required; actual provider requests, real file tools, private DB call IDs/ownership, and painted/saved answers establish provenance. No product modules or permission gates changed.
+Implemented the critical-journey catalog and real TldwCli project-chat pilot. Four scripted-model variants exercise actual workspace/binding/chat UI, instruction disclosure, built-in approval, provider serialization, file tools, SQLite ownership and painted/saved README evidence. Exact no-skip reporting and a real missing-evidence negative control run in the required CI lane.
 
-The existing admission-sensitive 2 lane now rejects missing/skipped cases and incomplete receipts, retains synthetic diagnostics, and runs a full missing-evidence negative control. Independent review false-green findings (model identity, absent schemas, wrong saved-answer ownership) were fixed with negative tests. Trace bodies remain private; the oracle correlates DB headers with actual HTTP history.
+Local SSE comments/control frames remain invisible while preserving cancellation checkpoints. Strata and PolyStrata have independent configuration, discovery, credentials, reasoning/tool metadata and local cost classification. Review fixes cover explicit-keyless credential selection, tool-round reasoning ownership and keep-alive-only Stop. Storage initialization waiters use existing state-change notifications instead of 10ms polling; native authority remains intact. The pilot waits for a distinct new chat and composer, and uses bounded Windows functional budgets after reproducing test-only agent-budget exhaustion.
 
-Validation: code head 4c0ce64d6c, Linux run 40805071773: 59 passed in 171.593s; expected missing-code failure after real fs_read verified in 37.802s. Both downloaded report sets independently verified. Local targeted checks: 56 support/report/enrollment passed, 147 affected CI contracts passed; Ruff and formatting clean. No full-suite sweep. Exact commands/timings/coverage are in Docs/superpowers/specs/2026-10-28-critical-journey-uat-design.md.
+Source head 3660a6caff: all four Windows journeys passed and their aggregate report verified exactly four successes with complete receipts. Body times: 743.657s fenced, 571.203s native, 493.250s compact recovery, 509.734s wrong family. The Windows missing-evidence control had exactly one intended failure, zero errors/skips, 399.400s parent time; verifier confirmed actual fs_read evidence caused rejection. Linux run 40817423013 passed 59 cases in 183.711s; its real negative control failed as intended in 38.888s. Both downloaded verifiers passed.
 
-ADR required: no; existing ADR-069/174/241/253 apply. Consent/trace-privacy lesson added to backlog/docs/lessons-testing-evidence.md. Modified files comprise the catalog/plan, pilot/helpers/report checker, workflow and CI contracts.
+The prior required aggregate failed only diagnostic inventory drift. Statement-level review found one added log interpolating a raw rejected effort. Follow-up 133b18c2cf removes that unnecessary diagnostic; two regression cases failed before the fix, then all 48 Strata tests passed in 17.38s. Exact statements again match the committed inventory without regeneration. Earlier focused provider/thinking/pricing/ratchet, six-case streaming/Stop, native admission and 90 CI-contract checks passed. Scoped Ruff/format and task-metadata checks pass; no full-suite sweep.
 
-Task stays In Progress while the complete existing PR gate finishes. Windows qualification failed with a Textual workspace-section timeout before provider entry; live Fedora/Python 3.14/model/native-terminal qualification is not run. Other catalog rows remain planned. These limitations are explicit, not converted into passing evidence.
+Independent code/documentation review findings are addressed. Qodo is unavailable for workspace credits and CodeRabbit auto-review skips dev; neither is claimed as external approval. Required final-head CI remains the closeout gate. No merge is authorized.
+
+Windows native validation remains slow: this is functional qualification, not a latency claim. Live Fedora/Python 3.14, real inference engines and native-terminal paint remain untested. Other catalog journeys remain planned. ADR required: no; existing ADR-069/174/241/253 govern the pilot, ADR-002/006/012/066/179 provider integration, and ADR-126 storage authority. Commands and evidence are in the linked UAT spec/plan; testing lessons record the consent, ownership and Stop-fixture traps.
+
+Final source validation: required check and full Derived Artifacts run 40822404188 passed on 133b18c2cf3f029fc248987ca4a2108c0b4d6b13. Linux UAT rerun: 59 passed in 190.245s; its expected negative control and downloaded report verification passed. The complete local diagnostic inventory passed unchanged. No review threads are unresolved. The final documentation-only commit retains the same required CI gate.
 <!-- SECTION:NOTES:END -->

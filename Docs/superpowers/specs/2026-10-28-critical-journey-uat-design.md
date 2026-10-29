@@ -434,8 +434,38 @@ python scripts/check_project_chat_uat.py \
 
 Use a fresh artifact/output directory for each invocation: duplicate receipts are
 rejected deliberately. On PowerShell, set `$env:TLDW_UAT_ARTIFACTS` before pytest.
-Windows cases allow 600 seconds for cold native storage/profile startup; Linux
+Windows cases allow 1200 seconds for cold native storage/profile startup and the
+complete journey, with a 600-second agent/send-stage budget; Linux
 cases allow 240 seconds. These are test deadlines, not performance targets.
+
+For Windows, run the matrix sequentially in a fresh, explicitly private directory.
+A short root avoids adding the checkout's depth to every native ancestry check;
+this does not bypass native admission or establish a measured speedup. The fixture
+runner temporarily selects the actual user as the token default owner and restores
+it afterward; it does not mock path/ACL checks. Keep the generated root and
+artifacts if diagnosis is needed.
+
+```powershell
+$uatRoot = Join-Path $env:USERPROFILE ('.tldw-uat-' + [guid]::NewGuid().ToString('N'))
+python -c "import sys; from tldw_chatbook.Utils.platform_files import os; p=sys.argv[1]; os.mkdir(p,0o700); os.mkdir(p+'/profile',0o700); os.mkdir(p+'/temp',0o700)" $uatRoot
+if ($LASTEXITCODE -ne 0) { throw 'Private fixture setup failed' }
+$env:TLDW_TEST_CONFIG_ROOT = Join-Path $uatRoot 'profile'
+$env:TEMP = Join-Path $uatRoot 'temp'
+$env:TMP = $env:TEMP
+$env:TLDW_UAT_ARTIFACTS = Join-Path $uatRoot 'artifacts'
+Remove-Item Env:TLDW_UAT_NEGATIVE_CONTROL -ErrorAction SilentlyContinue
+python -m Tests.windows_private_fixture_runner Tests/QA/test_project_chat_uat.py `
+  -q -o addopts= --tb=short --basetemp (Join-Path $uatRoot 'pytest') `
+  --junitxml (Join-Path $uatRoot 'results.xml')
+if ($LASTEXITCODE -ne 0) { throw "UAT failed; evidence: $uatRoot" }
+python scripts/check_project_chat_uat.py --junit (Join-Path $uatRoot 'results.xml') `
+  --artifacts $env:TLDW_UAT_ARTIFACTS
+if ($LASTEXITCODE -ne 0) { throw "UAT evidence rejected: $uatRoot" }
+```
+
+Use a disposable shell so these test-only environment selections do not affect a
+later ordinary application launch. A functional pass does not qualify Windows
+latency; the full native derivation remains substantially slower on this host.
 
 To prove a real missing-read failure is caught, set
 `TLDW_UAT_NEGATIVE_CONTROL=missing-readme` and select `[fenced]` in its own fresh
@@ -491,50 +521,69 @@ bypassing the built-in permission gate.
 
 ## Measured implementation inventory (2026-10-29 UTC)
 
-Tested code head: `4c0ce64d6c66cb976527afecc64b8674a919b943`.
-[Linux qualification run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40805071773),
-artifact `project-chat-uat-40805071773-1` (seven-day retention). Runner:
-`ubuntu-latest`, Python 3.12.15, x86_64/glibc 2.39. The receipts report tiktoken
-available; this is not a real llama.cpp model-tokenizer qualification.
+Tested source head: `3660a6caffb897fbe955e4ff5fc21ada4b08ad60`.
+[Linux qualification run](https://github.com/rmusser01/tldw_chatbook/actions/runs/40817423013),
+artifact `project-chat-uat-40817423013-1` (seven-day retention). The original
+pilot also passed on `4c0ce64d6c`; these results qualify the subsequent provider,
+streaming, storage-notification and pilot-ownership corrections.
 
 All node IDs start with `Tests/QA/test_project_chat_uat.py::test_project_chat_uat`:
 
-| Node suffix | Catalog coverage | Result | Case body time | Provider requests |
-| --- | --- | --- | ---: | ---: |
-| `[fenced]` | UAT-02, normal discovery | passed | 40.674s | 5 |
-| `[native]` | UAT-02, native protocol subset of UAT-04 | passed | 35.142s | 5 |
-| `[compact-recovery]` | UAT-02, compact/schema recovery subset of UAT-04 | passed | 36.298s | 5 |
-| `[wrong-family]` | UAT-02, listing recovery subset of UAT-05 | passed | 40.719s | 6 |
+| Node suffix | Catalog coverage | Linux body time | Windows body time | Provider requests |
+| --- | --- | ---: | ---: | ---: |
+| `[fenced]` | UAT-02, normal discovery | 45.973s | 743.657s | 5 |
+| `[native]` | UAT-02, native protocol subset of UAT-04 | 37.376s | 571.203s | 5 |
+| `[compact-recovery]` | UAT-02, compact/schema recovery subset of UAT-04 | 38.238s | 493.250s | 5 |
+| `[wrong-family]` | UAT-02, listing recovery subset of UAT-05 | 42.285s | 509.734s | 6 |
 
-Normal pytest invocation: **59 passed, zero skipped/errors/failures, 171.593s**
-(four journeys plus 55 fixture/report controls). Each normal receipt has matching
-run/conversation/assistant IDs, an actual bound README read, painted/saved final
-evidence, no model protocol errors, and no blocked network attempts. The compact
-request estimate was 815 input tokens plus 256 output tokens under the 4096 limit.
-The wrong-family case accepted the one real built-in approval, rejected the
-mismatched arguments, then completed through `fs_list`/`fs_read`.
+All eight journeys passed. Each normal receipt has matching run/conversation/
+assistant IDs, an actual bound README read, painted/saved final evidence, no model
+protocol errors and no blocked network attempts. The wrong-family case accepted
+the one real built-in approval, rejected mismatched arguments, then completed
+through `fs_list`/`fs_read`. Both platforms' combined normal report verifiers passed.
 
-Full negative control: **one expected failure, zero skips/errors, 37.802s**. Its
-real `fs_read` returned the deliberately altered README without a verification
-code; the model boundary rejected it with `README read did not supply a verification
-code`. The independent negative report verifier passed. Both report verifiers
-also passed against the downloaded artifacts. The combined pytest time was
-209.395s; the existing job's 35-minute cap and runner count are unchanged.
+Linux normal invocation: **59 passed, zero skips/errors/failures, 183.711s**
+(four journeys plus 55 fixture/report controls). Full negative control: **one
+expected failure, zero skips/errors, 38.888s**. Its actual `fs_read` returned the
+altered README without the verification code. The independent negative report
+verifier passed, including when rerun against the downloaded artifact. The Linux
+240-second case deadline, existing CI job/step budgets and runner count are unchanged.
 
-Additional local verification: 56 fixture/report/enrollment checks passed in
-8.71s; 147 affected CI workflow/enrollment contracts passed in 258.78s. Scoped Ruff
-checks passed for all eight changed Python files, and formatting checks passed
-for the six new Python files. No full repository test sweep was run.
+Windows 10.0.19045, Python 3.12.10, Textual 8.2.8, httpx 0.28.1, requests 2.34.2,
+pytest 9.2.0, pytest-asyncio 1.4.1, tiktoken 0.14.0: **four passed, zero skips/errors**.
+Fenced ran in its own invocation (759.68s); the remaining three ran sequentially
+(1608.30s, with fenced deselected because it had already passed). Their JUnit
+reports were combined and independently checked for exactly four successful cases.
+Fenced used a deep checkout-local fixture root; the other cases used a fresh short
+private root. This is functional qualification, not a controlled latency comparison.
+Full native Windows storage validation remains slow; no latency improvement or
+population performance claim is made. The Windows negative control completed with exactly one intended failure, zero
+skips/errors, in 399.400s (387.407s body). Its fifth provider request carried the
+actual altered README from `fs_read`; the exact missing-code report verifier passed.
 
-Windows Python 3.12.10: **failed qualification**, not a passing platform. The latest
-fenced attempt stopped opening the workspace section with Textual
-`WaitForScreenTimeout` before any provider request (161.69s parent run); earlier
-cold storage preparation also exceeded its deadline. Those results do not establish
-a product root cause or a performance regression. No Windows pass is claimed.
-Fedora/Python 3.14, a real llama.cpp model, and native-terminal input/paint are
-**not run**. All other catalog journeys remain planned, including the additional
-UAT-04 budget/denial and UAT-05 read/write variants. The complete PR gate is still
-running; this inventory records the completed UAT steps, not its eventual verdict.
+Windows diagnosis preserved genuine failures: the initial workspace-section
+Textual timeout, the pilot's 180-second agent budget expiring before its README
+read, and capturing the old session after asynchronously clicking New chat. The
+pilot now waits for a distinct active workspace chat with its composer bound,
+retains exact disclosure ownership, and allows bounded Windows-only native work.
+Storage initialization waiters use state-change notifications instead of repeated
+10ms validation polling. No permission, ACL, native authority or evidence check
+was bypassed, and no Windows authority caching was enabled.
+
+Additional local follow-up checks: 128 affected provider/thinking/pricing/ratchet
+tests passed; the final six-case local SSE/Stop matrix passed; targeted native
+admission tests passed; 90 affected CI contracts passed. Scoped Ruff/format checks
+passed for new/changed tests and the metadata helper; comparison against existing
+source lint found no new findings. No full repository sweep was run. Independent
+review found no remaining actionable issues on the final source diff. Qodo's
+external review is paused for workspace credits; CodeRabbit auto-review is disabled
+for the dev target. Neither is represented as an external review approval.
+
+The receipts report tiktoken available; this is not a real model-tokenizer
+qualification. Fedora/Python 3.14, live llama.cpp/Strata/PolyStrata inference and
+native-terminal input/paint are **not run**. All other catalog journeys remain
+planned, including additional UAT-04 budget/denial and UAT-05 read/write variants.
+The complete required PR gate must pass on the final committed head before closeout.
 
 For the full negative control, use fresh directories and preserve the expected
 nonzero pytest result:
@@ -552,3 +601,26 @@ test "$status" -eq 1
 python scripts/check_project_chat_uat.py --negative-control \
   --junit project-chat-negative.xml --artifacts project-chat-negative
 ```
+
+The first source-head aggregate check failed only diagnostic-inventory drift after
+all test lanes passed. Follow-up `133b18c2cf` removes an unnecessary raw rejected-
+effort log: both new privacy cases failed before the fix, then all 48 Strata tests
+passed. Exact statement comparison restores the original inventory without a
+pin update. This does not alter valid provider payloads or the qualified project-
+chat paths; final committed-head CI is still required.
+
+The diagnostic-fix source head `133b18c2cf` also passed the Linux UAT rerun:
+[run 40822404188](https://github.com/rmusser01/tldw_chatbook/actions/runs/40822404188),
+artifact `project-chat-uat-40822404188-1`: 59 passed in 190.245s, with the full
+negative control failing only as intended in 42.592s. Both downloaded report
+verifiers passed. The full local diagnostic inventory also passed unchanged:
+701 owners, 1053 TASK-492 calls, 56 TASK-31551 calls, 7766 TASK-494 calls and
+16 sink files. The qualified Windows project-chat path is unchanged by the
+subsequent deletion of the unsupported Strata-effort debug statement.
+
+Required source validation completed successfully on
+`133b18c2cf3f029fc248987ca4a2108c0b4d6b13`:
+[Derived Artifacts run 40822404188](https://github.com/rmusser01/tldw_chatbook/actions/runs/40822404188)
+and its required aggregate check both passed. No review threads are unresolved.
+The final qualification/task-record commit contains documentation only and retains
+the same required CI gate.
