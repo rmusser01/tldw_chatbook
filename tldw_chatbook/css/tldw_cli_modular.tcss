@@ -16244,6 +16244,11 @@ SmartContentTree Tree > .selected-node {
 }
 
 
+#setup-speech-parakeet {
+    height: auto;
+}
+
+
 #setup-voice-service-status {
     height: auto;
     min-height: $ds-size-1;

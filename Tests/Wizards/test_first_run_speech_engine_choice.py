@@ -469,6 +469,41 @@ async def test_parakeet_path_reads_choice_then_action(monkeypatch, size) -> None
     assert any(label.startswith("Full precision, larger") for label in precision_labels)
 
 
+@pytest.mark.parametrize("size", [(120, 40), (80, 24)])
+@pytest.mark.asyncio
+async def test_every_parakeet_control_scrolls_into_view_with_advanced_open(
+    monkeypatch, size
+) -> None:
+    """Review V1 (TASK-34100.13): the Parakeet block was a bare Vertical (1fr),
+    so it was sized to the leftover viewport, not its content: the step
+    under-reported its height and could not scroll. At 120x40 with Advanced
+    open, Precision and both disk options were cut off; at 80x24 even
+    "Review and install…" could not be reached."""
+    wizard = _wizard_with_facts(monkeypatch)
+    async with _WizardHost(wizard).run_test(size=size) as pilot:
+        step = await _speech_in_wizard(pilot, wizard, monkeypatch)
+        await _parakeet_step(pilot, step)
+        step.query_one("#setup-speech-advanced", Collapsible).collapsed = False
+        for _ in range(20):
+            await pilot.pause(0.05)
+        unreachable = []
+        for selector in (
+            "#setup-speech-language",
+            "#setup-speech-install",
+            "#setup-speech-precision-choice",
+            "#setup-speech-use-from-disk",
+            "#setup-speech-choose-transcribe-cpp-gguf",
+        ):
+            widget = step.query_one(selector)
+            step.scroll_to_widget(widget, animate=False, immediate=True)
+            await pilot.pause()
+            await pilot.pause()
+            region, viewport = widget.region, step.region
+            if not region.height or not viewport.contains_region(region):
+                unreachable.append(f"{selector} {region} vs {viewport}")
+    assert unreachable == [], f"out of reach at {size}: {unreachable}"
+
+
 @pytest.mark.asyncio
 async def test_runtime_missing_copy_names_the_extras_package_with_a_copy_action() -> None:
     _wizard, step = _step(runtime=False)
