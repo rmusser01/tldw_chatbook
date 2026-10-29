@@ -125,8 +125,6 @@ FAST_LANE_TARGETS = (
     # reaches the recycled-number branch on a filesystem that recycles, had
     # never run on Linux before a merge. Plain filesystem unit tests, seconds.
     "Tests/Notes/test_sync_containment.py",
-    "Tests/DB/test_subscriptions_db.py::test_base_exception_in_transaction_rolls_back_and_leaves_no_open_transaction[False]",
-    "Tests/DB/test_subscriptions_db.py::test_base_exception_in_transaction_rolls_back_and_leaves_no_open_transaction[True]",
     # TASK-34100.5: the first-reply and handoff unit guards -- the direct
     # runtime's unavailable tools never reach the agent catalog, plain arrival
     # words, the missing-revision trace diagnostic, the provider's own reason
