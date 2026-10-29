@@ -408,6 +408,33 @@ async def test_project_chat_uat(
                         server,
                     )
 
+                    if variant == "wrong-family":
+                        phase("wrong-family-approval")
+
+                        def listing_approval():
+                            capture_progress()
+                            return list(console.query(".approval-row"))
+
+                        rows = await wait_for(
+                            pilot,
+                            listing_approval,
+                            "built-in listing approval",
+                            server,
+                        )
+                        assert len(rows) == 1
+                        header = " ".join(
+                            str(item.renderable)
+                            for item in rows[0].query(".approval-row-header")
+                        )
+                        assert "Built-in" in header and "list_directory" in header
+                        assert len(server.model.received) == 3
+                        assert server.model.calls[-1] == {
+                            "name": "list_directory",
+                            "arguments": {"root_alias": alias, "path": "."},
+                        }
+                        await click(pilot, ".approval-row-fast-approve", server)
+                        record["approved_once"] = "list_directory"
+
                     def final_message():
                         capture_progress()
                         for message in reversed(store.messages_for_session(session.id)):

@@ -479,3 +479,10 @@ The saved run is checked for owner, completion, and matching successful read-cal
 IDs. Its metadata intentionally omits file arguments and bodies; those are checked
 against the actual provider HTTP history instead. The test never weakens production
 trace privacy or injects raw payloads into AgentRunsDB.
+
+The wrong-family variant explicitly enables the optional built-in listing tool
+through its normal config flag. Built-in file access retains an always-ask floor,
+so this journey checks the sole list_directory approval card and clicks its real
+Approve once button before validating argument refusal and recovery to fs_list.
+Run 40803962773 exposed this previously omitted user action; it does not justify
+bypassing the built-in permission gate.

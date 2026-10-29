@@ -62,6 +62,23 @@ row; single-line ellipsis preserves their identifying prefix.
 click outcome, especially on one-row controls. Reuse the design language's
 non-obscuring focus contract; a successful event alone does not prove a person
 can identify its target.
+## A real-app UAT must honor consent and trace privacy (TASK-37270, 2026-10-28)
+
+**Incident.** The first project-chat UAT reached Send but made no model request.
+Linux run 40801165548 captured the real agent worker waiting for first-use
+AGENTS.md disclosure and the visible Proceed dialog. After the pilot accepted
+that dialog, run 40802492563 read the README and painted/saved the answer but
+failed an oracle that expected file arguments and bodies in AgentRunsDB. The
+runtime intentionally strips those fields from durable metadata.
+
+**What to do.** Drive required consent through the actual UI and prove no provider
+request preceded it. Correlate saved call IDs, outcomes and message ownership with
+the actual provider exchange when validating private tool payloads; do not weaken
+production trace privacy to satisfy a test. Preserve active coroutine/thread stacks
+and the whole current viewport so an omitted user action is distinguishable from
+a provider stall. Keep positive controls using real metadata omissions alongside
+negative provenance tests.
+
 
 ## A successful wrong-family tool call is not project evidence (TASK-37234, 2026-10-28)
 
