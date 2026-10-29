@@ -14,6 +14,8 @@ The [R1 offline repair and provider diagnosis](r1-completion-offline/report.md)
 now reject contradictory completion before acknowledgment, with same-ID repair
 feedback and unchanged sealing checks. The failed live result is unchanged;
 offline provider controls do not recover the missing historical response body.
+The [provider diagnostics observer](provider-diagnostics.md) is now integrated
+with seven maintained offline controls and a separately gated runner preparation.
 
 The [shutdown reconciliation guard](ci-followup/shutdown.md) and earlier
 [UI wait repair/Windows diagnostics](ci-followup/report.md) passed normal CI
