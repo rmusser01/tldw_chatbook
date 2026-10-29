@@ -1542,6 +1542,15 @@ def _cap_automatic_prepared(
     )
 
 
+#: Generic provider failures whose HTTP status has a plainer meaning than
+#: "provider unavailable" (TASK-33621.5). 502/503 keep that default.
+_PROVIDER_STATUS_CATEGORIES = {
+    408: "request timed out",
+    500: "internal server error",
+    504: "gateway timed out",
+}
+
+
 def safe_provider_error_copy(
     provider: str,
     exc: BaseException,
@@ -1570,7 +1579,11 @@ def safe_provider_error_copy(
     elif isinstance(exc, ChatConfigurationError):
         category = "configuration error"
     elif isinstance(exc, ChatProviderError):
-        category = "provider unavailable"
+        # TASK-33621.5 AC#1: a status with its own meaning says it; a 504
+        # read "provider unavailable" although the gateway timed out.
+        category = _PROVIDER_STATUS_CATEGORIES.get(
+            getattr(exc, "status_code", None), "provider unavailable"
+        )
     if getattr(exc, "status_code", None) == 404 and not isinstance(
         exc, (ChatAuthenticationError, ChatRateLimitError)
     ):
