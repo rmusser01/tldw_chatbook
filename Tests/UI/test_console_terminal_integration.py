@@ -1236,3 +1236,120 @@ async def test_escape_from_a_rail_returns_to_the_open_terminal(
         assert _drain_terminal_input(manager, session_id) == b"ls"
 
     manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unsent_draft_survives_a_terminal_round_trip(tmp_path: Path) -> None:
+    """TASK-33622.5 / TASK-33622.8: shell typing never touches the chat draft.
+
+    The draft typed before opening the Terminal is still there, untouched by
+    the shell command, and typing after Return resumes it.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    session_id = _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer")
+        composer.focus()
+        await _wait_until(pilot, lambda: pilot.app.focused is composer)
+        await pilot.press("h", "e", "l", "l", "o")
+        await _wait_until(pilot, lambda: _composer_draft(console) == "hello")
+
+        assert await pilot.click("#console-terminal-open")
+        viewport_selector = "#console-terminal-viewport"
+        await _wait_for_selector(console, pilot, viewport_selector, timeout=10.0)
+        viewport = console.query_one(viewport_selector, TerminalViewport)
+        await _wait_until(pilot, lambda: pilot.app.focused is viewport)
+        await pilot.press("l", "s", "enter")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, session_id) == b"ls\r"
+        assert _composer_draft(console) == "hello"
+
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(
+            console, pilot, "#console-native-transcript", timeout=10.0
+        )
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is composer,
+            detail=lambda: pilot.app.focused,
+        )
+        await pilot.press("!")
+        await _wait_until(
+            pilot,
+            lambda: _composer_draft(console) == "hello!",
+            detail=lambda: _composer_draft(console),
+        )
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_return_never_applies_one_conversations_reading_to_another() -> None:
+    """TASK-33622.8: the restored position belongs to the conversation it came
+    from.
+
+    If the active conversation changes while the Terminal is open, Return
+    shows the new one at its own (live) position, never the old one's offset.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console, pilot, "#console-native-transcript", timeout=10.0
+        )
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Beta thread")
+        for session, word in ((first, "alpha"), (second, "beta")):
+            for index in range(12):
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.USER,
+                    content=f"{word} question {index}",
+                )
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=f"{word} answer {index}\n\nwith a second paragraph",
+                )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(pilot, lambda: transcript.max_scroll_y > 4)
+        transcript.release_anchor()
+        transcript.scroll_to(y=2, animate=False)
+        await _wait_until(pilot, lambda: transcript.scroll_y == 2)
+        alpha_ids = _rendered_message_ids(console)
+
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(
+            console, pilot, "#console-terminal-return", timeout=10.0
+        )
+        store.switch_session(second.id)  # e.g. Ctrl+K after Ctrl+]
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(
+            console, pilot, "#console-native-transcript", timeout=10.0
+        )
+        restored = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(
+            pilot,
+            lambda: _rendered_message_ids(console)
+            and not (_rendered_message_ids(console) & alpha_ids)
+            and restored.max_scroll_y > 4,
+            detail=lambda: len(_rendered_message_ids(console)),
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert restored.scroll_y != 2, restored.scroll_y
+        assert restored.scroll_y == restored.max_scroll_y, (
+            restored.scroll_y,
+            restored.max_scroll_y,
+        )
+
+    manager.finalize_shutdown()
