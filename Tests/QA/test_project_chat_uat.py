@@ -411,7 +411,7 @@ async def test_project_chat_uat(
                         capture_progress()
                         for message in reversed(store.messages_for_session(session.id)):
                             if (
-                                str(message.role) == "assistant"
+                                message.role == "assistant"
                                 and message.status == "complete"
                                 and message.persisted_message_id
                                 and server.model.final

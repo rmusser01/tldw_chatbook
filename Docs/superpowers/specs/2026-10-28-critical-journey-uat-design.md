@@ -128,7 +128,9 @@ Actions:
 3. Create a new chat in that workspace; verify the active workspace/chat pairing.
 4. Send: "Inspect this project's README. Summarize what it does and include its
    verification code."
-5. Wait for actual completion, then inspect the visible response and saved run.
+5. On the first-use project-instructions notice, verify the chat, source, and
+   provider destination; click Proceed. No generation may precede this decision.
+6. Wait for actual completion, then inspect the visible response and saved run.
 Pass: a real folder binding was saved; the model receives the owning binding;
 file tools access that binding; README contents reach the provider; the answer
 contains the fixture code and supported project facts; no decoy code appears;
@@ -464,3 +466,9 @@ negative cases cover these defects. Review fixtures and gate checks passed local
 full Linux pilot qualification remains pending. Direct SHA/dependency-version fields
 in individual receipts are deferred; CI artifacts remain associated with their run
 and tested head.
+
+Qualification exposed an omitted UI action: first-use project-instruction consent.
+Run 40801165548 preserved the visible notice and a worker waiting for its decision.
+The pilot now accepts it through the real Proceed button and asserts no model
+request preceded consent. Active task/thread stacks are retained separately from
+idle widget stacks so a blocked journey identifies its actual wait.
