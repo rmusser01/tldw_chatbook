@@ -135,6 +135,12 @@ Compare failing ids only.
 
 **What to do.** Derive focus-dependent state in a `watch_has_focus` override (call `super()`), or defer it with `call_next`; never read `has_focus` inside `on_focus`/`on_blur`. When a fix adds copy that depends on focus, assert that copy in both focus states.
 
+## Hiding a control silently kills every route that lands on it (TASK-33622.5, 2026-10-29)
+
+**Incident.** TASK-33622.5 hid the Console composer while the Terminal owns the center and made `_focus_console_composer_if_needed` return early in that state. All 18 mounted Terminal tests were green, and the live round covered Arm, New, F6 and Return. The independent review then found the TASK-32322 rail exit dead: Esc from a rail reaches that helper through `action_focus_console_composer_home`, so it moved focus nowhere, while the rail footer still taught "Esc composer · F6 panes". No test pressed Esc from a rail with the Terminal open, and the live capture that showed the stale footer was never read for it.
+
+**What to do.** When a change hides or disables a focus target, grep every caller of its focus helper and every footer or hint string that names it. Give each caller a new destination, or drop the hint. Add a mounted test that presses each surviving key and asserts both where focus lands and what the footer says.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
