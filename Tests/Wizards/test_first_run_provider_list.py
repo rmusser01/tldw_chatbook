@@ -238,6 +238,68 @@ async def test_a_legacy_row_the_config_already_uses_stays_listed():
 
 
 @pytest.mark.asyncio
+async def test_a_legacy_row_picked_through_the_filter_stays_listed_when_it_clears():
+    """Pre-merge review (2026-10-29), minor 2: the row Next would commit
+    vanished from the list once the filter that found it was cleared."""
+    wizard = resumed_on_provider()
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard)
+        assert "local_ollama" not in _provider_rows(step)
+        field = step.query_one(_FILTER, Input)
+        field.focus()
+        await pilot.pause()
+        field.value = "local_ollama"
+        await pilot.pause()
+        await pilot.press("enter")  # Enter in the filter picks the match
+        await pilot.pause()
+        assert step.selected_provider_key == "local_ollama"
+
+        field.value = ""
+        await pilot.pause()
+        assert "local_ollama" in _provider_rows(step)
+        highlighted = provider_list(step).highlighted_option
+        assert highlighted is not None
+        assert str(highlighted.id) == "provider-local_ollama"
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_legacy_pick_is_listed():
+    """Minor 2, the resume half: a legacy row picked before setup was
+    interrupted is restored as the selection, so it is listed and highlighted."""
+    from Tests.Wizards.provider_step_harness import app_instance
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        SETUP_DRAFT_VERSION,
+        STEP_WELCOME,
+        TRACK_QUICK,
+        SetupDraft,
+    )
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+
+    draft = SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=STEP_PROVIDER,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_PROVIDER: {
+                "provider_key": "local_ollama",
+                "provider_value": "local_ollama",
+            },
+        },
+    )
+    wizard = FirstRunSetupWizard(app_instance(), resume_draft=draft)
+    app = WizardHost(wizard)
+    async with app.run_test(size=SIZE) as pilot:
+        step = await _on_provider(pilot, wizard)
+        assert step.selected_provider_key == "local_ollama"
+        assert "local_ollama" in _provider_rows(step)
+        highlighted = provider_list(step).highlighted_option
+        assert highlighted is not None
+        assert str(highlighted.id) == "provider-local_ollama"
+
+
+@pytest.mark.asyncio
 async def test_the_list_grows_into_free_height():
     """provider-11: more than the old five visible rows when there is room."""
     wizard = resumed_on_provider()

@@ -524,11 +524,14 @@ class ProviderListStep(ProviderKeyEntryStep):
         return config if isinstance(config, Mapping) else {}
 
     def _build_list(self) -> ListBuild:
+        # Pre-merge review (2026-10-29), minor 2: the row Next would commit is
+        # in use, so clearing the filter that found it never hides it.
+        selected = legacy_keys_in_use({}, getattr(self, "selected_provider_key", ""))
         return build_provider_options(
             self._list_entries,
             query=self._list_query,
             show_legacy=self._show_legacy,
-            in_use=self._legacy_in_use,
+            in_use=self._legacy_in_use | selected,
             ready=self._ready_badges,
             found=self._found_servers,
         )
@@ -538,7 +541,9 @@ class ProviderListStep(ProviderKeyEntryStep):
         from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 
         self._list_entries = tuple(step_guard.first_run_provider_catalog())  # 33621.14
-        self._legacy_in_use = legacy_keys_in_use(self._list_app_config())
+        self._legacy_in_use = legacy_keys_in_use(
+            self._list_app_config(), self._resumed_provider_key()
+        )
         build = self._build_list()
         with HorizontalGroup(classes="setup-provider-filter-row"):  # one row at 80x24
             yield BurstSafeInput(
@@ -557,6 +562,17 @@ class ProviderListStep(ProviderKeyEntryStep):
         )
         # coverage-08: a typed key left behind is named here, under the list.
         yield Static("", id="setup-provider-unsaved-note", classes="setup-probe-status -warn hidden")
+
+    def _resumed_provider_key(self) -> str:
+        """The provider a resumed run restores; it stays listed (minor 2)."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import STEP_PROVIDER
+
+        draft = getattr(getattr(self, "wizard", None), "resume_draft", None)
+        values = getattr(draft, "values", None)
+        provider = values.get(STEP_PROVIDER) if isinstance(values, Mapping) else None
+        if not isinstance(provider, Mapping):
+            return ""
+        return str(provider.get("provider_key") or "")
 
     @on(events.Mount)
     def _list_mounted(self) -> None:
