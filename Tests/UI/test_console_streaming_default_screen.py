@@ -29,6 +29,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -189,5 +190,32 @@ async def test_a_fresh_openai_console_shows_partial_reply_text_before_the_reply_
             rows = _assistant_rows(store)
             assert rows[-1].status == "complete"
             assert rows[-1].content == FIRST_CHUNK + SECOND_CHUNK
+
+            # A reply streamed by default still records the usage the
+            # stream's final chunk reported (TASK-2122), in the store and on
+            # the durable row the cost display is priced from.
+            usage = rows[-1].usage
+            assert usage is not None
+            assert (usage.uncached_input, usage.output) == (12, 6)
+            persisted = None
+            for _ in range(80):
+                persisted = (
+                    app.chachanotes_db.get_connection()
+                    .execute(
+                        "SELECT usage_json FROM messages "
+                        "WHERE content = ? AND deleted = 0",
+                        (FIRST_CHUNK + SECOND_CHUNK,),
+                    )
+                    .fetchone()
+                )
+                if persisted is not None and persisted[0]:
+                    break
+                await pilot.pause(0.05)
+            assert persisted is not None and persisted[0], (
+                "the streamed reply's durable row carries no usage_json"
+            )
+            stored = ProviderUsage.from_json(persisted[0])
+            assert stored is not None
+            assert (stored.uncached_input, stored.output) == (12, 6)
     finally:
         provider.release.set()
