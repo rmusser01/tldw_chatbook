@@ -327,6 +327,7 @@ jobs:
             Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_stream_that_went_silent_after_content \
             Tests/Chat/test_stream_stall_watchdog.py::test_the_stop_poll_leaves_nothing_for_the_cyclic_collector \
             Tests/Backup_Recovery/test_raw_operation_task_discovery.py \
+            Tests/Backup_Recovery/test_admission_initialization_wait.py \
             Tests/Utils/test_user_theme_loader.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
@@ -544,6 +545,12 @@ jobs:
             Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast \
             Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast \
             Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast \
+            Tests/Chat/test_strata_providers.py \
+            Tests/LLM_Calls/test_local_chat_streaming.py \
+            Tests/Chat/test_local_reasoning_gateway.py \
+            Tests/Chat/test_streaming_stop_closes_transport.py \
+            Tests/Chat/test_console_agent_call_thinking.py::test_aggregate_tool_thinking_cannot_become_final_answer_thinking \
+            Tests/Chat/test_console_agent_call_thinking.py::test_live_native_loop_passes_exact_call_envelope_before_preparation \
             Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers \
             Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column \
             Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row \
