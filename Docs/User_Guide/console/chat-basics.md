@@ -476,7 +476,11 @@ statistics tools.
     Behavior** and save.
 
   The model and provider settings take priority over the setting for every
-  chat. A server that refuses streamed requests fails the reply, and the
+  chat. A chat you reopen keeps the Streaming value saved with it, so one
+  saved with Streaming Off (for example a cloud chat started before streaming
+  became the default) stays Off until you set **Streaming** to **On** in Chat
+  settings and press **Apply to this chat**. A server that refuses streamed
+  requests fails the reply, and the
   System row quotes the server's own error message; turn streaming off for
   that model or provider and send again. A llama.cpp
   server that refuses a streamed request, or answers one with no text, is
