@@ -13,11 +13,14 @@ and this project adheres to Some kind of Versioning
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
   streaming` value, and applies to an existing `config.toml` that does not
   set `[chat_defaults] streaming` (or the older `enable_streaming`) itself.
-  Upgrade note: a self-hosted server that refuses streamed requests now fails
-  the first reply with the server's own error. Turn Streaming off for that
-  model ("Save as model default" in Chat settings) or provider
-  (`[console.provider_defaults.<provider>] streaming = false`) and send
-  again. llama.cpp still retries once without streaming on its own.
+  A self-hosted or Custom OpenAI-compatible server that cannot stream (it
+  refuses a streamed request with a client error such as HTTP 400, or sends
+  no text) is asked once more without streaming, as llama.cpp already was,
+  and the reply arrives whole. To skip that extra request, turn Streaming
+  off for that model ("Save as model default" in Chat settings) or provider
+  (`[console.provider_defaults.<provider>] streaming = false`). A cloud
+  provider is never retried this way; when one refuses a streamed request
+  before any text, the failure now says how to turn Streaming off.
 
 ## [0.2.3] - 2026-10-02
 

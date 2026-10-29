@@ -479,14 +479,17 @@ statistics tools.
   chat. A chat you reopen keeps the Streaming value saved with it, so one
   saved with Streaming Off (for example a cloud chat started before streaming
   became the default) stays Off until you set **Streaming** to **On** in Chat
-  settings and press **Apply to this chat**. A server that refuses streamed
-  requests fails the reply, and the
-  System row quotes the server's own error message; turn streaming off for
-  that model or provider and send again. A llama.cpp
-  server that refuses a streamed request, or answers one with no text, is
-  retried once without streaming on its own. With streaming off, the reply
-  appears all at once when the provider finishes, and the label shows the
-  time waited until then.
+  settings and press **Apply to this chat**. A self-hosted server (llama.cpp,
+  vLLM, Ollama and the other local providers) or a Custom OpenAI-compatible
+  endpoint that refuses a streamed request with a client error such as HTTP
+  400, or answers one with no text, is asked once more without streaming on
+  its own, and the reply appears all at once. Each such reply costs one
+  refused request first, so turn streaming off for that model or provider to
+  skip it. A cloud provider is not asked again: when it refuses a streamed
+  request before any text, the System row quotes the provider's own error
+  message where it sent one and adds how to turn streaming off. With
+  streaming off, the reply appears all at once when the provider finishes,
+  and the label shows the time waited until then.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
   run.") appears at the right end of the composer row, after Dictate and
   Redirect; the collapsed composer strip gets its own Stop. The keyboard
