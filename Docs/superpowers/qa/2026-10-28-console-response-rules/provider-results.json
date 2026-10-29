@@ -180,7 +180,8 @@
     ],
     "physical_helpers_after_cleanup": 0,
     "test_result": "1 passed; four real judgments; 11.64 seconds",
-    "earlier_snapshot_attempt": "1 passed in13.59s; retained privately, superseded for current-work chronology proof"
+    "earlier_snapshot_attempt": "1 passed in13.59s; retained privately, superseded for current-work chronology proof",
+    "interpretation": "Three grounded judgments (current success, contradiction, qualified history) plus one safe invalid-judge refusal. The stale case is couldnt_verify with judge_result_unavailable because its citation excerpt is absent from the supplied evidence text; no successful model freshness-classification claim."
   },
   "second_available_model_attempt": {
     "model": "deepseek-v4-pro",
