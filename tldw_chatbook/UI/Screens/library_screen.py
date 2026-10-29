@@ -8953,9 +8953,15 @@ class LibraryScreen(BaseAppScreen):
             phase = self._library_notes_sync_controller.snapshot.phase
             if phase in {"checking", "activating"}:
                 return (("wait", "current step"),)
+            # TASK-34000.40 fix round 1 (review R0 I-1): Escape goes where the
+            # back control goes, and the chip says where -- the same decision.
+            if self._notes_controller._library_notes_lasting_back_returns_to_roots():
+                back_wide, back_compact = "back to sync folders", "sync folders"
+            else:
+                back_wide, back_compact = "back to notes", "notes"
             tier = self._notes_footer_tier(
-                (("enter", "run action"), ("esc", "back to notes")),
-                (("enter", "act"), ("esc", "notes")),
+                (("enter", "run action"), ("esc", back_wide)),
+                (("enter", "act"), ("esc", back_compact)),
             )
             # task-32545 AC#2: name the focused control, in place -- the
             # editor tier appends its chip, but this tier already spends the
@@ -8980,13 +8986,14 @@ class LibraryScreen(BaseAppScreen):
             )
         if region == "import":
             phase = self._library_note_import_controller.snapshot.phase
-            # TASK-34000.40 (rulings T10-c/T10-e): Escape leaves a running
-            # import for Notes and cancels only a running check.
+            # TASK-34000.40 (ruling T10-c): Escape cancels only a running
+            # check; otherwise it returns to Notes, running import or not --
+            # one action, one spelling (fix round 1, review R0 M-4).
             if phase is NoteImportPhase.CHECKING:
                 return (("esc", "cancel"),)
-            if phase is NoteImportPhase.IMPORTING:
-                return (("esc", "notes"),)
-            return (("esc", "back to notes"),)
+            return self._notes_footer_tier(
+                (("esc", "back to notes"),), (("esc", "notes"),)
+            )
         return self._library_footer_shortcuts_for_current_state()
 
     def _apply_library_notes_footer_context(self) -> None:

@@ -689,7 +689,11 @@ _BUDGETS: dict[str, int] = {
     # named for the route in ("‹ Sync folders"): 8441 -> 8462 (measured).
     # Same day, same decision: that hand-off is class-forwarded, because the
     # canvas-kwargs tests run the method on a fake: 8462 -> 8467 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8467,
+    # 2026-10-29, Task 10 fix round 1 (review R0 I-1/M-7; same decision):
+    # one "back to Sync folders" decision read by Escape, the back control,
+    # the label and the footer, a shared roots return that lands focus, and a
+    # running-import re-entry focused on its progress: 8467 -> 8505 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8505,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -748,7 +752,10 @@ _BUDGETS: dict[str, int] = {
     # review -- forgotten per root by an apply, a stale review or a root
     # control, bounded to three observations -- and the status line is
     # derived from the staged count: 2461 -> 2524 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2524,
+    # 2026-10-29, Task 10 fix round 1 (review R0 M-2/M-3; same decision): the
+    # inert root action keeps staged choices, and one status-line derivation
+    # puts a held Activate's reason ahead of them: 2524 -> 2548 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2548,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

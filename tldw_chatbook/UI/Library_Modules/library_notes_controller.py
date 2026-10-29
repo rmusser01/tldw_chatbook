@@ -531,6 +531,7 @@ from ...Library.library_note_import_state import (
     NoteImportPhase,
 )
 from ...Library.library_notes_lasting_sync_state import (
+    LASTING_SYNC_BACK_TO_ROOTS_LABEL,
     LibraryNotesLastingSyncSnapshot,
 )
 from ...Library.library_notes_session import (
@@ -560,7 +561,6 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_MEDIA,
     LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_CREATE_NOTE,
-    back_cue_label,
     build_library_shell_state,
 )
 from ...Notes.note_folder_models import NoteFolderChildPage
@@ -3496,6 +3496,17 @@ class LibraryNotesController:
             await self._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
             return
         if self._library_notes_view in {"lasting_add", "lasting_roots"}:
+            # TASK-34000.40 fix round 1 (review R0 I-1): Escape goes where the
+            # visible back control goes -- "‹ Sync folders" for a review opened
+            # from Manage sync folders. A running step keeps the key inert, as
+            # ``_exit_library_notes_lasting_sync`` does.
+            if (
+                LibraryNotesController._library_notes_lasting_back_returns_to_roots(self)
+                and self._library_notes_sync_controller.snapshot.phase
+                not in {"checking", "activating"}
+            ):
+                LibraryNotesController._return_to_library_notes_sync_roots(self)
+                return
             await self._exit_library_notes_lasting_sync()
             return
         if self._library_notes_view == "import":
@@ -6123,13 +6134,16 @@ class LibraryNotesController:
         except (NoMatches, QueryError):
             pass
     def _focus_library_note_import_control(self) -> None:
-        """Focus the enabled primary action after an import recompose."""
+        """Land a re-entry to the running import on its progress region.
+
+        TASK-34000.40 fix round 1 (review R0 M-7): this focused the enabled
+        primary action -- Cancel import while importing -- so a blind Enter
+        after View import cancelled a half-imported folder. The stepper's own
+        focusable scroll owner (role ``import-body``) has no Enter action;
+        Cancel import stays painted and one Tab away.
+        """
         try:
-            canvas = self.query_one(LibraryNoteImportCanvas)
-            for control in canvas.query(".note-import-primary"):
-                if isinstance(control, Button) and not control.disabled:
-                    control.focus()
-                    return
+            self.query_one("#note-import-body").focus()
         except (NoMatches, QueryError):
             pass
     async def _reconcile_library_notes_list_canvas(self) -> None:
@@ -6593,17 +6607,39 @@ class LibraryNotesController:
         """Return from a directly mounted inert surface without mutation."""
 
         event.stop()
-        if (
-            isinstance(event, LibraryNotesAddFromFilesCanvas.BackRequested)
-            and self._library_notes_lasting_origin == "roots"
-        ):
-            self._library_notes_sync_controller.return_to_roots()
-            self._library_notes_lasting_origin = None
-            self._library_notes_view = "lasting_roots"
-            self._apply_library_notes_footer_context()
-            _sync_library_canvas(self, "notes")
+        if isinstance(
+            event, LibraryNotesAddFromFilesCanvas.BackRequested
+        ) and LibraryNotesController._library_notes_lasting_back_returns_to_roots(self):
+            LibraryNotesController._return_to_library_notes_sync_roots(self)
             return
         await self._exit_library_notes_lasting_sync()
+    def _library_notes_lasting_back_returns_to_roots(self) -> bool:
+        """The one decision: does this lasting-sync canvas go back to Sync folders?
+
+        TASK-34000.40 fix round 1 (review R0 I-1). True for the add-from-files
+        canvas of a review opened from Manage sync folders. The back control's
+        words (``_library_notes_lasting_snapshot_for_canvas``), the back
+        control, Escape and the footer's Escape chip all read this.
+        """
+        return (
+            self._library_notes_view == "lasting_add"
+            and self._library_notes_lasting_origin == "roots"
+        )
+    def _return_to_library_notes_sync_roots(self) -> None:
+        """Leave a review opened from Manage sync folders for the folder list.
+
+        Focus lands on the list's own back control, so the next key has
+        somewhere to go whichever way the user left (button or Escape).
+        """
+        self._library_notes_sync_controller.return_to_roots()
+        self._library_notes_lasting_origin = None
+        self._library_notes_view = "lasting_roots"
+        self._apply_library_notes_footer_context()
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=lambda: self._focus_library_note_control("#notes-sync-roots-back"),
+        )
     def _library_notes_lasting_snapshot_for_canvas(
         self,
     ) -> LibraryNotesLastingSyncSnapshot | None:
@@ -6614,9 +6650,11 @@ class LibraryNotesController:
         control read "‹ Notes" on every route.
         """
         snapshot = self._library_notes_lasting_sync_snapshot
-        if snapshot is None or self._library_notes_lasting_origin != "roots":
+        if snapshot is None or not (
+            LibraryNotesController._library_notes_lasting_back_returns_to_roots(self)
+        ):
             return snapshot
-        return dataclasses.replace(snapshot, back_label=back_cue_label("Sync folders"))
+        return dataclasses.replace(snapshot, back_label=LASTING_SYNC_BACK_TO_ROOTS_LABEL)
     async def _exit_library_notes_lasting_sync(self) -> bool:
         """Settle provisional authority before leaving a lasting-sync canvas."""
 

@@ -658,6 +658,12 @@ class LastingSyncWriteReceipt:
         return "LastingSyncWriteReceipt(<private>)"
 
 
+#: TASK-34000.40 fix round 1 (review R0 I-1, M-1): the back control's words
+#: when it returns to Manage sync folders. The Notes controller stamps it; the
+#: canvas reads it to drop the receipt's second door to the same place.
+LASTING_SYNC_BACK_TO_ROOTS_LABEL = back_cue_label("Sync folders")
+
+
 @dataclass(frozen=True, slots=True)
 class LibraryNotesLastingSyncSnapshot:
     """Complete immutable input for the two lasting-sync canvases."""

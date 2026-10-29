@@ -1207,7 +1207,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (``esc cancel`` while checking, ``esc notes`` while importing, ruling
     #: T10-e) and F1 starts from the footer the screen paints, keeping F6:
     #: 38796 -> 38812 lines, 1397 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38812, 1397),
+    #: 2026-10-29, Task 10 fix round 1 (review R0 I-1/M-4; same owner
+    #: decision): the lasting tier's Escape chip names the folder list when
+    #: Escape returns there, and the import tier has one spelling for Escape:
+    #: 38812 -> 38819 lines, 1397 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38819, 1397),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
