@@ -133,8 +133,7 @@ async def test_a_retry_after_definitive_rejections_is_recoverable(
                 owner, caught.value, signals, capture
             )
         assert type(refused.value) is TraceCallPersistenceError
+    # A later answer retires the refusal: the card must not report an HTTP
+    # 429 as the outcome of a run whose retry was answered.
     contact = gateway.trace_provider_contact(signals)
-    assert contact == (
-        history != "none",
-        REJECTION if history in {"rejected", "rejected_then_answered"} else None,
-    )
+    assert contact == (history != "none", REJECTION if history == "rejected" else None)

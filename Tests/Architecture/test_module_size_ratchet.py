@@ -580,6 +580,10 @@ _BUDGETS: dict[str, int] = {
     # The run's per-call provider outcomes (refused / answered), the typed
     # not-established refusal and the in-place-retry recovery proof; the
     # status meanings moved to provider_error_reason.
+    # 2026-10-29, TASK-33621.5/.6 (same owner rule): 8,184 -> 8,252 (+68).
+    # The run's per-call provider outcomes (refused / answered), the typed
+    # not-established refusal and the in-place-retry recovery proof; the
+    # status meanings moved to provider_error_reason.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
