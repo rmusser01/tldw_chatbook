@@ -3,11 +3,11 @@ id: TASK-37031
 title: >-
   Console: images are blocked for the default Anthropic model because
   claude-haiku-4-5 is not marked vision-capable
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-27 16:12'
-updated_date: '2026-10-29 08:05'
+updated_date: '2026-10-29 08:07'
 labels:
   - console
   - p2
