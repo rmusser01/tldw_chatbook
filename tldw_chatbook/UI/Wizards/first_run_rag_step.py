@@ -231,6 +231,9 @@ class RagStep(SetupStep):
             return False, "Saving the search setting failed."
         self.auto_retrieve = chosen
         self._current_auto_retrieve = chosen
+        # Review R8: Back shows this step again without a rebuild.
+        for line in self.query("#setup-rag-unavailable").results(Static):
+            line.update(rag_state.search_unavailable_copy(saved_automatic=chosen))
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
