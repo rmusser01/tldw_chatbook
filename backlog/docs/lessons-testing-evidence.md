@@ -22529,3 +22529,20 @@ tab.'), now TASK-33621.57. A `_block('Hook continuation is no longer
 current.')` sits right after the transition too. Before calling a "never
 stranded" fix done, list every `return` between the state transition and the
 owner that releases it, and give each one a test or a filed task.
+
+## `-p no:warnings` turns every `filterwarnings`-marked file into a collection error (TASK-33620.3, 2026-10-29)
+
+**Incident.** A dev-vs-branch comparison over 20 touched-module test files added
+`-p no:warnings` to hide the macOS `rm_rf` PytestWarning noise. Three files
+(`test_console_durable_turn_fix_round1.py`, `_round2.py`,
+`test_console_library_pause_recovery.py`) then reported `1 error in 0.6s`,
+rc=2: `'filterwarnings' not found in markers`. The repo runs with
+`--strict-markers`, and disabling the warnings plugin unregisters the
+`filterwarnings` marker, so those files never collected. Dev and the branch
+"agreed" (error on both sides), which a by-id comparison would have read as
+"no new failures" over zero executed tests.
+
+**What to do.** Run the plain command (`python -m pytest <file> -q`) and filter
+the noise out of the captured log with `grep -v`, never by disabling a plugin.
+A per-file `rc=2` or `N error in <1s` is a collection failure, not a result:
+re-run that file before comparing it.
