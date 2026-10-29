@@ -264,6 +264,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: from it (logic in Console_Modules/terminal.py yield_rails/reclaim_rails
     #: and Chat/console_rail_state.py); 24387/737 measured.
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
+    #: Lowered 24387 -> 24385 2026-10-29 on rebase onto dev b5150753eb, which
+    #: measures 24327/737 (2 under its own row); with the three Terminal
+    #: fixes 24385/737, the exact measurement (dev's slack not absorbed).
+    #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24562, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
