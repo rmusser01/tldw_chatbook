@@ -21,7 +21,10 @@ records it as Stopped:
 * An ACCEPTED durable checkpoint settles directly as stopped, through the
   store's accepted-turn settlement, so no provider dispatch is invented.
 * Any other row settles through ``_mark_stream_stopped``, as a Stop during the
-  checkpoint move does.
+  checkpoint move does. A Retry (or a variant) enters the window with its row
+  still showing the previous outcome, a failed reply, until the reply prepares
+  it for the new attempt; a Stop before that leaves the row as it was, so Retry
+  is offered again, and still stops the run.
 
 A settlement that cannot complete raises ``ConsoleDispatchSettlementError``, and
 the accepted-turn handler retains the turn for recovery. Any other cancellation
@@ -58,16 +61,20 @@ class PreProviderSetupStop:
 
     Use it as an async context manager around the window, then call
     :meth:`settle` when :attr:`stopped` is set. Entering registers the reply's
-    assistant row in the controller's ``_stops_settled_in_setup``, which tells
-    ``stop_active_run`` to cancel the reply instead of settling the row itself.
-    The registration lasts until the window closes without a Stop, or until
-    :meth:`settle` finishes, so a repeated Stop never races the settlement.
+    assistant row in the controller's ``_replies_in_pre_provider_setup``, which
+    tells ``stop_active_run`` to cancel the reply instead of settling the row
+    itself. The registration lasts until the window closes without a Stop, or
+    until :meth:`settle` finishes, so a repeated Stop never races the
+    settlement.
 
     Args:
         controller: The ``ConsoleChatController`` running the reply.
         assistant_message_id: The reply's assistant row.
         cancel_event: The run's own cancel event; ``_signal_stop`` sets it for
             Stop, close and shutdown.
+        prepares_row: True for a Retry or a variant, whose row the reply
+            prepares for the new attempt inside the window; the reply sets
+            :attr:`row_prepared` once it has.
     """
 
     def __init__(
@@ -75,15 +82,23 @@ class PreProviderSetupStop:
         controller: Any,
         assistant_message_id: str,
         cancel_event: threading.Event,
+        *,
+        prepares_row: bool = False,
     ) -> None:
         self._controller = controller
         self._assistant_message_id = assistant_message_id
         self._cancel_event = cancel_event
+        self._prepares_row = prepares_row
         #: True once an explicit Stop ended the window; :meth:`settle` is due.
         self.stopped = False
+        #: True once a Retry or variant row was prepared for the new attempt.
+        self.row_prepared = False
+
+    def _registrations(self) -> set[str]:
+        return self._controller._replies_in_pre_provider_setup
 
     async def __aenter__(self) -> PreProviderSetupStop:
-        self._controller._stops_settled_in_setup.add(self._assistant_message_id)
+        self._registrations().add(self._assistant_message_id)
         return self
 
     async def __aexit__(
@@ -100,7 +115,7 @@ class PreProviderSetupStop:
             # Keep the registration: settle() still owns this Stop.
             self.stopped = True
             return True
-        self._controller._stops_settled_in_setup.discard(self._assistant_message_id)
+        self._registrations().discard(self._assistant_message_id)
         return False
 
     async def settle(self, session_id: str) -> ConsoleSubmitResult:
@@ -137,14 +152,20 @@ class PreProviderSetupStop:
             from . import console_chat_controller as _source_controller
 
             try:
+                # A Retry stopped before its row was prepared leaves the row
+                # as it was ("failed"); marking it stopped would be refused,
+                # and the run would never be stopped.
                 stopped = controller._mark_stream_stopped(
-                    assistant_id, visible_copy=STOPPED_COPY
+                    assistant_id,
+                    visible_copy=STOPPED_COPY,
+                    prepare_retry=self._prepares_row,
+                    retry_prepared=self.row_prepared,
                 )
             except KeyError:
                 return controller._session_closed_result(session_id=session_id)
             return _source_controller.ConsoleSubmitResult(True, True, stopped.content)
         finally:
-            controller._stops_settled_in_setup.discard(assistant_id)
+            self._registrations().discard(assistant_id)
 
     async def _settle_accepted(self, session_id: str) -> ConsoleSubmitResult:
         """Settle an ACCEPTED durable checkpoint as stopped, never as sent."""
@@ -179,13 +200,37 @@ class PreProviderSetupStop:
             raise ConsoleDispatchSettlementError(
                 "Stopped turn could not settle before provider dispatch."
             )
-        controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STOPPED, STOPPED_COPY),
-            session_id=session_id,
-        )
-        if assistant_id in controller._deferred_user_stop_markers:
-            controller._deferred_user_stop_markers.discard(assistant_id)
-            store.append_message(
+        publish_stopped_run(controller, assistant_id, session_id, STOPPED_COPY)
+        return _source_controller.ConsoleSubmitResult(True, True, "")
+
+
+def publish_stopped_run(
+    controller: Any,
+    assistant_message_id: str,
+    session_id: str | None,
+    visible_copy: str,
+) -> None:
+    """Publish a settled Stop: the run state, then the user's Stop record.
+
+    The one place both Stop settlements publish from (the controller's
+    ``_mark_stream_stopped`` and an ACCEPTED checkpoint settled here), so the
+    two cannot drift apart.
+
+    Args:
+        controller: The ``ConsoleChatController`` that ran the reply.
+        assistant_message_id: The stopped reply's assistant row.
+        session_id: The session that owns the row; ``None`` when it was closed
+            under the run, which leaves nothing to record the Stop in.
+        visible_copy: The STOPPED run-state copy.
+    """
+    controller._set_run_state(
+        ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+        session_id=session_id,
+    )
+    markers = controller._deferred_user_stop_markers
+    if assistant_message_id in markers:
+        markers.discard(assistant_message_id)
+        if session_id is not None:
+            controller.store.append_message(
                 session_id, role=ConsoleMessageRole.SYSTEM, content=USER_STOP_RECORD
             )
-        return _source_controller.ConsoleSubmitResult(True, True, "")
