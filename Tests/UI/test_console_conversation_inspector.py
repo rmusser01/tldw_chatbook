@@ -46,6 +46,7 @@ from tldw_chatbook.Chat.console_cost_tracker import (
     ConsoleCostRow,
     ConsoleCostRowTotals,
     build_cost_rows,
+    build_cost_rows_totals,
 )
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -1156,7 +1157,9 @@ async def test_target_invalidation_removes_selection_and_keeps_snapshot_fences()
         assert modal.snapshot.next_send_payload == {}
 
 
-@pytest.mark.parametrize("pane_id", ["console-inspector-context-detail", "console-inspector-exchange-detail"])
+@pytest.mark.parametrize(
+    "pane_id", ["console-inspector-context-detail", "console-inspector-exchange-detail"]
+)
 def test_detail_worker_creation_can_be_cancelled_before_coroutine_exists(pane_id):
     """A queued Textual worker may be cancelled without ever starting its body."""
     import inspect
@@ -1171,7 +1174,9 @@ def test_detail_worker_creation_can_be_cancelled_before_coroutine_exists(pane_id
         _show_trace_detail=AsyncMock(),
         run_worker=lambda work, **kwargs: queued.append(work),
     )
-    event = SimpleNamespace(stop=lambda: None, pane=SimpleNamespace(id=pane_id), key="messages")
+    event = SimpleNamespace(
+        stop=lambda: None, pane=SimpleNamespace(id=pane_id), key="messages"
+    )
     ConsoleConversationInspector._section_selected(inspector, event)
     try:
         assert not inspect.iscoroutine(queued[0])
@@ -1295,8 +1300,10 @@ async def test_capture_load_failure_names_its_reason_and_logs_the_type(
             modal.query_one("#console-inspector-exchange-detail").select("turn:0")
             await _wait_until(
                 pilot,
-                lambda: "Could not load captures"
-                in _detail_text(modal, "console-inspector-exchange-detail"),
+                lambda: (
+                    "Could not load captures"
+                    in _detail_text(modal, "console-inspector-exchange-detail")
+                ),
                 attempts=60,
             )
             text = _detail_text(modal, "console-inspector-exchange-detail")
@@ -1336,7 +1343,6 @@ async def test_llama_cpp_capture_note_appears_only_on_llama_cpp_calls() -> None:
         detail.select("turn:0")
         await _wait_until(pilot, lambda: len(detail.sections) == 3, attempts=60)
 
-
         def call_detail(model: str) -> bool:
             # The turn summary lists every call; a call's own reader starts
             # with its title and carries the request heading.
@@ -1351,3 +1357,108 @@ async def test_llama_cpp_capture_note_appears_only_on_llama_cpp_calls() -> None:
         detail.select("call:n1:1")
         await _wait_until(pilot, lambda: call_detail("qwen3"), attempts=60)
         assert "llama.cpp" in _detail_text(modal, "console-inspector-exchange-detail")
+
+
+def _usage_rows_like_a_staged_chat() -> list[ConsoleCostRow]:
+    """The three rows a live staged-Library chat showed (2026-10-29)."""
+    return [
+        ConsoleCostRow(
+            index=0,
+            role="system",
+            model="claude-haiku-4-5",
+            uncached_input=22,
+            cache_read=0,
+            cache_write=0,
+            output=0,
+            cost_usd=0.0,
+            estimated=True,
+        ),
+        ConsoleCostRow(
+            index=1,
+            role="user",
+            model="claude-haiku-4-5",
+            uncached_input=24,
+            cache_read=0,
+            cache_write=0,
+            output=0,
+            cost_usd=0.0,
+            estimated=True,
+        ),
+        ConsoleCostRow(
+            index=2,
+            role="assistant",
+            model="claude-haiku-4-5",
+            uncached_input=3,
+            cache_read=0,
+            cache_write=14058,
+            output=26,
+            cost_usd=0.0177,
+            estimated=False,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (235, 52)])
+@pytest.mark.parametrize(
+    ("tab", "pane_id"),
+    [
+        (TAB_COSTS, "console-inspector-usage-detail"),
+        (TAB_EXCHANGE, "console-inspector-exchange-detail"),
+    ],
+)
+async def test_focused_section_list_paints_every_turn_on_its_own_line(
+    size: tuple[int, int], tab: str, pane_id: str
+) -> None:
+    """TASK-33621.9 AC#3, on the painted frame at both reference sizes.
+
+    The app-wide ``*:focus`` outline drew over the list's first row (it read
+    as the list scrolling down one), and a usage row wider than the list
+    wrapped its basis label onto a line of its own, above the next turn.
+    """
+    from textual.widgets import OptionList
+
+    from Tests.UI.roleplay_frame_harness import painted_rows
+
+    rows = _usage_rows_like_a_staged_chat()
+    app = InspectorHarness(
+        **_default_kwargs(
+            rows=rows,
+            totals=build_cost_rows_totals(rows),
+            turns=[
+                _turn(0, message_id="p0", native_message_id="n0", role="system"),
+                _turn(1, message_id="p1", native_message_id="n1", role="user"),
+                _turn(2, message_id="p2", native_message_id="n2", role="assistant"),
+            ],
+            initial_tab=tab,
+        )
+    )
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        choices = modal.query_one(f"#{pane_id}").query_one(OptionList)
+        choices.focus()
+        choices.highlighted = 0
+        await pilot.pause()
+        await pilot.pause()
+        assert modal.focused is choices
+        region = choices.region
+        assert region.height >= 3, region
+        painted = [
+            line[region.x : region.right].rstrip()
+            for line in painted_rows(modal)[region.y : region.bottom]
+        ]
+
+    roles = ("system", "user", "assistant")
+    for index, role in enumerate(roles):
+        owners = [line for line in painted if f"{index + 1}" in line and role in line]
+        assert len(owners) == 1, (role, painted)
+        if tab == TAB_COSTS:
+            basis = "Reported" if role == "assistant" else "Estimated"
+            assert basis in owners[0], (role, painted)
+    # No row of the list is a stray continuation such as a lone basis label.
+    assert not any(line.strip() in {"Estimated", "Reported"} for line in painted), (
+        painted
+    )
+    # The first turn, highlighted under focus, is painted in the first row.
+    assert "1" in painted[0] and "system" in painted[0], painted

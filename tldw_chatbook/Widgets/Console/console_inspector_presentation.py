@@ -167,7 +167,10 @@ def usage_items(
         turn = unique.get(row.index)
         basis = "Estimated" if row.estimated else "Reported"
         cost = "Unpriced" if row.cost_usd is None else f"${row.cost_usd:.4f}"
-        title = f"{row.index + 1:>3} {row.role:<9} {row.uncached_input + row.cache_read + row.cache_write:>7} in {row.output:>6} out  {cost} · {basis}"
+        tokens_in = row.uncached_input + row.cache_read + row.cache_write
+        # TASK-33621.9: basis and cost lead, so a narrow list that clips the
+        # row (it never wraps) clips token counts, never the basis label.
+        title = f"{row.index + 1:>3} {row.role:<9} {basis:<9} {cost:>8} {tokens_in:>6} in {row.output:>4} out"
         result.append(
             InspectorUsageItem(turn.native_message_id if turn else "", row, title)
         )
