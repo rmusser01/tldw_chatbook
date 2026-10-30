@@ -11,6 +11,8 @@ from typing import Literal
 from uuid import uuid4
 
 from tldw_chatbook.Agents.code_review_models import (
+    CODE_REVIEW_DEFAULT_ENABLED,
+    CODE_REVIEW_GATE_KEY,
     ReviewBoundaryReceipt,
     ReviewRefused,
     ReviewRunChoice,
@@ -98,6 +100,15 @@ def _explicit_stages(text: str, trusted_skill_bindings=()) -> frozenset[str]:
     return frozenset()
 
 
+_OFFER_ACCEPT = frozenset({"yes", "yes please", "proceed"})
+_OFFER_DECLINE = frozenset({"no", "no thanks", "decline"})
+# "Review my resume" also starts with "review". Without a single bound local
+# root, only wording that names code review earns a needs-attention reply.
+_CODE_REVIEW_WORDING = re.compile(
+    r"\b(?:multi-model|code|reviewers?|prs?|pull requests?|diffs?|commits?|"
+    r"patch(?:es)?|changes)\b"
+)
+# Per session; requests that never led to a prepared review are evicted first.
 _MAX_ACCEPTED_REQUESTS = 64
 
 
@@ -260,10 +271,22 @@ class ConsoleCodeReviewCoordinator:
                 # A newly accepted manual request can start fresh authority;
                 # previously revoked grants and receipts remain revoked.
                 self._fenced.discard(session_id)
+            previous = self._requests.get(message_id)
+            if previous is not None:
+                # Re-binding keeps the first acceptance; an offer it consumed
+                # is not read again.
+                if (
+                    previous.session_id,
+                    previous.source_epoch,
+                    previous.content_digest,
+                ) != (session_id, source_epoch, accepted.content_digest):
+                    raise ReviewRefused("source_epoch_mismatch")
+                return
+            reply = message.content.strip().lower()
             offer = self._offers.get(session_id)
             if (
                 offer is not None
-                and message.content.strip().lower() in {"yes", "yes please", "proceed"}
+                and reply in _OFFER_ACCEPT
                 and offer[2] == source_epoch
             ):
                 accepted = _AcceptedRequest(
@@ -274,20 +297,36 @@ class ConsoleCodeReviewCoordinator:
                     frozenset((offer[1],)),
                     offer[0],
                 )
-            if offer is not None and message.content.strip().lower() in {
-                "no",
-                "no thanks",
-                "decline",
-            }:
+                # One answer consumes the offer; a later "yes" is ordinary chat.
                 self._offers.pop(session_id, None)
-            previous = self._requests.get(message_id)
-            if previous is not None and previous != accepted:
-                raise ReviewRefused("source_epoch_mismatch")
-            if previous is None:
-                if len(self._requests) >= _MAX_ACCEPTED_REQUESTS:
-                    raise ReviewRefused("review_authority_quota_exceeded")
+            elif offer is not None and reply in _OFFER_DECLINE:
+                self._offers.pop(session_id, None)
+            if accepted.stages:
+                self._admit_request_slot(session_id)
                 self._requests[message_id] = accepted
                 self.issuer.register_intent(self, accepted)
+
+    def _admit_request_slot(self, session_id: str) -> None:
+        """Evict this session's oldest request that never led to review work."""
+        held = [
+            key
+            for key, value in self._requests.items()
+            if value.session_id == session_id
+        ]
+        if len(held) < _MAX_ACCEPTED_REQUESTS:
+            return
+        in_use = (
+            set(self._narrowed)
+            | set(self._accepted_stages)
+            | set(self._stage_admissions)
+            | set().union(*self._review_requests.values())
+        )
+        stale = next((key for key in held if key not in in_use), None)
+        if stale is None:
+            raise ReviewRefused("review_authority_quota_exceeded")
+        evicted = self._requests.pop(stale)
+        with self.issuer._lock:
+            self.issuer._intents.pop(id(evicted), None)
 
     def narrow_request(
         self,
@@ -1074,7 +1113,14 @@ def compose_native_review_provider(
     tool_configuration,
     trusted_skill_bindings=(),
 ):
-    """Compose from accepted Console state, before the runtime mints its run ID."""
+    """Compose from accepted Console state, before the runtime mints its run ID.
+
+    An ordinary turn returns before building the lazy review owner. With the
+    `[tools]` gate off nothing is composed. Without a single bound local root,
+    only an unmistakable code-review request (code wording, or a stage control
+    or offer answer for a review this session holds) is refused with
+    ``source_selection_required``; "Review my resume" stays ordinary chat.
+    """
     from tldw_chatbook import config
     from tldw_chatbook.Agents.agent_models import RunBudget
     from tldw_chatbook.Agents.agent_routing import load_agents_routing_config
@@ -1085,7 +1131,6 @@ def compose_native_review_provider(
     from tldw_chatbook.Agents.code_review_tool_provider import CodeReviewToolProvider
     from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
-    coordinator = controller.code_review
     budget = RunBudget()
     limits = AutomaticWorkLimits.from_settings()
 
@@ -1101,18 +1146,39 @@ def compose_native_review_provider(
     if receipt is not None:
         if not wake_authorization.accepted:
             raise ReviewRefused("review_boundary_unavailable")
-        service = coordinator.service_for_boundary(
+        service = controller.code_review.service_for_boundary(
             receipt, capacity=capacity, destination_check=destination_check
         )
         return CodeReviewToolProvider(service)
     if message is None:
         return None
-    with coordinator._lock:
-        offered = session_id in coordinator._offers
-    if not _explicit_stages(message.content, trusted_skill_bindings) and not offered:
+    stages = _explicit_stages(message.content, trusted_skill_bindings)
+    reply = message.content.strip().lower()
+    existing = getattr(controller, "_code_review", None)
+    offered = has_review = False
+    if existing is not None:
+        with existing._lock:
+            offered = session_id in existing._offers
+            has_review = offered or any(
+                service.store._session_id == session_id
+                for service in existing._reviews.values()
+            )
+    if not stages and not (offered and reply in _OFFER_ACCEPT | _OFFER_DECLINE):
+        return None
+    settings = config.load_settings()
+    tools = settings.get("tools", {})
+    if not config.coerce_bool_setting(
+        tools.get(CODE_REVIEW_GATE_KEY, CODE_REVIEW_DEFAULT_ENABLED)
+        if isinstance(tools, dict)
+        else CODE_REVIEW_DEFAULT_ENABLED,
+        default=CODE_REVIEW_DEFAULT_ENABLED,
+    ):
         return None
     if len(roots) != 1 or isinstance(roots[0].root, RemoteRoot):
-        raise ReviewRefused("source_selection_required")
+        if _CODE_REVIEW_WORDING.search(reply) or (has_review and stages != {"review"}):
+            raise ReviewRefused("source_selection_required")
+        return None
+    coordinator = controller.code_review
     root = roots[0]
     # Source identity is retained with the exact admitted binding; its guard
     # checks current authority on every capture/read and continuation.
@@ -1123,21 +1189,19 @@ def compose_native_review_provider(
         source_epoch=epoch,
         trusted_skill_bindings=trusted_skill_bindings,
     )
-    settings = config.load_settings()
     routing = load_agents_routing_config()
-    stages = coordinator._requests[message.id].stages
-    if not stages:
+    with coordinator._lock:
+        accepted = coordinator._requests.get(message.id)
+    if accepted is None:
         return None
+    stages = accepted.stages
     if "review" not in stages:
         with coordinator._lock:
             reviews = [
                 (rid, service)
                 for rid, service in coordinator._reviews.items()
                 if service.store._session_id == session_id
-                and (
-                    coordinator._requests[message.id].review_id is None
-                    or rid == coordinator._requests[message.id].review_id
-                )
+                and (accepted.review_id is None or rid == accepted.review_id)
             ]
         if len(reviews) != 1:
             raise ReviewRefused("review_selection_required")

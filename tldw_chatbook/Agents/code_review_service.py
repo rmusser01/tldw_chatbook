@@ -32,6 +32,8 @@ from .agent_routing import (
 )
 from .code_review_guide import fit_code_review_guide, load_code_review_guide
 from .code_review_models import (
+    CODE_REVIEW_DEFAULT_ENABLED,
+    CODE_REVIEW_GATE_KEY,
     CheckReceipt,
     CoverageGap,
     ReviewRefused,
@@ -345,8 +347,10 @@ class CodeReviewService:
         from tldw_chatbook.config import coerce_bool_setting
 
         return not self.ephemeral and coerce_bool_setting(
-            self.app_config.get("tools", {}).get("code_review_enabled", True),
-            default=True,
+            self.app_config.get("tools", {}).get(
+                CODE_REVIEW_GATE_KEY, CODE_REVIEW_DEFAULT_ENABLED
+            ),
+            default=CODE_REVIEW_DEFAULT_ENABLED,
         )
 
     def validate_authority(self):
@@ -696,13 +700,10 @@ class CodeReviewService:
             if hasattr(result, "model_dump_json")
             else json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         )
-        if (
-            len(text) > self.result_limit
-            or (
-                self.verifier_estimate(text) > self.capacity().remaining_input_tokens
-                if getattr(self, "verifier_estimate", None) is not None
-                else len(text.encode("utf-8")) > self.capacity().remaining_input_tokens * 4
-            )
+        if len(text) > self.result_limit or (
+            self.verifier_estimate(text) > self.capacity().remaining_input_tokens
+            if getattr(self, "verifier_estimate", None) is not None
+            else len(text.encode("utf-8")) > self.capacity().remaining_input_tokens * 4
         ):
             self.diagnostic = "review_response_capacity_unavailable"
             raise ReviewRefused(self.diagnostic)
@@ -1969,9 +1970,8 @@ class CodeReviewService:
                 if claim_tokens > claim_budget:
                     if records:
                         break
-                    if (
-                        claim_tokens <= 4096
-                        and getattr(self, "verifier_required_continuation", False)
+                    if claim_tokens <= 4096 and getattr(
+                        self, "verifier_required_continuation", False
                     ):
                         # Retained private owners prevent proving owner-free fit.
                         self.record_verification_gap(
