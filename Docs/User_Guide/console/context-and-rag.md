@@ -615,8 +615,16 @@ Captured call summaries load only for the selected message. These costs are
 supporting detail, not additional spend to add to the transcript total.
 **Inspect calls in Exchange history** keeps the same message identity. Missing
 or ambiguous identity disables drill-in rather than guessing another turn.
-A capture load failure leaves usage figures available and can be retried by
-selecting the turn again.
+A capture load failure leaves usage figures available and says why it failed.
+Only a busy store offers **Select this turn again to retry**; a stored capture
+that cannot be decoded says a retry will not help, and any other failure names
+its error type. The app log records the reason and error type.
+
+Each turn is one row, with its basis (**Estimated** or **Reported**) and cost
+before the token counts; a list too narrow for the whole row clips the token
+counts, never the basis. A focused list tints its background and paints the
+highlighted row in the focus colours instead of drawing an outline, so its
+first and last rows stay readable.
 
 #### Exchange history
 
@@ -626,9 +634,10 @@ labels. The reader shows the captured request, response, reported usage, omitted
 fields, and provenance. Locally synthesized fallback text is labeled as such.
 
 Capture records the request at the provider-adapter boundary, generally before
-provider-internal framing and prompt-cache markers. The llama.cpp capture is the
-literal wire payload. Missing captures can reflect capture being off, a failed
-capture, or purged history; the modal does not reconstruct missing requests.
+provider-internal framing and prompt-cache markers. A llama.cpp call is the
+exception: its capture is the literal payload sent, and its call detail says so.
+Missing captures can reflect capture being off, a failed capture, or purged
+history; the modal does not reconstruct missing requests.
 
 **View: Safe/Full** (or **v**) controls local disclosure in both historical
 views. Changing it clears both readers and their cached bodies; switching to
