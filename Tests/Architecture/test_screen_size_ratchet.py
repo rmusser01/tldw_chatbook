@@ -297,6 +297,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: line), and the row joins the composer's Tab region and F6 pane map
     #: (two lines) so both actions are keyboard-reachable. The row, its sync
     #: and both actions live in Console_Modules/composer_run_controls.py.
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24333/737 -> 24331/737.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24504, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
