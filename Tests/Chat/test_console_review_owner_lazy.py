@@ -96,3 +96,29 @@ async def test_unexpected_review_composition_failure_keeps_agent_turn(
 
     assert len(gateway.dispatched) == 1
     assert store.messages_for_session(session.id)[-1].content == "plain answer"
+
+
+def test_review_offer_on_its_owner_loop_presents_without_deadlock():
+    """The offer presenter must not block its own loop on a coroutine it owns."""
+    import asyncio
+    import threading
+
+    store, session, controller, _bridge = rig()
+    loop = asyncio.new_event_loop()
+    controller._fleet_wake._loop = loop
+    results = []
+
+    async def offer_on_loop():
+        results.append(controller._present_review_offer(session.id, "review-1"))
+
+    worker = threading.Thread(
+        target=lambda: loop.run_until_complete(offer_on_loop()), daemon=True
+    )
+    worker.start()
+    worker.join(5)
+
+    assert results == [True]
+    loop.close()
+    assert "Verification is available for review review-1" in (
+        store.messages_for_session(session.id)[-1].content
+    )

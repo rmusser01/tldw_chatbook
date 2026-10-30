@@ -24895,7 +24895,7 @@ class ConsoleChatController:
             loop.call_soon_threadsafe(present)
 
     def _present_review_offer(self, session_id, review_id):
-        async def present():
+        def present():
             if self._disposed or session_id in self._session_close_generations:
                 return False
             self.store.append_message(
@@ -24905,9 +24905,19 @@ class ConsoleChatController:
             )
             return True
 
+        async def hop():
+            return present()
+
         loop = self._fleet_wake._loop
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            # Blocking on a coroutine scheduled onto our own loop deadlocks.
+            return present()
         if loop is not None and loop.is_running():
-            return asyncio.run_coroutine_threadsafe(present(), loop).result()
+            return asyncio.run_coroutine_threadsafe(hop(), loop).result()
         return False
 
     def _present_review_report(self, session_id, review_id, report):
