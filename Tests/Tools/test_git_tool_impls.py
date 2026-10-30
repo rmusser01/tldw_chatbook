@@ -673,3 +673,31 @@ def test_review_reader_validates_repository_object_format(tmp_path):
     )
     with pytest.raises(LocalToolError, match="invalid_object_id"):
         reader.commit("0" * 40)
+
+
+@pytest.mark.parametrize("ignorecase", ["true", "false"])
+def test_review_index_case_variant_matches_a_single_literal_lookup(
+    tmp_git_repo, ignorecase
+):
+    """Batched index reads agree with the old per-path literal lookup.
+
+    A literal pathspec is case-sensitive even with core.ignorecase, so git
+    returns no record for a case variant of a tracked file: the old single-
+    path read and the batch both answer None (no new acceptance).
+    """
+    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+
+    _git(tmp_git_repo, "config", "core.ignorecase", ignorecase)
+    raw = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", ":(literal)FILE.TXT"],
+        cwd=tmp_git_repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert raw == b""
+    reader = ReviewGitReader(tmp_git_repo)
+    entries = reader.index_entries(("FILE.TXT", "file.txt"))
+    assert entries["FILE.TXT"] is None
+    assert entries["file.txt"] is not None
+    assert entries["file.txt"].path == "file.txt"
+    assert reader.index("FILE.TXT") is None
