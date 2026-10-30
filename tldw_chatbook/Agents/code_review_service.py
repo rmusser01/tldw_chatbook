@@ -1690,6 +1690,25 @@ class CodeReviewService:
                 return execution.activate()
         return nullcontext()
 
+    def is_claimed_check_call(self, run_id: str, call) -> bool:
+        """Whether ``call`` is ``run_id``'s claimed, unstarted check process.
+
+        Matches the argv-exact specification ``prepare_check_process`` binds,
+        so denying an unrelated ``shell_exec`` leaves the claim pending.
+        """
+        if call.name != "shell_exec":
+            return False
+        with self.store._tab.lock:
+            return any(
+                check.primary_run_id == run_id
+                and check.receipt is None
+                and check.execution is not None
+                and not check.execution.started
+                and call.args == check.execution.arguments
+                for context in self.store._tab.contexts.values()
+                for check in context.checks.values()
+            )
+
     def register_check_result(
         self, review_id: str, proposal_id: str, execution_receipt_id: str
     ) -> CheckReceipt:
