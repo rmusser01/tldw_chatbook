@@ -3157,7 +3157,10 @@ reviewer team with optional additional focuses and a verifier preset. The defaul
 team is empty. Names can change without breaking saved preset IDs. Missing or
 disabled presets need attention; duplicate destinations are shown explicitly.
 Per-run provider/model choices use existing routing permission and consent and do
-not change the saved team. `[tools] code_review_enabled` controls the feature.
+not change the saved team. `[tools] code_review_enabled` controls the feature
+(on by default); its switch is **Multi-model code review** under
+Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates. With it off, no
+review tools are offered and review wording is ordinary chat.
 
 Ask “Review my changes with my default team”, identifying the selected workspace
 folder and scope. You can also supply exact commit-range/PR base and head commits
@@ -3166,17 +3169,24 @@ untracked files and mutable caller/test context explicitly. A PR URL alone canno
 grant integration or repository access. Normal file permissions, exclusions,
 project instructions and destination consent still apply. No installed skill is
 required; the optional [inline skill example](../../Examples/skills/multi-model-review/SKILL.md)
-uses the same primary recipe.
+uses the same primary recipe. Without exactly one selected local workspace folder,
+only a request that names code review (code, multi-model, reviewer, PR, pull
+request, diff, commit, patch or changes) reports that a folder is needed; other
+“review …” wording, such as “Review my resume”, stays an ordinary chat.
 
 Each reviewer gets the same captured source and general brief, plus its optional
-focus. Originals open in **Review reports** before verification; press **u** in the
+focus. A changed binary or symlink file is listed by path as a coverage gap, and
+changed files hidden by exclusions or sensitive-path rules are counted without
+names; neither blocks the rest of the review. Originals open in **Review reports**
+before verification; press **u** in the
 owning Console chat to reopen them. Read originals, raw output, target identity,
 requested/actual provider-model routes, fallback changes and coverage separately.
 A failed or incomplete report is not an empty successful review. Later edits to
 your files do not change captured evidence.
 
 Ask for verification initially (“Review my changes and verify every finding”), or
-accept the later offer. A fresh verifier assesses blinded claims and a separate
+accept the later offer; the first “yes” or “no” answers it, and a later “yes” is
+ordinary chat. A fresh verifier assesses blinded claims and a separate
 unified report maps every original to confirmed, refuted or unresolved evidence.
 Exact repeated claims share an assessment; different triggers remain separate.
 Refutations need specific counter-evidence, and unresolved claims state the next

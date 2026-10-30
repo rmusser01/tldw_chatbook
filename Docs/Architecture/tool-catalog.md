@@ -144,7 +144,19 @@ inline alias using normal Library trust, disabled for model invocation.
 run overrides, resolved routes/fallbacks and the guide under scratch-store quotas.
 Its required host capacity and destination callbacks supply current admission
 floors. `ConsoleCodeReviewCoordinator` derives stage intent from actual accepted
-USER messages and narrows it to exact preparation fingerprints. A configured verifier
+USER messages and narrows it to exact preparation fingerprints. Only messages with
+stage intent (or the first answer to a native offer, which consumes it) are
+recorded; each session keeps at most 64 and evicts its oldest request that never
+led to review work. `compose_native_review_provider` returns before building the
+lazy coordinator for an ordinary turn, composes nothing with `[tools]
+code_review_enabled` off (`CODE_REVIEW_GATE_KEY`, hand-listed in
+`all_tool_gates()` like `web_deep_search`), and without one local root refuses
+only code-review wording or a stage control for a review the session holds.
+Capture verifies each commit once, lists each pinned directory once per
+`ReviewGitReader`, refuses a change set beyond the file quota before reading
+entries, and holds the review-store lock only for its precondition checks (the
+source guard may wait on the UI thread). Changed binary/symlink files become
+path-named coverage gaps and withheld sensitive changes one unnamed counted gap. A configured verifier
 is frozen without authorizing verification: only a separately issued matching
 verification grant adds it to preparation's finite schedule accounting.
 
