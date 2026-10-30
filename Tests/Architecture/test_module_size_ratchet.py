@@ -590,8 +590,9 @@ _BUDGETS: dict[str, int] = {
     # status meanings moved to provider_error_reason. The last +18 is the
     # review's fail-closed fix: every admitted call is counted, and an
     # answer is recorded on every adapter path (llama.cpp direct included).
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8179 -> 8265.
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
