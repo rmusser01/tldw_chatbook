@@ -43,14 +43,38 @@ def attach_app(controller: Any, app: Any) -> None:
 def session_activated(controller: Any) -> None:
     """Present the newly active chat's pending originals on a real switch.
 
+    An activation off the owner loop hops onto it first. With no running
+    owner loop the switch is left unrecorded, so the next switch or fresh
+    claim still presents it.
+
     Args:
         controller: The Console chat controller whose store changed chats.
     """
+    from ...Chat.console_review_delivery import _on_owner_loop
+
+    loop, on_loop = _on_owner_loop(controller)
+    if not on_loop:
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(session_activated, controller)
+        return
     session_id = controller.store.active_session_id
     if getattr(controller, "_review_active_session", None) == session_id:
         return  # re-activating the active chat is not a switch
     controller._review_active_session = session_id
     if session_id is not None:  # None would mean every chat's reviews
+        _schedule_present_pending(controller, session_id)
+
+
+def view_resumed(controller: Any) -> None:
+    """Present the active chat's pending originals when Console is shown again.
+
+    The chat route is reused: the view stays attached (same generation) while
+    another screen is current, so a resume, not a claim, must present them.
+
+    Args:
+        controller: The Console chat controller of the resumed view.
+    """
+    if (session_id := controller.store.active_session_id) is not None:
         _schedule_present_pending(controller, session_id)
 
 
@@ -95,11 +119,12 @@ def present_code_review_original(
 
     def available():
         cancel = controller._active_cancel_events.get(session_id)
-        # A detached view must not push the modal over other screens; the
-        # original stays pending until the next fresh attach presents it.
+        # A detached or suspended view must not push the modal over another
+        # screen (modals over the Console keep it current); the original stays
+        # pending until the next resume or fresh attach presents it.
         runtime = getattr(controller.app, "console_runtime", None)
         return (
-            (runtime is None or runtime.view is not None)
+            (runtime is None or getattr(runtime.view, "is_current", False))
             and not controller._disposed
             and session_id not in controller._session_close_generations
             and controller.store.active_session_id == session_id

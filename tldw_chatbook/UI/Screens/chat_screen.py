@@ -22726,9 +22726,9 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
             )
         )
-        controller = self._console_chat_controller
-        if controller is not None:
+        if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
+            review_reports.view_resumed(controller)
         if self._pending_character_return_focus_id is not None:
             self.call_after_refresh(self._workspace.restore_character_navigation_focus)
         logger.debug("Chat screen resuming")

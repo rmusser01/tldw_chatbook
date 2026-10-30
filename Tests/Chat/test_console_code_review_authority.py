@@ -528,14 +528,20 @@ def test_attach_never_reoffers_an_answered_or_fenced_review(native_dispatch, ans
 
 
 @pytest.mark.asyncio
-async def test_switching_to_a_chat_presents_its_pending_original_once(native_dispatch):
+@pytest.mark.parametrize("off_loop", [False, True])
+async def test_switching_to_a_chat_presents_its_pending_original_once(
+    native_dispatch, off_loop
+):
     """A review that settled in another chat opens when its chat becomes active.
 
     The store's activation hook (through the runtime) runs one off-loop
-    ``present_pending`` pass for the newly active chat. Switching back and
-    forth never re-offers, a declined offer is never raised again, and
-    re-activating the already active chat schedules nothing.
+    ``present_pending`` pass for the newly active chat; an activation made off
+    the owner loop hops onto it first. Switching back and forth never
+    re-offers, a declined offer is never raised again, and re-activating the
+    already active chat schedules nothing.
     """
+    import asyncio
+
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.UI.Console_Modules import review_reports
 
@@ -554,18 +560,26 @@ async def test_switching_to_a_chat_presents_its_pending_original_once(native_dis
     c.coordinator.on_settled(review_id)
     assert presented == [] and offered == []
 
-    controller = SimpleNamespace(_code_review=c.coordinator, store=store)
+    controller = SimpleNamespace(
+        _code_review=c.coordinator,
+        store=store,
+        _fleet_wake=SimpleNamespace(_loop=asyncio.get_running_loop()),
+    )
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     review_reports.attach_app(controller, SimpleNamespace(console_runtime=runtime))
 
-    async def switch(session_id):
-        store.switch_session(session_id)
+    async def switch(session_id, *, from_worker=False):
+        if from_worker:  # e.g. a hydration worker activating the chat
+            await asyncio.to_thread(store.switch_session, session_id)
+            await asyncio.sleep(0)  # the hop lands on the owner loop
+        else:
+            store.switch_session(session_id)
         await controller._review_present_task
 
     await controller._review_present_task  # the attach pass: "other" is active
-    await switch("chat")
+    await switch("chat", from_worker=off_loop)
     assert len(presented) == 1 and offered == [review_id]
 
     await switch("other")
@@ -580,6 +594,43 @@ async def test_switching_to_a_chat_presents_its_pending_original_once(native_dis
     c.coordinator.bind_accepted_request(reply.id, session_id="chat", source_epoch=0)
     await switch("other")
     await switch("chat")
+    assert len(presented) == 1 and offered == [review_id]
+
+
+@pytest.mark.asyncio
+async def test_resuming_console_presents_a_pending_original_once(native_dispatch):
+    """A review that settled while Console was suspended opens on resume.
+
+    The chat route is reused, so the view stays attached while another screen
+    is current; nothing is presented then, and each resume runs one pass for
+    the active chat. Repeated resumes never re-offer.
+    """
+    import asyncio
+
+    from tldw_chatbook.UI.Console_Modules import review_reports
+
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    review_id, current = c.prepared.review_id, []
+    presented, offered = [], []
+    c.coordinator.present_offer = lambda session_id, review_id: (
+        offered.append(review_id) or True
+    )
+    # Mirrors the presenter: only a current Console view can show it.
+    c.coordinator.present_report = lambda *args: (
+        bool(current) and (presented.append(args) or True)
+    )
+    c.coordinator.on_settled(review_id)  # another screen is current
+    assert presented == [] and offered == []
+
+    controller = SimpleNamespace(
+        _code_review=c.coordinator,
+        store=c.chat_store,
+        _fleet_wake=SimpleNamespace(_loop=asyncio.get_running_loop()),
+    )
+    current.append(True)
+    for _ in range(3):  # the resume, then repeated resumes
+        review_reports.view_resumed(controller)
+        await controller._review_present_task
     assert len(presented) == 1 and offered == [review_id]
 
 
