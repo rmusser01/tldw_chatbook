@@ -500,12 +500,13 @@ $ds-portrait-review-lines: 13;
 }
 
 /* Frame slice B2b (spec 1.5.4): the no-match message, composed once and
-   updated in place, and the recovery row's Retry. */
+   updated in place, its "Also in:" targets, and the recovery row's Retry. */
 #personas-library-nomatch {
     height: auto;
 }
 
-#personas-library-retry {
+#personas-library-retry,
+.personas-library-also-in-target {
     margin: $ds-space-0 $ds-space-1;
 }
 

@@ -203,7 +203,9 @@ _BUDGETS: dict[str, int] = {
     # T9, search-aware empty, no-match, loading and failure states (the
     # recovery row's Retry, Escape's rung 8 and its import-intent bump, the
     # centre's no-match wording): +76 (17,137 -> 17,213).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17213,
+    # T10, Also in (the counts worker, its fence, the per-kind counts and the
+    # switch that carries the query): +142 (17,213 -> 17,355).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17355,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -237,7 +239,9 @@ _BUDGETS: dict[str, int] = {
     # labels and the search placeholder): +147 (1,019 -> 1,166).
     # T9, the empty, no-match and loading copy (no_match_view, empty_kind_text,
     # loading_text): +71 (1,166 -> 1,237).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1237,
+    # T10, the Also in targets (AlsoInTarget, the counts in no_match_view):
+    # +48 (1,237 -> 1,285).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1285,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
@@ -264,7 +268,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-33910.4, 2026-10-26: +24 (1,249 -> 1,273).
     # T9, the no-match block composed once, the delayed loading line and the
     # recovery row's Retry (spec 1.5.4), same decision: +115 (1,273 -> 1,388).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1388,
+    # T10, the Also in targets composed once, Enter and Down on an empty list
+    # reaching them, same decision: +103 (1,388 -> 1,491).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1491,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

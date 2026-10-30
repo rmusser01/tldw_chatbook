@@ -259,6 +259,7 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
 from ...Widgets.Persona_Widgets.personas_messages import (
     ActorPackImportRequested,
     ActorPackExportRequested,
+    AlsoInRequested,
     PersonaActionRequested,
     PersonaBuddyActionRequested,
     PersonaEntitySelected,
@@ -497,6 +498,10 @@ PERSONAS_LIBRARY_PAGE_SIZE = 200
 _SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
 #: Every window fetch runs in this exclusive worker group (spec 1.5.6).
 _LIST_WINDOW_GROUP = "roleplay-list-window"
+#: The other kinds' counts for a search the current kind found nothing for
+#: run in this exclusive worker group (frame slice B2b, spec 1.5.4). It is
+#: never a "rows pending" group: Enter in the search box never waits on it.
+_ALSO_IN_GROUP = "roleplay-also-in"
 _MAX_CHARACTER_ID = (1 << 63) - 1
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
@@ -3864,6 +3869,115 @@ class PersonasScreen(BaseAppScreen):
             and not self._window_state.rows_current(fence)
         )
 
+    # ---- Also in: the other kinds' counts (frame slice B2b, spec 1.5.4) ----
+
+    def _start_also_in(self, fence: frame_state.ListFence) -> None:
+        """The current kind found nothing for ``fence``'s query: count the other kinds.
+
+        One count per kind, off the event loop, only for an empty result; the
+        renders that call this sit behind the search debounce already.
+        """
+        if not fence.query or not self.is_running:
+            return
+        self.run_worker(
+            self._also_in_worker(fence),
+            group=_ALSO_IN_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _also_in_worker(self, fence: frame_state.ListFence) -> None:
+        """Count each other kind's matches; a count that fails is left out."""
+        current = frame_state.KIND_FOR_MODE.get(fence.mode)
+        counts: dict[str, int] = {}
+        failed: set[str] = set()
+        for kind in frame_state.ALSO_IN_ORDER:
+            if kind == current:
+                continue
+            try:
+                counts[kind] = await self._count_kind_matches(kind, fence)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.opt(exception=True).debug("An Also in count failed.")
+                failed.add(kind)
+        self._apply_also_in(fence, counts, failed)
+
+    def _apply_also_in(
+        self, fence: frame_state.ListFence, counts: dict[str, int], failed: set[str]
+    ) -> None:
+        """Show the counts only on the list they were counted for (spec 1.5.6's fence)."""
+        if not self._list_fence_is_current(fence):
+            return
+        try:
+            self.query_one(PersonasLibraryPane).show_also_in(counts, failed)
+        except QueryError:
+            pass
+
+    async def _count_kind_matches(self, kind: str, fence: frame_state.ListFence) -> int:
+        """How many of ``kind`` the query matches, with that kind's own search.
+
+        Characters count with the list's FTS prefix expression (the database
+        method, not the wrapper that answers 0 on an error); the server
+        source asks its search once, as its list does. Personas page the
+        service as their list does; lore books and chat dictionaries filter
+        names as theirs do. Raises when a kind cannot be read.
+        """
+        query = fence.query.strip()
+        needle = query.lower()
+        if kind == "character" and fence.runtime_source == "server":
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
+            response = await service.search_characters(
+                query, mode="server", limit=_SERVER_CHARACTER_SEARCH_MAX_RESULTS
+            )
+            rows, total = self._server_character_rows(response)
+            return total if total is not None else len(rows)
+        if kind == "character":
+            db = self._character_db()
+            if db is None:
+                raise RuntimeError("No character database.")
+            return await asyncio.to_thread(
+                db.count_character_cards, search_term=quote_fts5_prefix(query)
+            )
+        if kind == "persona":
+            records = await self.persona_handler.list_all_persona_profiles()
+            return page_persona_profiles(
+                records,
+                search_term=query,
+                sort_key="name_asc",
+                offset=0,
+                page_size=max(1, len(records)),
+            )[1]
+        if kind == "dictionary":
+            service = self._dictionary_scope_service()
+            response = await service.list_dictionaries(
+                mode="local", include_inactive=True
+            )
+            names = [r.get("name", "") for r in response.get("dictionaries") or []]
+        else:
+            manager = self._lore_manager()
+            if manager is None:
+                raise RuntimeError("No lore database.")
+            books = await asyncio.to_thread(manager.list_world_books, True)
+            names = [book.get("name", "") for book in books]
+        return sum(1 for name in names if needle in str(name).lower())
+
+    @on(AlsoInRequested)
+    async def _handle_also_in(self, message: AlsoInRequested) -> None:
+        """An ``Also in:`` target: that kind's list with the search applied.
+
+        It is a kind switch, so it goes through the unsaved guard; the
+        first-match landing is owed inside the switch, so Stay owes nothing.
+        """
+        message.stop()
+        mode = frame_state.MODE_FOR_KIND.get(message.kind)
+        query = self.state.search_query
+        if mode is None or not query or mode == self.state.active_mode:
+            return
+        await self._run_guarded(lambda: self._apply_mode(mode, carry_query=query))
+
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
         fence = request.fence
@@ -4104,7 +4218,7 @@ class PersonasScreen(BaseAppScreen):
                 await library.show_loading()
             elif request.replace:
                 with window.painting():
-                    await library.update_rows(
+                    no_match = await library.update_rows(
                         rows,
                         total=(self._character_unfiltered_total or total)
                         if filtered
@@ -4117,6 +4231,8 @@ class PersonasScreen(BaseAppScreen):
                         query=fence.query,
                         tag=fence.tag,
                     )
+                if no_match:
+                    self._start_also_in(fence)
                 # On dev the centre kept "Pick a character…" over a search
                 # that listed nothing (TASK-33788 AC#4).
                 self._refresh_characters_empty_guidance()
@@ -4287,7 +4403,7 @@ class PersonasScreen(BaseAppScreen):
             recovery_state = self._profile_lookup_recovery_state
             filtered = bool(self.state.search_query)
             total = len(self._profiles)
-            await library.update_rows(
+            no_match = await library.update_rows(
                 rows,
                 total=total,
                 filtered=filtered,
@@ -4308,6 +4424,8 @@ class PersonasScreen(BaseAppScreen):
                 ),
                 query=self.state.search_query,
             )
+            if no_match:
+                self._start_also_in(self._list_fence())
             library.item_list.set_more_available(False)
             if recovery_state is None:
                 library.set_sort_label(sort_key)
@@ -4345,6 +4463,7 @@ class PersonasScreen(BaseAppScreen):
             self.state.sort_key = "name_asc"
         # A changed search reloads from row 0 and (for characters) recounts.
         self._count_cache_key = None
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
@@ -4610,7 +4729,7 @@ class PersonasScreen(BaseAppScreen):
             if recovery_copy is None:
                 self._dictionaries_cache = records
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(
+            no_match = await library.update_rows(
                 rows,
                 total=len(records),
                 filtered=bool(needle),
@@ -4625,6 +4744,8 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
                 query=expected_query,
             )
+            if no_match:
+                self._start_also_in(self._list_fence())
             library.item_list.set_more_available(False)
             from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence, request_generation)
@@ -4712,7 +4833,7 @@ class PersonasScreen(BaseAppScreen):
             if recovery_copy is None:
                 self._lore_books_cache = records
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(
+            no_match = await library.update_rows(
                 rows,
                 total=len(records),
                 filtered=bool(needle),
@@ -4727,6 +4848,8 @@ class PersonasScreen(BaseAppScreen):
                 recovery_copy=recovery_copy,
                 query=expected_query,
             )
+            if no_match:
+                self._start_also_in(self._list_fence())
             library.item_list.set_more_available(False)
             from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence, request_generation)
@@ -4773,11 +4896,20 @@ class PersonasScreen(BaseAppScreen):
             self._compact_active_pane = "inspector"
         self._sync_personas_rails()
 
-    async def _apply_mode(self, mode: str) -> None:
+    async def _apply_mode(self, mode: str, *, carry_query: str | None = None) -> None:
+        """Switch the workbench to ``mode`` (its list unfiltered, or searched).
+
+        Args:
+            mode: The workbench mode.
+            carry_query: ``Also in:``'s switch (spec 1.5.4): the new kind's
+                list is searched for this, and the cursor lands on its first
+                match. A plain switch clears the search (on dev, always).
+        """
         self._bump_import_intent()
         self._advance_persona_buddy_session()
         if mode != "characters":
             self._clear_character_tts_profile_suggestion()
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
         self._cancel_search_debounce()
         self._selected_server_character = None
         # switch_mode resets sort_key/tag_filter for a fresh list.
@@ -4785,15 +4917,19 @@ class PersonasScreen(BaseAppScreen):
         self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         # switch_mode does not reset search_query; clear it explicitly and
-        # reset the Input widget so the library starts unfiltered in the new mode.
-        self.state.search_query = ""
+        # reset the Input widget so the library starts unfiltered in the new
+        # mode. A carried query stays in the box as typed.
+        self.state.search_query = carry_query or ""
+        if carry_query and mode == "characters":
+            self.state.sort_key = "relevance"  # as a first typed key sets it
         # The (search, tag) pair changed, so the character count must be
         # recomputed the next time the characters page loads.
         self._count_cache_key = None
-        try:
-            self.query_one("#personas-library-search", Input).value = ""
-        except Exception:
-            pass
+        if carry_query is None:
+            try:
+                self.query_one("#personas-library-search", Input).value = ""
+            except Exception:
+                pass
         self._edit_mode = "view"
         for chip_mode in MODE_CHIP_ORDER:
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
@@ -4802,6 +4938,9 @@ class PersonasScreen(BaseAppScreen):
         self._update_purpose_line()
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        if carry_query:
+            # After set_mode, whose kind switch forgets any owed move.
+            self._window_state.owe_first(self._list_fence())
         self._sync_local_character_actions()
         is_dictionaries = mode == "dictionaries"
         is_lore = mode == "lore"
@@ -4843,10 +4982,10 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
-            await self._render_dictionary_rows()
+            await self._render_dictionary_rows(self.state.search_query)
             self._show_center(None)
         elif mode == "lore":
-            await self._render_lore_rows()
+            await self._render_lore_rows(self.state.search_query)
             self._show_center(None)
         else:
             async with self._render_lock:
@@ -16997,7 +17136,10 @@ class PersonasScreen(BaseAppScreen):
             return
         if focused is None or not (
             focused is library.item_list
-            or any(node.id == "personas-library-marks" for node in focused.ancestors)
+            or any(
+                node.id in ("personas-library-marks", "personas-library-nomatch")
+                for node in focused.ancestors
+            )
         ):
             return
         if self.state.search_query or self.state.tag_filter:

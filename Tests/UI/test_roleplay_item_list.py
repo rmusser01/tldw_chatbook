@@ -2019,7 +2019,59 @@ def _status_lines(pane) -> tuple[str, tuple[str, ...]]:
         return state, (str(static.render()),)
     if no_match.display:
         return "no_match", tuple(
-            str(line.render())
-            for line in no_match.query(".personas-library-status-copy")
+            str(pane.query_one(f"#personas-library-nomatch-{part}").render())
+            for part in ("line", "hint")
         )
     return "rows", ()
+
+
+def test_also_in_lists_matching_kinds_in_rail_order_and_drops_zero_and_failed():
+    """Spec 1.5.4: ``Also in:`` names only the kinds that match, in the rail's
+    order (characters, personas, lore books, chat dictionaries); a kind whose
+    count is 0 or failed is not listed, and nothing is listed while counting."""
+    view = frame_state.no_match_view(
+        "character",
+        query="kepler",
+        tag=None,
+        total=28,
+        counts={"dictionary": 2, "lore": 1, "persona": 0},
+    )
+    assert [(t.kind, t.count, t.label) for t in view.targets] == [
+        ("lore", 1, "Lore books 1 ›"),
+        ("dictionary", 2, "Chat dictionaries 2 ›"),
+    ]
+    assert view.none_text is None
+    some_failed = frame_state.no_match_view(
+        "lore",
+        query="kep",
+        tag=None,
+        total=3,
+        counts={"character": 4, "persona": 1, "dictionary": 9},
+        failed={"dictionary"},
+    )
+    assert [t.label for t in some_failed.targets] == ["Characters 4 ›", "Personas 1 ›"]
+    counting = frame_state.no_match_view("lore", query="kep", tag=None, total=3)
+    assert (counting.targets, counting.none_text) == ((), None)
+
+
+def test_also_in_follows_the_ascii_glyph_mode(ascii_mode):
+    view = frame_state.no_match_view(
+        "persona", query="kep", tag=None, total=2, counts={"character": 3}
+    )
+    assert [t.label for t in view.targets] == ["Characters 3 >"]
+
+
+def test_not_found_elsewhere_only_when_every_count_succeeded_with_zero():
+    zero = {"persona": 0, "lore": 0, "dictionary": 0}
+    view = frame_state.no_match_view(
+        "character", query="zzqx", tag=None, total=28, counts=zero
+    )
+    assert (view.targets, view.none_text) == ((), "Not found in other kinds either.")
+    failed = frame_state.no_match_view(
+        "character", query="zzqx", tag=None, total=28, counts=zero, failed={"lore"}
+    )
+    assert failed.none_text is None
+    uncounted = frame_state.no_match_view(
+        "character", query="zzqx", tag=None, total=28, counts={"persona": 0}
+    )
+    assert uncounted.none_text is None
