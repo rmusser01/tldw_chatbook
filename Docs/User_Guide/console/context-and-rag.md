@@ -1112,7 +1112,9 @@ Chatbook saves which sources each reply cited, so the button and the
 window still work after you restart the app or reopen the chat. These
 citation records are protected by a key that Chatbook creates in your
 system keyring (Keychain, Secret Service or KWallet) the first time it
-needs one. Nothing is read from the keyring at startup.
+needs one, when you send a reply with Library evidence. Until then
+Chatbook doesn't touch the keyring. Once records exist, it reads the key
+in the background just after startup to maintain them.
 
 When citation records can't be saved, the reply has no `[S1]` labels.
 Chatbook still sends the evidence, and asks the model to refer to each
