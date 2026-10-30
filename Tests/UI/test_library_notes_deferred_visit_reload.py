@@ -13,17 +13,33 @@ One boot of the real ``LibraryScreen`` over a real ChaChaNotes database
 held open at its database write; the placement is read back through a
 second connection.
 
-Final review I-1 (M1): the last arm was flaky (1 in ~22). It waited for the
-FIRST slice of the owed reload only, held a row widget across the remaining
-slices' recompose, moved focus with ``set_focus`` and pressed Down; a later
-slice landing in between put focus on the role fallback (the filter) or
-reordered the rows (a folder row). The arm now settles on the whole reload
+Final review I-1 (M1): the last arm was flaky (1 in ~22). It acted once the
+FIRST slice of the owed reload had landed: it took a row, moved focus to it
+with ``set_focus`` and pressed Down. A later slice's canvas sync had already
+captured Notes focus (the filter), and that slice's focus replay ran after
+the ``set_focus``, so the Down started from the filter and handed off onto
+the tree's first row, a folder row. The arm now settles on the whole reload
 (no rows reloading, no branch loading, no pending identity), re-queries the
-row, and drives focus with real keys only. The root ``folders`` slice of the
-owed reload is slowed (``SLOW_SLICE``) so the note rows land FIRST and the
-folders slice recomposes the tree after them -- the recorded failure shape,
-made deterministic: the old arm is RED under it, this one GREEN. T7 N-1: the
-focus the reload lands on is asserted by role before any key.
+rows, and drives focus with real keys only.
+
+What the pin proves, and how (residual R-1). The test forces that recorded
+interleaving with events alone -- no timeout, no sleep, no timed slice:
+
+- the owed reload's root ``folders`` slice is read only after the root
+  placements slice (the note rows) has landed, so it recomposes the tree
+  last;
+- that slice's focus replay, captured before any arm acts, is held until a
+  ``set_focus`` lands on a note row (the old arm's first act) and then runs
+  on the screen's queue; this arm never calls ``set_focus`` and releases the
+  replay explicitly;
+- a Down the screen receives before that replay has run is held, without
+  blocking the queue, and handled after it.
+
+So the old arm's Down always starts from the replayed filter and lands on a
+folder row: RED on every run (5 of 5, by an Edit mutation restoring the old
+arm). This arm presses no key until the reload is whole, so no key of its is
+ever held, and its Down walk ends on a note row: GREEN. T7 N-1: the focus the
+reload lands on is asserted by role before any key.
 """
 
 from __future__ import annotations
@@ -47,10 +63,6 @@ from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 WIDE = (160, 45)
-#: How long the owed reload's root folders slice is held back, so the note
-#: rows (the placements slice) are painted and focusable while the tree is
-#: still mid-reload. Long enough to be certain the old arm acted inside it.
-SLOW_SLICE = 0.4
 
 
 class _Overlay(ModalScreen[None]):
@@ -154,39 +166,99 @@ async def test_a_visit_reload_held_back_by_a_running_mutation_runs_once_it_ends(
         assert reloads == [], "the tree was reloaded under the running mutation"
         assert screen._library_notes_mutation_fenced()
 
-        # Hold the owed reload's root folders slice: the placements slice
-        # (the note rows) lands first, and the folders slice is released the
-        # moment a ``set_focus`` lands on a note row -- the window the old
-        # arm acted inside (its ``set_focus(first)``, then Down) -- or after
-        # SLOW_SLICE when nothing does, as this arm never does (it drives
-        # focus by real keys only once the reload is whole). Measured: the
-        # old arm was red 1 run in 3 under this (1 in ~22 bare); the released
-        # slice still needs its read before it lands, so the key can win the
-        # race. (The slice request's worker runs
-        # ``_run_library_notes_tree_slice_request`` directly.)
+        # The event-ordered injection (residual R-1: no timeout, no timer).
+        # The recorded failure: a later slice's canvas sync captured Notes
+        # focus (the filter) before the old arm's ``set_focus(first)``, and
+        # that slice's post-recompose focus replay ran after it, putting
+        # focus back on the filter before the arm's Down -- which handed off
+        # onto the tree's first row, a folder row. Three events force that
+        # order on every run:
+        # * the owed reload's root ``folders`` slice is read only once the
+        #   root placements slice (the note rows) has landed
+        #   (``rows_landed``), so it recomposes the tree last;
+        # * its focus replay (and any replay after it) is held until a
+        #   ``set_focus`` lands on a note row -- the old arm's first act --
+        #   and then runs on the screen's queue (``row_focused``). This arm
+        #   never calls ``set_focus``; it releases the replay explicitly;
+        # * a Down the screen receives before that replay has run
+        #   (``slice_landed``) is held, never blocking the queue, and handled
+        #   after it.
+        # (The slice request's worker runs
+        # ``_run_library_notes_tree_slice_request`` directly; the canvas's
+        # post-recompose follow-up calls
+        # ``_restore_library_notes_after_targeted_sync``.)
+        root_folders = NotesBranchKey(None, "folders")
+        root_placements = NotesBranchKey(None, "placements")
         real_slice = LibraryScreen._run_library_notes_tree_slice_request
+        real_replay = LibraryScreen._restore_library_notes_after_targeted_sync
         real_set_focus = LibraryScreen.set_focus
-        slowed: list[NotesBranchKey] = []
-        row_focused = asyncio.Event()
+        real_on_key = LibraryScreen.on_key
+        gated: list[NotesBranchKey] = []
+        held_replays: list[object] = []
+        held_keys: list[str] = []
+        rows_landed, folders_applied = asyncio.Event(), asyncio.Event()
+        row_focused, slice_landed = asyncio.Event(), asyncio.Event()
 
-        async def gated_folders_slice(self, key, **kwargs):
-            if key == NotesBranchKey(None, "folders") and reloads:
-                slowed.append(key)
-                try:
-                    await asyncio.wait_for(row_focused.wait(), timeout=SLOW_SLICE)
-                except TimeoutError:
-                    pass
-            return await real_slice(self, key, **kwargs)
+        async def ordered_slice(self, key, **kwargs):
+            if not reloads or key not in (root_folders, root_placements):
+                return await real_slice(self, key, **kwargs)
+            if key == root_folders:
+                gated.append(key)
+                await rows_landed.wait()
+            try:
+                return await real_slice(self, key, **kwargs)
+            finally:
+                (folders_applied if key == root_folders else rows_landed).set()
 
-        def set_focus_opens_the_gate(self, widget, *args, **kwargs):
-            if reloads and widget is not None and widget.has_class("library-notes-row"):
-                row_focused.set()
-            return real_set_focus(self, widget, *args, **kwargs)
+        def held_replay(self, identity) -> None:
+            if folders_applied.is_set() and not row_focused.is_set():
+                held_replays.append(identity)
+                return
+            real_replay(self, identity)
+
+        def release_the_replay(owner) -> None:
+            if row_focused.is_set():
+                return
+            row_focused.set()
+
+            def replay() -> None:
+                for identity in held_replays:
+                    real_replay(owner, identity)
+                slice_landed.set()
+
+            owner.call_later(replay)
+
+        def set_focus_releases_the_replay(self, widget, *args, **kwargs):
+            result = real_set_focus(self, widget, *args, **kwargs)
+            if (
+                folders_applied.is_set()
+                and widget is not None
+                and widget.has_class("library-notes-row")
+            ):
+                release_the_replay(self)
+            return result
+
+        async def handle_after_the_landing(self, event) -> None:
+            await slice_landed.wait()
+            self.call_later(real_on_key, self, event)
+
+        def on_key_holds_an_early_down(self, event) -> None:
+            if event.key == "down" and reloads and not slice_landed.is_set():
+                held_keys.append(event.key)
+                event.stop()
+                event.prevent_default()
+                self.run_worker(handle_after_the_landing(self, event), group="held-down")
+                return
+            real_on_key(self, event)
 
         monkeypatch.setattr(
-            LibraryScreen, "_run_library_notes_tree_slice_request", gated_folders_slice
+            LibraryScreen, "_run_library_notes_tree_slice_request", ordered_slice
         )
-        monkeypatch.setattr(LibraryScreen, "set_focus", set_focus_opens_the_gate)
+        monkeypatch.setattr(
+            LibraryScreen, "_restore_library_notes_after_targeted_sync", held_replay
+        )
+        monkeypatch.setattr(LibraryScreen, "set_focus", set_focus_releases_the_replay)
+        monkeypatch.setattr(LibraryScreen, "on_key", on_key_holds_an_early_down)
 
         # The mutation ends: the held-back reload runs, once.
         release.set()
@@ -204,9 +276,20 @@ async def test_a_visit_reload_held_back_by_a_running_mutation_runs_once_it_ends(
         assert reloads == ["full reload"], reloads
         assert seed.note_ids["Ideas inbox"] in seed.placed_in("Recipes")
 
+        # The window is open: the folders slice has been applied and its
+        # recompose has run; only its focus replay waits.
+        await until(pilot, lambda: bool(held_replays), "the folders slice's replay")
+
+        # Nothing of this arm has released it. This arm never calls
+        # ``set_focus``, so it releases the replay explicitly.
+        assert not slice_landed.is_set()
+        assert not row_focused.is_set(), "a note row took set_focus mid-reload"
+        release_the_replay(screen)
+        await until(pilot, slice_landed.is_set, "the folders slice to land")
+
         # The reload lands WHOLE: no rows reloading, no branch loading, no
-        # pending identity -- and holds across one more pause. The slowed
-        # folders slice must have been the one to land last.
+        # pending identity -- and holds across one more pause. Exactly one
+        # slice (the root folders slice) went through the gate.
         for _ in range(2):
             await until(
                 pilot,
@@ -219,7 +302,7 @@ async def test_a_visit_reload_held_back_by_a_running_mutation_runs_once_it_ends(
             )
             await pilot.pause(0.1)
         assert _reload_settled(screen)
-        assert slowed == [NotesBranchKey(None, "folders")], slowed
+        assert gated == [root_folders], gated
 
         # T7 N-1: the mutation's own landing -- the reconcile SELECTS the
         # moved note's new placement under Recipes (``desired_target``,
@@ -271,3 +354,4 @@ async def test_a_visit_reload_held_back_by_a_running_mutation_runs_once_it_ends(
             lambda: f"Down to move to the next row (focus {screen.focused!r})",
         )
         assert not screen.focused.has_class("library-notes-folder-row")
+        assert held_keys == [], "a key of this arm was held: it pressed mid-reload"
