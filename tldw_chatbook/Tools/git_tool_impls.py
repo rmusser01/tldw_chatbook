@@ -402,6 +402,20 @@ def _literal_pathspec(relative_posix: str) -> str:
     return f":(literal){relative_posix}"
 
 
+def _argv_chunks(paths, limit: int = 64 * 1024):
+    """Split pathspec arguments so one git process stays within argv limits."""
+    chunk: list[str] = []
+    size = 0
+    for path in paths:
+        if chunk and size + len(path) > limit:
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(path)
+        size += len(path) + 24
+    if chunk:
+        yield chunk
+
+
 def _denylist_pathspecs(
     repo_root: Path,
     context: SensitivePathContext | None = None,
@@ -1668,18 +1682,7 @@ class ReviewGitReader:
         for path in paths:
             self.safe_path(path)
         found: dict[str, list[tuple[bytes, str]]] = {path: [] for path in paths}
-        chunk: list[str] = []
-        chunks = [chunk]
-        size = 0
-        for path in paths:  # bounded argv per git process
-            if chunk and size + len(path) > 64 * 1024:
-                chunk, size = [], 0
-                chunks.append(chunk)
-            chunk.append(path)
-            size += len(path) + 16
-        for chunk in chunks:
-            if not chunk:
-                continue
+        for chunk in _argv_chunks(paths):
             raw = self._read(
                 ["ls-files", "--stage", "-z", "--", *map(_literal_pathspec, chunk)]
             )
@@ -1713,6 +1716,30 @@ class ReviewGitReader:
                 path, selected, mode.decode("ascii"), self._object_sizes[selected]
             )
         return entries
+
+    def tracked_case_variants(self, paths) -> frozenset[str]:
+        """Requested paths the index tracks under any letter case, or below.
+
+        On a case-insensitive filesystem ``MAIN.PY`` opens tracked
+        ``main.py``. Detection only: the ``icase`` pathspec here can only
+        refuse a selection, never widen what a caller reads (see
+        ``_literal_pathspec``), and record names are compared, never returned.
+        """
+        paths = tuple(dict.fromkeys(paths))
+        folded: dict[str, list[str]] = {}
+        for path in paths:
+            self.safe_path(path)
+            folded.setdefault(path.casefold(), []).append(path)
+        tracked: set[str] = set()
+        for chunk in _argv_chunks(paths):
+            raw = self._read(
+                ["ls-files", "-z", "--", *(f":(icase,literal){p}" for p in chunk)]
+            )
+            for name in raw.split(b"\0"):
+                parts = PurePosixPath(name.decode("utf-8").casefold()).parts
+                for depth in range(1, len(parts) + 1):
+                    tracked.update(folded.get("/".join(parts[:depth]), ()))
+        return frozenset(tracked)
 
     def blob(
         self, entry: ReviewGitEntry, *, max_bytes: int = GIT_MAX_OUTPUT_BYTES

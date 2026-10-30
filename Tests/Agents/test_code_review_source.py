@@ -1374,8 +1374,11 @@ def test_working_tree_capture_reads_the_index_once_per_pass(source_case, monkeyp
         doc.relative_path for doc in manifest.initial_sources if doc.side == "staged"
     }
     assert set(names) <= staged
-    # One read for capture and one fresh read for the drift re-check.
-    assert len([call for call in calls if call[0] == "ls-files"]) == 2
+    # Per pass (capture, then the fresh drift re-check): one index read for
+    # the changed paths and one case-insensitive check of untracked ones.
+    listings = [call for call in calls if call[0] == "ls-files"]
+    assert len([call for call in listings if call[1] == "--stage"]) == 2
+    assert len([call for call in listings if call[1] == "-z"]) == 2
 
 
 def test_index_change_between_capture_passes_is_still_drift(source_case, monkeypatch):
@@ -1402,3 +1405,43 @@ def test_index_change_between_capture_passes_is_still_drift(source_case, monkeyp
             c.working_tree_target, c.authority, c.store, context.review_id
         )
     assert restaged
+
+
+@pytest.mark.parametrize("variant", ["MAIN.PY", "Main.py"])
+def test_case_variant_of_a_tracked_file_is_not_an_untracked_selection(
+    source_case, variant
+):
+    """On a case-insensitive filesystem the variant opens the tracked file."""
+    c = source_case
+    with pytest.raises(ReviewRefused, match="invalid_untracked_selection"):
+        c.capture(
+            c.working_tree_target.model_copy(update={"untracked_paths": (variant,)})
+        )
+
+
+@pytest.mark.parametrize("variant", ["SECRET.TXT", "Secret.Txt"])
+def test_case_variant_of_an_excluded_file_never_reaches_a_reviewer(
+    source_case, variant
+):
+    """Exclusions casefold (local_tool_impls._is_relative_sensitive_path)."""
+    c = source_case
+    with pytest.raises(ReviewRefused, match="source_path_unavailable"):
+        c.capture(
+            c.working_tree_target.model_copy(update={"untracked_paths": (variant,)})
+        )
+    manifest = c.capture(
+        c.working_tree_target.model_copy(update={"context_paths": (variant,)})
+    )
+    assert "optional_context_unavailable" in [gap.reason for gap in manifest.gaps]
+    assert variant.casefold() not in repr(manifest).casefold()
+
+
+@pytest.mark.parametrize("variant", [".NETRC", ".Git-Credentials"])
+def test_case_variant_of_a_sensitive_name_is_refused(source_case, variant):
+    """The name rule is casefolded (Utils/sensitive_paths._SENSITIVE_FILE_NAMES)."""
+    c = source_case
+    (c.root / variant.lower()).write_text("machine example login me password pw\n")
+    with pytest.raises(ReviewRefused, match="source_path_unavailable"):
+        c.capture(
+            c.working_tree_target.model_copy(update={"untracked_paths": (variant,)})
+        )
