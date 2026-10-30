@@ -4594,3 +4594,148 @@ async def test_enter_in_the_search_box_never_waits_on_the_counts(
         finally:
             release.set()
         await _targets(pilot, screen, ("Lore books 1 ›",))
+
+
+# ---- Also in across a leave, an Escape clear and a newer keystroke (B2b Task 10 fix round 1) ----
+
+
+def _also_in_workers(app) -> list:
+    """The ``Also in:`` count workers still pending or running."""
+    return [
+        worker
+        for worker in app.workers
+        if worker.group == "roleplay-also-in"
+        and worker.state in (WorkerState.PENDING, WorkerState.RUNNING)
+    ]
+
+
+def _held_lore_count(monkeypatch):
+    """Hold the next lore books read (the lore count) until ``release`` is set."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    reading, release = threading.Event(), threading.Event()
+    armed = {"on": False}
+    real_list = WorldBookManager.list_world_books
+
+    def held_list(self, include_disabled=False):
+        if armed["on"]:
+            armed["on"] = False
+            reading.set()
+            release.wait(timeout=30)
+        return real_list(self, include_disabled)
+
+    monkeypatch.setattr(WorldBookManager, "list_world_books", held_list)
+    return armed, reading, release
+
+
+async def test_a_leave_stops_the_counts_and_the_return_counts_again(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The leave (spec 4.11) cancels the counts as it cancels the window
+    worker, so no read or server call runs on after it; the return finds the
+    no-match message with no counts laid over it and counts again (the rows
+    stayed, so no render does). New with B2b Task 10 (dev has no Also in)."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    armed, reading, release = _held_lore_count(monkeypatch)
+    async with open_styled_roleplay(
+        "mock",
+        mock_app_instance,
+        size=SIZE,
+        character_db=volume_348,
+        app_class=_ReusedRoleplayApp,
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        armed["on"] = True
+        try:
+            await _search_settled(pilot, screen, "kepler", workers=False)
+            await wait_until(pilot, reading.is_set, what="the held lore count")
+            assert _also_in_workers(app)
+            await app.switch_screen("elsewhere")
+            await pilot.pause()
+            assert screen not in app.screen_stack and screen.is_attached
+            await wait_until(
+                pilot, lambda: _also_in_workers(app) == [], what="the counts stopped"
+            )
+        finally:
+            release.set()
+        await app.switch_screen("roleplay")
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        assert no_match_lines(screen)[:1] == ('No characters match "kepler".',)
+
+
+async def test_an_escape_clear_stops_the_counts(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Escape's clear (owner decision D9's box rung) is a search change too:
+    it cancels the counts, so a read or server call for the cleared query
+    does not run on. New with B2b Task 10."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    armed, reading, release = _held_lore_count(monkeypatch)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        armed["on"] = True
+        try:
+            await _search_settled(pilot, screen, "kepler", workers=False)
+            await wait_until(pilot, reading.is_set, what="the held lore count")
+            assert _also_in_workers(app)
+            screen.query_one("#personas-library-search", Input).focus()
+            await pilot.press("escape")
+            await wait_until(
+                pilot,
+                lambda: screen.state.search_query == "",
+                what="the search cleared",
+            )
+            await wait_until(
+                pilot, lambda: _also_in_workers(app) == [], what="the counts stopped"
+            )
+        finally:
+            release.set()
+        await settle(pilot)
+        assert also_in_targets(screen) == () and visible_item_ids(screen)
+
+
+@pytest.mark.parametrize("via", ["click", "down"])
+async def test_a_target_counted_for_an_older_query_never_switches(
+    mock_app_instance, volume_348, monkeypatch, via
+):
+    """A keystroke hides the targets counted for the query before it, so while
+    the newer query debounces neither a click nor Down then Enter on the
+    empty list can switch kind with a query the target was not counted for
+    (it promised "Lore books 1"). New with B2b Task 10."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        # Hold the newer query's debounce open: the window under test.
+        monkeypatch.setattr(
+            personas_screen_module, "PERSONAS_SEARCH_DEBOUNCE_SECONDS", 30
+        )
+        screen.query_one("#personas-library-search", Input).value = "keplerzz"
+        await wait_until(
+            pilot,
+            lambda: screen.state.search_query == "keplerzz",
+            what="the newer query",
+        )
+        await pilot.pause()
+        target = screen.query_one("#personas-library-also-in-lore", Button)
+        if via == "click":
+            # A user can click only what is still painted.
+            if target.display:
+                assert await pilot.click("#personas-library-also-in-lore")
+        else:
+            item_list.focus()
+            await pilot.press("down")
+            assert screen.focused is item_list
+            await pilot.press("enter")
+        await pilot.pause()
+        assert screen.state.active_mode == "characters"
+        assert screen.state.search_query == "keplerzz"
+        assert also_in_targets(screen) == ()

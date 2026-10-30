@@ -731,6 +731,8 @@ class PersonasLibraryPane(Vertical):
         # What the no-match message shows (query, tag, total), while it shows:
         # the other kinds' counts are laid over it when they arrive.
         self._no_match_args: tuple[str, str | None, int | None] | None = None
+        # Whether counts were laid over that message (a leave can cut them short).
+        self._also_in_landed = False
 
     @property
     def item_list(self) -> RoleplayItemList:
@@ -1046,6 +1048,7 @@ class PersonasLibraryPane(Vertical):
                 item_list.kind, query=query, tag=tag, total=total if filtered else None
             )
             self._no_match_args = (query, tag, total if filtered else None)
+            self._also_in_landed = False
         else:
             status = (
                 "personas-library-empty",
@@ -1132,6 +1135,27 @@ class PersonasLibraryPane(Vertical):
                 failed=failed,
             )
         )
+        self._also_in_landed = True
+
+    def hide_also_in(self) -> None:
+        """Hide the targets: the search moved on from the query they were counted for.
+
+        The no-match lines stay until the newer query's rows replace them.
+        """
+        if self._no_match_args is None:
+            return
+        query, tag, total = self._no_match_args
+        self._show_no_match(
+            frame_state.no_match_view(
+                self.item_list.kind, query=query, tag=tag, total=total
+            )
+        )
+        self._also_in_landed = False
+
+    def also_in_owed(self, query: str) -> bool:
+        """Whether the no-match message for ``query`` shows with no counts laid over it."""
+        args = self._no_match_args
+        return args is not None and args[0] == query and not self._also_in_landed
 
     def focus_also_in(self, *, query: str | None = None) -> bool:
         """Focus the first ``Also in:`` target, if one shows (for ``query``, when given)."""

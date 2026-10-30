@@ -2368,16 +2368,19 @@ class PersonasScreen(BaseAppScreen):
         """The visit-lifecycle leave hook (spec 4.11), with B2a's first duties.
 
         Clears the marks of every kind (they are never saved, R16), cancels
-        the window worker and stops the search debounce. The window state's
-        leave fences a window whose read is still running in its thread and
-        forgets the owed End or load-through; a list whose replace had not
-        landed and painted reloads on the return (TASK-33910.34). Runs on
-        unmount and on a suspend that leaves Roleplay, and is safe to run
-        twice. Later slices extend it: B5b-2 closes More actions, B7 ends the
-        work session and flushes the pane preferences.
+        the window worker and the ``Also in:`` counts (frame slice B2b, so no
+        read or server call runs on) and stops the search debounce. The
+        window state's leave fences a window whose read is still running in
+        its thread and forgets the owed End or load-through; a list whose
+        replace had not landed and painted reloads on the return
+        (TASK-33910.34). Runs on unmount and on a suspend that leaves
+        Roleplay, and is safe to run twice. Later slices extend it: B5b-2
+        closes More actions, B7 ends the work session and flushes the pane
+        preferences.
         """
         self._window_state.leave(self._list_fence())
         self.workers.cancel_group(self, _LIST_WINDOW_GROUP)
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
         self._cancel_search_debounce()
         self._marked_rows = ()
         try:
@@ -2391,9 +2394,11 @@ class PersonasScreen(BaseAppScreen):
 
         A modal pop also delivers ``ScreenResume``, but only a real leave sets
         the flag. No ``super()``: the dispatcher calls every handler along the
-        MRO (TASK-31418).
+        MRO (TASK-31418). ``Also in:`` counts the leave cut short count again.
         """
-        if not self._window_state.returned():
+        reload = self._window_state.returned()
+        self._resume_also_in()
+        if not reload:
             return
         if self.state.active_mode == "characters" and self.is_attached:
             await self.refresh_character_library_list(None)
@@ -3886,6 +3891,40 @@ class PersonasScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
+    def _resume_also_in(self) -> None:
+        """A return finds the no-match message with no counts over it: count again.
+
+        The leave cancelled the counts, and rows that stayed are not read
+        again, so no render restarts them. A modal pop with the counts still
+        running leaves them alone.
+        """
+        if any(
+            worker.node is self
+            and worker.group == _ALSO_IN_GROUP
+            and not worker.is_finished
+            for worker in self.workers
+        ):
+            return
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        if library.also_in_owed(self.state.search_query):
+            self._start_also_in(self._list_fence())
+
+    def _stop_also_in(self) -> None:
+        """The search moved on: stop the counts and hide the old query's targets.
+
+        A target that stayed shown could switch kind with a query it was not
+        counted for while the newer one debounces (by a click, or Down then
+        Enter on the empty list).
+        """
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
+        try:
+            self.query_one(PersonasLibraryPane).hide_also_in()
+        except QueryError:
+            pass
+
     async def _also_in_worker(self, fence: frame_state.ListFence) -> None:
         """Count each other kind's matches; a count that fails is left out."""
         current = frame_state.KIND_FOR_MODE.get(fence.mode)
@@ -4463,7 +4502,7 @@ class PersonasScreen(BaseAppScreen):
             self.state.sort_key = "name_asc"
         # A changed search reloads from row 0 and (for characters) recounts.
         self._count_cache_key = None
-        self.workers.cancel_group(self, _ALSO_IN_GROUP)
+        self._stop_also_in()
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
@@ -17156,6 +17195,7 @@ class PersonasScreen(BaseAppScreen):
         # like a typed search (B2b Task 5); the prevented Input.Changed below
         # would otherwise skip _handle_search_changed's bump.
         self._bump_import_intent()
+        self._stop_also_in()
         self._cancel_search_debounce()
         self.state.search_query = ""
         self.state.tag_filter = None
