@@ -46,7 +46,7 @@ built-in Default workspace is intentionally absent from the Tree; **Switch**
 is the route to it. **RAG** narrows retrieval to the active workspace's
 items — see [Context & RAG](context-and-rag.md).
 
-**Conversations section** (left rail). A separate **Search conversations**
+**Conversations section** (left rail). A separate **Filter visible titles**
 box with **Clear**, a **New conversation** button, and a flat list containing
 only Default-workspace and unassigned conversations. A conversation assigned
 to a named workspace appears under that workspace in the Tree instead, never
@@ -224,7 +224,7 @@ History remain usable.
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters only Default and unassigned conversations; "Clear" resets it without changing Workspaces search |
+| "Filter visible titles" + "Clear" | Filters only Default and unassigned conversations, by **title** (case does not matter). The match count counts exactly the rows the filter shows. It does not look inside messages: use **Search all chats…** or Ctrl+K for that. The box keeps your text, its case and the cursor while results update, so you can keep typing through a search. "Clear" empties it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
 | Conversation row | Click to open it in the Console |
 | "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
@@ -437,8 +437,9 @@ conversation.
    match — or,
 2. For a named-workspace conversation, search in **Workspaces**, disclose its
    parent if needed, and select the conversation leaf.
-3. For a Default or unassigned conversation, search in **Conversations** and
-   select its flat row.
+3. For a Default or unassigned conversation, filter **Conversations** by its
+   title and select its flat row. (To find it by something said in it, use
+   **Search all chats…** instead.)
 
 **Star a conversation**
 
