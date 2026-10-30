@@ -162,3 +162,15 @@ def test_v25_recovery_accepts_both_upgrades_and_still_checks_goal_rows(
     assert validate_candidate(owner, path, Event(), migrate=False) == (
         "invalid_goal_ownership",
     )
+
+
+@pytest.mark.parametrize("rows", [(), (None,)])
+def test_goal_row_validation_refuses_a_missing_schema_version(rows):
+    """Admission runs first today; a missing version must still fail closed."""
+    from tldw_chatbook.DB.recovery_goal_schema import validate_goal_rows
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE schema_version (version INTEGER)")
+    for version in rows:
+        connection.execute("INSERT INTO schema_version VALUES (?)", (version,))
+    assert validate_goal_rows(connection) == ("unsupported_schema_version",)
