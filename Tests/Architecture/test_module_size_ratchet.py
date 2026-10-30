@@ -111,7 +111,11 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3690,
+    # 2026-10-29, TASK-33620.8 (owner decision 2026-10-04, expand limits):
+    # 3690 -> 3692 (+2) -- both boot compositions defer the citation
+    # fingerprint key to its first use (``defer_key=True``), so boot never
+    # touches the system keyring now that citation records ship on.
+    "tldw_chatbook/app_service_wiring.py": 3692,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -607,7 +611,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
+    # 2026-10-29 (TASK-33620.8, owner decision 2026-10-04: expand limits):
+    # 4719 -> 4772 (+53) -- the fingerprint key moves to first use: the
+    # repository holds its key provider, one idempotent thread-safe
+    # ``ensure_local_fingerprint_key`` and the two bounded state reads the
+    # honest Sources copy needs. The acquisition protocol itself lives in
+    # the new Chat/citation_key_first_use.py.
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4772,
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,

@@ -490,6 +490,7 @@ async def test_deferred_migration_is_single_flight(monkeypatch) -> None:
 
     migration = SimpleNamespace(
         ready=True,
+        writes_enabled=True,  # TASK-33620.8: the driver gates on the switch
         migrate_idle_unit=lambda: LegacyMigrationBatchResult(
             state=LegacyMigrationState.COMPLETE
         ),
@@ -542,6 +543,7 @@ async def test_deferred_migration_retries_exceptions_with_bounded_backoff(
     fake_app = SimpleNamespace(
         citation_legacy_migration_service=SimpleNamespace(
             ready=True,
+            writes_enabled=True,  # TASK-33620.8
             migrate_idle_unit=migrate_idle_unit,
         ),
         loguru_logger=Mock(),
@@ -587,6 +589,7 @@ async def test_deferred_migration_backs_off_running_guard_failures(
     fake_app = SimpleNamespace(
         citation_legacy_migration_service=SimpleNamespace(
             ready=True,
+            writes_enabled=True,  # TASK-33620.8
             migrate_idle_unit=migrate_idle_unit,
         ),
         loguru_logger=Mock(),
@@ -650,6 +653,7 @@ async def test_deferred_migration_isolates_terminal_failures_and_drains_later_wo
     fake_app = SimpleNamespace(
         citation_legacy_migration_service=SimpleNamespace(
             ready=True,
+            writes_enabled=True,  # TASK-33620.8
             migrate_idle_unit=migrate_idle_unit,
         ),
         loguru_logger=logger,
@@ -686,7 +690,9 @@ async def test_deferred_migration_rechecks_disabled_policy_between_units() -> No
         calls = 0
 
         @property
-        def ready(self) -> bool:
+        def writes_enabled(self) -> bool:
+            # TASK-33620.8: the driver re-checks the canonical-write switch;
+            # key readiness is acquired inside each unit (first use).
             return self.enabled
 
         def migrate_idle_unit(self):

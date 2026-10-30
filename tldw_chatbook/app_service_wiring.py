@@ -2113,6 +2113,7 @@ class ServiceWiringMixin(
                     trace_db,
                     sidecar_path=sidecar_path,
                     repository=coordinator_repository,
+                    defer_key=True,  # TASK-33620.8: no keyring at boot
                 )
             )
         else:
@@ -2331,6 +2332,7 @@ class ServiceWiringMixin(
                     trace_db,
                     sidecar_path=get_user_data_dir()
                     / "tldw_chatbook_chat_rag_context.json",
+                    defer_key=True,  # TASK-33620.8: key on first use
                 )
             )
             self.local_chat_conversation_service = conversation_service

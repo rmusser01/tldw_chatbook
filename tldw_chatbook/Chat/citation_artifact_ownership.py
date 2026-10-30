@@ -361,6 +361,13 @@ class CitationArtifactOwnershipCoordinator:
                 failed=0,
                 disabled=True,
             )
+        # TASK-33620.8: the app defers the key to first use. Load it here only
+        # when saved records depend on it; a fresh profile is never touched.
+        repository = self.trace_repository
+        ensure_key = getattr(repository, "ensure_local_fingerprint_key", None)
+        rows_exist = getattr(repository, "fingerprint_bearing_rows_exist", None)
+        if callable(ensure_key) and callable(rows_exist) and rows_exist():
+            ensure_key()
         try:
             with self.artifact_store.provenance_collection_guard():
                 self.artifact_store.materialize_deferred_provenance_unlinks(
