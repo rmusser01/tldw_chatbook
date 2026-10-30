@@ -488,7 +488,7 @@ class ConsoleLibraryOutcomeLines:
             if off_loop:
                 self._request(key)
             else:
-                self._land(key, self._read_inline(database, conversation_id))
+                self._read_inline(key)
         return {
             native_id: library_outcome_copy(self._views[durable_id])
             for durable_id, native_id in turns.items()
@@ -525,23 +525,36 @@ class ConsoleLibraryOutcomeLines:
         )
         return database, session_id, conversation_id, off_loop
 
-    def _land(self, key: tuple, rows: Iterable[Any]) -> None:
-        """Project ``rows`` onto ``key``'s turns and keep them as current."""
-        durable_ids = key[-1]
-        self._views = {
-            view.turn_id: view
-            for view in project_library_preparation(rows, durable_ids)
-        }
-        self._landed_key = key
+    def _land(self, key: tuple, rows: Iterable[Any] | None) -> None:
+        """Make ``key`` current, projecting ``rows`` onto its turns.
 
-    @staticmethod
-    def _read_inline(database: Any, conversation_id: str) -> tuple[Any, ...]:
-        """Read on the calling thread; a failure shows no lines."""
+        ``rows`` is None after a failed read. A record never changes once
+        written, so the views already landed stay right; only the key moves,
+        so the failure is not retried on every sync. Any read still in flight
+        is for an older key and is stale from here on.
+        """
+        if rows is not None:
+            self._views = {
+                view.turn_id: view
+                for view in project_library_preparation(rows, key[-1])
+            }
+        self._landed_key = key
+        self._requested = None
+
+    def _read_inline(self, key: tuple) -> None:
+        """Read ``key``'s rows on the calling thread and land them.
+
+        A local storage pause lands nothing, so the next sync reads again.
+        """
+        database, _session_id, conversation_id, _turns = key
         try:
-            return tuple(database.get_trajectory_rows(conversation_id))
-        except Exception:  # noqa: BLE001 - payload-free display degradation
+            rows = tuple(database.get_trajectory_rows(conversation_id))
+        except Exception as error:  # noqa: BLE001 - payload-free display degradation
+            if _storage_paused(error):
+                return
             logger.warning("library_outcome_projection_read_failed")
-            return ()
+            rows = None
+        self._land(key, rows)
 
     def _request(self, key: tuple) -> None:
         """Start one worker read for ``key`` unless it is already in flight."""
@@ -554,38 +567,45 @@ class ConsoleLibraryOutcomeLines:
     async def _read_on_worker(self, key: tuple) -> None:
         """Read ``key``'s rows off the UI loop, then repaint with them.
 
-        Only the newest requested read lands, and none after teardown. A local
-        storage pause lands nothing (the next sync reads again); any other
-        failure lands no lines, so it is not retried on every sync.
+        Only the newest requested read lands, and none after teardown or after
+        a newer key landed inline. A local storage pause lands nothing (the
+        next sync reads again); any other failure keeps the lines already
+        shown and repaints nothing (see ``_land``).
         """
-        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-
         from .view_workers import owned_display_read
 
         database, _session_id, conversation_id, _turns = key
-        rows: tuple[Any, ...] | None = ()
+        rows: tuple[Any, ...] | None = None
+        paused = False
         try:
             rows = tuple(
                 await owned_display_read(
                     database, database.get_trajectory_rows, conversation_id
                 )
             )
-        except RecoveryRequired as error:
-            if error.args == ("storage_locally_paused",):
-                rows = None
-            else:
+        except Exception as error:  # noqa: BLE001 - payload-free display degradation
+            paused = _storage_paused(error)
+            if not paused:
                 logger.warning("library_outcome_projection_read_failed")
-        except Exception:  # noqa: BLE001 - payload-free display degradation
-            logger.warning("library_outcome_projection_read_failed")
         finally:
             newest = self._requested == key
             if newest:
                 self._requested = None
-        if not newest or self.torn_down() or rows is None:
+        if not newest or self.torn_down() or paused:
             return
         self._land(key, rows)
-        if self.repaint is not None and not self.presentation_paused():
-            await self.repaint()
+        if rows is None or self.repaint is None or self.presentation_paused():
+            return
+        await self.repaint()
+
+
+def _storage_paused(error: BaseException) -> bool:
+    """Return True for a local storage pause, after which a read is retried."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    return isinstance(error, RecoveryRequired) and error.args == (
+        "storage_locally_paused",
+    )
 
 
 __all__ = [

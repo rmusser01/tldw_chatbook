@@ -421,12 +421,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 518,
     # TASK-33621.51 (2026-10-29, owner rule 2026-10-04: a fix over a size
     # ratchet raises the row by its own lines, dated, never squeezes other
-    # code): +25 for the Automatic Library outcome row under a USER turn
-    # (setter, row plan, Static build, protected click class). Raised by this
+    # code): +27 for the Automatic Library outcome row under a USER turn
+    # (setter, row plan, Static build, protected click class, and the row
+    # kind Literal naming library-outcome and library-activity). Raised by this
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8378,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source

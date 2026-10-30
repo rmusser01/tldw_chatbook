@@ -355,3 +355,145 @@ async def test_a_read_landing_after_teardown_or_in_a_storage_pause_publishes_not
         assert harness.repaints == 1
     finally:
         harness.close()
+
+
+def _pending_second(harness) -> list:
+    """The two-turn chat before its second USER turn was accepted."""
+    second = harness.users[1]
+    return [
+        replace(m, persisted_message_id=None) if m.id == second.id else m
+        for m in harness.messages
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_worker_read_keeps_the_lines_already_shown(tmp_path):
+    """A transient read failure must not blank every turn's line.
+
+    A record never changes once written, so the lines a previous read landed
+    stay right; the failed key is marked read so the next syncs do not retry
+    it on every tick, and nothing repaints because nothing changed.
+    """
+    import sqlite3
+
+    harness = _Harness(tmp_path)
+    first, second = harness.users
+    harness.record(first, _payload("zero_matches"), seq=50)
+    pending = _pending_second(harness)
+    try:
+        harness.lines.lines_for(pending)
+        await harness.settle()
+        assert harness.lines.lines_for(pending) == {first.id: ZERO}
+        assert harness.repaints == 1
+
+        harness.record(second, _payload("evidence_sent", count=1), seq=51)
+        calls = []
+
+        def busy(conversation_id):
+            calls.append(conversation_id)
+            raise sqlite3.OperationalError("database is locked")
+
+        harness.db.get_trajectory_rows = busy
+        assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+        await harness.settle()
+        for _ in range(3):  # ordinary syncs after the failure
+            assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+            await harness.settle()
+        assert len(calls) == 1, "the failed key was retried on every sync"
+        assert harness.repaints == 1
+    finally:
+        harness.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_inline_read_keeps_lines_and_a_paused_one_reads_again(
+    tmp_path,
+):
+    """The loop-side read degrades like the worker's: kept lines, no blanking.
+
+    Any failure keeps the landed lines. A local storage pause lands nothing,
+    so the first sync after it ends reads again and shows the new turn's line;
+    any other failure marks the key read so it is not retried every sync.
+    """
+    import sqlite3
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    harness = _Harness(tmp_path)
+    first, second = harness.users
+    harness.record(first, _payload("zero_matches"), seq=50)
+    harness.live = True  # a send's start reads on the loop
+    pending = _pending_second(harness)
+    original = harness.db.get_trajectory_rows
+    try:
+        assert harness.lines.lines_for(pending) == {first.id: ZERO}
+        harness.record(second, _payload("evidence_sent", count=2), seq=51)
+
+        calls = []
+
+        def paused(conversation_id):
+            calls.append(conversation_id)
+            raise RecoveryRequired("storage_locally_paused")
+
+        harness.db.get_trajectory_rows = paused
+        assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+        assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+        assert len(calls) == 2, "a storage pause must not mark the key read"
+
+        harness.db.get_trajectory_rows = original
+        both = {first.id: ZERO, second.id: "Library: 2 sources sent"}
+        assert harness.lines.lines_for(harness.messages) == both
+
+        # A different failure on a new key (the branch without the first
+        # turn) keeps what is shown for turns still on the path and is not
+        # retried on every sync.
+        branch = [m for m in harness.messages if m.id != first.id]
+
+        def busy(conversation_id):
+            calls.append(conversation_id)
+            raise sqlite3.OperationalError("database is locked")
+
+        harness.db.get_trajectory_rows = busy
+        calls.clear()
+        for _ in range(3):
+            assert harness.lines.lines_for(branch) == {
+                second.id: "Library: 2 sources sent"
+            }
+        assert len(calls) == 1
+        assert harness.tasks == []
+    finally:
+        harness.db.get_trajectory_rows = original
+        harness.close()
+
+
+@pytest.mark.asyncio
+async def test_an_older_worker_read_never_overwrites_a_newer_inline_landing(
+    tmp_path,
+):
+    """A send's start lands its newer key inline while an older read is out.
+
+    The older worker read, landing afterwards, is stale: it must neither
+    replace the newer lines nor force a repaint.
+    """
+    harness = _Harness(tmp_path)
+    first, second = harness.users
+    harness.record(first, _payload("zero_matches"), seq=50)
+    pending = _pending_second(harness)
+    both = {first.id: ZERO, second.id: "Library: 1 source sent"}
+    try:
+        harness.lines.lines_for(pending)  # older key: a worker read is out
+        assert len(harness.tasks) == 1
+
+        harness.record(second, _payload("evidence_sent", count=1), seq=51)
+        harness.live = True
+        assert harness.lines.lines_for(harness.messages) == both
+        harness.live = False
+
+        await harness.settle()  # the older read lands now
+        assert harness.repaints == 0, "a stale read forced a repaint"
+        with _ReadThreads() as reads:
+            assert harness.lines.lines_for(harness.messages) == both
+            await harness.settle()
+        assert reads.threads == [], "a stale read regressed the landed key"
+    finally:
+        harness.close()

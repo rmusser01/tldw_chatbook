@@ -1156,6 +1156,8 @@ class _TranscriptRow:
         "generation-card",
         "video-card",
         "canvas-card",
+        "library-outcome",
+        "library-activity",
         "actions",
         "action-help",
         "assistant-turn",
