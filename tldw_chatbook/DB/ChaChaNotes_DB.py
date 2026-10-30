@@ -11787,7 +11787,10 @@ DELETE FROM keywords
         query_terms: Optional[Sequence[str]] = None,
         query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
         query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
+        title_only: bool = False,
     ) -> Tuple[str, List[Any]]:
+        if title_only and query_terms is not None:
+            raise InputError("title_only does not combine with query_terms.")
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
         # Archive scopes govern saved live chats. Trash must retain every
         # deleted chat, including those archived before deletion.
@@ -11989,6 +11992,13 @@ DELETE FROM keywords
                     )
                     params.append(json.dumps(workspace_term_ids, separators=(",", ":")))
                 clauses.append(f"({' OR '.join(query_clauses)})")
+        elif normalized_query is not None and title_only:
+            # TASK-33622.6: the Console rail filter counts what it shows --
+            # titles, as a literal substring (its matcher treats '%' and '_'
+            # as text, so LIKE must too).
+            clauses.append("title LIKE ? ESCAPE '\\'")
+            escaped = re.sub(r"([\\%_])", r"\\\1", normalized_query)
+            params.append(f"%{escaped}%")
         elif normalized_query is not None:
             query_clauses = [f"title LIKE ? OR id = ? OR {content_match_clause}"]
             like_query = f"%{normalized_query}%"
@@ -12036,6 +12046,7 @@ DELETE FROM keywords
         query_terms: Optional[Sequence[str]] = None,
         query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
         query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
+        title_only: bool = False,
         limit: int = 50,
         offset: int = 0,
         **_: Any,
@@ -12058,6 +12069,7 @@ DELETE FROM keywords
             query_terms=query_terms,
             query_workspace_ids_by_term=query_workspace_ids_by_term,
             query_include_global_scope_by_term=query_include_global_scope_by_term,
+            title_only=title_only,
         )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"

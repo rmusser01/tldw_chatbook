@@ -13,8 +13,11 @@ from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.compose import compose
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.message import Message
+from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -47,6 +50,7 @@ from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
 from .compose_delta import ComposeReadView, box_ignores_content, same_visual
+from .console_bounded_section import ConsoleBoundedSection
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -75,6 +79,11 @@ class ConsoleBrowserSearchInput(Input):
     `self.prevent(Input.Changed)`, Textual's documented mechanism for a
     programmatic set without a message. The invariant the handler relies on
     -- every `Changed` from this box is a real edit -- becomes true.
+
+    TASK-33622.6: the Conversations filter is no longer re-mounted by those
+    syncs -- the tray keeps its mounted filter row across a rebuild (see
+    `_KeepsConversationFilterRow`) -- so this mount path now runs only for
+    a fresh tray. The Workspaces search still re-mounts per changed sync.
     """
 
     def __init__(
@@ -802,7 +811,144 @@ class ConsoleWorkspaceStatusPair(Horizontal):
         yield value_widget
 
 
-class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
+_CONVERSATION_FILTER_ROW_ID = "console-workspace-conversation-search-row"
+_CONVERSATION_FILTER_INPUT_ID = "console-workspace-conversation-search"
+_CONVERSATION_FILTER_CLEAR_ID = "console-workspace-conversation-search-clear"
+
+
+def _sync_retained_filter_row(row: Widget, query: str) -> None:
+    """Refresh a kept filter row from state without fighting the user's typing.
+
+    While the input has focus its text is the user's and is never written:
+    a sync can be built before the latest keystrokes reached the screen, so
+    its query may be behind what the field shows. Unfocused, nobody is
+    typing into it, so it shows the state's (raw) query -- silently, since a
+    `Changed` echo would read as an edit. Clear's enabled state follows the
+    field's own text.
+
+    Args:
+        row: The mounted filter row the rebuild keeps.
+        query: The raw query of the state being composed.
+    """
+    try:
+        search = row.query_one(f"#{_CONVERSATION_FILTER_INPUT_ID}", Input)
+        clear = row.query_one(f"#{_CONVERSATION_FILTER_CLEAR_ID}", Button)
+    except NoMatches:
+        return
+    if not search.has_focus and search.value != query:
+        with search.prevent(Input.Changed):
+            search.value = query
+    clear.disabled = not search.value.strip()
+
+
+def _clear_conversation_filter_input(row: Widget) -> None:
+    """Empty a kept filter input without posting a `Changed` for it.
+
+    The rebuild never writes state into a kept input, so Clear must empty
+    it here; the screen's Clear handler resets the search state itself, and
+    a `Changed("")` echo would clear it a second time.
+
+    Args:
+        row: The filter row (or any ancestor of its input).
+    """
+    try:
+        search = row.query_one(f"#{_CONVERSATION_FILTER_INPUT_ID}", Input)
+    except NoMatches:
+        return
+    with search.prevent(Input.Changed):
+        search.value = ""
+
+
+class _KeepsConversationFilterRow:
+    """Rebuild the tray's children around its mounted filter row (TASK-33622.6).
+
+    The tray rebuilds every child on a sync that changes what it shows, and a
+    rail search changes the rows on every debounced pass -- so it used to
+    replace the 'Filter visible titles' input under the user's fingers. The
+    replacement was seeded from state (lowercased, until the same task kept
+    the raw text), focus went wherever Textual's reset sent it, and the
+    restore that brought it back selected the text, so the next key replaced
+    the query, landed on a button, or reached a screen binding ('y' opened
+    Trace).
+
+    A rebuild now removes every child except a mounted filter row, composes
+    with that row offered back to ``compose`` (``_retained_filter_row``), and
+    mounts the new children around it. The input keeps its instance, value,
+    cursor and focus; the state's query is never written into it while it
+    has focus (see `_sync_retained_filter_row`). Sits
+    between ``RecomposeCaptureGuard`` and ``Vertical`` so the guard's
+    mouse-capture release and focus keeping still wrap the rebuild.
+    """
+
+    #: The mounted filter row the running rebuild keeps, else None. Read by
+    #: ``_compose_conversation_browser``; set only inside ``recompose``.
+    _retained_filter_row: Horizontal | None = None
+
+    async def recompose(self) -> None:
+        """Rebuild every child except a mounted filter row, which stays put."""
+        kept = self._filter_row_to_keep()
+        if kept is None:
+            await super().recompose()  # type: ignore[misc]
+            return
+        tray: Any = self
+        if not tray.is_attached or tray._pruning:
+            return
+        # The kept row stays laid out while the new children are not, so a
+        # fit before the next layout would pin a short height (TASK-37160's
+        # mechanism, made routine by this rebuild): make it wait.
+        tray._fit_waits_for_layout = True
+        async with tray.batch():
+            doomed = [
+                child
+                for child in tray.children
+                if child is not kept and not child.has_class("-textual-system")
+            ]
+            if doomed:
+                await tray.remove_children(doomed)
+            if not tray.is_attached:
+                return
+            self._retained_filter_row = kept
+            try:
+                nodes = compose(tray)
+            finally:
+                self._retained_filter_row = None
+            index = next(
+                (position for position, node in enumerate(nodes) if node is kept),
+                None,
+            )
+            if index is None:
+                # This state renders no browser, so no filter row either.
+                await kept.remove()
+                await tray.mount_all(nodes)
+                return
+            if index:
+                await tray.mount_all(nodes[:index], before=kept)
+            if index + 1 < len(nodes):
+                await tray.mount_all(nodes[index + 1 :], after=kept)
+
+    def _recompose_kept_child(self) -> Horizontal | None:
+        """Name the kept row to ``RecomposeCaptureGuard``'s focus prediction.
+
+        Textual's reset lands on the kept filter input when a focused row
+        control is torn down; counted as removed, the guard missed that and
+        left focus in the filter, where the next key started a search.
+        """
+        return self._filter_row_to_keep()
+
+    def _filter_row_to_keep(self) -> Horizontal | None:
+        """The tray's own mounted filter row, when a rebuild can keep it."""
+        tray: Any = self
+        for child in tray.children:
+            if child.id == _CONVERSATION_FILTER_ROW_ID:
+                if child.is_attached and not child._pruning:
+                    return child
+                return None
+        return None
+
+
+class ConsoleWorkspaceContextTray(
+    RecomposeCaptureGuard, _KeepsConversationFilterRow, Vertical
+):
     """Render workspace selection, conversation scope, and recovery copy."""
 
     #: TASK-33621.12: a state sync (e.g. the one that follows closing a row
@@ -836,6 +982,9 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     _composed_browser_paint: _BrowserPaintRecord | None = None
     #: Live collector for the compose pass currently running, or None.
     _composing_browser_paint: _BrowserPaintRecord | None = None
+    #: TASK-33622.6: set when a rebuild kept the filter row; the height fit
+    #: waits for the screen's next layout (see `_fit_height_to_content`).
+    _fit_waits_for_layout: bool = False
 
     class WorkspaceFilesRequested(Message):
         """Typed request to inspect one stable workspace without activation."""
@@ -1501,6 +1650,13 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         if self._maybe_relabel_for_width():
             return
 
+        if self._fit_waits_for_layout:
+            # TASK-33622.6: a rebuild kept the (laid-out) filter row, so the
+            # check below cannot tell that the new children are not laid
+            # out yet; wait for the layout instead of pinning a short tray.
+            self._fit_after_screen_layout()
+            return
+
         content_top = 0
         content_bottom = 1
         for child in self.children:
@@ -1515,15 +1671,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             )
 
         if content_bottom == 1 and len(self.children) > 1:
-            # Coalesce retries until this screen actually lays out children.
-            if (
-                self.is_mounted
-                and self.display
-                and self._height_fit_layout_signal is None
-            ):
-                signal = self.screen.screen_layout_refresh_signal
-                signal.subscribe(self, self._fit_height_after_layout, immediate=True)
-                self._height_fit_layout_signal = signal
+            self._fit_after_screen_layout()
             return
 
         target_height = max(1, content_bottom - content_top)
@@ -1542,11 +1690,38 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
             # ds-runtime: The rail region is measured to retain its viewport height during reflow.
             self.set_styles(height=target_height)
 
+    def _fit_after_screen_layout(self) -> None:
+        """Retry the fit once this screen lays out children (coalesced)."""
+        if self.is_mounted and self.display and self._height_fit_layout_signal is None:
+            signal = self.screen.screen_layout_refresh_signal
+            signal.subscribe(self, self._fit_height_after_layout, immediate=True)
+            self._height_fit_layout_signal = signal
+
     def _fit_height_after_layout(self, screen: Any) -> None:
         """Retry once after the owning screen supplies fresh child geometry."""
         screen.screen_layout_refresh_signal.unsubscribe(self)
         self._height_fit_layout_signal = None
+        # A layout after a kept-row rebuild finished has laid out its new
+        # children (TASK-33622.6).
+        settled_rebuild = self._fit_waits_for_layout and not self.recompose_in_flight
+        if settled_rebuild:
+            self._fit_waits_for_layout = False
         self.call_after_refresh(self._fit_height_to_content)
+        if settled_rebuild:
+            # The owning section measured this tray while only the kept row
+            # was laid out; nothing else re-measures it once the tray settles.
+            self.call_after_refresh(self._request_owning_section_reconcile)
+
+    def _request_owning_section_reconcile(self) -> None:
+        """Ask the bounded rail section holding this tray to re-measure it.
+
+        Matched by type: the section's own scroll viewport sits between it
+        and the tray and carries a ``console-bounded-section-…`` id too.
+        """
+        for ancestor in self.ancestors:
+            if isinstance(ancestor, ConsoleBoundedSection):
+                ancestor.request_reconcile()
+                return
 
     def _is_inside_rail_section_body(self) -> bool:
         """Return whether this tray is nested in a collapsible rail section body.
@@ -2181,34 +2356,46 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 classes="console-workspace-selected-conversation"
                 + _selected_conversation_active_class(browser.selected_summary),
             )
-        with Horizontal(
-            id="console-workspace-conversation-search-row",
-            classes="console-workspace-conversation-search-row",
-        ):
-            search_input = ConsoleBrowserSearchInput(
-                initial_value=browser.query,
-                placeholder="Filter visible titles",
-                id="console-workspace-conversation-search",
-                classes="console-workspace-conversation-search",
-            )
-            search_input.remove_class(
-                *(name for name in search_input.classes if name.startswith("w-"))
-            )
-            search_input.set_styles(width=None)
-            search_input.add_class("w-fill")
-            yield search_input
-            clear_button = Button(
-                "Clear",
-                id="console-workspace-conversation-search-clear",
-                classes=(
-                    "console-workspace-action "
-                    "console-workspace-conversation-search-clear"
-                ),
-                compact=True,
-                disabled=not bool(str(browser.query or "").strip()),
-            )
-            clear_button.tooltip = "Clear conversation search"
-            yield clear_button
+        retained_row = self._retained_filter_row
+        if retained_row is not None:
+            # TASK-33622.6: a rebuild keeps the mounted filter row (see
+            # `_KeepsConversationFilterRow`). It must stay a top-level child:
+            # the rebuild mounts the other children around it.
+            _sync_retained_filter_row(retained_row, str(browser.query or ""))
+            yield retained_row
+        else:
+            with Horizontal(
+                id=_CONVERSATION_FILTER_ROW_ID,
+                classes="console-workspace-conversation-search-row",
+            ):
+                search_input = ConsoleBrowserSearchInput(
+                    initial_value=browser.query,
+                    placeholder="Filter visible titles",
+                    id=_CONVERSATION_FILTER_INPUT_ID,
+                    classes="console-workspace-conversation-search",
+                    # TASK-33622.6: a programmatic refocus (a search's
+                    # results landing) must not select the text, or the
+                    # next key replaces the whole query.
+                    select_on_focus=False,
+                )
+                search_input.remove_class(
+                    *(name for name in search_input.classes if name.startswith("w-"))
+                )
+                search_input.set_styles(width=None)
+                search_input.add_class("w-fill")
+                yield search_input
+                clear_button = Button(
+                    "Clear",
+                    id=_CONVERSATION_FILTER_CLEAR_ID,
+                    classes=(
+                        "console-workspace-action "
+                        "console-workspace-conversation-search-clear"
+                    ),
+                    compact=True,
+                    disabled=not bool(str(browser.query or "").strip()),
+                )
+                clear_button.tooltip = "Clear conversation search"
+                yield clear_button
         if browser.status_copy:
             yield self._static(
                 browser.status_copy,
@@ -2452,6 +2639,10 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Translate the active workspace's Show Files control into a typed intent."""
         button_id = str(event.button.id or "")
+        if button_id == _CONVERSATION_FILTER_CLEAR_ID:
+            # TASK-33622.6: not stopped -- the screen resets the search state.
+            _clear_conversation_filter_input(self)
+            return
         if button_id != "console-workspace-files-open":
             return
         event.stop()

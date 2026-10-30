@@ -1886,6 +1886,36 @@ def test_list_conversations_character_scope_filters_before_pagination(tmp_path):
         db.close_connection()
 
 
+def test_list_conversations_title_only_counts_and_pages_titles(tmp_path):
+    """TASK-33622.6: ``title_only`` reaches storage for the page AND its total.
+
+    The Console rail's 'Filter visible titles' shows title matches only; a
+    total that also counted message-content matches read '1 match. Showing
+    0 of 1' over an empty list.
+
+    Args:
+        tmp_path: Temporary directory for the real SQLite database backing
+            the service under test.
+    """
+    db = CharactersRAGDB(tmp_path / "title-only.sqlite", "test-client")
+    try:
+        service = ChatConversationService(db)
+        titled = service.create_conversation(title="Zebra plan")
+        content_only = service.create_conversation(title="Quarterly notes")
+        db.add_message(
+            {"conversation_id": content_only, "sender": "user", "content": "zebra"}
+        )
+
+        titles = service.list_conversations("zebra", scope_type="global", title_only=True)
+        everything = service.list_conversations("zebra", scope_type="global")
+
+        assert [item["id"] for item in titles["items"]] == [titled]
+        assert titles["pagination"]["total"] == 1
+        assert everything["pagination"]["total"] == 2
+    finally:
+        db.close_connection()
+
+
 @pytest.fixture
 def service_with_db(tmp_path):
     """Real in-memory-file DB + service pair for the fork copy primitive (task-2)."""

@@ -540,16 +540,27 @@ _BUDGETS: dict[str, int] = {
     # unified_control_plane_service 5,917 -> 5,920, library_notes_canvas
     # 4,463 -> 4,646). Later phases lower these rows;
     # `test_every_module_of_the_guard_size_has_a_row` keeps new gaps from opening.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25693,
     # TASK-37270: removed the dead local map shadowed by TOML-derived defaults.
+    # 2026-10-29, TASK-33622.6 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 25693 -> 25705 (+12). The conversation search gains `title_only` (the
+    # Console rail filter's count and page match titles, as a literal
+    # substring), threaded through the shared filter and the page query.
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/config.py": 12251,
     "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     "tldw_chatbook/Agents/agent_service.py": 9620,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
+    # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
+    # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
+    # asks storage for its count by title only (owner decision 2026-10-27),
+    # so the two can no longer disagree.
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):

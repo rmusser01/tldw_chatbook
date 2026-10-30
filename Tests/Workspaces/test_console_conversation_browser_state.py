@@ -213,6 +213,62 @@ def test_query_matches_only_flat_scope_and_reports_service_total() -> None:
     assert state.status_copy == "7 matches. Showing 1 of 7"
 
 
+def test_query_keeps_the_users_raw_text_and_matches_case_insensitively() -> None:
+    """TASK-33622.6 AC#2: the state carries what the user typed, not a lowercase copy.
+
+    A tray that is rebuilt from this state seeds its filter input from
+    ``query``. Storing the stripped, lowercased form made 'OK' read back as
+    'ok' (and dropped a trailing space the user was about to type past).
+    Matching still ignores case and surrounding whitespace.
+    """
+    state = build_console_conversation_browser_state(
+        rows=(_row("ok", "OK 9 rollout"), _row("other", "Unrelated")),
+        active_workspace_id=None,
+        query="OK ",
+    )
+
+    assert state.query == "OK "
+    assert [row.conversation_id for row in _chats(state).rows] == ["ok"]
+    assert state.status_copy == "1 match"
+
+
+def test_query_matches_titles_only() -> None:
+    """TASK-33622.6 AC#4 (owner decision 2026-10-27): the filter matches titles.
+
+    'Filter visible titles' used to match workspace labels, status words and
+    scope copy too ('chats' matched every row through "default workspace
+    chats"), while the database counted message content. The rows and the
+    count now follow one rule: the title.
+    """
+    rows = (
+        _row("plan", "Rollout plan"),
+        _row("chats", "Group chats recap"),
+    )
+    by_scope = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id=None, query="workspace"
+    )
+    by_title = build_console_conversation_browser_state(
+        rows=rows, active_workspace_id=None, query="chats"
+    )
+
+    assert _chats(by_scope).rows == ()
+    assert by_scope.status_copy == "0 matches"
+    assert [row.conversation_id for row in _chats(by_title).rows] == ["chats"]
+    assert by_title.status_copy == "1 match"
+
+
+def test_title_matcher_is_a_case_insensitive_literal_substring() -> None:
+    from tldw_chatbook.Workspaces.conversation_browser_state import (
+        console_conversation_title_matches_query,
+    )
+
+    assert console_conversation_title_matches_query("OK 9 rollout", " ok ")
+    assert console_conversation_title_matches_query("a_b plan", "a_b")
+    assert not console_conversation_title_matches_query("axb plan", "a_b")
+    assert not console_conversation_title_matches_query("Rollout", "Default")
+    assert console_conversation_title_matches_query("anything", "   ")
+
+
 def test_literal_title_and_selected_run_marker_are_preserved() -> None:
     title = "[bold]你好[/bold] 🧭"
     state = build_console_conversation_browser_state(

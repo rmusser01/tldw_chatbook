@@ -106,6 +106,7 @@ from ...Workspaces import (
 )
 from ...Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
+    console_conversation_title_matches_query,
     format_console_relative_age,
 )
 from ...Workspaces.display_state import (
@@ -2628,7 +2629,7 @@ class ConsoleWorkspaceController:
             self._console_conversation_browser_search_timer.stop()
             self._console_conversation_browser_search_timer = None
         self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
+            self._filter_flat_browser_rows_by_title(
                 self._console_conversation_browser_rows,
                 query,
             )
@@ -2731,7 +2732,7 @@ class ConsoleWorkspaceController:
             self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
         self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
+            self._filter_flat_browser_rows_by_title(
                 self._merge_console_browser_rows(
                     self._native_console_browser_rows(),
                     *self._workspace_membership_rows.values(),
@@ -2792,6 +2793,15 @@ class ConsoleWorkspaceController:
             row
             for row in row_tuple
             if self._console_browser_row_matches_query(row, normalized_query)
+        )
+
+    @staticmethod
+    def _filter_flat_browser_rows_by_title(
+        rows: Iterable[ConsoleConversationBrowserInputRow], query: str
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """TASK-33622.6: the Conversations filter keeps title matches only."""
+        return tuple(
+            row for row in rows if console_conversation_title_matches_query(row.title, query)
         )
 
     def _find_console_browser_row(
@@ -3904,6 +3914,10 @@ class ConsoleWorkspaceController:
             ("global", None),
             ("workspace", DEFAULT_WORKSPACE_ID),
         )
+        # TASK-33622.6: the flat lane's filter counts and pages titles only.
+        title_only_kwargs = (
+            {"title_only": True} if scopes is None and str(query or "").strip() else {}
+        )
         last_error = ""
         for service, include_mode in services:
             stock_read = None
@@ -3937,6 +3951,7 @@ class ConsoleWorkspaceController:
                         "workspace_id": workspace_id,
                         "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
                         "offset": max(0, int(offset)), "character_scope": "generic",
+                        **title_only_kwargs,
                     }
                     for scope_type, workspace_id in query_scopes
                 )
@@ -3955,6 +3970,7 @@ class ConsoleWorkspaceController:
                     # TASK-32309 (review finding 1): flat-lane ownership is a
                     # query filter, not a post-fetch removal.
                     "character_scope": "generic",
+                    **title_only_kwargs,
                 }
                 if include_mode:
                     list_kwargs["mode"] = "local"
@@ -4410,7 +4426,7 @@ class ConsoleWorkspaceController:
 
         local_rows = tuple(
             row
-            for row in self._filter_console_browser_rows_for_query(
+            for row in self._filter_flat_browser_rows_by_title(
                 self._merge_console_browser_rows(
                     self._native_console_browser_rows(),
                     *self._workspace_membership_rows.values(),
