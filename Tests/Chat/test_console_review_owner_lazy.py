@@ -156,7 +156,8 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     """Only a fresh view claim re-presents pending originals, one pass at a time.
 
     ``attach_app`` runs on every ensure call; a refresh of the same claim must
-    schedule nothing, and a failed pass is retrieved and logged.
+    schedule nothing, a claim made mid-pass is owed one pass after it, and a
+    failed pass is retrieved and logged.
     """
     import asyncio
     import threading
@@ -166,12 +167,12 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
 
     from tldw_chatbook.UI.Console_Modules import review_reports
 
-    calls, release = [], threading.Event()
+    calls, release, fail = [], threading.Event(), []
 
-    def present_pending():
-        calls.append("pending")
+    def present_pending(session_id):
+        calls.append(session_id)
         release.wait(5)
-        if len(calls) == 2:
+        if fail:
             raise RuntimeError("PRIVATE failure text")
 
     runtime = SimpleNamespace(view=object(), _attached_generation=1)
@@ -192,14 +193,18 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     assert controller._review_present_task is first  # at most one in flight
     release.set()
     await first
-    assert calls == ["pending"]
+    owed = controller._review_present_task
+    assert owed is not first  # the mid-pass claim is owed one pass after it
+    await owed
+    assert calls == [None, None]
 
     for _ in range(3):  # refreshes of the same claim schedule nothing
         review_reports.attach_app(controller, app)
         await asyncio.sleep(0)
-    assert calls == ["pending"]
+    assert calls == [None, None]
 
     runtime._attached_generation = 3
+    fail.append(True)
     logged = []
     sink = logger.add(lambda record: logged.append(str(record)), level="WARNING")
     try:
@@ -209,7 +214,7 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
         await asyncio.sleep(0)
     finally:
         logger.remove(sink)
-    assert calls == ["pending", "pending"]
+    assert calls == [None, None, None]
     assert any("RuntimeError" in line for line in logged)
     assert not any("PRIVATE" in line for line in logged)
 

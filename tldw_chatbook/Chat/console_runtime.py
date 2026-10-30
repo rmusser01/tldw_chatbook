@@ -2109,9 +2109,9 @@ class ConsoleRuntime:
     def _on_active_session_changed(self) -> None:
         """Re-derive app-owned decisions after the store's authoritative swap."""
         controller = self._chat_controller
-        callback = getattr(controller, "active_session_changed", None)
-        if callable(callback):
-            callback()
+        for hook in ("active_session_changed", "review_session_activated"):
+            if callable(callback := getattr(controller, hook, None)):
+                callback()
         self._schedule_project_instruction_projection()
 
     def ensure_prompt_history(self) -> Any:

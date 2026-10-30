@@ -555,12 +555,14 @@ class ConsoleCodeReviewCoordinator:
         with self._presentation_lock:
             self._present_settled(review_id)
 
-    def present_pending(self):
+    def present_pending(self, session_id=None):
         """Present originals left pending while no Console view could show them.
 
         A review can settle with no view attached (the launch wake attaches
-        only the app), and its verification offer waits for every original.
-        A view attach calls this, off the UI loop; boundaries are not resealed.
+        only the app) or while another chat is active, and its verification
+        offer waits for every original. A view attach (every chat) or a switch
+        to the owning chat (``session_id``) calls this, off the UI loop;
+        boundaries are not resealed.
         """
         with self._lock:
             review_ids = [
@@ -568,6 +570,7 @@ class ConsoleCodeReviewCoordinator:
                 for review_id, service in self._reviews.items()
                 # Stop/close fences pending work: nothing is shown or offered.
                 if service.store._session_id not in self._fenced
+                and session_id in (None, service.store._session_id)
             ]
         failure = None
         for review_id in review_ids:
