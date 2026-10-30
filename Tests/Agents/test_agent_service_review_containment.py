@@ -15,7 +15,9 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.Agents import test_code_review_dispatch
+from Tests.Agents.test_code_review_boundary_ledger import ledger_case  # noqa: F401
 from Tests.Agents.test_post_tool_dispatch_hook import _Provider
+from Tests.Chat import test_console_code_review_authority as native_helpers
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
@@ -34,6 +36,7 @@ from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 dispatch_case = test_code_review_dispatch.dispatch_case
 review_case = test_code_review_dispatch.review_case
 source_case = test_code_review_dispatch.source_case
+native_dispatch = native_helpers.native_dispatch
 pytestmark = pytest.mark.bootstrap_profile
 
 
@@ -254,3 +257,18 @@ def test_fleet_check_actor_refusal_retires_the_half_applied_attach(
     children = [a for a, _ in c.calls if a.kind == "subagent"]
     assert children and refused[0] not in {a.run_id for a in children}
     assert "verification_attempt_closed" in json.dumps(c.calls[1][1])
+
+
+# -- wake-claim predecessor check ------------------------------------------------
+
+
+def test_predecessor_check_reads_only_the_named_settlement_step(ledger_case):  # noqa: F811
+    c = ledger_case
+    run_id = c.live_boundary.predecessor_run_ids[0]
+    with c.db.transaction() as connection:
+        connection.execute(
+            "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (run_id, 987654, "{not json", "2026-10-29T00:00:00Z"),
+        )
+    assert c.claim().state == "prepared"

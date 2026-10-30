@@ -1256,18 +1256,18 @@ class AutomaticWorkLedger:
                             raise ValueError(
                                 "review_boundary predecessor scope mismatch"
                             )
-                        actual = any(
-                            settlement == f"agent-step:{run_id}:{step['index']}"
-                            and step.get("status") == row["status"]
-                            for step in (
-                                json.loads(item[0])
-                                for item in conn.execute(
-                                    "SELECT payload FROM agent_run_steps WHERE run_id=?",
-                                    (run_id,),
-                                )
-                            )
-                        )
-                        if not actual:
+                        # The id names its step index (= seq): decode that one
+                        # row, not the whole run, inside the write transaction.
+                        # CAST keeps a malformed suffix a miss, never an error.
+                        item = conn.execute(
+                            "SELECT payload FROM agent_run_steps WHERE run_id=? AND seq=CAST(? AS INTEGER)",
+                            (run_id, settlement.rpartition(":")[2]),
+                        ).fetchone()
+                        step = json.loads(item[0]) if item is not None else {}
+                        if (
+                            settlement != f"agent-step:{run_id}:{step.get('index')}"
+                            or step.get("status") != row["status"]
+                        ):
                             raise ValueError(
                                 "review_boundary predecessor settlement missing"
                             )
