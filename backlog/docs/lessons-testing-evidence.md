@@ -278,6 +278,16 @@ Enter pressed before the store holds the new draft ends in
 `RecoveryRequired: console_snapshot_owner_changed`, so wait for
 `store.session_draft(...)` to match first.
 
+**Second incident, same task: one entry point is not the window.** The fix,
+its tests and three live rounds all used a fresh send. Review then pressed
+Stop on a Retry of a failed reply in the same window, and the tab locked
+exactly as before, while the new owner reported the Stop as a success. A Retry
+enters the window with its row still "failed" (the reply prepares it for the
+new attempt only after tool composition), and marking that row stopped is
+refused, so the run was never stopped. Before calling a window fixed, list
+every caller that reaches it (fresh send, Retry, variant, queued prompt, wake,
+close) and ask what state each one's row is in there.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
