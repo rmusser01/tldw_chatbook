@@ -192,6 +192,11 @@ LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY = (
 #: in-flight guard (review I-3: a double or held Ctrl+S wrote two versions).
 LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY = "Media change in progress."
 LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY = "Already saving."
+#: TASK-34000.40 final review (m-2): the Folder files editor's Ctrl+S refusal
+#: marker. Truthy for ``_library_editor_save_refusal``'s "would refuse" test
+#: only; never user copy -- ``report_key_save`` owns the words a refused
+#: folder-files save shows ("Save refused — …").
+LIBRARY_FILE_NOTES_SAVE_REFUSED = "file_notes_save_refused"
 
 
 def library_disabled_reason_line(label: str, reason: str) -> str:
