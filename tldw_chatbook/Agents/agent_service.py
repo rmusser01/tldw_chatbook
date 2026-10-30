@@ -4410,50 +4410,9 @@ class AgentService:
         close_capture: bool = True,
     ) -> None:
         """Close only an actually associated attempt after native status persistence."""
-        from .code_review_models import ReviewRefused
+        from .agent_request_execution import settle_review_capture
 
-        try:
-            binding = service.store._tab.runs.get(run_id)
-            if binding is None or binding.role == "primary":
-                return
-            row = self.db.get_run(run_id)
-            status = row["status"]
-            if status not in TERMINAL_RUN_STATUSES:
-                return
-            # A prior cancellation wins over a later outcome's terminal step.
-            if receipt_id is None or (
-                receipt_id
-                and not any(
-                    f"agent-step:{run_id}:{step['index']}" == receipt_id
-                    and step.get("status") == status
-                    for step in row["steps"]
-                )
-            ):
-                receipt_id = next(
-                    (
-                        f"agent-step:{run_id}:{step['index']}"
-                        for step in reversed(row["steps"])
-                        if step.get("status") == status
-                        and step.get("kind") == self._terminal_lifecycle_kind(status)
-                    ),
-                    "",
-                )
-            with (
-                service.store._tab.lock,
-                service.store.lease(binding.review_id) as context,
-            ):
-                stream = context.streams[(binding.slot_id, binding.attempt_id)]
-                if stream.terminal_status is None:
-                    if close_capture and not stream.capture_terminal:
-                        service.store.capture_review_output(run_id, "", terminal=True)
-                    service.settle_review_run(
-                        run_id, terminal_status=status, receipt_id=receipt_id
-                    )
-            # No review-store lock may cross the wake/DB notification boundary.
-            if service.native_coordinator is not None:
-                service.native_coordinator.on_settled(binding.review_id)
-        except (ReviewRefused, OSError, KeyError):
-            logger.warning("review_terminal_capture_unavailable")
+        settle_review_capture(self, service, run_id, receipt_id, close_capture)
 
     def _fork_review_child(
         self, service, *, actor, max_tool_result_chars: int, grant=None
