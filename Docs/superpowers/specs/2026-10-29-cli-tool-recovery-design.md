@@ -11,6 +11,8 @@ configured storage limits remain in force.
   empty search, not an ordinary tool failure. Genuine errors and compound or
   otherwise ambiguous shell expressions retain existing failure handling.
 - Preserve exact command text through Windows `cmd /D /S /C` invocation.
+- Cancellation cleanup must not acquire synchronization locks left owned by a
+  terminated worker; launch refusal and bounded tree cleanup remain enforced.
 - Virtual `ls` accepts `-a`, `-A`, `--all`, `--almost-all`, `-l`, and combined
   forms such as `-la`. The existing listing includes hidden entries; all flags
   preserve that behavior. Long listings add type/permissions and size to each

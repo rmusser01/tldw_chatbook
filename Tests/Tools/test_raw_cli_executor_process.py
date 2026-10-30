@@ -503,17 +503,38 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from multiprocessing.synchronize import Event as ProcessEvent
+
     callback_waiting = threading.Event()
     allow_callback = threading.Event()
     callback_finished = threading.Event()
     cancel_event = threading.Event()
     process_events: list[Any] = []
+    signaled_events: list[Any] = []
+    late_abort_signals: list[Any] = []
+    cleanup_finished = threading.Event()
+    real_cleanup = raw_cli._cleanup_tree
+    real_set = ProcessEvent.set
     real_event = multiprocessing.context.BaseContext.Event
 
     def recording_event(context: Any) -> Any:
         event = real_event(context)
         process_events.append(event)
         return event
+
+    def recording_set(event: Any) -> None:
+        if cleanup_finished.is_set() and event is process_events[2]:
+            # Fault injection: a dead worker may have stranded this lock.
+            late_abort_signals.append(event)
+            return
+        signaled_events.append(event)
+        real_set(event)
+
+    def recording_cleanup(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
+        proven = real_cleanup(tree, terminate=terminate)
+        if terminate and proven:
+            cleanup_finished.set()
+        return proven
 
     def admit(tree: ExecutorProcessTree, commit_launch: Any) -> None:
         callback_waiting.set()
@@ -525,6 +546,8 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
             callback_finished.set()
 
     monkeypatch.setattr(multiprocessing.context.BaseContext, "Event", recording_event)
+    monkeypatch.setattr(ProcessEvent, "set", recording_set)
+    monkeypatch.setattr(raw_cli, "_cleanup_tree", recording_cleanup)
     results: list[Any] = []
     thread = threading.Thread(
         target=lambda: results.append(
@@ -548,7 +571,12 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
     assert thread.is_alive() is False
     assert callback_finished.wait(5.0)
     assert results[0].terminal_state == "cancelled"
-    assert process_events[1].is_set() is False
+    assert cleanup_finished.is_set()
+    assert late_abort_signals == []
+    # A killed worker can leave its Event lock held; observe parent signaling
+    # without acquiring that dead process's semaphore after cleanup.
+    assert process_events[2] in signaled_events  # the real abort gate was signaled
+    assert process_events[1] not in signaled_events  # the launch gate was not
 
 
 def test_commit_between_failed_wait_and_parent_settlement_is_honored(

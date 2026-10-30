@@ -78,3 +78,13 @@ review reproduced PowerShell backslash handling that both rejected full-path
 searches and concealed compound failures. Eight pure/native regressions failed
 before preserving backslashes for PowerShell. Focused recovery checks passed33;
 the full raw-provider/integration selection passed88. Existing ADR-254 applies.
+
+## CI ferry follow-up (TASK-37630)
+
+Python3.14 CI timed out while the cancellation test inspected a worker
+Event after termination. The test now observes real parent-side signaling.
+A local retry exposed the same hazard in executor finalization; a bounded
+post-cleanup signal guard failed before the fix. Finalization now skips
+abort signaling after worker death. All46 native process controls passed,
+with7 explicit POSIX skips. The boot-census investigation remains separate;
+ADR-097 limits must stay unchanged. No new ADR is needed for this repair.

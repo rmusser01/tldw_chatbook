@@ -1319,7 +1319,9 @@ class RawShellExecutor:
         finally:
             if launch_commit is not None:
                 launch_commit.close()
-            if abort_event is not None:
+            # Termination can strand a multiprocessing Event lock in its owner.
+            # A settled worker cannot observe abort and must not be signaled.
+            if abort_event is not None and _process_is_alive(process):
                 abort_event.set()
             _request_relay_stop(output_relay)
             if tree is not None:
