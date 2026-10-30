@@ -72,7 +72,6 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Agents.code_review_models import ReviewTeam
     from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
@@ -9835,17 +9834,6 @@ def current_config_identity() -> tuple[int, str]:
         ``(configuration generation, effective config path)``.
     """
     return (_CONFIG_GENERATION, str(_get_effective_config_path()))
-
-
-def get_code_review_team() -> ReviewTeam:
-    """Return strict saved review defaults, retaining unresolved preset IDs.
-
-    Raises:
-        ReviewRefused: When saved choices are malformed; never substitutes a team.
-    """
-    from tldw_chatbook.Agents.code_review_models import parse_review_team
-
-    return parse_review_team(get_cli_setting("agents", "code_review", {}))
 
 
 def get_cli_setting(

@@ -64,7 +64,7 @@ from tldw_chatbook.Chat.sampling_params import (
     parse_params_text,
     validate_sampling_params,
 )
-from tldw_chatbook.config import get_code_review_team, save_settings_to_cli_config
+from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
@@ -75,6 +75,13 @@ ENABLED_DEFINITIONS_SOFT_CAP = 20
 
 #: Prompt shown by the routing provider Selects for the empty (inherit) value.
 INHERIT_PARENT_PROMPT = "(inherit parent)"
+
+
+def get_code_review_team():
+    """Saved review team; imported lazily to keep review models out of boot."""
+    from tldw_chatbook.Agents.code_review_models import get_code_review_team as load
+
+    return load()
 
 
 def _parse_requested_tools(raw: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
