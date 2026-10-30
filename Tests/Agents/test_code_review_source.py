@@ -1115,3 +1115,150 @@ def test_selected_untracked_file_staged_during_capture_refuses(
     assert context.source_state is None and not context.sources
     assert not context.source_finalized
     assert c.store.usage().retained_bytes == 0
+
+
+def _git_calls(monkeypatch):
+    """Record every Git argv the review reader runs, still executing it."""
+    from tldw_chatbook.Tools import git_tool_impls
+
+    calls = []
+    original = git_tool_impls._run_git_bytes
+
+    def counted(args, **kwargs):
+        calls.append(tuple(args[1:]))
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(git_tool_impls, "_run_git_bytes", counted)
+    return calls
+
+
+def _commit_paths(root, message, *paths):
+    git(root, "add", "--", *paths)
+    git(root, "commit", "-qm", message, "--", *paths)
+    return git(root, "rev-parse", "HEAD")
+
+
+def test_committed_capture_lists_each_pinned_directory_once(source_case, monkeypatch):
+    c = source_case
+    for index in range(8):
+        path = c.root / "pkg" / "deep" / f"m{index}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"value = {index}\n")
+    head = _commit_paths(c.root, "package", "pkg")
+    calls = _git_calls(monkeypatch)
+    manifest = c.capture(
+        c.committed_target.model_copy(
+            update={"base_commit": c.head, "head_commit": head}
+        )
+    )
+    assert len([doc for doc in manifest.initial_sources if doc.side == "head"]) == 8
+    # Base lists "." once; head lists ".", "pkg" and "pkg/deep" once each.
+    assert len([call for call in calls if call[0] == "ls-tree"]) == 4
+    assert len([call for call in calls if call[:2] == ("rev-parse", "--verify")]) == 2
+
+
+def test_oversized_change_set_refuses_before_reading_entries(
+    source_case, monkeypatch, tmp_path
+):
+    from tldw_chatbook.Agents.code_review_models import ReviewLimits
+
+    c = source_case
+    for index in range(4):
+        (c.root / f"wide{index}.py").write_text("wide\n")
+    head = _commit_paths(c.root, "wide", *(f"wide{index}.py" for index in range(4)))
+    (tmp_path / "small").mkdir()
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path / "small")
+    store = ReviewStore(manager, "small", limits=ReviewLimits(review_max_files=5))
+    calls = _git_calls(monkeypatch)
+    context = store.create(target_digest="0" * 64)
+    with pytest.raises(ReviewRefused, match="storage_quota_exceeded"):
+        capture_review_source(
+            c.committed_target.model_copy(
+                update={"base_commit": c.head, "head_commit": head}
+            ),
+            c.authority,
+            store,
+            context.review_id,
+        )
+    assert not [call for call in calls if call[0] == "ls-tree"]
+    store.close()
+    assert manager.dispose()
+
+
+def test_capture_never_runs_the_source_guard_under_the_store_lock(source_case):
+    """The Console guard may hop to the UI thread, which takes this lock on Stop."""
+    import threading
+
+    c = source_case
+    blocked = []
+
+    def ui_thread_takes_store_lock():
+        if c.store._tab.lock.acquire(timeout=1):
+            c.store._tab.lock.release()
+        else:
+            blocked.append(True)
+
+    def guard(write):
+        thread = threading.Thread(target=ui_thread_takes_store_lock)
+        thread.start()
+        thread.join()
+        return not write
+
+    authority = replace(
+        c.authority, admitted=replace(c.authority.admitted, guard=guard)
+    )
+    context = c.store.create(target_digest="0" * 64)
+    capture_review_source(c.working_tree_target, authority, c.store, context.review_id)
+    assert not blocked
+
+
+def test_exclusion_resolving_outside_the_root_is_ignored(source_case, tmp_path):
+    c = source_case
+    admitted = replace(
+        c.authority.admitted,
+        exclusions_provider=lambda: (tmp_path / "outside", c.root / "secret.txt"),
+    )
+    authority = replace(c.authority, admitted=admitted)
+    context = c.store.create(target_digest="0" * 64)
+    manifest = capture_review_source(
+        c.working_tree_target.model_copy(update={"context_paths": ("secret.txt",)}),
+        authority,
+        c.store,
+        context.review_id,
+    )
+    assert "secret.txt" not in {doc.relative_path for doc in manifest.initial_sources}
+    assert "secret.txt" not in repr(manifest)
+
+
+def test_unreadable_changed_files_become_coverage_gaps(source_case):
+    c = source_case
+    (c.root / "image.bin").write_bytes(b"\x89PNG\x00\x01")
+    (c.root / "alias").symlink_to("helpers.py")
+    (c.root / "secret.txt").write_text("ROTATED\n")
+    (c.root / "helpers.py").write_text("new helper\n")
+    head = _commit_paths(
+        c.root, "mixed", "image.bin", "alias", "secret.txt", "helpers.py"
+    )
+    manifest = c.capture(
+        c.committed_target.model_copy(
+            update={"base_commit": c.head, "head_commit": head}
+        )
+    )
+    captured = {(doc.side, doc.relative_path) for doc in manifest.initial_sources}
+    assert {("base", "helpers.py"), ("head", "helpers.py")} <= captured
+    assert not {path for _, path in captured} & {"image.bin", "alias"}
+    reasons = [gap.reason for gap in manifest.gaps]
+    assert "binary_source: image.bin" in reasons
+    assert "unsupported_source_type: alias" in reasons
+    assert "excluded_source: 1 changed file(s) withheld" in reasons
+    assert "secret.txt" not in repr(manifest)
+
+
+def test_unstaged_binary_change_is_a_gap_not_a_refusal(source_case):
+    c = source_case
+    (c.root / "data.bin").write_bytes(b"\x00first")
+    _commit_paths(c.root, "data", "data.bin")
+    (c.root / "data.bin").write_bytes(b"\x00second")
+    manifest = c.capture()
+    assert "main.py" in {doc.relative_path for doc in manifest.initial_sources}
+    assert [gap.reason for gap in manifest.gaps].count("binary_source: data.bin") == 1

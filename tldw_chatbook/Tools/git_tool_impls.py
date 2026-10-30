@@ -1464,6 +1464,10 @@ class ReviewGitReader:
         )
         if partial.truncated or partial.returncode not in (0, 1) or partial.stdout:
             raise LocalToolError("history_unavailable")
+        # Commit and tree objects are immutable: verify each commit once and
+        # list each pinned directory once per reader (one capture or query).
+        self._commits: set[str] = set()
+        self._listings: dict[tuple[str, str], dict[str, ReviewGitEntry]] = {}
 
     def _read(self, args: list[str], *, limit: int = GIT_MAX_OUTPUT_BYTES) -> bytes:
         result = _run_git_bytes(
@@ -1503,6 +1507,8 @@ class ReviewGitReader:
 
     def commit(self, value: str) -> str:
         oid = self._oid(value)
+        if oid in self._commits:
+            return oid
         resolved = (
             self._read(["rev-parse", "--verify", oid + "^{commit}"])
             .strip()
@@ -1510,6 +1516,7 @@ class ReviewGitReader:
         )
         if resolved != oid:
             raise LocalToolError("invalid_commit_id")
+        self._commits.add(oid)
         return oid
 
     def head(self) -> str:
@@ -1525,9 +1532,9 @@ class ReviewGitReader:
             raise LocalToolError("ambiguous_comparison")
         return self.commit(values[0].decode("ascii"))
 
-    def changed(
-        self, base: str | None, head: str | None, scope: str = ".", *, staged=False
-    ) -> tuple[str, ...]:
+    def _changed_paths(
+        self, base, head, scope, staged, *, withhold_sensitive
+    ) -> list[bytes]:
         args = [
             "diff",
             "--no-ext-diff",
@@ -1542,73 +1549,97 @@ class ReviewGitReader:
             args.append(self.commit(base))
         if head is not None:
             args.append(self.commit(head))
-        args.extend(
-            [
-                "--",
-                _literal_pathspec(self.safe_path(scope, directory=True)),
-                *_denylist_pathspecs(
+        args.extend(["--", _literal_pathspec(self.safe_path(scope, directory=True))])
+        if withhold_sensitive:
+            args.extend(
+                _denylist_pathspecs(
                     self.root,
                     sensitive_exclusions=self.exclusions,
                     workspace_root=self.root,
-                ),
-            ]
-        )
-        return tuple(
-            self.safe_path(part.decode("utf-8"))
-            for part in self._read(args).split(b"\0")
-            if part
+                )
+            )
+        return [part for part in self._read(args).split(b"\0") if part]
+
+    def changed(
+        self, base: str | None, head: str | None, scope: str = ".", *, staged=False
+    ) -> tuple[str, ...]:
+        """Admitted changed paths; withheld ones are only counted, never named."""
+        paths = []
+        for part in self._changed_paths(
+            base, head, scope, staged, withhold_sensitive=True
+        ):
+            try:
+                paths.append(self.safe_path(part.decode("utf-8")))
+            except LocalToolError:
+                continue  # unsafe in the checkout; change_count still counts it
+        return tuple(paths)
+
+    def change_count(
+        self, base: str | None, head: str | None, scope: str = ".", *, staged=False
+    ) -> int:
+        """Count every changed path, withheld ones included, naming none."""
+        return len(
+            self._changed_paths(base, head, scope, staged, withhold_sensitive=False)
         )
 
-    def tree(self, commit: str, directory: str = ".") -> tuple[ReviewGitEntry, ...]:
-        self.commit(commit)
-        self.safe_path(directory, directory=True)
+    def _listing(self, commit: str, directory: str) -> dict[str, ReviewGitEntry]:
+        """Every blob/tree entry of one pinned directory; callers check paths."""
+        key = (self.commit(commit), directory)
+        listing = self._listings.get(key)
+        if listing is not None:
+            return listing
         treeish = commit if directory == "." else commit + ":" + directory
-        raw = self._read(["ls-tree", "-z", "-l", treeish])
-        entries = []
-        for record in raw.split(b"\0"):
+        listing = {}
+        for record in self._read(["ls-tree", "-z", "-l", treeish]).split(b"\0"):
             if not record:
                 continue
             meta, name = record.split(b"\t", 1)
             mode, kind, oid, size = meta.split()
+            if kind not in (b"blob", b"tree"):
+                continue
             path = (
                 name.decode("utf-8")
                 if directory == "."
                 else directory + "/" + name.decode("utf-8")
             )
+            listing[path] = ReviewGitEntry(
+                path,
+                self._oid(oid.decode("ascii")),
+                mode.decode("ascii"),
+                int(size) if size != b"-" else 0,
+            )
+        self._listings[key] = listing
+        return listing
+
+    def tree(self, commit: str, directory: str = ".") -> tuple[ReviewGitEntry, ...]:
+        self.commit(commit)
+        self.safe_path(directory, directory=True)
+        entries = []
+        for entry in self._listing(commit, directory).values():
             try:
-                self.safe_path(path, directory=kind == b"tree")
+                self.safe_path(entry.path, directory=entry.mode == "040000")
             except LocalToolError:
                 continue
-            if kind not in (b"blob", b"tree"):
-                continue
-            entries.append(
-                ReviewGitEntry(
-                    path,
-                    self._oid(oid.decode("ascii")),
-                    mode.decode("ascii"),
-                    int(size) if size != b"-" else 0,
-                )
-            )
+            entries.append(entry)
         return tuple(entries)
 
     def entry(self, commit: str, path: str) -> ReviewGitEntry | None:
+        # Admit the requested path and each ancestor directory walked, never
+        # every sibling of every listed directory (tree() filters listings).
         self.safe_path(path)
         directory = "."
         for part in PurePosixPath(path).parts:
             candidate = part if directory == "." else directory + "/" + part
-            entry = next(
-                (
-                    item
-                    for item in self.tree(commit, directory)
-                    if item.path == candidate
-                ),
-                None,
-            )
+            entry = self._listing(commit, directory).get(candidate)
             if entry is None:
                 return None
             if candidate == path:
                 return entry
             if entry.mode != "040000":
+                return None
+            try:
+                self.safe_path(candidate, directory=True)
+            except LocalToolError:
                 return None
             directory = candidate
         return None

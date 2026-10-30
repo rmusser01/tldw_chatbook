@@ -104,8 +104,13 @@ class ReviewSourceAuthority:
             ):
                 exclusions = list(sensitive_exclusions_under(root))
                 if self.admitted.exclusions_provider:
-                    for path in self.admitted.exclusions_provider():
-                        relative = Path(path).relative_to(root).as_posix()
+                    for path in map(Path, self.admitted.exclusions_provider()):
+                        # A resolved exclusion outside the root (an escaping
+                        # symlink) matches no in-root path; _safe refuses the
+                        # escaping link itself.
+                        if not path.is_relative_to(root):
+                            continue
+                        relative = path.relative_to(root).as_posix()
                         # Exact excluded files remain excluded if deleted/replaced.
                         exclusions.append(SensitiveExclusion("subtree", relative))
                 yield root, tuple(exclusions)
@@ -317,15 +322,15 @@ def capture_review_source(
     target = target.model_copy(update=normalized)
     if target.binding_ref != authority.admitted.binding_id:
         raise ReviewRefused("source_binding_mismatch")
-    with (
-        store._tab.lock,
-        store.lease(review_id) as context,
-        authority.scope() as (root, exclusions),
-    ):
-        if context.source_finalized or context.active_attempts:
-            raise ReviewRefused("source_already_published")
-        if context.source_epoch != authority.source_epoch:
-            raise ReviewRefused("source_epoch_mismatch")
+    with store.lease(review_id) as context, authority.scope() as (root, exclusions):
+        # The guard may wait on the UI thread, which takes the store lock on
+        # Stop/close, so capture holds that lock only for these checks;
+        # reservations and finalize_capture re-check publication under it.
+        with store._tab.lock:
+            if context.source_finalized or context.active_attempts:
+                raise ReviewRefused("source_already_published")
+            if context.source_epoch != authority.source_epoch:
+                raise ReviewRefused("source_epoch_mismatch")
         _safe(root, exclusions, target.scope, directory=True)
         try:
             return _capture(target, authority, store, context, root, exclusions)
@@ -335,6 +340,17 @@ def capture_review_source(
             if isinstance(exc, ReviewRefused):
                 raise
             raise ReviewRefused("source_acquisition_failed") from exc
+
+
+# A changed file the view cannot hold as text is a named coverage gap, not a
+# refusal of the whole target (spec: excluded/binary material is coverage).
+_UNREADABLE_CHANGE = frozenset({"binary_source", "unsupported_source_type"})
+
+
+def _within_file_quota(store, files):
+    """Refuse a change set before reading entries when its files cannot fit."""
+    if files + 2 > store._tab.limits.review_max_files:
+        raise ReviewRefused("storage_quota_exceeded")
 
 
 def _capture(target, authority, store, context, root, exclusions):
@@ -348,6 +364,8 @@ def _capture(target, authority, store, context, root, exclusions):
     comparison = "captured"
     head = None
     layers = None
+    changed_paths = set()
+    withheld = 0
     if target.kind in ("pr", "commit_range", "working_tree") or getattr(
         target, "preimage_commit", None
     ):
@@ -362,6 +380,9 @@ def _capture(target, authority, store, context, root, exclusions):
             base = reader.merge_base(base, head)
         revisions = {"base": base, "head": head}
         changed = reader.changed(base, head, target.scope)
+        _within_file_quota(store, len(changed) * len(revisions))
+        withheld = reader.change_count(base, head, target.scope) - len(changed)
+        changed_paths.update(changed)
         for path in changed:
             for side, revision in revisions.items():
                 selected[side, path] = reader.entry(revision, path)
@@ -375,6 +396,17 @@ def _capture(target, authority, store, context, root, exclusions):
         )
         unstaged = reader.changed(None, None, target.scope) if target.unstaged else ()
         layers = (staged, unstaged)
+        changed_paths.update((*staged, *unstaged))
+        _within_file_quota(
+            store,
+            len(changed_paths) * (2 + int(target.unstaged))
+            + len(target.untracked_paths),
+        )
+        if target.staged:
+            withheld += reader.change_count(head, None, target.scope, staged=True)
+            withheld -= len(staged)
+        if target.unstaged:
+            withheld += reader.change_count(None, None, target.scope) - len(unstaged)
         for path in dict.fromkeys((*staged, *unstaged)):
             selected["base", path] = reader.entry(head, path)
             selected["staged", path] = reader.index(path)
@@ -421,6 +453,17 @@ def _capture(target, authority, store, context, root, exclusions):
             )
             if not revisions:
                 mutable.add(preimage_path)
+    if withheld > 0:
+        gaps.append(
+            CoverageGap(reason=f"excluded_source: {withheld} changed file(s) withheld")
+        )
+
+    def unreadable(path, reason):
+        gap = CoverageGap(reason=f"{reason}: {path}")
+        if gap not in gaps:
+            gaps.append(gap)
+        mutable.discard(path)
+
     required = set(selected)
     for path in target.context_paths:
         if any(path in (patch.old_path, patch.new_path) for patch in patch_files):
@@ -442,7 +485,14 @@ def _capture(target, authority, store, context, root, exclusions):
             gaps.append(CoverageGap(reason="optional_context_unavailable"))
     sizes = {}
     for (side, path), entry in tuple(selected.items()):
-        _safe(root, exclusions, path)
+        try:
+            _safe(root, exclusions, path)
+        except ReviewRefused as exc:
+            if path not in changed_paths or exc.reason not in _UNREADABLE_CHANGE:
+                raise
+            unreadable(path, exc.reason)
+            selected.pop((side, path))
+            continue
         if entry == "mutable":
             try:
                 size = (root / path).stat().st_size
@@ -504,7 +554,11 @@ def _capture(target, authority, store, context, root, exclusions):
                     missing.append((side, path))
                     continue
                 add(side, path, data)
-            except (ReviewRefused, LocalToolError):
+            except (ReviewRefused, LocalToolError) as exc:
+                reason = exc.reason if isinstance(exc, ReviewRefused) else str(exc)
+                if path in changed_paths and reason in _UNREADABLE_CHANGE:
+                    unreadable(path, reason)
+                    continue
                 if (side, path) in required:
                     raise
                 gaps.append(CoverageGap(reason="optional_context_unavailable"))
@@ -663,9 +717,10 @@ def _fits(page, max_result_chars, max_tokens, estimate=None):
     encoded = page.model_dump_json()
     # Conservative byte estimate works without a provider tokenizer; Task 4
     # still performs its model-specific complete-request admission check.
-    return (
-        len(encoded) <= review_result_char_limit(max_result_chars)
-        and (estimate(encoded) <= max_tokens if estimate is not None else len(encoded.encode("utf-8")) <= max_tokens * 4)
+    return len(encoded) <= review_result_char_limit(max_result_chars) and (
+        estimate(encoded) <= max_tokens
+        if estimate is not None
+        else len(encoded.encode("utf-8")) <= max_tokens * 4
     )
 
 
