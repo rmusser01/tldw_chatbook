@@ -23995,3 +23995,22 @@ The persisted Sources test initially timed out even though a direct reply and it
 The same mounted fixture replaced the factory's absent ChaChaNotes DB with a file DB but rewired only conversation services. Its dictionary participant still referred to the original missing owner. Rebinding the real dictionary service to that same DB restored the production composition; a legacy conversation-service stub was also removed. A full reply arriving before a terminal timeout did not prove a citation bug: native stack observations located guarded Windows admission, and the same agent operation later completed. Capture phase/timing evidence before changing watchdogs, and retain the distinction between functional completion and latency qualification.
 
 Final preservation found a second concrete composition trap in `test_console_runtime_rag_capture_wiring.py`: its helper passed a store to `ensure_chat_controller` but never called `runtime.set_chat_store(store)`. Four cases stopped at required hook initialization on both the integrated candidate (r-cf89449e) and pinned a9c base (r-0bcbb613). The hook owner guard compared the controller's store with the runtime's unset store. Adding the real composition call, without replacing hooks or weakening assertions, passed all four cases (r-306266a0). A swallowed initialization message alone did not identify the cause; the exact owner path and controlled fixture correction did. Keep unrelated base-reproduced trace/Stop failures explicit rather than using this fixture fix to imply they passed.
+## On an old commit, a private-profile failure's reason is in the child's pytest.xml, not the parent's output
+
+**TASK-33621.4, 2026-10-29.** AC#6 asked for a test that fails on the review
+commit 64579cce2c. The real-ChatScreen hold test, copied into a detached
+worktree at that commit, failed, but the parent's report showed only DEBUG log
+lines: that commit's `@private_profile_test` wrapper fails with the *last
+16,000 characters* of the child's log, and a real Console run fills them with
+SQLite and screen-unmount chatter. The child's assertion was cut off. (Newer
+wrappers print a `--- child failure:` line; old commits do not have it.) The
+child's `pytest.xml` sits in the parent's `tmp_path`, which pytest's basetemp
+rotation then deleted. Re-running with `--basetemp=<a scratch dir>` kept it,
+and its `<failure message=...>` gave the reason in one line:
+`AttributeError: ... 'ConsolePreparationPauseKind' has no attribute
+'CONTEXT_COMPACTION'` (no compaction hold exists at that commit).
+
+**What to do.** When checking that a private-profile test fails on an older
+commit, pass `--basetemp=<scratch dir>` and read the child's `pytest.xml`
+failure message before calling the red "for the right reason". A red you cannot
+read is not evidence of anything.
