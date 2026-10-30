@@ -17,6 +17,7 @@ from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Chat.trajectory import TrajectorySnapshot
 from tldw_chatbook.Chat.trajectory_export import (
+    TraceExportCredentialBlocked,
     TraceExportPreflight,
     TrajectoryExportError,
     build_trace_export,
@@ -44,11 +45,38 @@ from tldw_chatbook.Widgets.status_line import set_status_line
 
 #: TASK-33621.8: what the dialog says when the bundle fails its own checks.
 #: The checker's text names internal event ids; it goes to the log instead.
+#: The failures left after the unrecorded-link repair come from stored data,
+#: so the same snapshot fails the same way every time: the copy offers the
+#: log for a report, never a retry.
 TRACE_EXPORT_VALIDATION_FAILED = (
     "Export failed: part of this Trace could not be checked, so nothing was "
-    "written. Reopen the Trace view to rebuild it, then export again; if it "
-    "still fails, the app log has the details."
+    "written; the app log has the details to include in a bug report."
 )
+
+#: The final credential backstop keeps its own words: what stopped the
+#: export, never the field that tripped it. Field names survive every
+#: profile's scrubbing, so another profile is not offered as a fix.
+TRACE_EXPORT_CREDENTIAL_BLOCKED = (
+    "Export blocked: something in this Trace still looks like a password or "
+    "key after redaction, so nothing was written; the app log has the details "
+    "to include in a bug report."
+)
+
+
+def _validation_failure_copy(exc: Exception) -> str:
+    """Return the dialog's plain copy for a failed preflight or bundle check.
+
+    Args:
+        exc: What preflight or the bundle builder raised.
+
+    Returns:
+        The credential-block copy for the final credential check, else the
+        generic could-not-be-checked copy.
+    """
+    if isinstance(exc, TraceExportCredentialBlocked):
+        return TRACE_EXPORT_CREDENTIAL_BLOCKED
+    return TRACE_EXPORT_VALIDATION_FAILED
+
 
 __all__ = [
     "TRACE_EXPORT_PROFILE_COPY",
@@ -221,7 +249,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         except Exception as exc:  # noqa: BLE001 - projection boundary
             self._preflight = None
             self._log_validation_failure(exc, profile)
-            self._set_status(TRACE_EXPORT_VALIDATION_FAILED, error=True)
+            self._set_status(_validation_failure_copy(exc), error=True)
             return
         if profile is not self._selected_profile:
             return
@@ -362,7 +390,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             self._writing = False
             self._set_controls_disabled(False)
             self._log_validation_failure(exc, self._selected_profile)
-            self._set_status(TRACE_EXPORT_VALIDATION_FAILED, error=True)
+            self._set_status(_validation_failure_copy(exc), error=True)
             return
         except Exception as exc:  # noqa: BLE001 - actionable write boundary
             self._writing = False
@@ -380,6 +408,10 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     ) -> None:
         """Log a failed preflight or bundle check with its conversation.
 
+        Runs inside the callers' except handlers: a snapshot too malformed
+        to name its conversation is logged as unreadable rather than raising
+        over the plain copy.
+
         Args:
             exc: What preflight or the bundle builder raised. Only the
                 exporter's own errors are logged with their text, which names
@@ -387,14 +419,17 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
                 type alone.
             profile: The privacy profile being exported.
         """
-        conversation_ids = sorted(
-            {
-                str(record.conversation_id)
-                for turn in self._snapshot.turns
-                for record in turn.records
-                if record.conversation_id
-            }
-        )
+        try:
+            conversation_ids = sorted(
+                {
+                    str(record.conversation_id)
+                    for turn in self._snapshot.turns
+                    for record in turn.records
+                    if record.conversation_id
+                }
+            )
+        except Exception:  # noqa: BLE001 - the copy must survive a bad snapshot
+            conversation_ids = ["<unreadable snapshot>"]
         detail = (
             str(exc)
             if isinstance(exc, TrajectoryExportError)

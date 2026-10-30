@@ -518,14 +518,57 @@ def _snapshot_that_fails_bundle_validation():
     return TrajectorySnapshot(turns=(turn, *snapshot.turns[1:]))
 
 
+def _snapshot_that_trips_the_credential_block():
+    """A trace the final credential check blocks under every profile.
+
+    Field names are kept verbatim by every scrubber, so a credential-looking
+    field name is what still reaches the bundle's last check.
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.trajectory import TrajectorySnapshot, TrajectoryTurn
+
+    snapshot = base_snapshot()
+    first_turn = snapshot.turns[0]
+    first = first_turn.records[0]
+    blocked = replace(
+        first,
+        field_states={**first.field_states, "password=hunter22": "observed"},
+    )
+    turn = TrajectoryTurn(first_turn.turn_id, (blocked, *first_turn.records[1:]))
+    return TrajectorySnapshot(turns=(turn, *snapshot.turns[1:]))
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("make_snapshot", "expected", "logged_error"),
+    [
+        # Stored data the checker refuses: retrying cannot change it, so the
+        # copy offers the log for a report instead of a retry (review
+        # follow-up: the old "Reopen the Trace view" advice rebuilt the same
+        # failure).
+        (
+            _snapshot_that_fails_bundle_validation,
+            "Export failed: part of this Trace could not be checked",
+            "Invalid Trace events: duplicate event_id",
+        ),
+        # The credential backstop says what stopped it, as it did before this
+        # task, without the field name that tripped it.
+        (
+            _snapshot_that_trips_the_credential_block,
+            "Export blocked: something in this Trace still looks like a password or key",
+            "the final bundle still contains credential material",
+        ),
+    ],
+    ids=["stored-data", "credential-block"],
+)
 async def test_validation_failure_shows_plain_recovery_copy_and_logs_the_error(
-    tmp_path: Path,
+    tmp_path: Path, make_snapshot, expected: str, logged_error: str
 ) -> None:
     from loguru import logger
 
-    snapshot = _snapshot_that_fails_bundle_validation()
-    duplicated = snapshot.turns[0].records[0].event_id
+    snapshot = make_snapshot()
+    first_event_id = snapshot.turns[0].records[0].event_id
     conversation_id = snapshot.turns[0].records[0].conversation_id
     assert conversation_id
     target = tmp_path / "never-written.json"
@@ -543,7 +586,7 @@ async def test_validation_failure_shows_plain_recovery_copy_and_logs_the_error(
             for _ in range(20):
                 await pilot.pause()
                 status = str(dialog.query_one("#trace-export-status", Static).render())
-                if "Export failed" in status:
+                if "Export " in status and "Writing" not in status:
                     break
             assert app.screen is dialog
             assert not dialog.query_one("#trace-export-submit").disabled
@@ -551,12 +594,48 @@ async def test_validation_failure_shows_plain_recovery_copy_and_logs_the_error(
         logger.remove(sink_id)
 
     assert not target.exists()
+    assert expected in status
     assert "nothing was written" in status
-    assert "Reopen the Trace view" in status
-    for internal in ("Invalid", "duplicate", "event_id", duplicated):
+    assert "the app log has the details to include in a bug report" in status
+    # No false retry: the same snapshot fails the same way every time.
+    assert "Reopen" not in status and "again" not in status
+    for internal in (
+        "Invalid",
+        "duplicate",
+        "event_id",
+        "credential material",
+        "hunter22",
+        first_event_id,
+    ):
         assert internal not in status
     logged = "".join(records)
     assert "Trace export failed validation" in logged
     assert conversation_id in logged
     # The exporter's own message, verbatim (Redacted aliases its event ids).
-    assert "Invalid Trace events: duplicate event_id" in logged
+    assert logged_error in logged
+
+
+@pytest.mark.asyncio
+async def test_validation_failure_copy_survives_a_snapshot_it_cannot_log() -> None:
+    """Review follow-up (TASK-33621.8): the failure log runs inside the
+    preflight's except handler, so a snapshot too malformed to name its
+    conversation must still leave the plain copy on screen, not raise."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.trajectory import TrajectorySnapshot
+
+    malformed = TrajectorySnapshot(
+        turns=(SimpleNamespace(turn_id="t1", records=(object(),)),)  # type: ignore[arg-type]
+    )
+    app = _TraceHost()
+    async with app.run_test(size=(80, 24)) as pilot:
+        dialog = TraceExportDialog(malformed)
+        await app.push_screen(dialog)
+        for _ in range(20):
+            await pilot.pause()
+            status = str(dialog.query_one("#trace-export-status", Static).render())
+            if "Export failed" in status:
+                break
+        assert app.screen is dialog
+        assert "Export failed: part of this Trace could not be checked" in status
+        assert dialog.query_one("#trace-export-submit").disabled

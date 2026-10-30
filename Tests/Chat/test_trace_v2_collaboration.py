@@ -1053,3 +1053,39 @@ def test_clearing_unrecorded_references_logs_metadata_only() -> None:
     assert "3c8cc2a1" not in orphaned
     assert "A bounded diagnostic summary" not in orphaned
     assert clean == ""
+
+
+@pytest.mark.parametrize("profile", list(trajectory_export.TraceExportProfile))
+def test_credential_block_raises_its_own_error_type(
+    profile: trajectory_export.TraceExportProfile,
+) -> None:
+    """Review follow-up (TASK-33621.8): the final credential check has its own
+    error type, so the export dialog can say what stopped the export instead
+    of the generic "could not be checked" copy and its retry advice.
+
+    A credential-looking field name survives every scrubber (field names are
+    kept verbatim), so it is blocked under every profile alike.
+    """
+    blocked = _record(
+        field_states={
+            "content_preview": "observed",
+            "payload": "observed",
+            "password=hunter22": "observed",
+        }
+    )
+
+    with pytest.raises(
+        trajectory_export.TraceExportCredentialBlocked, match="credential material"
+    ) as raised:
+        _build(
+            _snapshot(blocked),
+            profile,
+            confirm_full=profile is trajectory_export.TraceExportProfile.FULL_TRACE,
+        )
+    assert isinstance(raised.value, trajectory_export.TrajectoryExportError)
+    # Every other validation failure keeps the base type.
+    with pytest.raises(trajectory_export.TrajectoryExportError) as duplicate:
+        _build(_snapshot(_record(), _record(seq=2)), profile, confirm_full=True)
+    assert not isinstance(
+        duplicate.value, trajectory_export.TraceExportCredentialBlocked
+    )

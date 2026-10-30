@@ -72,6 +72,7 @@ __all__ = [
     "TraceExportProfile",
     "TraceFieldDecision",
     "TraceExportPreflight",
+    "TraceExportCredentialBlocked",
     "TrajectoryExportError",
     "preflight_trace_export",
     "build_trace_export",
@@ -139,6 +140,15 @@ _AUX_ATTEMPT_LIMIT = 500
 
 class TrajectoryExportError(Exception):
     """Unknown conversation, or an export payload that fails validation."""
+
+
+class TraceExportCredentialBlocked(TrajectoryExportError):
+    """The finished bundle still holds credential-looking text after scrubbing.
+
+    The final privacy backstop, kept distinct so a caller can say what stopped
+    the export rather than reporting a generic validation failure
+    (TASK-33621.8).
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +285,10 @@ _IDENTITY_DOMAINS = {
 }
 _MISSING_STATES = frozenset({"not_available", "capture_failed"})
 _REFERENCE_FIELDS = ("parent_event_id", "source_event_id", "replacement_event_id")
-#: TASK-33621.8: provenance reason for a reference to an unrecorded event.
+#: TASK-33621.8: provenance reason for a cleared reference whose target is
+#: not recorded in this snapshot. Usually the event was never written (the
+#: staged-Library orphan); it also covers an event recorded somewhere this
+#: snapshot does not include, since the bundle cannot tell the two apart.
 _REFERENCE_NOT_RECORDED = "reference_not_recorded"
 _NON_OBSERVED_STATES = frozenset(
     {"redacted", "truncated", "omitted", "not_available", "capture_failed"}
@@ -1240,7 +1253,7 @@ def build_trace_export(
         "integrity": {"algorithm": "sha256", "authenticity": False},
     }
     if _has_credential_material(payload):
-        raise TrajectoryExportError(
+        raise TraceExportCredentialBlocked(
             "Trace export blocked: the final bundle still contains credential material"
         )
     payload["integrity"]["digest"] = _trace_digest(payload)
