@@ -429,15 +429,20 @@ def _capture(target, authority, store, context, root, exclusions):
             withheld -= len(staged)
         if target.unstaged:
             withheld += reader.change_count(None, None, target.scope) - len(unstaged)
-        for path in dict.fromkeys((*staged, *unstaged)):
+        for path in target.untracked_paths:
+            _safe(root, exclusions, path)
+            if not _in_scope(path, target.scope):
+                raise ReviewRefused("invalid_untracked_selection")
+        paths = tuple(dict.fromkeys((*staged, *unstaged)))
+        indexed = reader.index_entries((*paths, *target.untracked_paths))
+        for path in paths:
             selected["base", path] = reader.entry(head, path)
-            selected["staged", path] = reader.index(path)
+            selected["staged", path] = indexed[path]
             if target.unstaged:
                 selected["worktree", path] = "mutable"
                 mutable.add(path)
         for path in target.untracked_paths:
-            _safe(root, exclusions, path)
-            if not _in_scope(path, target.scope) or reader.index(path) is not None:
+            if indexed[path] is not None:
                 raise ReviewRefused("invalid_untracked_selection")
             selected["worktree", path] = "mutable"
             mutable.add(path)
@@ -625,11 +630,18 @@ def _capture(target, authority, store, context, root, exclusions):
             )
             if now != layers or reader.head() != head:
                 raise ReviewRefused("source_drift")
+            # A fresh index read: drift between the passes is still seen.
+            staged_now = reader.index_entries(
+                (
+                    *(path for side, path in selected if side == "staged"),
+                    *target.untracked_paths,
+                )
+            )
             for (side, path), entry in selected.items():
-                if side == "staged" and reader.index(path) != entry:
+                if side == "staged" and staged_now[path] != entry:
                     raise ReviewRefused("source_drift")
             for path in target.untracked_paths:
-                if reader.index(path) is not None:
+                if staged_now[path] is not None:
                     raise ReviewRefused("source_drift")
         if not authority.admitted.guard(False):
             raise ReviewRefused("source_authority_unavailable")
