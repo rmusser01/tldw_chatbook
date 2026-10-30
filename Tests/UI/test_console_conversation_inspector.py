@@ -1497,3 +1497,86 @@ async def test_focused_section_list_paints_every_turn_on_its_own_line(
     )
     # The first turn, highlighted under focus, is painted in the first row.
     assert "1" in painted[0] and "system" in painted[0], painted
+
+
+async def _snapshot_with_long_section_labels() -> ConsoleContextSnapshot:
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    return ConsoleContextSnapshot(
+        current_messages=[
+            ConsoleChatMessage(role="user", content=f"m{i}") for i in range(12)
+        ],
+        next_send_payload={
+            "model": "claude-haiku-4-5",
+            "messages": [{"role": "user", "content": "Hello"}] * 12,
+            "staged_sources": [{"id": i} for i in range(3)],
+        },
+    )
+
+
+async def _two_call_loader(_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+    usage = ProviderUsage(
+        uncached_input=3,
+        cache_write=14058,
+        output=26,
+        provider="anthropic",
+        model="claude-haiku-4-5",
+    ).to_json()
+    return [
+        (
+            _capture(
+                "run-a", seq, f"2026-10-29T00:00:0{seq}Z", "claude-haiku-4-5", usage
+            ),
+            False,
+        )
+        for seq in (0, 1)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tab", [TAB_NEXT_SEND, TAB_EXCHANGE])
+async def test_context_and_exchange_lists_wrap_rather_than_clip_their_labels(
+    tab: str,
+) -> None:
+    """Review follow-up (TASK-33621.9): only the Usage & cost rows needed to
+    stay on one line. Applied to every section list, the 28-cell no-wrap cut
+    the Context counts ("Retained messages (12)", "Staged sources (3)") and
+    each call's model, cost and capture detail at 235x52 -- the wide size."""
+    from textual.widgets import OptionList
+
+    from Tests.UI.roleplay_frame_harness import painted_rows
+
+    pane_id = (
+        "console-inspector-context-detail"
+        if tab == TAB_NEXT_SEND
+        else "console-inspector-exchange-detail"
+    )
+    app = InspectorHarness(
+        **_default_kwargs(
+            snapshot_factory=_snapshot_with_long_section_labels,
+            exchanges_loader=_two_call_loader,
+            turns=[_turn(0, message_id="p0", native_message_id="n0", role="user")],
+            initial_tab=tab,
+        )
+    )
+    async with app.run_test(size=(235, 52)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        pane = modal.query_one(f"#{pane_id}")
+        choices = pane.query_one(OptionList)
+        if tab == TAB_EXCHANGE:
+            pane.select("turn:0")
+        await _wait_until(pilot, lambda: choices.option_count >= 3, attempts=80)
+        await pilot.pause()
+        region = choices.region
+        painted = "\n".join(
+            line[region.x : region.right]
+            for line in painted_rows(modal)[region.y : region.bottom]
+        )
+
+    assert "…" not in painted, painted
+    if tab == TAB_NEXT_SEND:
+        assert "(12)" in painted and "(3)" in painted, painted
+    else:
+        assert painted.count("claude-haiku-4-5") == 2, painted
+        assert painted.count("capture: Safe") == 2, painted

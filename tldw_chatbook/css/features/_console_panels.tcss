@@ -2484,11 +2484,10 @@ WorktreeRecoveryDialog {
    ADR-161: fills/zeros/caps are tokens ($ds-*-fill/-size-0/-size-2). */
 ConsoleInspectorDetailPane { height: $ds-height-fill; min-height: $ds-size-0; }
 .inspector-detail-body { height: $ds-height-fill; min-height: $ds-size-0; }
-.inspector-section-list { width: $ds-inspector-section-width; min-width: $ds-size-0; height: $ds-height-fill; border: none; text-wrap: nowrap; text-overflow: ellipsis; }
+.inspector-section-list { width: $ds-inspector-section-width; min-width: $ds-size-0; height: $ds-height-fill; border: none; }
 /* TASK-33621.9: the global `*:focus` outline overpainted these lists' first
-   and last rows, so Turn 1 looked scrolled away; a wrapped usage row left its
-   basis label alone above the next turn. Rows stay on one line, and focus is
-   the content-safe tint plus focus-coloured highlight (TASK-28226's cue). */
+   and last rows, so Turn 1 looked scrolled away. Focus is the content-safe
+   tint plus focus-coloured highlight (TASK-28226's cue). */
 .inspector-section-list:focus { outline: none; background: $ds-action-focus 12%; }
 .inspector-section-list:focus > .option-list--option-highlighted { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
 .inspector-detail-reader { width: $ds-width-fill; min-width: $ds-size-0; height: $ds-height-fill; }
@@ -2525,8 +2524,14 @@ ConsoleConversationInspector #console-inspector-tabs > ContentSwitcher > TabPane
     height: $ds-height-fill;
     min-height: $ds-size-0;
 }
+/* TASK-33621.9: a wrapped usage row left its basis label alone above the
+   next turn, so usage rows stay on one line (basis and cost lead). Only
+   here: Context and Exchange labels wrap, or their counts and call details
+   would be cut off. */
 .inspector-usage-detail .inspector-section-list {
     width: $ds-inspector-usage-list-width;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 ConsoleConversationInspector #console-inspector-tabs > ContentTabs {
     height: $ds-control-height-compact;
