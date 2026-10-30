@@ -22,12 +22,12 @@ the tree's first row, a folder row. The arm now settles on the whole reload
 (no rows reloading, no branch loading, no pending identity), re-queries the
 rows, and drives focus with real keys only.
 
-What the pin proves, and how (residual R-1). The test forces that recorded
-interleaving with events alone -- no timeout, no sleep, no timed slice:
+What the pin proves, and how (residual R-1). The injection that forces that
+recorded interleaving is ordered by events alone -- no timeout, no sleep, no
+timed slice:
 
 - the owed reload's root ``folders`` slice is read only after the root
-  placements slice (the note rows) has landed, so it recomposes the tree
-  last;
+  placements slice (the note rows) has landed, so the rows land before it;
 - that slice's focus replay, captured before any arm acts, is held until a
   ``set_focus`` lands on a note row (the old arm's first act) and then runs
   on the screen's queue; this arm never calls ``set_focus`` and releases the
@@ -175,7 +175,7 @@ async def test_a_visit_reload_held_back_by_a_running_mutation_runs_once_it_ends(
         # order on every run:
         # * the owed reload's root ``folders`` slice is read only once the
         #   root placements slice (the note rows) has landed
-        #   (``rows_landed``), so it recomposes the tree last;
+        #   (``rows_landed``), so the note rows land before it does;
         # * its focus replay (and any replay after it) is held until a
         #   ``set_focus`` lands on a note row -- the old arm's first act --
         #   and then runs on the screen's queue (``row_focused``). This arm
