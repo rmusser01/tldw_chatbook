@@ -29,8 +29,8 @@
   },
   "owners": [
     {
-      "call_count": 2,
-      "diagnostic_digest": "2d698e717eae37514ee9",
+      "call_count": 4,
+      "diagnostic_digest": "57916705a4ab8f35f910",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/agent_request_execution.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -43,8 +43,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 54,
-      "diagnostic_digest": "62680bacbd702b05c035",
+      "call_count": 53,
+      "diagnostic_digest": "478a1f0b2f5fab786bad",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/agent_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
