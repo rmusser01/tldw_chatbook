@@ -419,3 +419,57 @@ def test_final_prepared_owner_positive_remainder_does_not_consume_claim(
         expanded = c.primary.expand_dispositions(prepared.review_id)
     assert expanded[0]["disposition"]["reason"] == "verification_incomplete"
     assert expanded[0]["original"]["trigger"] == "ordinary bounded claim " * 150
+
+
+@pytest.mark.parametrize("probe", ["verified", "target_changed"])
+def test_cold_metadata_cache_resolves_capacity_before_review_admission(
+    monkeypatch, probe
+):
+    """A first review child to an unprobed destination waits for its metadata.
+
+    resolve_for_send attaches the cold cache's unverified fallback and refreshes
+    in the background; review admission refuses unknown capacity, so a review-
+    bound request resolves the bounded metadata first. Ordinary sends never wait.
+    """
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_agent_bridge import (
+        _routed_child_messages,
+        _routing_parent_resolution,
+        _streaming_adapter,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    gateway = ConsoleProviderGateway(config_provider=dict, environ={})
+
+    async def stream(resolution, request, **kwargs):
+        yield "done"
+
+    probes, sources = [], []
+
+    async def resolve_window(settings):
+        probes.append(settings)
+        if probe == "target_changed":
+            raise ValueError("review_metadata_target_changed")
+        return ContextWindowResolution(8192, "server metadata", True)
+
+    monkeypatch.setattr(gateway, "stream_chat", stream)
+    monkeypatch.setattr(gateway, "resolve_context_window", resolve_window)
+    resolution = replace(
+        _routing_parent_resolution(),
+        context_window=ContextWindowResolution(32000, "provider fallback", False),
+    )
+
+    def admit(request):
+        sources.append(
+            (request.capacity.limit_source, request.capacity.context_window_tokens)
+        )
+
+    with _streaming_adapter(resolution, gateway) as adapter:
+        with adapter.review_request_admission(admit):
+            adapter.chat_call(messages_payload=_routed_child_messages())
+        adapter.chat_call(messages_payload=_routed_child_messages())
+    assert len(probes) == 1
+    assert sources == [
+        ("detected", 8192) if probe == "verified" else ("estimated", 32000)
+    ]
