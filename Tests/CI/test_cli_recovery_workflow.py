@@ -13,6 +13,7 @@ def test_cli_regressions_are_selected_by_the_pr_recovery_workflow():
         "Tests/Agents/test_raw_shell_recovery.py",
         "Tests/Tools/test_virtual_cli_listing_recovery.py",
         "Tests/Tools/test_workspace_atomic_writes.py",
+        "Tests/Tools/test_remote_worker_bundle.py",
         "Tests/Tools/test_raw_cli_executor_process.py",
         "Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output",
     ):

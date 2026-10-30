@@ -93,6 +93,13 @@ Check adjacent import budgets when paying down boot residency; a passing
 first-paint count alone can hide a transfer. The replacement uses the
 Console package's existing lazy export for the first-use Rename dialog.
 
+Fast Lane later passed 3257 checks but rejected the generated worker at 5730
+lines against 5706. Byte-equality only proved the larger artifact matched its
+sources. Sharing canonical descriptor reads/flag assembly/temp bookkeeping
+returned it to 5706 without changing the builder or budget. Run the existing
+size envelope beside bundle generation early; source parity alone does not
+establish that the generated artifact fits its governed envelope.
+
 ## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
 
 The real Windows workspace worker could preview a write but failed creation at

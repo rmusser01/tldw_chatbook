@@ -2,10 +2,12 @@
 id: TASK-37632
 title: Repair atomic local tool writes on Windows
 status: Done
-created_date: 2026-10-29 22:34
 assignee:
-- '@codex'
-updated_date: 2026-10-29 23:07
+  - '@codex'
+created_date: 2026-10-29 22:34
+updated_date: '2026-10-30T10:58:00Z'
+labels: []
+dependencies: []
 ---
 
 ## Description
@@ -20,25 +22,25 @@ Allow valid Windows file-tool writes to complete with the existing pinned-direct
 - [x] #2 Stale CAS, root replacement, reparse and sensitive-path controls remain enforced.
 - [x] #3 POSIX and remote stdlib worker behavior retain their existing contracts.
 - [x] #4 Real worker tests, focused atomic-write tests, lint and documentation are complete.
+- [x] #5 Canonical atomic-write sources regenerate a remote worker within the existing size limit while complete multi-chunk reads and write safeguards are retained.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/254-cli-search-outcomes-and-listing-compatibility.md. Reason: refine search outcomes and optional listing worker arguments while retaining ADR-078/094/101 authority. Follow Docs/superpowers/plans/2026-10-29-cli-tool-recovery.md with focused red/green tests, implementation, documentation, targeted checks and fresh review.
+
+CI source-size paydown: share repeated descriptor reading, use equivalent optional-flag composition, unify successful temp bookkeeping, and regenerate the bundle without modifying its builder or increasing budgets. Add actual large-file preview/CAS verification and repeat scoped native/bundled controls. ADR required: no new ADR; preserve ADR-254 mutation boundary and existing generation contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Windows write/read/CAS helpers reuse native retained directory operations. CAS reads through the locked target handle; explicit FileRenameInformationEx/POSIX replacement keeps the lock through the atomic swap. Ordinary native rename behavior and POSIX paths stay intact; Windows creation/replacement retains the facade private-DACL policy. Added real worker create/read/replace, stale/absent, cleanup, inode substitution, lock-retention and junction-swap controls. Exact-byte and POSIX-mode fixtures were corrected for Windows; the cross-process lock probe uses the worker admitted-root body. Evidence: windows-green-scoped 36 passed/1 POSIX-mode skip; native facade controls passed in the root selection; new native tests and lint pass. Six existing file-symlink fixtures fail at setup WinError1314, with real native junction refusal covered. Remote artifact regenerated and checked; actual POSIX execution unavailable on this host. ADR-254 and architecture/lessons docs record the native contract.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
-## Final Summary
+<!-- SECTION:NOTES:BEGIN -->
+Windows write/read/CAS helpers retain native directory handles, read locked targets through their lock handle, and use FileRenameInformationEx/POSIX replacement to keep the lock through swap. Private-DACL policy, ordinary rename behavior, POSIX mode handling, exclusions and root pins remain intact. Original real worker/stale/absent/cleanup/inode/lock/junction controls passed; six existing file-symlink fixtures require unavailable WinError1314 privileges and remain outside this native evidence.
 
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Fast Lane exposed the regenerated artifact at 5730 lines versus its 5706 limit. A behavior-preserving canonical-source refactor now shares complete descriptor reads, composes the same optional flags with zero defaults, and unifies successful temp bookkeeping. The builder and ratchet are unchanged; regenerated size is exactly 5706. A real multi-chunk preview/CAS case passed before and after the refactor. No flag, CAS check, lock, descriptor cleanup or watchdog protection was removed.
 
-<!-- SECTION:FINAL_SUMMARY:END -->
+Verification: 43 native atomic/listing/bundled-loopback controls passed, plus 20 write/edit/race/cross-process controls with one POSIX-mode skip; two size-envelope and five workflow-safety checks passed. A Python 3.10.5 bare interpreter imported the artifact and read 1048599 bytes correctly with site packages disabled. The POSIX bundle module cannot collect on Windows because it imports fcntl; its full contracts and early size checks are now selected in the Linux Python 3.12/3.14 workflow. Scoped lint introduces no findings beyond the inherited undefined re. Fresh independent review found no issues, confirmed source/artifact parity, and passed three size/routing checks plus the new multi-chunk case.
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+Existing ADR-254 governs the retained mutation boundary; no new ADR or dependency is needed. No full local suite was run; current-head GitHub checks remain required before merge.
+<!-- SECTION:NOTES:END -->

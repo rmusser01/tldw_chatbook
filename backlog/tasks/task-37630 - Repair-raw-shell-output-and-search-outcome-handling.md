@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: 2026-10-29 22:34
-updated_date: '2026-10-30T08:53:00Z'
+updated_date: '2026-10-30T10:58:00Z'
 labels: []
 dependencies: []
 ---
@@ -49,6 +49,8 @@ Full boot verification found a second eager public import in UI/Console_Modules/
 The existing real Rename persistence test also reproduces raw_source_selection_changed alone before its action. Enroll only that case in the repository established private_profile_test harness so it exercises real persistence under an admitted isolated profile; retain its UI and database assertions. This is a test fixture repair, with no production authority/config gate changes.
 
 Select the new cold package/session Rename export regression in the existing Perf Guard boot-ratchet step and trigger that workflow for changes to the regression itself. Preserve the Python version, permissions, concurrency and timeout; verify existing workflow safety contracts. This keeps the new import-boundary check exercised on PRs.
+
+Fast Lane found only generated remote worker growth: 5730 lines versus 5706. Preserve the generator and ratchet. Reduce duplicated canonical write-source logic: combine optional open flags with equivalent getattr defaults, share complete descriptor reads using the stdlib sentinel iterator, and unify successful temp cleanup bookkeeping. Add multi-chunk preview/CAS coverage, regenerate the artifact, and verify size, real local writes, native confinement and bundled worker parity. Select existing bundle ceiling/slack checks in the focused Linux workflow so this gate runs early. ADR required: no new ADR; behavior-preserving implementation under ADR-254 and existing bundle contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -63,4 +65,6 @@ The inherited boot census was paid down using the Console package's existing laz
 The controller-import candidate was reverted after it moved cost into preimport. Tests/UI/test_console_rename_persistence.py::test_rename_modal_persists_saved_conversation_title remains unchanged: its profile admission and stale fake persistence-owner route failed; authoritative test_console_rename_consistency.py controls passed. No thresholds or assertions were weakened. No full suite was run. GitHub checks must still pass on the published head.
 
 Modified raw shell projection/execution, native and parser regression fixtures, the Console lazy-export/session import boundary, CI selection, architecture docs and testing lessons. Existing ADR-254 and ADR-097 govern the changes; no new ADR is required. Tasks 37631/37632 retain virtual listing and Windows write evidence. PR #3314 is the integration target.
+
+Fast Lane artifact follow-up: the unchanged worker size guard failed at 5730/5706. Canonical write-source deduplication restored exactly 5706 lines with builder/budget unchanged. Multi-chunk preview/CAS, native write/listing/loopback, write/edit/locking, size and workflow checks pass; bare Python 3.10.5 source/artifact execution is verified. Full POSIX bundle contracts are explicitly selected in Linux CI. Fresh independent review found no findings and independently passed the size/routing and multi-chunk controls. No full suite or budget override was used; publication still requires fresh GitHub checks.
 <!-- SECTION:NOTES:END -->

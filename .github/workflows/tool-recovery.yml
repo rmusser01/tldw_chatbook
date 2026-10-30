@@ -63,12 +63,18 @@ jobs:
           Tests/Tools/test_virtual_cli_listing_recovery.py
           Tests/Tools/test_virtual_cli_impls.py
           Tests/Tools/test_workspace_atomic_writes.py
+          Tests/Tools/test_remote_worker_bundle.py
           Tests/Tools/test_raw_cli_executor_process.py
           Tests/Tools/test_raw_cli_executor_contract.py
           Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output
           -q -o addopts= --timeout=120 --junitxml=cli-worker-results.xml
       - name: Check generated CLI worker bundle
-        run: python -m tldw_chatbook.Tools.build_remote_worker_bundle --check
+        run: |
+          python -m tldw_chatbook.Tools.build_remote_worker_bundle --check
+          python -m pytest \
+            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Tools/remote_worker_bundle.py]' \
+            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Tools/remote_worker_bundle.py]' \
+            --confcutdir=Tests/Architecture -q -o addopts=
       - name: Run recovery and real command contracts
         run: >-
           python -m pytest

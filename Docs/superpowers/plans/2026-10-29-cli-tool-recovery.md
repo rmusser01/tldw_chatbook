@@ -106,3 +106,24 @@ transferred two modules into preimport (560/558), so it was reverted. The legacy
 rename-persistence fixture was also left unchanged after its profile admission
 and obsolete fake-owner route failed; current real SQLite controls provide the
 Rename behavior evidence. No full suite was run and no new ADR was needed.
+
+## Generated-worker size follow-up (TASK-37630, TASK-37632)
+
+Fast Lane passed 3257 checks but found the generated worker at 5730 lines,
+24 over its unchanged 5706 limit. The canonical write implementation now
+shares complete descriptor reading, composes optional flags with equivalent
+zero defaults, and joins duplicate successful-temp bookkeeping. The unchanged
+builder regenerates exactly 5706 lines. No artifact compression, manual edits,
+flag removal or budget increase is used.
+
+The new real multi-chunk preview/CAS case passed before and after refactoring.
+Native write/listing/bundled-loopback controls passed 43 cases, with another
+20 write/edit/locking controls passing and one POSIX-mode skip. Size ceiling
+and slack checks passed; five workflow safety checks passed; a bare Python
+3.10.5 interpreter loaded the artifact and read 1048599 bytes correctly with
+site packages disabled. The POSIX-only bundle test module cannot collect on
+Windows because it imports fcntl; its full contracts are selected in the Linux
+Tool Recovery matrix, along with early generated-size checks. Scoped lint has
+only the existing undefined-re diagnostic. Fresh independent review found no
+issues and independently repeated the size/routing checks and multi-chunk
+preview/CAS control. Existing ADR-254 applies; no new ADR is needed.
