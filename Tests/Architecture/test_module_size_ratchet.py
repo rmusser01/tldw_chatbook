@@ -592,7 +592,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29, TASK-33620.15.26 review fix (same owner decision): 7068 ->
     # 7080 (+12). The kept rows apply only while Send refuses for a turn
     # being prepared, so a refused send's draft re-wraps like any other.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7080.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7080,
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
