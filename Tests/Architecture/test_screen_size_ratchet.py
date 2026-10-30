@@ -233,7 +233,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: same owner rule: F1 help gains a Context limit group, imported lazily
     #: from Chat/console_context_budget_copy.py so the UI-ready census stays
     #: flat (+2: the import and its blank line).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24344, 738),
+    #: Raised 24344 -> 24347 (methods unchanged) 2026-10-29 by TASK-33621.4,
+    #: same owner rule: the run chip, the status strip's first segment at
+    #: every width, says the next send pauses for compaction (+2) with the
+    #: summary's own copy constant (+1 import). Live at 80x24 the header badge
+    #: drops to "Ready" there.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24347, 738),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

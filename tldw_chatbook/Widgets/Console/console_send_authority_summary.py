@@ -21,6 +21,10 @@ from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
 
 CONSOLE_AUTHORITY_SUMMARY_ID = "console-send-authority-summary"
 
+#: TASK-33621.4: the Run fact (and the status strip's run chip) once the chat
+#: is over its Ask trigger; whole in the block's 29 columns after "Run: ".
+COMPACTION_PAUSE_RUN_COPY = "Pauses for compaction"
+
 _FACTS = (
     ("Where", "where", "console-send-authority-where"),
     ("Scope", "scope", "console-send-authority-scope"),
@@ -168,7 +172,7 @@ def project_console_send_authority(
     elif state.compaction_pause_expected:
         # TASK-33621.4: about the NEXT send, so above a past failure; whole
         # in the 29-column block (the card and the chip tooltip say more).
-        run = "Pauses for compaction"
+        run = COMPACTION_PAUSE_RUN_COPY
     elif state.run_failed:
         # TASK-24602. Ordered BELOW everything above it deliberately: a run in
         # flight, a pending approval and a blocked provider all describe what

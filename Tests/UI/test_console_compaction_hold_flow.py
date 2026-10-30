@@ -378,6 +378,9 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
             await settle(lambda: badge() == COMPACTION_PAUSE_FORECAST_COPY)
             assert run_line() == "Pauses for compaction"
             assert badge() == COMPACTION_PAUSE_FORECAST_COPY
+            # The status strip's first segment, which every width shows
+            # (live 2026-10-29: at 80x24 the header badge is just "Ready").
+            assert console._native_run_status_copy() == "Pauses for compaction"
             chip = console._context_spend._build_console_cost_state()
             assert chip.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
             assert "Next send pauses for compaction approval" in chip.tooltip

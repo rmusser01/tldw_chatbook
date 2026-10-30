@@ -37,7 +37,11 @@ CONTEXT_LIMIT_HELP: tuple[str, tuple[tuple[str, str], ...]] = (
             "a send over the compaction trigger is held: Compact and send, "
             "Send without compacting, Change policy, or Cancel send",
         ),
-        ("Before it", "header and Inspect say Next send pauses to compact"),
+        (
+            "Before it",
+            "the header reads Next send pauses to compact; Inspect and the "
+            "status strip's run chip, Pauses for compaction",
+        ),
         ("/compact", "summarize older turns now (one model call)"),
         ("/rewind", "Summarize up to here previews what would be summarized"),
     ),
