@@ -35,6 +35,7 @@ pytestmark = pytest.mark.bootstrap_profile
 
 APP_SIZE = (160, 48)
 SEARCH = "#console-workspace-conversation-search"
+STATUS = "#console-workspace-conversation-search-status"
 # Longer than the rail search's 0.2 s debounce, so the debounced search (and
 # the tray rebuild its results cause) lands between two keys.
 PAST_DEBOUNCE_S = 0.45
@@ -264,6 +265,58 @@ async def test_clear_empties_the_filter_the_rebuild_kept(tmp_path):
         assert console._console_conversation_browser_query == ""
         assert console.focused is live, getattr(console.focused, "id", None)
         assert not list(console.query("#console-workspace-conversation-search-status"))
+
+
+def _shown(console) -> tuple[str, list[str]]:
+    """The status line and the conversation rows the rail paints."""
+    statuses = list(console.query(STATUS))
+    status = str(statuses[0].render()) if statuses else ""
+    rows = [
+        str(row.label).splitlines()[0]
+        for row in console.query(".console-workspace-conversation-row")
+    ]
+    return status, rows
+
+
+@pytest.mark.asyncio
+async def test_the_match_count_and_rows_follow_one_title_rule(tmp_path):
+    """AC#4 (owner decision 2026-10-27): the filter counts what it shows -- titles.
+
+    'Quarterly notes' mentions zebra only in a message. The database used to
+    count it while the rail hid it: '1 match. Showing 0 of 1' over an empty
+    list. Message-content search stays in 'Search all chats…' / Ctrl+K.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    _seed_conversations(app, tmp_path)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, search = await _focused_filter(host, pilot)
+        seen = {}
+        for query in ("zebra", "notes", "ok"):
+            if search.value:
+                await pilot.click("#console-workspace-conversation-search-clear")
+                for _ in range(20):
+                    await pilot.pause(0.05)
+                    if not search.value and not console.query(STATUS):
+                        break
+                search.focus()
+                await pilot.pause()
+            await pilot.press(*query)
+            await pilot.pause(PAST_DEBOUNCE_S)
+            assert await _wait_for_search_to_settle(console, pilot, query)
+            seen[query] = _shown(console)
+
+        assert seen["zebra"] == ("0 matches", [])
+        status, rows = seen["notes"]
+        assert status == "1 match"
+        assert len(rows) == 1 and "Quarterly notes" in rows[0]
+        status, rows = seen["ok"]
+        assert status == "2 matches"
+        assert len(rows) == 2
+        assert any("OK 9 rollout plan" in row for row in rows)
+        assert any("Okra recipes" in row for row in rows)
 
 
 # ---------------------------------------------------------------------------

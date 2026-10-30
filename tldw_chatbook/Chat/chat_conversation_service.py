@@ -881,6 +881,7 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
         character_scope: str | None = None,
+        title_only: bool = False,
     ) -> dict[str, Any]:
         """Return one normalized, bounded page of local conversations.
 
@@ -913,6 +914,10 @@ class ChatConversationService:
                 Applied before counts and pagination, so lane owners can
                 exclude conversations they do not display without wasting
                 page slots on them.
+            title_only: Match ``query`` against titles only, as a literal
+                substring, in both the page and its total (TASK-33622.6: the
+                Console rail's 'Filter visible titles'). Not combinable with
+                ``query_terms``.
 
         Returns:
             A mapping containing normalized ``items`` and a ``pagination``
@@ -970,6 +975,7 @@ class ChatConversationService:
             topic_label=_clean_text(topic_label),
             character_id=character_id,
             character_scope=character_scope,
+            title_only=title_only,
             limit=limit,
             offset=offset,
         )

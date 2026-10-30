@@ -579,8 +579,8 @@ def build_console_conversation_browser_state(
         active_workspace_id: Retained compatibility input; ownership no longer
             depends on the active named workspace.
         group_collapse_preferences: Flat Chats collapse preference mapping.
-        query: Search text matched against row title, workspace, status, and
-            scope copy.
+        query: Search text, matched against row titles only (TASK-33622.6;
+            see ``console_conversation_title_matches_query``).
         marks_available: Whether local star state is available for rendering.
         error_copy: Optional scoped recovery copy.
         result_total_count: Total matched rows when the caller already knows a
@@ -1055,28 +1055,29 @@ def _workspace_group_sort_key(
     return (not is_active, ReverseKey(latest_sort), label.casefold(), group_id)
 
 
+def console_conversation_title_matches_query(title: str, query: str) -> bool:
+    """Return whether the rail's 'Filter visible titles' text matches ``title``.
+
+    TASK-33622.6 (owner decision 2026-10-27): the filter matches titles only,
+    as a case-insensitive literal substring of the trimmed query -- the rule
+    its result count follows too (``title_only`` on the conversation search).
+    Message-content search stays in 'Search all chats…' / Ctrl+K.
+
+    Args:
+        title: The conversation title.
+        query: The filter text as typed; blank matches everything.
+
+    Returns:
+        True when ``title`` contains the trimmed query, ignoring case.
+    """
+    needle = str(query or "").strip().lower()
+    return not needle or needle in str(title or "").lower()
+
+
 def _row_matches(
     row: ConsoleConversationBrowserInputRow, normalized_query: str
 ) -> bool:
-    haystack = " ".join(
-        (
-            row.title,
-            row.workspace_label,
-            row.status,
-            _scope_copy(row),
-        )
-    ).lower()
-    return normalized_query in haystack
-
-
-def _scope_copy(row: ConsoleConversationBrowserInputRow) -> str:
-    if row.scope_type == "global":
-        return "global chats"
-    if row.workspace_id == DEFAULT_WORKSPACE_ID:
-        return "default workspace chats"
-    if row.workspace_id:
-        return f"workspace {row.workspace_label}"
-    return "chats"
+    return console_conversation_title_matches_query(row.title, normalized_query)
 
 
 def _belongs_to_chats(row: ConsoleConversationBrowserInputRow) -> bool:
