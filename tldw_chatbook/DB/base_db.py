@@ -35,6 +35,11 @@ SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
 
 
+# Thread-local, like the handles it governs (asyncio.to_thread copies
+# contextvars, which would leak an owner into another thread's handle).
+_OPERATION_OWNERS = threading.local()
+
+
 @contextmanager
 def operation_owned_connection(database: object) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
@@ -42,7 +47,25 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     Inspect without acquiring a handle. A pre-existing registered connection,
     including its active transaction, remains owned by the caller unless retired
     during the operation; a newly acquired replacement is operation-owned.
+    A nested operation on the same thread and database defers to the
+    outermost owner, which retires the handle when the whole operation ends.
     """
+    owners = getattr(_OPERATION_OWNERS, "ids", None)
+    if owners is None:
+        owners = _OPERATION_OWNERS.ids = set()
+    if id(database) in owners:
+        yield
+        return
+    owners.add(id(database))
+    try:
+        with _operation_owned_connection(database):
+            yield
+    finally:
+        owners.discard(id(database))
+
+
+@contextmanager
+def _operation_owned_connection(database: object) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
@@ -72,7 +95,11 @@ def operation_owned_connection(database: object) -> Iterator[None]:
 
         # A raw close can leave a stale cache. Use the same native retirement
         # evidence as the getter; a still-live borrowed handle remains owned.
-        local = database._local if type(database) is MediaDatabase else database._thread_local
+        local = (
+            database._local
+            if type(database) is MediaDatabase
+            else database._thread_local
+        )
         close = database.close
         previous = _core_cached_connection(database, getattr(local, "conn", None))
         borrowed = previous is not None
@@ -102,6 +129,7 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
     its executor callback. Existing connections and memory/custom owners retain
     their original lifetimes.
     """
+
     def invoke() -> _CallResult:
         from .AgentRuns_DB import AgentRunsDB
         from .ChaChaNotes_DB import CharactersRAGDB
@@ -328,9 +356,9 @@ class SQLiteConnectionQuiescenceRegistry:
             return len(self._connections)
 
 
-_QUIESCENCE_REGISTRIES: WeakValueDictionary[
-    str, SQLiteConnectionQuiescenceRegistry
-] = WeakValueDictionary()
+_QUIESCENCE_REGISTRIES: WeakValueDictionary[str, SQLiteConnectionQuiescenceRegistry] = (
+    WeakValueDictionary()
+)
 _QUIESCENCE_REGISTRIES_LOCK = threading.Lock()
 
 
@@ -605,7 +633,9 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
             try:
                 result = run(*args)
             except sqlite3.DatabaseError as error:
-                refused = getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_AUTH
+                refused = (
+                    getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_AUTH
+                )
                 raise
             finally:
                 connection._observe_transaction_state(
@@ -747,6 +777,7 @@ def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
     if issubclass(_QuiescentSQLiteCursor, factory):
         return _QuiescentSQLiteCursor
     return type(f"_Quiescent{factory.__name__}", (_QuiescentSQLiteCursor, factory), {})
+
 
 class _SemanticMutationAuthorization:
     """Connection-local authorization read by SQLite mutation triggers.
@@ -1037,8 +1068,7 @@ class BaseDB(ABC):
                 ``check_same_thread=False``). The connection is still
                 opened HERE, under this module's ``db.base`` owner.
         """
-        conn = connect_private_sqlite(
-            "db.base", self.db_path_str, **connect_kwargs)
+        conn = connect_private_sqlite("db.base", self.db_path_str, **connect_kwargs)
         conn.row_factory = sqlite3.Row
         return conn
 
