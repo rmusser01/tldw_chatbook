@@ -474,7 +474,7 @@ _TITLES = ("OK 9 rollout plan", "Okra recipes", "Quarterly notes")
 
 
 @pytest.mark.asyncio
-async def test_a_rebuild_never_writes_state_into_the_kept_input():
+async def test_a_rebuild_never_writes_state_into_the_focused_input():
     """AC#2: typing ahead of a slower sync is never overwritten.
 
     A sync built before the latest keystrokes carries an older query and
@@ -506,6 +506,34 @@ async def test_a_rebuild_never_writes_state_into_the_kept_input():
         assert app.changed == []
         rows = [str(row.row_key) for row in app.query(".console-workspace-conversation-row")]
         assert rows == ["c0"], "the rebuild did not apply the new rows"
+
+
+@pytest.mark.asyncio
+async def test_an_unfocused_kept_input_shows_the_states_raw_query():
+    """Nobody is typing into an unfocused filter, so it displays the state.
+
+    A sync that carries a different query while focus is elsewhere (the
+    tray's own Clear, or any future programmatic search) updates the kept
+    input -- with the raw text and without a `Changed` echo.
+    """
+    app = _tray_app(_tray_state("", _TITLES))
+    async with app.run_test(size=(60, 30)) as pilot:
+        tray = await _settled_tray(app, pilot)
+        search = app.query_one(SEARCH, Input)
+        app.set_focus(None)
+        await pilot.pause()
+        assert app.focused is None
+        app.changed.clear()
+
+        await _rebuild(tray, _tray_state("OK", _TITLES), pilot)
+
+        live = app.query_one(SEARCH, Input)
+        assert live is search
+        assert live.value == "OK"
+        assert app.changed == []
+        assert not app.query_one(
+            "#console-workspace-conversation-search-clear"
+        ).disabled
 
 
 @pytest.mark.asyncio

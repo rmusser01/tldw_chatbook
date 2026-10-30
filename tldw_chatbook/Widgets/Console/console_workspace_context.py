@@ -816,17 +816,28 @@ _CONVERSATION_FILTER_INPUT_ID = "console-workspace-conversation-search"
 _CONVERSATION_FILTER_CLEAR_ID = "console-workspace-conversation-search-clear"
 
 
-def _sync_retained_filter_row(row: Widget) -> None:
-    """Refresh what a kept filter row derives, never the user's text.
+def _sync_retained_filter_row(row: Widget, query: str) -> None:
+    """Refresh a kept filter row from state without fighting the user's typing.
 
-    Only Clear's enabled state follows: from the input's live value, which
-    can be ahead of the state the rebuild is composing.
+    While the input has focus its text is the user's and is never written:
+    a sync can be built before the latest keystrokes reached the screen, so
+    its query may be behind what the field shows. Unfocused, nobody is
+    typing into it, so it shows the state's (raw) query -- silently, since a
+    `Changed` echo would read as an edit. Clear's enabled state follows the
+    field's own text.
+
+    Args:
+        row: The mounted filter row the rebuild keeps.
+        query: The raw query of the state being composed.
     """
     try:
         search = row.query_one(f"#{_CONVERSATION_FILTER_INPUT_ID}", Input)
         clear = row.query_one(f"#{_CONVERSATION_FILTER_CLEAR_ID}", Button)
     except NoMatches:
         return
+    if not search.has_focus and search.value != query:
+        with search.prevent(Input.Changed):
+            search.value = query
     clear.disabled = not search.value.strip()
 
 
@@ -863,7 +874,8 @@ class _KeepsConversationFilterRow:
     A rebuild now removes every child except a mounted filter row, composes
     with that row offered back to ``compose`` (``_retained_filter_row``), and
     mounts the new children around it. The input keeps its instance, value,
-    cursor and focus; the state's query is never written into it. Sits
+    cursor and focus; the state's query is never written into it while it
+    has focus (see `_sync_retained_filter_row`). Sits
     between ``RecomposeCaptureGuard`` and ``Vertical`` so the guard's
     mouse-capture release and focus keeping still wrap the rebuild.
     """
@@ -2344,7 +2356,7 @@ class ConsoleWorkspaceContextTray(
             # TASK-33622.6: a rebuild keeps the mounted filter row (see
             # `_KeepsConversationFilterRow`). It must stay a top-level child:
             # the rebuild mounts the other children around it.
-            _sync_retained_filter_row(retained_row)
+            _sync_retained_filter_row(retained_row, str(browser.query or ""))
             yield retained_row
         else:
             with Horizontal(
