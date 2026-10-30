@@ -331,6 +331,7 @@ from ...Library.library_shell_state import (
     LIBRARY_CANVAS_LANDING_COPY,
     LIBRARY_EDITOR_SAVE_BUSY_COPY,
     LIBRARY_EDITOR_SAVE_NO_CHANGES,
+    LIBRARY_FILE_NOTES_SAVE_REFUSED,
     LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY,
     LIBRARY_MEDIA_CHANGE_IN_PROGRESS_COPY,
     LIBRARY_SKILL_SAVE_DELETE_ARMED_COPY,
@@ -4806,6 +4807,19 @@ class LibraryScreen(BaseAppScreen):
         if widget_id.startswith("notes-sync-root-"):
             action = widget_id.removeprefix("notes-sync-root-").rsplit("-", 1)[0]
             return _LIBRARY_SYNC_ROOTS_ENTER_LABELS.get(action, "")
+        # TASK-34000.40 final review (Task 10 N-1): the lasting-sync canvases'
+        # two Back controls name where Enter goes from the SAME decision the
+        # control, Escape and the Escape chip read -- never the tier's
+        # literal "run action" -- and the import's Cancel import names its
+        # own action once Tab reaches it.
+        if widget_id in ("notes-sync-roots-back", "notes-sync-back"):
+            return (
+                "back to sync folders"
+                if self._notes_controller._library_notes_lasting_back_returns_to_roots()
+                else "back to notes"
+            )
+        if widget_id == "note-import-cancel":
+            return "cancel import"
         navigator_label = _LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS.get(widget_id)
         if navigator_label:
             return navigator_label
@@ -9010,8 +9024,13 @@ class LibraryScreen(BaseAppScreen):
             # one action, one spelling (fix round 1, review R0 M-4).
             if phase is NoteImportPhase.CHECKING:
                 return (("esc", "cancel"),)
-            return self._notes_footer_tier(
-                (("esc", "back to notes"),), (("esc", "notes"),)
+            # Final review (Task 10): name the focused control's Enter --
+            # "enter cancel import" once Tab reaches Cancel import -- the
+            # way the editor, Preview and list tiers do (F1 mirrors it).
+            return self._with_library_notes_focus_chip(
+                self._notes_footer_tier(
+                    (("esc", "back to notes"),), (("esc", "notes"),)
+                )
             )
         return self._library_footer_shortcuts_for_current_state()
 
@@ -9357,7 +9376,9 @@ class LibraryScreen(BaseAppScreen):
         if target == "file_notes":
             workspace = self._notes_state.file_notes_workspace
             if workspace is not None and workspace.save_state in {"conflict", "error"}:
-                return workspace.save_state
+                # Final review m-2: a marker, never the raw state string --
+                # ``report_key_save`` owns the words.
+                return LIBRARY_FILE_NOTES_SAVE_REFUSED
         if target == "media_analysis" and self._media_state.saving_analysis:
             return LIBRARY_MEDIA_ANALYSIS_ALREADY_SAVING_COPY
         if target == "media_edit" and self._media_state.bulk_delete_in_flight:

@@ -716,7 +716,10 @@ _BUDGETS: dict[str, int] = {
     # ``finally`` and the import's settle path through it) runs the owed
     # Trash read and clears the busy reason; leaving the Trash drops a queued
     # read: 8845 -> 8893 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8893,
+    # 2026-10-29, final review T6 m2 (same owner decision): the origin focus
+    # return's docstring names it a backstop while the origin stays enabled:
+    # 8893 -> 8896 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8896,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

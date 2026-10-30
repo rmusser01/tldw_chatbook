@@ -1381,3 +1381,4 @@ Tests/UI/test_library_notes_import_escape_keeps_running.py
 Tests/UI/test_library_notes_trash_pages_and_purges_extended.py
 Tests/UI/test_library_notes_trash_focused_row_purge.py
 Tests/UI/test_library_notes_trash_during_import.py
+Tests/UI/test_library_notes_entry_focus_read_through.py

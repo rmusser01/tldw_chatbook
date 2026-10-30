@@ -2462,6 +2462,24 @@ async def test_check_changes_lands_on_the_review_it_built_in_a_mounted_screen(
             screen.query_one("#library-notes-manage-sync-folders", Button).press()
             check = await _wait_for_selector(screen, pilot, "#notes-sync-root-check-0")
             assert screen._notes_state.view == "lasting_roots"
+            # Final review (Task 10 N-1): the folder list's ‹ Notes names
+            # where Enter goes -- "back to notes" -- from the same decision
+            # the control and the Escape chip read; the lasting tier paints
+            # that label in place of its literal "run action". RED at
+            # 29d2272b95: the tier fell back to ``enter run action``.
+            roots_back = await _wait_for_selector(screen, pilot, "#notes-sync-roots-back")
+            assert screen._library_focus_enter_label(roots_back) == "back to notes"
+            screen.set_focus(roots_back)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.focused is roots_back
+                and ("enter", "back to notes") in screen._library_notes_footer_shortcuts(),
+                message=(
+                    "‹ Notes focused with its Enter chip: "
+                    f"{screen._library_notes_footer_shortcuts()!r}"
+                ),
+            )
+            assert ("enter", "run action") not in screen._library_notes_footer_shortcuts()
             check.press()
             await _wait_for_condition(
                 pilot,
@@ -2472,5 +2490,25 @@ async def test_check_changes_lands_on_the_review_it_built_in_a_mounted_screen(
             controller = screen._library_notes_sync_controller
             assert controller.snapshot.phase == "review"
             assert controller.snapshot.review.safe_count == 1
+            # The review opened from Manage sync folders: its Back goes to
+            # the folder list, and Enter on it says so (the SAME decision as
+            # Escape's chip). RED at 29d2272b95 for the same reason.
+            review_back = await _wait_for_selector(screen, pilot, "#notes-sync-back")
+            assert screen._library_focus_enter_label(review_back) == "back to sync folders"
+            screen.set_focus(review_back)
+            await _wait_for_condition(
+                pilot,
+                lambda: screen.focused is review_back
+                and ("enter", "back to sync folders")
+                in screen._library_notes_footer_shortcuts()
+                # 80x30 paints the compact tier: "esc sync folders".
+                and dict(screen._library_notes_footer_shortcuts()).get("esc")
+                in {"back to sync folders", "sync folders"},
+                message=(
+                    "the review's Back focused with its Enter chip: "
+                    f"{screen._library_notes_footer_shortcuts()!r}"
+                ),
+            )
+            assert ("enter", "run action") not in screen._library_notes_footer_shortcuts()
     finally:
         await _close_real_conflict_stack(owner, database, interop)

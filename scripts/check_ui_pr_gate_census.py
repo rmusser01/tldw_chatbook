@@ -603,7 +603,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #   import and the one interlock release: one production-CSS Library boot at
 #   120x36 over a real ChaChaNotes database and the real import executor,
 #   ~9 s alone at load ~7, w1b plugin): 932 -> 933.
-MINIMUM_FILES = 933
+# - polish-1b final fix wave (2026-10-29, parked T7 pin): Tests/UI/
+#   test_library_notes_entry_focus_read_through.py (the entry reconcile's
+#   detach window reads through to the captured control: one production-CSS
+#   Library boot, ~8 s alone at load ~13, w1b plugin): 933 -> 934.
+MINIMUM_FILES = 934
 
 
 def read_census(path: Path) -> list[str]:

@@ -1568,8 +1568,8 @@ A note kept in sync with a folder is refused with "This note is kept in sync
 with a folder, so it can't be deleted forever here."; this release has no way
 to take one note out of its folder's sync. The confirm opens on **Cancel**,
 and **Escape** cancels it without changing anything. There is no Undo
-afterwards: the note, its keyword and folder links and its earlier versions
-are gone, and focus lands on the row now in its place.
+afterwards: the note, its keyword and folder links and its sync history are
+gone, and focus lands on the row now in its place.
 
 Delete forever removes the note from this device's notes only. A file that a
 synced folder wrote for it before that folder was disconnected stays on disk,
