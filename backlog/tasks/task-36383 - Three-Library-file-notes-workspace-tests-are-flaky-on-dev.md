@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 22:57
+updated_date: 2026-10-30 04:31
 labels:
 - follow-up
 - tests
@@ -78,4 +78,10 @@ Review round 1 (2026-10-23):
 - The comment and the AC#1 record now name the 11-cell width as the known N-37 / TASK-34000.30 defect.
 - The lesson is scoped to teardown-state failures, and its control counts match this table.
 - Re-verified: test 2 passed 20 of 20 serial runs. The whole file with `-n 4` gave 152 passed and 10 failed, the same 10 pre-existing failures. Preflight passes.
+
+Re-sync (2026-10-30): rebased onto dev ff815f8559. The only conflict was the lessons file, and both sides are kept. The test file, this file and TASK-36513 are unchanged. After the rebase, under load averages of 32 to 158:
+- Each of the three tests passed 5 of 5 serial runs.
+- The whole file with `-n 4` gave 151 passed and 11 failed. The 11 are the earlier 10 plus `test_folder_files_capability_inventory_and_modes`, a load flake that also fails 2 of 6 serial runs at dev and is noted in TASK-36386.
+- The same command on dev's test file gave 148 passed and 14 failed, including this task's test 3.
+- Preflight passes.
 
