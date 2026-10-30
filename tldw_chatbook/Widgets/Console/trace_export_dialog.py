@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -17,6 +18,7 @@ from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Chat.trajectory import TrajectorySnapshot
 from tldw_chatbook.Chat.trajectory_export import (
     TraceExportPreflight,
+    TrajectoryExportError,
     build_trace_export,
     preflight_trace_export,
     write_trajectory_export,
@@ -39,6 +41,14 @@ from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
     full_trace_confirmation,
 )
 from tldw_chatbook.Widgets.status_line import set_status_line
+
+#: TASK-33621.8: what the dialog says when the bundle fails its own checks.
+#: The checker's text names internal event ids; it goes to the log instead.
+TRACE_EXPORT_VALIDATION_FAILED = (
+    "Export failed: part of this Trace could not be checked, so nothing was "
+    "written. Reopen the Trace view to rebuild it, then export again; if it "
+    "still fails, the app log has the details."
+)
 
 __all__ = [
     "TRACE_EXPORT_PROFILE_COPY",
@@ -210,7 +220,8 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             )
         except Exception as exc:  # noqa: BLE001 - projection boundary
             self._preflight = None
-            self._set_status(f"Preflight failed: {exc}", error=True)
+            self._log_validation_failure(exc, profile)
+            self._set_status(TRACE_EXPORT_VALIDATION_FAILED, error=True)
             return
         if profile is not self._selected_profile:
             return
@@ -347,6 +358,12 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             written = await asyncio.to_thread(
                 write_trajectory_export, destination, payload
             )
+        except TrajectoryExportError as exc:
+            self._writing = False
+            self._set_controls_disabled(False)
+            self._log_validation_failure(exc, self._selected_profile)
+            self._set_status(TRACE_EXPORT_VALIDATION_FAILED, error=True)
+            return
         except Exception as exc:  # noqa: BLE001 - actionable write boundary
             self._writing = False
             self._set_controls_disabled(False)
@@ -357,6 +374,38 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
         # this dialog is on top again, so the export is still reported
         # (TASK-33622.15).
         self.dismiss_safe_once_when_on_top(written)
+
+    def _log_validation_failure(
+        self, exc: Exception, profile: TraceExportProfile
+    ) -> None:
+        """Log a failed preflight or bundle check with its conversation.
+
+        Args:
+            exc: What preflight or the bundle builder raised. Only the
+                exporter's own errors are logged with their text, which names
+                event ids and fields, never content; anything else logs its
+                type alone.
+            profile: The privacy profile being exported.
+        """
+        conversation_ids = sorted(
+            {
+                str(record.conversation_id)
+                for turn in self._snapshot.turns
+                for record in turn.records
+                if record.conversation_id
+            }
+        )
+        detail = (
+            str(exc)
+            if isinstance(exc, TrajectoryExportError)
+            else f"exception_type={type(exc).__name__}"
+        )
+        logger.error(
+            "Trace export failed validation conversation_ids={} profile={} error={}",
+            conversation_ids,
+            profile.value,
+            detail,
+        )
 
     def _set_controls_disabled(self, disabled: bool) -> None:
         for selector in (

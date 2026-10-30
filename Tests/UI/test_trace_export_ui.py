@@ -497,3 +497,66 @@ async def test_v2_digest_tamper_is_rejected_through_ui(tmp_path: Path) -> None:
         notifications = list(app._notifications._notifications.values())
         assert notifications
         assert "digest" in notifications[-1].message.lower()
+
+
+def _snapshot_that_fails_bundle_validation():
+    """A trace whose bundle validation still fails after preflight succeeds.
+
+    Two records sharing one event id is the case the exporter keeps refusing
+    (TASK-33621.8 clears unrecorded references; it cannot pick a duplicate).
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.trajectory import TrajectorySnapshot, TrajectoryTurn
+
+    snapshot = base_snapshot()
+    first_turn = snapshot.turns[0]
+    duplicate = replace(first_turn.records[1], event_id=first_turn.records[0].event_id)
+    turn = TrajectoryTurn(
+        first_turn.turn_id, (first_turn.records[0], duplicate, *first_turn.records[2:])
+    )
+    return TrajectorySnapshot(turns=(turn, *snapshot.turns[1:]))
+
+
+@pytest.mark.asyncio
+async def test_validation_failure_shows_plain_recovery_copy_and_logs_the_error(
+    tmp_path: Path,
+) -> None:
+    from loguru import logger
+
+    snapshot = _snapshot_that_fails_bundle_validation()
+    duplicated = snapshot.turns[0].records[0].event_id
+    conversation_id = snapshot.turns[0].records[0].conversation_id
+    assert conversation_id
+    target = tmp_path / "never-written.json"
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        app = _TraceHost()
+        async with app.run_test(size=(80, 24)) as pilot:
+            dialog = TraceExportDialog(snapshot)
+            await app.push_screen(dialog)
+            await pilot.pause()
+            dialog.query_one("#trace-export-path", Input).value = str(target)
+
+            await pilot.click("#trace-export-submit")
+            for _ in range(20):
+                await pilot.pause()
+                status = str(dialog.query_one("#trace-export-status", Static).render())
+                if "Export failed" in status:
+                    break
+            assert app.screen is dialog
+            assert not dialog.query_one("#trace-export-submit").disabled
+    finally:
+        logger.remove(sink_id)
+
+    assert not target.exists()
+    assert "nothing was written" in status
+    assert "Reopen the Trace view" in status
+    for internal in ("Invalid", "duplicate", "event_id", duplicated):
+        assert internal not in status
+    logged = "".join(records)
+    assert "Trace export failed validation" in logged
+    assert conversation_id in logged
+    # The exporter's own message, verbatim (Redacted aliases its event ids).
+    assert "Invalid Trace events: duplicate event_id" in logged
