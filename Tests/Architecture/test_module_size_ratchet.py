@@ -158,6 +158,9 @@ _BUDGETS: dict[str, int] = {
     # unpacks the staged path's four-part canonical capture
     # (``capture_automatic_evidence`` in console_library_search) instead of
     # formatting the bundle straight into the prompt.
+    # 2026-10-30 (TASK-33620.8 review, owner decision 2026-10-04): +2 -- the
+    # runtime passes that capture in (``automatic_evidence_capture``), so the
+    # Chat layer no longer imports the event handlers (layer-direction test).
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
@@ -597,7 +600,12 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    # 2026-10-30 (TASK-33620.8 review, owner decision 2026-10-04: raise the
+    # row rather than squeeze unrelated code): 6686 -> 6704 (+18). The
+    # runtime owns the Automatic evidence capture beside the staged one and
+    # hands it to the controller, keeping Chat -> Event_Handlers out of the
+    # layer map (Tests/Architecture/test_layer_direction.py).
+    "tldw_chatbook/Chat/console_runtime.py": 6704,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
