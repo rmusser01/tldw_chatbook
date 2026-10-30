@@ -65,10 +65,11 @@ Top to bottom:
 Below the chips sit three panes:
 
 - **Library** (left rail) — the searchable list of items in the current
-  mode, with its **New** / **Import** / **Duplicate** buttons. Its top
-  border names the kind and counts it ("Characters 349"). The **<**
-  button in its header collapses it to a slim **Library** handle; click the
-  handle to bring it back.
+  mode. Its header row reads **Library**, **Import…** and **<**; under it
+  one toolbar row holds the search box and the list's controls (**Name**
+  for the sort, **Tag**, **+ New**). Its top border names the kind and
+  counts it ("Characters 349"). The **<** button collapses the rail to a
+  slim **Library** handle; click the handle to bring it back.
 - The **centre pane** — the detail view or editor for whatever you
   selected. Empty until you pick something. In Characters and Personas
   modes it starts with a **Try a test chat (nothing saved)** toggle for
@@ -87,17 +88,88 @@ panes (handle → Library → centre → Inspector → handle).
 
 | Control | What it does | Shown in |
 |---|---|---|
-| **Search...** | Filters the list as you type. In Characters mode it searches the whole library. Enter moves into the list at once and puts the cursor on the first match as soon as the search's results appear, however long a slow server takes. Until they appear, Enter on the list opens no old row: it remembers one open and opens the first match when the current results arrive (a server search shows an empty list until the server answers). Repeated Enter while waiting still opens it only once. An arrow key, click, new search, sort, tag, source or mode change, or leaving Roleplay cancels that pending open. A search that fails or finds nothing cancels it too. | every mode |
-| **New** | Creates a new item in the current mode. ("Create a new item in this mode.") | every mode |
-| **Import** | Opens a file picker; the tooltip names the accepted formats per mode — "Import a character card (PNG or JSON).", "Import a dictionary (JSON or Markdown).", "Import a world book (JSON)." | Characters, Dictionaries, Lore — **hidden in Personas** |
-| **Duplicate** | Copies the selected item. ("Duplicate the selected item.") | Characters, Dictionaries, Lore — **hidden in Personas** |
-| **Sort: Name** | Cycles the list order — Name → Recent edit → Recent add (plus Relevance while a Characters search is running). ("Cycle the list sort order.") | Characters, Personas — **hidden in Dictionaries and Lore** |
-| **Tag: All** | Opens the "Filter by tag" picker. ("Filter characters by tag.") | **Characters only** |
+| **Search characters…** | Filters the list as you type (the placeholder names the kind, or reads just "Search…" where the box is narrow). The box is one row, so focusing it never moves the list. In Characters mode it searches the whole library. Enter moves into the list at once and puts the cursor on the first match as soon as the search's results appear, however long a slow server takes. Until they appear, Enter on the list opens no old row: it remembers one open and opens the first match when the current results arrive (a server search shows an empty list until the server answers). Repeated Enter while waiting still opens it only once. An arrow key, click, new search, sort, tag, source or mode change, or leaving Roleplay cancels that pending open. A search that fails or finds nothing cancels it too. | every mode |
+| **Name** (the sort) | Cycles the list order — Name → Recent edit → Recent add (plus Relevance while a Characters search is running). The button names the order in force; where the one-row toolbar is tight (a 160-column terminal) it uses a short form ("Edited", "Added", "Best", "Server"), and its tooltip always says it whole ("Sort: Recent edit. Click to change the order. (s)"). | Characters, Personas |
+| **Tag** | Opens the "Filter by tag" picker. The active tag shows in the list's top border, not on the button. ("Filter characters by tag.") | **Characters only** |
+| **+ New** | Opens the **New** chooser (below). ("Create something new: pick a kind and a starting point.") | every mode |
+| **Import…** (header row) | Opens the one Import picker for every Roleplay file (below). Below about 100 columns the word "Library" gives it room. | every mode |
 
-**Empty states** name the way out: "No characters yet - use New or
-Import to add one.", "No personas yet - use New to add one." (Personas has
-no Import), and the same "use New or Import" wording for "No dictionaries
-yet - …" and "No lore books yet - …".
+At 160 columns and wider the toolbar is one row; at 120 the controls take a
+second row under the search box. Labels shorten before they wrap, and a
+control is never cut.
+
+**Duplicate** is in the Inspector, beside **Delete**: it copies the open
+character, lore book or chat dictionary (there is none for personas).
+
+#### New…
+
+**+ New** (or **Ctrl+N**) opens a small chooser titled **New**: "Character ·
+Blank", "Character · From a concept" ("describe it, then generate the
+card"), "Character · From a portrait (Actor Pack)", "Persona · Blank",
+"Persona · From a portrait (Actor Pack)", "Lore book" and "Chat dictionary"
+(both "created at once"). The current kind's Blank is highlighted, so
+**+ New**, **Enter** is the old one-step create. Pick a row with the arrows
+and **Enter**; **Escape** creates nothing. A row of another kind switches
+to that kind first, asking about unsaved edits as a mode switch does. On a
+server runtime the character rows and "Persona · From a portrait" are off,
+and say why ("Server characters are read-only here.", "Portraits come from
+local characters.").
+
+#### Import…
+
+**Import…** opens one picker titled "Import a card (PNG, WebP, JSON,
+Markdown), lore book, chat dictionary, Actor Pack or Buddy". Its default
+filter, **Roleplay files**, shows `.png`, `.webp`, `.json`,
+`.tldw-actor-pack` and `.tldw-persona-vpack`; **Markdown** and **All Files**
+are the other filters. It opens in the last folder you imported from. The
+file decides where it goes, whatever kind is showing: a card becomes a
+character, a world book a lore book, a dictionary a chat dictionary, an
+Actor Pack or a Buddy archive goes through its own review. A JSON or
+Markdown file that could be more than one kind asks **"Import {file} as:"**
+(**Character card** / **Lore book** / **Chat dictionary**; Escape imports
+nothing). Markdown rules without a `---@@@---` line ask too, with **Chat
+dictionary** highlighted, since notes and READMEs have `key: value` lines
+as well. Refusals name the file: "{file} is larger than 10 MB; nothing was
+imported." (cards, lore books and dictionaries; packs keep their own
+limits), "{file} is not a Roleplay file; nothing was imported.", "{file}
+could not be imported: {reason}". A second Import while one runs says "An
+import is already in progress."
+
+Import never asks about unsaved edits. When nothing is unsaved, Roleplay
+still shows, and you have not done anything newer since you picked the
+file, the new item opens in its own kind (the list switches to it).
+"Newer" means a create, a kind switch, a selection, a cursor move, a
+search, sort or tag change, or Escape clearing the search. Otherwise
+the open draft and the list stay as they are and a toast names where it
+went: "Imported Wren · in Lore books".
+
+**Empty states.** A kind with nothing in it says so and names the way
+out: "No characters yet - use New or Import to add one.", and the same for
+personas, lore books and chat dictionaries. A search (or tag) that finds
+nothing says what it searched instead:
+
+```text
+No characters match "kepler".
+28 in total · esc clears the search
+Also in:
+ Lore books 1 ›
+```
+
+**Also in:** lists the other kinds the search matches (counted in the
+background and hidden while a new search is still settling; a kind that
+could not be counted is left out), or reads "Not
+found in other kinds either.". Enter in the search box, or Enter or Down
+on the empty list, moves to the first of them; **Enter** on it switches to
+that kind with the search kept and the cursor on the first match (asking
+about unsaved edits first, as any mode switch does); pressed again while
+that kind loads, Enter opens its first match once it appears. **Escape**
+on the list, or on an **Also in:** target, clears the search and the tag,
+before it clears marks. In the search box, Escape clears them too while the
+message shows; while the search lists matches, it moves to the list.
+
+A kind switch blanks the old kind's rows at once; a slow list says
+"Loading lore books…" after a quarter second. A list that could not load
+says so ("Lore books could not be loaded.") with a **Retry** button.
 
 #### The list
 
@@ -132,9 +204,9 @@ keys act on the list only, never on a focused button.
 The list's top border names the kind and its count: "Characters 349",
 "Personas 114", "Lore books 3 · 2 on" and "Chat dictionaries 3 · 2 on"
 (books add how many are on). While a search or a tag narrows the list it
-reads "Characters 48 of 349", adding "· tag fantasy" for a tag. Personas
-reads "Personas (…)" while it loads. On a server, Characters reads
-"Characters 0" with the empty-list line until the server first answers,
+reads "Characters 48 of 349", adding "· tag fantasy" for a tag. While a
+kind's list loads, its name is followed by "(…)" ("Lore books (…)"); on a
+server, Characters reads "Characters (…)" until the server first answers,
 then "100+" until the total is known. "(?)" means the list could not load.
 
 The bottom border gives the open item's place in the list, "#4 of 28". It
@@ -156,7 +228,8 @@ buttons, **Clear** before **Export**; at its narrowest it shows only
 Marks are kept per kind. They survive searching, sorting, tags and
 switching to another kind and back. When a search or tag hides some of
 them, the bar says so: "✓ 3 marked (2 hidden)". **Clear**, or **Escape**
-while the list or the marks bar has focus, clears the current kind's marks.
+while the list or the marks bar has focus, clears the current kind's marks
+(while a search or tag is active, the first Escape clears that instead).
 Leaving Roleplay clears them all: marks are never saved.
 
 - **Export…** asks for a folder ("Export 3 items as JSON") and writes one
@@ -266,11 +339,12 @@ answer it, Chatbook stays open and says "Quit cancelled."
    (Dictionaries), or **Ctrl+4** (Lore). With focus outside any text box,
    **[** and **]** step to the previous/next mode.
 2. **Create something in the current mode.** Press **Ctrl+N** (or click
-   **New** in the Library rail). The new item appears in the list and its
-   editor opens in the centre pane; **Ctrl+S** saves characters and
-   personas, while dictionaries and lore books have their own Save button.
-3. **Find an item.** Press **Ctrl+F** to jump into the **Search...** box
-   and type. Press Enter to drop into the results list, then Enter again
+   **+ New** in the Library rail), then **Enter** on the highlighted Blank.
+   The new item appears in the list and its editor opens in the centre
+   pane; **Ctrl+S** saves characters and personas, while dictionaries and
+   lore books have their own Save button.
+3. **Find an item.** Press **Ctrl+F** to jump into the search box and
+   type. Press Enter to drop into the results list, then Enter again
    (or click) on a row to open it.
 4. **Send a character to Console.** Select the character, check the
    Inspector reads "Console ready", then press **Attach to Console** (or
@@ -294,11 +368,11 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 |---|---|
 | c / p / d / l | Switch to Characters / Personas / Dictionaries / Lore — **only when focus is not in a text box** (in a text box they type the letter) |
 | [ / ] | Previous / next mode — **only when focus is not in a text box** (in a text box they type the bracket) |
-| Ctrl+N | New item in the current mode |
-| Ctrl+F | Focus the **Search...** box; Enter there moves into the list and puts the cursor on the first match once the results appear |
+| Ctrl+N | Open the **New** chooser (the current kind's Blank is highlighted) |
+| Ctrl+F | Focus the search box; Enter there moves into the list and puts the cursor on the first match once the results appear |
 | Ctrl+Enter | Attach to Console — only with a saved character or persona selected |
 | Ctrl+S | Save — character and persona editors only |
-| Escape | Back: cancels the open editor, returns from a conversation transcript to the card, or moves focus from the search box to the list. On the list or its marks bar it clears the current kind's marks. It never leaves the screen. |
+| Escape | Back: cancels the open editor, returns from a conversation transcript to the card, or moves focus from the search box to the list (while a search matches nothing, Escape in the box clears it instead). On the list or its marks bar it clears an active search and tag first, then the current kind's marks. It never leaves the screen. |
 | Enter | Open the highlighted item (Library list) |
 | m | Mark or unmark the highlighted item (Library list) |
 | Space | Turn the highlighted lore book or dictionary on or off (Library list) |
@@ -328,11 +402,13 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 - **Ctrl+2 takes me to Console now, not Personas mode.** Intended — the
   Ctrl+digit row is the global screen navigator everywhere (Roleplay's
   modes moved to **c / p / d / l**).
-- **New / Import / Duplicate / Tag are greyed out in Characters mode.**
-  You're on a server runtime, where characters are read-only — the buttons
-  give no explanation, and the sort button quietly reads "Sort: Server
-  order". Export, Edit, and Delete are disabled for the same reason.
-  Switch to a local runtime to author characters.
+- **+ New, Duplicate and Tag are greyed out in Characters mode.**
+  You're on a server runtime, where characters are read-only, and the sort
+  button reads "Server". Import stays on, but a character card or a Buddy
+  pack is refused ("Server characters are read-only here. {file} was not
+  imported."); lore books, dictionaries and Actor Packs are not refused.
+  Export, Edit, and Delete are disabled for the same reason. Switch to a
+  local runtime to author characters.
 - **The Inspector only offers Delete.** A dictionary or a lore book is
   selected; the Console and export actions apply to characters and
   personas only.

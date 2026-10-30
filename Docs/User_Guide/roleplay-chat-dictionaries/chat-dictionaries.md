@@ -24,17 +24,19 @@ mode while this screen is open (the mode keys are the single letters
 "Dictionaries — text find/replace rules."
 
 The Library rail lists your dictionaries; before you have any it reads "No
-dictionaries yet - use New or Import to add one." Each row shows the name and
-**on** or **off**, with "{N} rules" on a dim second line when the list is wide
-enough. Highlight a row and press **Space** to switch that dictionary on or off
-without opening it; switching one off says "{name} turned off · space to undo".
+chat dictionaries yet - use New or Import to add one." Each row shows the
+name and **on** or **off**, with "{N} rules" on a dim second line when the
+list is wide enough. Highlight a row and press **Space** to switch that
+dictionary on or off without opening it; switching one off says "{name}
+turned off · space to undo".
 
 ## Layout tour
 
 ![Dictionary entries and preview](../images/roleplay/dictionary-entries.svg)
 
-- **Library rail** (left) — "Search...", the **New**, **Import** and
-  **Duplicate** buttons, then the dictionary rows.
+- **Library rail** (left) — **Import…** on its header row, then the search
+  box and **+ New**, then the dictionary rows. **Duplicate** is in the
+  Inspector.
 - **The detail pane** (centre) — five tabs: **Entries**, **Settings**,
   **Stats**, **Versions**, **Attachments**, over a status line reporting the
   outcome of whatever you just did.
@@ -144,15 +146,22 @@ budget" when the replacements did not fit — over one line per rule that fired
 
 ### Importing and exporting
 
-**Import** in the rail opens the **Import Dictionary** picker for `.json` and
-`.md` files up to 10 MB ("Import failed: file is larger than 10 MB." above
-that); a name already in use is imported anyway as "{name} (imported)",
-announced as "Name in use - imported as '…'." **Export JSON** is the full
-backup. **Export Markdown** is lossy and says so first: "Markdown keeps only
-pattern and replacement text. These fields are DROPPED: regex/type, probability,
-group, max replacements, timed effects, enabled, case-sensitivity, priority. Use
-JSON for a full backup." with **Export anyway** / **Cancel**. Markdown *import*
-drops the same fields.
+**Import…** in the rail opens the one Import picker (see the [parent
+page](../roleplay-chat-dictionaries.md)); a dictionary lands in Dictionaries
+whatever mode is showing, and the toast names where it went ("Imported Ship
+Talk · in Chat dictionaries"). `.json` and `.md` files up to 10 MB are read
+("{file} is larger than 10 MB; nothing was imported." above that; Markdown
+is under the picker's **Markdown** filter), and a file that could also be a
+card asks "Import {file} as:" first. So does a Markdown file without a
+`---@@@---` line, with **Chat dictionary** highlighted: press Enter. A name already in use is imported
+anyway as "{name} (imported)", announced as "Name in use - imported as
+'…'."
+
+**Export JSON** is the full backup. **Export Markdown** is lossy and says
+so first: "Markdown keeps only pattern and replacement text. These fields
+are DROPPED: regex/type, probability, group, max replacements, timed effects,
+enabled, case-sensitivity, priority. Use JSON for a full backup." with
+**Export anyway** / **Cancel**. Markdown *import* drops the same fields.
 
 ### Attaching a dictionary so it actually does something
 
@@ -177,8 +186,9 @@ marker, not the rule above), and Console's **Attach dictionary…** /
 
 ## Common tasks
 
-1. **Create a dictionary and add one rule.** Press **New** (or **Ctrl+N**); you
-   land on **Settings** with the name focused — type a name, press **Save
+1. **Create a dictionary and add one rule.** Press **+ New** (or **Ctrl+N**)
+   and **Enter** on "Chat dictionary"; you land on **Settings** with the
+   name focused — type a name, press **Save
    settings**. On **Entries**, type the text to find into **Pattern**, the
    replacement into the large box, press **Add**.
 2. **Check what it will do.** Type a sentence containing the pattern into the
@@ -199,7 +209,7 @@ marker, not the rule above), and Console's **Attach dictionary…** /
 | Key | Action |
 |---|---|
 | d | Switch to Dictionaries mode (while this screen is open, focus outside a text box) |
-| Ctrl+N | New dictionary |
+| Ctrl+N | Open the **New** chooser on "Chat dictionary" (Enter creates it) |
 | Ctrl+F | Focus the rail's search box |
 | Space | Turn the highlighted dictionary row on/off |
 | Ctrl+Enter | Run the substitution preview (from the "Try it" box) |

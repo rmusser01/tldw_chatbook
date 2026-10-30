@@ -2075,3 +2075,27 @@ def test_not_found_elsewhere_only_when_every_count_succeeded_with_zero():
         "character", query="zzqx", tag=None, total=28, counts={"persona": 0}
     )
     assert uncounted.none_text is None
+
+
+# ---- The persona marker the list never paints (frame slice B2b, OQ15) ----
+
+
+@pytest.mark.parametrize("ascii_glyphs", [False, True], ids=["unicode", "ascii"])
+async def test_a_persona_row_paints_no_active_marker(ascii_glyphs):
+    """The proof that runs for B2a's carry-over: the human-identity marker
+    (``●``, ASCII ``[*]``) is absent from what a persona row paints, gutter
+    included (the workbench's own check reads the same painted prompt, but
+    its class errors at setup on dev, so it never ran)."""
+    set_ascii_glyph_mode(ascii_glyphs)
+    try:
+        async with _PaneHost().run_test(size=(120, 36)) as pilot:
+            pane, _item_list = await _host(
+                pilot, (LibraryRow(item_id="p-1", kind="persona", name="Archivist"),)
+            )
+            pane.mark_active_row("persona", "p-1")
+            await pilot.pause()
+            row = item_at(pilot.app.screen, "persona:p-1")
+            assert not any(marker in row.painted for marker in ("●", "[*]"))
+            assert row.active and row.lines[0].startswith("Archivist")
+    finally:
+        set_ascii_glyph_mode(False)

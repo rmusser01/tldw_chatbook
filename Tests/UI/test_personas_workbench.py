@@ -12277,7 +12277,11 @@ class TestPersonaHumanIdentityRemoval:
                     list(screen.query("#personas-active-profile-summary"))
                 ),
                 "set/clear button": bool(list(screen.query("#personas-set-my-name"))),
-                "active marker": "●" in row.name,
+                # The painted prompt, gutter included, in both glyph forms
+                # (frame slice B2b): B2a read the row's data (``row.name``),
+                # which a marker the list paints never reaches, so the check
+                # could not fail.
+                "active marker": any(marker in row.painted for marker in ("●", "[*]")),
                 "pointer toggle handler": hasattr(
                     PersonasScreen, "_handle_set_my_name"
                 ),

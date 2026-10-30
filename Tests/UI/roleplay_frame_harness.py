@@ -353,7 +353,9 @@ class RoleplayItemView:
 
     ``name``, ``state`` and ``meta`` are the row's data (``meta`` is line 2's
     scent, whether or not the density paints it); ``lines`` is what the prompt
-    paints, gutter stripped, trailing blank lines dropped. ``marked`` is the
+    paints, gutter stripped, trailing blank lines dropped. ``painted`` is the
+    whole prompt the ``OptionList`` paints, gutter included (frame slice B2b:
+    a marker in the gutter is invisible to ``lines``). ``marked`` is the
     list's mark state; ``painted_mark`` is what the row paints: the option's
     own prompt shows the resolved ``✓`` (``[x]`` in ASCII mode) in the
     gutter's mark column.
@@ -366,6 +368,7 @@ class RoleplayItemView:
     state: str | None
     meta: str | None
     lines: tuple[str, ...]
+    painted: str
     active: bool
     marked: bool
     painted_mark: bool
@@ -421,6 +424,7 @@ def item_at(node, index: int | str) -> RoleplayItemView:
         state=row.state,
         meta=row.meta,
         lines=tuple(painted),
+        painted=shown_text,
         active=item_list.active_id == option_id,
         marked=option_id in item_list.marked_ids(kind),
         painted_mark=painted_mark,
