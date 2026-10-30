@@ -2960,6 +2960,65 @@ async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_shipped_default_continuation_destinations_stay_durable() -> None:
+    """Every ready continuation-capable provider keeps a durable tuple.
+
+    Only moonshot, zai, deepseek and engine presets produce provider
+    continuations. With the shipped default config each one that is ready
+    resolves to a destination that records its continuation tuple, so making
+    durability optional (credentialed/query/oversized bases) costs no default
+    setup its resume. Legacy ``chat_with_<provider>`` handlers have no
+    continuation protocol at all.
+    """
+    import tomllib
+
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    defaults = tomllib.loads(app_config.CONFIG_TOML_CONTENT)
+    environ = {
+        section["api_key_env_var"]: "probe-key-1234567890"
+        for section in defaults.get("api_settings", {}).values()
+        if isinstance(section, dict) and section.get("api_key_env_var")
+    }
+    environ.update(
+        {
+            name: "probe-key-1234567890"
+            for name in ("MOONSHOT_API_KEY", "ZAI_API_KEY", "DEEPSEEK_API_KEY")
+        }
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": []})
+        )
+    ) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client, config_provider=lambda: defaults, environ=environ
+        )
+
+        async def resolve(provider):
+            return await gateway.resolve_for_send(
+                ConsoleProviderSelection(
+                    provider=provider, explicit_model="probe-model"
+                )
+            )
+
+        ready = []
+        for key in ["moonshot", "zai", "deepseek"] + [r.key for r in ENGINE_RECORDS]:
+            resolved = await resolve(key)
+            if not resolved.ready:
+                # Workspace-URL presets block until a base URL is configured.
+                assert key in {"azure", "cloudflare", "custom-hosted", "databricks"}
+                continue
+            ready.append(key)
+            assert resolved.continuation_protocol, key
+            assert resolved.resolved_destination.continuation_provider, key
+        assert {"moonshot", "zai", "deepseek", "arcee", "together"} <= set(ready)
+        for legacy in ("openai", "anthropic"):
+            assert (await resolve(legacy)).continuation_protocol is None, legacy
+
+
+@pytest.mark.asyncio
 async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() -> None:
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
     from tldw_chatbook.Chat.provider_readiness import (
