@@ -1617,3 +1617,13 @@ Tests/UI/test_console_modal_theme_frames.py::test_console_modals_paint_theme_fra
 # consent first, and leaving it during model preparation ends in idle.
 Tests/UI/test_console_speech_header_state.py::test_enter_on_hands_free_asks_consent_and_declining_starts_nothing
 Tests/UI/test_console_speech_header_state.py::test_exit_during_model_preparation_cancels_and_a_late_start_never_records[escape]
+# TASK-33622.6 (2026-10-29): the rail's 'Filter visible titles' keeps what is
+# typed across the debounced rebuild (value, case, focus, no Trace), counts
+# and shows titles only, and paints every counted row. The file runs ~55 s
+# whole, so its P0 cases are gated as node ids (each ~6-13 s locally at load
+# 13-20); appended at the tail, so no existing entry changes shard.
+Tests/UI/test_console_rail_filter_typing.py::test_typing_across_the_debounce_keeps_case_text_and_focus
+Tests/UI/test_console_rail_filter_typing.py::test_binding_letters_typed_around_rebuilds_stay_in_the_filter
+Tests/UI/test_console_rail_filter_typing.py::test_the_match_count_and_rows_follow_one_title_rule
+Tests/UI/test_console_rail_filter_typing.py::test_every_counted_row_is_painted_after_each_filter
+Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_into_the_focused_input

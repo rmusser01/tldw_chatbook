@@ -622,7 +622,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # shard: 1143 + 2 = 1145. Rebased 2026-10-29 onto dev's 1142: 1144 + 2 = 1146.
 # Rebased 2026-10-29 onto dev's 1143: 1145 + 2 = 1147.
 # Rebased 2026-10-29 onto dev's 1145 entries: 1147 + 2 = 1149.
-MINIMUM_FILES = 1149
+# TASK-33622.6 (2026-10-29) appends 5 node ids at the tail: the Console rail
+# filter's typing, binding-letter, titles-only count, painted-row and
+# stale-sync cases, so no existing entry changes shard: dev's 1144 + 5 = 1149.
+# Rebased 2026-10-29 onto dev's 1149 entries: 1149 + 5 = 1154.
+MINIMUM_FILES = 1154
 
 
 def read_census(path: Path) -> list[str]:
