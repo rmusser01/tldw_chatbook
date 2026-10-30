@@ -2961,10 +2961,10 @@ class ConsoleRuntime:
 
 
     def cancel_received_intents(self, session_id: str | None = None) -> bool:
-        """Cancel existing intake custody, including a queue/review with no claim."""
+        """Cancel pre-acceptance intake custody (after it, Stop belongs to the run)."""
         cancelled = False
         for record in tuple(self._turn_custody.values()):
-            if record.received_intent is None or (
+            if record.received_intent is None or record.inputs.durable_accepted or (
                 session_id is not None and record.session_id != session_id
             ):
                 continue

@@ -723,8 +723,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR3318 integration: all1276 dev entries plus the6 source selections.
 # PR3318 integration appends three ownership/interruption entries.
 # PR3319 integration: preserve1285 dev entries plus5 source selections.
-MINIMUM_FILES = 1291
+# TASK-33621.22 (2026-10-29) appends 1 whole-file entry at the tail: Stop in
+# the pre-provider "Connecting tools…" window (two mounted cases, about 16 s
+# locally), so no existing entry changes shard: dev's 1144 + 1 = 1145.
+# Rebased 2026-10-29 onto dev's 1149: 1149 + 1 = 1150.
 
+# PR3320 rebase preserves the complete current-dev prefix.
+MINIMUM_FILES = 1292
 
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.

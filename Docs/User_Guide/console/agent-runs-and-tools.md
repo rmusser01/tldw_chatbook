@@ -202,7 +202,10 @@ means the tool finished and the model is composing the next round, and
 `Generating…` is the wait for the model's first response of the turn. That
 setup step is capped at ten seconds: if something it needs — an OS
 keychain prompt, for instance — does not answer in time, the send goes
-ahead without profile tools rather than waiting. Once an approval, a skill
+ahead without profile tools rather than waiting. **Stop** (or Ctrl+G) works
+during that step too: the reply ends `[stopped]` with the "Response stopped
+by user." row before anything reaches the model, pressing Stop again changes
+nothing, and your next send goes out normally. Once an approval, a skill
 or worktree confirm, or a question is up and waiting on you, the line reads
 `Waiting for your approval · 12s` for an approval, `Waiting for your
 answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
