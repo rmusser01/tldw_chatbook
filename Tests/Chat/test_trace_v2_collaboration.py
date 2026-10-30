@@ -1022,3 +1022,34 @@ def test_stored_unrecorded_references_are_cleared_disclosed_and_reimportable(
     assert imported.manifest["missing_metadata"] == payload["manifest"][
         "missing_metadata"
     ]
+
+
+def test_clearing_unrecorded_references_logs_metadata_only() -> None:
+    """A future producer that leaves orphans must surface in the app log, not
+    only inside shared bundles; the line carries field names and event kinds,
+    never event ids or content (review follow-up, TASK-33621.8)."""
+    from loguru import logger
+
+    attached = _record(
+        event_id="console-trace:3c8cc2a1:retrieval:context_attached",
+        kind="context_attached",
+        parent_event_id=_UNRECORDED_RETRIEVAL,
+        source_event_id=_UNRECORDED_RETRIEVAL,
+    )
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
+    try:
+        trajectory_export.preflight_trace_export(_snapshot(attached))
+        orphaned = "".join(records)
+        records.clear()
+        trajectory_export.preflight_trace_export(_snapshot(_record()))
+        clean = "".join(records)
+    finally:
+        logger.remove(sink_id)
+
+    assert "cleared 2 reference(s) to unrecorded events" in orphaned
+    assert "parent_event_id" in orphaned and "source_event_id" in orphaned
+    assert "context_attached" in orphaned
+    assert "3c8cc2a1" not in orphaned
+    assert "A bounded diagnostic summary" not in orphaned
+    assert clean == ""
