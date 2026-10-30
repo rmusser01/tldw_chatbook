@@ -385,3 +385,93 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
         if console is not None:
             await console._console_runtime().dispose()
         database.close()
+
+
+@private_profile_test
+async def test_compact_action_compacts_and_the_next_send_no_longer_pauses(
+    request, monkeypatch, tmp_path
+):
+    """TASK-33621.4 AC#4 through the real ChatScreen, controller and store.
+
+    After a hold is cancelled the chat is over its trigger; the Compact action
+    (palette entry and ``/compact``) runs Compact now (one summary call), says
+    so in the chat, the forecast clears, and the same message then sends
+    without a hold.
+    """
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        COMPACTION_PAUSE_FORECAST_COPY,
+    )
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, held_draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+
+            def badge() -> str:
+                return str(console.query_one("#workbench-header-status", Static).content)
+
+            async def settle(predicate) -> None:
+                for _ in range(150):
+                    await console._sync_native_console_chat_ui()
+                    await pilot.pause(0.1)
+                    if predicate():
+                        return
+
+            card = console.query_one(TraceCallRecoveryCallout)
+            card.query_one("#console-trace-cancel", Button).focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await settle(lambda: badge() == COMPACTION_PAUSE_FORECAST_COPY)
+            assert badge() == COMPACTION_PAUSE_FORECAST_COPY
+
+            summaries = len(
+                [c for c in adapter_calls if "Summarize" in str(c.get("system_message"))]
+            )
+            # The palette entry's action (``/compact`` dispatches to the same
+            # method, but typing it would replace the restored draft).
+            console.action_compact_console_context()
+            await settle(
+                lambda: not any(
+                    w.group == "console-compact" and not w.is_finished
+                    for w in host.workers
+                )
+                and badge() != COMPACTION_PAUSE_FORECAST_COPY
+            )
+            rows = [
+                message.content
+                for message in controller.store.messages_for_session(session.id)
+                if message.role is ConsoleMessageRole.SYSTEM
+            ]
+            assert (
+                len(
+                    [
+                        c
+                        for c in adapter_calls
+                        if "Summarize" in str(c.get("system_message"))
+                    ]
+                )
+                == summaries + 1
+            ), rows
+            assert any("memory updated" in row for row in rows), rows
+            assert badge() != COMPACTION_PAUSE_FORECAST_COPY
+            assert console._console_composer_or_none().draft_text() == held_draft
+
+            calls = len(adapter_calls)
+            await console._send_console_message_from_visible_action(
+                session_id=session.id
+            )
+            await settle(lambda: len(adapter_calls) > calls)
+            assert len(adapter_calls) == calls + 1
+            assert controller.store.preparation_for_session(session.id) is None or (
+                controller.store.preparation_for_session(session.id).pause_kind
+                is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+            )
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()

@@ -216,7 +216,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24331/737 -> 24338/738 2026-10-29 by TASK-33621.4, owner rule (a
+    #: fix over a size ratchet raises the row with a dated comment; never move
+    #: or reflow code to make it fit): `/compact` dispatches by name to a
+    #: ChatScreen action (the action-command contract requires the method on
+    #: the screen), so the screen gains action_compact_console_context (+1
+    #: method, +6 lines; the work lives in Console_Modules/compact_command.py)
+    #: and its target row (+1). The compaction forecast's two keywords (Inspect
+    #: and the header, +2) used dev's slack. Dev ed7481a30c measures 24329/737;
+    #: with the task, 24338/738, the exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24338, 738),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
