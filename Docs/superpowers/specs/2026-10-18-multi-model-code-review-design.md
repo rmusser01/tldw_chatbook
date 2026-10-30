@@ -967,9 +967,13 @@ store lock only for precondition checks so the source guard never waits on the U
 thread under it; the reader memoizes commit verification and per-directory
 listings and refuses an over-quota change set before reading entries. Exclusions
 that resolve outside the root are skipped (escaping links are still refused).
-Changed submodules and over-size changed files are gaps too (explicit untracked or
+Changed submodules, non-UTF-8 and over-size changed files are gaps too (explicit untracked or
 patch selections still refuse). The primary sees the first eight gap reasons in
 `PreparedReview.coverage_gaps` (`coverage_gaps_omitted` counts the rest) and states
 them before launch; a reviewer's first scope listing repeats them, and its
 persisted launch task carries only the count. Turning the gate off does not stop
 accepted automatic continuations of a review already in progress.
+
+An approval denial ends a run's unstarted checks only when the denied call is the
+claimed check's own argv-exact `shell_exec`; an unrelated denied `shell_exec`
+leaves the claim pending.

@@ -3176,7 +3176,7 @@ request, diff, commit, patch or changes) reports that a folder is needed; other
 “review …” wording, such as “Review my resume”, stays an ordinary chat.
 
 Each reviewer gets the same captured source and general brief, plus its optional
-focus. A changed binary, symlink, submodule or over-size file is listed by path as
+focus. A changed binary, symlink, submodule, non-UTF-8 or over-size file is listed by path as
 a coverage gap, and changed files hidden by exclusions or sensitive-path rules are
 counted without names; neither blocks the rest of the review. The assistant states
 these gaps (up to eight, plus a count of the rest) before launching reviewers, and
