@@ -953,6 +953,126 @@ def test_agent_service_forwards_current_checkpoint_as_one_owner_group(tmp_path) 
     assert turn.tokens == 3
 
 
+def _raw_tool_response(arguments: object) -> dict[str, object]:
+    return {
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "checking",
+                    "reasoning_content": "PRIVATE-REASONING-CANARY",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "calculator", "arguments": arguments},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+    }
+
+
+@pytest.mark.parametrize("provider", ["moonshot", "zai"])
+def test_real_handler_echo_anchors_its_own_continuation(tmp_path, provider) -> None:
+    """The agent's exact-native-batch anchor matches real handler output.
+
+    Real normalization and turn responses, not a mocked HostedChatTurn: the
+    echo the agent appends and the checkpoint's newest batch must be the same
+    canonical tool_calls, or every continued tool turn would fail.
+    """
+    from tldw_chatbook.LLM_Calls.hosted_chat import normalize_hosted_chat_response
+
+    if provider == "moonshot":
+        # Spaced JSON stays verbatim on both sides.
+        turn = normalize_hosted_chat_response(
+            _raw_tool_response('{"expression": "2+2"}'),
+            finish_policy=moonshot._FINISH_POLICY,
+        )
+        resolution = moonshot.MoonshotResolution(
+            provider="moonshot",
+            model="kimi-k3",
+            api_key="secret",
+            base_url="https://api.moonshot.ai/v1",
+            timeout=90.0,
+            retries=3,
+            retry_delay=1.0,
+            streaming=False,
+        )
+        response = moonshot._moonshot_turn_response(
+            turn, resolution=resolution, provider_continuations=()
+        )
+    else:
+        # Object arguments are serialized once, before either side reads them.
+        turn = zai.normalize_zai_response(
+            _raw_tool_response({"z": 1, "expression": "2+2"})
+        )
+        resolution = zai.ZAIResolution(
+            provider="zai",
+            model="glm-5.2",
+            api_key="secret",
+            base_url="https://api.z.ai/api/paas/v4",
+            timeout=90.0,
+            retries=3,
+            retry_delay=1.0,
+            streaming=False,
+        )
+        response = zai._turn_response(
+            turn, resolution=resolution, provider_continuations=()
+        )
+    checkpoint = response.provider_continuation
+    assert checkpoint is not None and checkpoint.state == "active"
+    registry = ToolCatalogRegistry()
+    registry.register_provider(BuiltinToolProvider())
+    service = AgentService(
+        db=AgentRunsDB(tmp_path / "anchor.db", client_id="contract"),
+        registry=registry,
+        chat_call=lambda **_kwargs: response,
+    )
+    call_model = service._make_call_model(
+        AgentConfig(model=resolution.model, system_prompt="s", native_tools=True),
+        provider,
+        [],
+        continuation_owner_key="_owner",
+        continuation_owner_message_id="owner-1",
+    )
+    user = {"role": "user", "content": "2+2?"}
+    first = call_model([user], (), None)
+    assert first.provider_continuation == checkpoint
+    history = [
+        user,
+        first.assistant_message,
+        {"role": "tool", "tool_call_id": "call_1", "content": "4"},
+    ]
+    # Raises "requires its exact native batch" if the shapes ever diverge.
+    assert call_model(history, (), checkpoint).tokens == 3
+
+
+def test_deepseek_handler_never_arms_the_continuation_anchor() -> None:
+    from tldw_chatbook.LLM_Calls import deepseek
+    from tldw_chatbook.LLM_Calls.hosted_chat import normalize_hosted_chat_response
+
+    turn = normalize_hosted_chat_response(
+        _raw_tool_response('{"expression": "2+2"}'),
+        finish_policy=deepseek._FINISH_POLICY,
+        allowed_choice_keys=frozenset({"logprobs"}),
+    )
+    response = deepseek._deepseek_turn_response(turn)
+
+    assert getattr(response, "provider_continuation", None) is None
+    assert response["choices"][0]["message"]["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "calculator", "arguments": '{"expression": "2+2"}'},
+        }
+    ]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "model", "base_url"),
