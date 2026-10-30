@@ -1908,6 +1908,9 @@ class LibraryNotesController:
         (Delete, in Info) over a deferred restore. A control the apply has
         not re-enabled yet (a deferred apply) gets one retry after the
         refresh, still in the operation's region and marked programmatic.
+        A backstop since the origin stays enabled while its transfer runs
+        (TASK-34000.29 fix round 1, A): a focus the user moved meanwhile is
+        captured by the apply's own sync and replayed over this return.
         """
         if not operation.origin_control:
             return

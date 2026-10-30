@@ -235,11 +235,30 @@ async def test_focus_returns_to_the_control_that_started_the_export(
     Each landing is followed by a real key on it (Enter re-opens the export;
     Shift+Tab walks to Copy; Tab walks back), and the folder holds exactly one
     export afterwards: returning focus never presses anything.
+
+    Final review, T6 m1: pressing the still-enabled origin behind the open
+    picker opens no second picker and claims no second token. T6 m2 is
+    pinned on a fake below (``test_the_origin_return_retries_once_after_
+    the_refresh``): traced here, a focus moved off the origin while the
+    picker is open -- to Back, or to Delete when the origin is disabled --
+    is captured by the apply's own canvas sync and replayed OVER the
+    cancel's return (``_restore_library_notes_after_targeted_sync``, then
+    ``_refocus_pruned_child``), the user's move winning by design, so no
+    mounted arm can need the return while the origin stays enabled.
     """
     host, seeded, toasts, copies = _mounted(tmp_path, monkeypatch)
     folder = tmp_path / "exports"
     folder.mkdir()
     destination = folder / "ideas.md"
+    pushes: list[str] = []
+    original_push_screen = host.push_screen
+
+    def counting_push_screen(dialog, *args, **kwargs):
+        if isinstance(dialog, FileSave):
+            pushes.append("FileSave")
+        return original_push_screen(dialog, *args, **kwargs)
+
+    monkeypatch.setattr(host, "push_screen", counting_push_screen)
     async with host.run_test(size=SIZE) as pilot:
         screen = await _library(host, pilot)
         await _open_note(screen, pilot, IDEAS, seeded.ideas_id)
@@ -248,6 +267,7 @@ async def test_focus_returns_to_the_control_that_started_the_export(
         # Cancelled.
         await pilot.click(f"#{EXPORT_MD}")
         await _export_dialog(host, pilot)
+        assert pushes == ["FileSave"]
         await pilot.press("escape")
         await _back_on_screen(host, screen, pilot)
         await _focus_settles_on(
@@ -259,6 +279,16 @@ async def test_focus_returns_to_the_control_that_started_the_export(
         # Written: Enter on the returned focus re-opens the dialog.
         await pilot.press("enter")
         dialog = await _export_dialog(host, pilot)
+        assert pushes == ["FileSave", "FileSave"]
+        # m1: the still-enabled origin behind the open picker is refused
+        # before any token is claimed -- one picker, one token, no toast.
+        token_before = screen._notes_state.operation.token
+        assert not screen.query_one(f"#{EXPORT_MD}", Button).disabled
+        screen.query_one(f"#{EXPORT_MD}", Button).press()
+        await pilot.pause(0.2)
+        assert pushes == ["FileSave", "FileSave"], pushes
+        assert host.screen is dialog
+        assert screen._notes_state.operation.token == token_before
         await pilot.press("ctrl+a")
         filename = dialog.query_one(FileNameInput)
         filename.value = str(destination)
@@ -295,6 +325,70 @@ async def test_focus_returns_to_the_control_that_started_the_export(
             host, screen, pilot, EXPORT_MD, "export Markdown", after="Tab"
         )
         assert sorted(path.name for path in folder.iterdir()) == ["ideas.md"]
+
+
+def test_the_origin_return_retries_once_after_the_refresh() -> None:
+    """Final review, T6 m2 (M-3): the deferred retry, on a controller-shaped
+    fake. A control the apply has not re-enabled yet (not focusable) gets
+    exactly ONE retry after the refresh, marked programmatic when it lands;
+    a retry that finds the region changed does nothing; an already-focusable
+    origin is focused at once and schedules nothing. RED under a no-op
+    ``_return_focus_to_library_notes_operation_origin`` (measured)."""
+    from types import MethodType, SimpleNamespace
+
+    from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+        LibraryNotesController,
+    )
+
+    class _Origin:
+        focusable = False
+
+    origin = _Origin()
+    deferred: list[tuple] = []
+    focused: list[tuple] = []
+    fake = SimpleNamespace(
+        focused=None,
+        query_one=lambda selector, _type=None: origin,
+        _library_notes_active_region=lambda: "context",
+        call_after_refresh=lambda fn, *args, **kwargs: deferred.append(
+            (fn, args, kwargs)
+        ),
+        set_focus=lambda target, **kwargs: focused.append((target, kwargs)),
+        _library_notes_programmatic_focus_target=None,
+    )
+    fake._return_focus_to_library_notes_operation_origin = MethodType(
+        LibraryNotesController._return_focus_to_library_notes_operation_origin, fake
+    )
+    operation = SimpleNamespace(origin_control=EXPORT_MD, region="context")
+
+    # Not focusable yet: one retry is scheduled, nothing is focused.
+    LibraryNotesController._return_focus_to_library_notes_operation_origin(
+        fake, operation
+    )
+    assert focused == []
+    assert len(deferred) == 1 and deferred[0][2] == {"deferred": True}
+
+    # The apply re-enabled it: the retry lands, marked programmatic.
+    origin.focusable = True
+    fn, args, kwargs = deferred[0]
+    fn(*args, **kwargs)
+    assert focused == [(origin, {"scroll_visible": False})]
+    assert fake._library_notes_programmatic_focus_target is origin
+    assert len(deferred) == 1, "a retry never schedules another retry"
+
+    # A retry whose region moved on does nothing.
+    fake._library_notes_active_region = lambda: "navigator"
+    LibraryNotesController._return_focus_to_library_notes_operation_origin(
+        fake, operation, deferred=True
+    )
+    assert len(focused) == 1
+
+    # Focusable from the start: focused at once, nothing scheduled.
+    fake._library_notes_active_region = lambda: "context"
+    LibraryNotesController._return_focus_to_library_notes_operation_origin(
+        fake, operation
+    )
+    assert len(focused) == 2 and len(deferred) == 1
 
 
 async def test_a_refused_escape_names_the_field_and_mentions_discard_only_when_shown(

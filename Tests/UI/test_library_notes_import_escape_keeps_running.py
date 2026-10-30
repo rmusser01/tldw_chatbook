@@ -357,6 +357,38 @@ async def test_escape_during_an_import_keeps_it_running(
                     f"{getattr(screen.focused, 'id', None)!r}"
                 ),
             )
+            # Final review (Task 10): a Tab-focused Cancel import names its
+            # Enter action in the footer, and F1 mirrors it; Shift+Tab goes
+            # back to the progress region, where the blind Enter below
+            # cancels nothing. RED at 29d2272b95: the import tier named no
+            # Enter action at all ("enter_label_after_tab == ''").
+            await pilot.press("tab")
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "note-import-cancel"
+                and "enter cancel import" in _footer(host, screen),
+                lambda: (
+                    "Tab onto Cancel import with its Enter chip painted: "
+                    f"focus={getattr(screen.focused, 'id', None)!r} "
+                    f"footer={_footer(host, screen)!r}"
+                ),
+            )
+            assert screen._library_focus_enter_label() == "cancel import"
+            shortcuts = await _f1_shortcuts(host, screen, pilot)
+            assert ("enter", "cancel import") in shortcuts, shortcuts
+            assert ("esc", "back to notes") in shortcuts, shortcuts
+            await pilot.press("shift+tab")
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "note-import-body"
+                and "enter cancel import" not in _footer(host, screen),
+                lambda: (
+                    "Shift+Tab back to the progress region, chip gone: "
+                    f"focus={getattr(screen.focused, 'id', None)!r} "
+                    f"footer={_footer(host, screen)!r}"
+                ),
+            )
+            assert controller.snapshot.cancel_requested is False
             await pilot.press("enter")
             await pilot.press("escape")
             await _until(

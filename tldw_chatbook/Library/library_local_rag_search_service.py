@@ -147,6 +147,14 @@ ROUTE_NOTE_HYBRID_NO_KEYWORD_SOURCES = (
     "no keyword leg for the selected sources — semantic only"
 )
 ROUTE_NOTE_SEMANTIC_LEG_EMPTY = "semantic leg empty — keyword-only results"
+# TASK-34000.29 final review (m-1): the liveness check could not ask the
+# notes database, so every note hit on the page was withheld rather than
+# shown on a guess -- the outcome must say so, never read as a plain "no
+# results". Rendered as "Note results hidden: the notes database did not
+# answer." by ``library_rag_state._route_note_sentence``.
+ROUTE_NOTE_NOTE_HITS_UNVERIFIED = (
+    "note results hidden: the notes database did not answer"
+)
 # (TASK-18903) A seam that RAN AND THREW contributed nothing, and its silence
 # must not read as "that source has nothing". This is the same principle the
 # routing disclosures already encode -- and, as their own docstring says, zero
@@ -930,7 +938,8 @@ class LibraryLocalRagSearchService:
                 metadata_allowlist=allowlists,
             )
 
-        rows = await self._live_semantic_rows(raw_results, source_types)
+        rows, liveness_notes = await self._live_semantic_rows(raw_results, source_types)
+        route_notes = (*route_notes, *liveness_notes)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
             return _with_route_notes(
                 LibraryRagSearchOutcome(
@@ -1041,12 +1050,15 @@ class LibraryLocalRagSearchService:
             keyword_source_types=keyword_source_types,
             **allowlist_kwargs,
         )
-        rows = await self._live_semantic_rows(raw_results, source_types)
+        rows, liveness_notes = await self._live_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
-            return LibraryRagSearchOutcome(
-                status="empty",
-                recovery_state=_rag_index_empty_recovery_state(),
-                runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
+            return _with_route_notes(
+                LibraryRagSearchOutcome(
+                    status="empty",
+                    recovery_state=_rag_index_empty_recovery_state(),
+                    runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
+                ),
+                liveness_notes,
             )
         if scope is not None and scope.state == "scoped" and not rows:
             # The same distinction the scoped semantic path draws (task-6):
@@ -1054,14 +1066,17 @@ class LibraryLocalRagSearchService:
             # scope-shaped dead end with a scope-shaped next action, and
             # routing scoped queries to hybrid must not quietly demote it to
             # the generic no-match state.
-            return LibraryRagSearchOutcome(
-                status="empty",
-                recovery_state=_scope_zero_results_recovery_state(
-                    _scope_item_count(scope, source_types)
+            return _with_route_notes(
+                LibraryRagSearchOutcome(
+                    status="empty",
+                    recovery_state=_scope_zero_results_recovery_state(
+                        _scope_item_count(scope, source_types)
+                    ),
+                    runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
                 ),
-                runtime_backend=_RAG_HYBRID_RUNTIME_BACKEND,
+                liveness_notes,
             )
-        route_notes: list[str] = []
+        route_notes: list[str] = list(liveness_notes)
         if _rows_are_keyword_only(rows) and await self._semantic_index_is_empty(
             rag_service
         ):
@@ -1167,7 +1182,7 @@ class LibraryLocalRagSearchService:
 
     async def _live_semantic_rows(
         self, raw_results: Any, source_types: tuple[str, ...]
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
         """`_filtered_semantic_rows`, minus note hits whose note is gone.
 
         TASK-34000.29 (review R0, I-1). The vector store is a projection: it
@@ -1181,19 +1196,27 @@ class LibraryLocalRagSearchService:
         An app with no local Notes seam able to answer (test doubles, a
         build without the scope service) keeps its rows: it holds no notes
         this device could have deleted. A lookup that fails drops every note
-        hit on the page instead -- a deleted note is never shown on a guess.
+        hit on the page instead -- a deleted note is never shown on a guess
+        -- and says so (final review m-1): the second value carries
+        ``ROUTE_NOTE_NOTE_HITS_UNVERIFIED`` for the outcome's route notes, so
+        the user is never told there was nothing.
+
+        Returns:
+            ``(rows, route_notes)``: the rows to show and the disclosures
+            the liveness check adds (empty when it answered).
         """
         rows = _filtered_semantic_rows(raw_results, source_types)
         candidates = {
             note_id for row in rows if (note_id := _semantic_note_id(row)) is not None
         }
         if not candidates:
-            return rows
+            return rows, ()
         service = getattr(self._app, "notes_scope_service", None)
         lookup = getattr(service, "live_local_note_ids", None)
         if not callable(lookup):
-            return rows
+            return rows, ()
         user_id = getattr(self._app, "notes_user_id", None) or "default_user"
+        route_notes: tuple[str, ...] = ()
         try:
             live = set(await lookup(sorted(candidates), user_id=user_id))
         except Exception as error:
@@ -1202,11 +1225,12 @@ class LibraryLocalRagSearchService:
                 type(error).__name__,
             )
             live = set()
+            route_notes = (ROUTE_NOTE_NOTE_HITS_UNVERIFIED,)
         return [
             row
             for row in rows
             if (note_id := _semantic_note_id(row)) is None or note_id in live
-        ]
+        ], route_notes
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
         """True only when the runtime's vector store verifiably has 0 documents.
