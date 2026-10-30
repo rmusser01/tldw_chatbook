@@ -738,6 +738,14 @@ MINIMUM_FILES = 1317
 # 7536ac3b87 (1,163 entries, floor 1,163): the floor is the measured count, 1,164.
 # PR3334 integration: retain current dev and append B2b sniff.
 MINIMUM_FILES = 1318
+# (Task 3) and Tests/UI/test_tag_filter_picker.py (Task 11) at the tail, one
+# commit each (the last assignment is the one that takes effect). History:
+# 1,145 -> 1,146 -> 1,147 on dev 38623632e9; rebased 2026-10-29 onto dev
+# ff815f8559 (1,156 entries, its floor read 1,149): 1,157 / 1,158; rebased
+# 2026-10-30 onto dev 7536ac3b87 (1,163 entries, floor 1,163): the floor is
+# the measured count, 1,165.
+# PR3334 integration: append tag picker after sniff.
+MINIMUM_FILES = 1319
 
 
 def read_census(path: Path) -> list[str]:
