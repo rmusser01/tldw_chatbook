@@ -248,6 +248,24 @@ def chat_call_impl(
                 sampling_overlays=sampling_overlays,
                 execution_provider=execution_provider,
             )
+        window = getattr(effective_resolution, "context_window", None)
+        resolve_window = getattr(self._gateway, "resolve_context_window", None)
+        if (
+            review_admission is not None
+            and window is not None
+            and not window.verified
+            and callable(resolve_window)
+        ):
+            # Sends attach the cache's fallback and refresh in the background,
+            # but review admission refuses unknown capacity: a first review
+            # child to an unprobed destination waits for the bounded probe.
+            try:
+                effective_resolution = bridge.dataclass_replace(
+                    effective_resolution,
+                    context_window=await resolve_window(effective_resolution),
+                )
+            except ValueError:
+                pass  # changed target: keep the fallback; admission refuses it
         if is_subagent:
             call_continuation_target = (
                 bridge.ContinuationRestoreTarget(
