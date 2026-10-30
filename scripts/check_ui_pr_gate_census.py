@@ -626,7 +626,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # filter's typing, binding-letter, titles-only count, painted-row and
 # stale-sync cases, so no existing entry changes shard: dev's 1144 + 5 = 1149.
 # Rebased 2026-10-29 onto dev's 1149 entries: 1149 + 5 = 1154.
-MINIMUM_FILES = 1154
+# TASK-33621.51 (2026-10-29) appends 2 whole-file entries at the tail: the
+# Library outcome line on a mounted ChatScreen (four cases, about 24 s
+# locally) and its projection helper (16 cases, about 12 s), so no
+# existing entry changes shard: dev's 1149 + 2 = 1151.
+MINIMUM_FILES = 1163
 
 
 def read_census(path: Path) -> list[str]:
