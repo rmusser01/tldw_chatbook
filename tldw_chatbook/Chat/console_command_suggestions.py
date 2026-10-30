@@ -61,6 +61,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "settings": "Open Chat settings: every setting for this chat (Ctrl+O)",
     "context": "Show current and next-send context (Ctrl+Shift+P)",
     "endpoint": "Create a named custom endpoint from a template",
+    "compact": "Summarize older turns to free context now (one extra model call)",
 }
 
 #: Shown for a registered command with no ``_COMMAND_DESCRIPTIONS`` entry --

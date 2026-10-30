@@ -138,6 +138,11 @@ class ConsoleCommandProvider(Provider):
                 "Browse image styles and insert an @style token (/generate-image)",
             ),
             (
+                "Console: Compact context now",
+                screen.action_compact_console_context,
+                "Summarize older turns to free context (one model call); same as /compact",
+            ),
+            (
                 "Console: View chat context",
                 screen.action_view_chat_context,
                 "Show current and next-send context (Ctrl+Shift+P)",

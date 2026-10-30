@@ -118,6 +118,7 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "settings",
         "context",
         "endpoint",
+        "compact",  # TASK-33621.4
         "goal",
     )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")

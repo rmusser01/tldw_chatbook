@@ -6034,6 +6034,12 @@ class ChatScreen(BaseAppScreen):
             return
         self.run_worker(self._open_console_settings(), exclusive=False)
 
+    def action_compact_console_context(self) -> None:
+        """`/compact` and the palette entry: Compact now (TASK-33621.4)."""
+        from ..Console_Modules.compact_command import run_compact_command
+
+        self.run_worker(run_compact_command(self), group="console-compact")
+
     def action_open_console_new_endpoint(self) -> None:
         """Open the endpoint-template creation flow on top of session settings.
 
@@ -18483,6 +18489,7 @@ class ChatScreen(BaseAppScreen):
         "settings": "action_open_console_session_settings",
         "context": "action_view_chat_context",
         "endpoint": "action_open_console_new_endpoint",
+        "compact": "action_compact_console_context",
     }
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         command.name: command.handler_id
