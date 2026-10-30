@@ -139,6 +139,17 @@ charset-less `text/event-stream`; pre-decoded string fixtures bypass that step.
 Test encoding behavior with raw `ensure_ascii=False` JSON bytes and real HTTP
 response construction, including missing/misleading charsets and one-byte reads.
 
+## Retained rows do not acknowledge preparatory navigation (TASK-38060, 2026-10-29)
+
+PR3308's UI gate timed out opening a later note in the preview-link journey.
+The shared setup posted a hidden-rail button press, then waited for any retained
+note row; its click helper also sampled a painted offset only once. An unchanged
+local run instead failed finding the later Gone link, while a diagnostic run
+with extra compositor reads passed. The harness now awaits canonical navigation
+and the current painted click target, retaining the real mouse click and all
+link/browser assertions. The exact hosted interleaving was not captured; this
+evidence supports readiness hardening, not a claim of a proven production race.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
