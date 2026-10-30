@@ -191,6 +191,8 @@ _BLOCKED_TURN_REASONS = {
     # TASK-33621.20 review: a send that re-paused after Retry / Send once.
     ConsolePreparationPauseKind.DESTINATION_CHANGED: "check provider",
     ConsolePreparationPauseKind.PERSISTENCE: "send not saved",
+    # TASK-33621.4: held by the Ask policy, waiting on the card's choice.
+    ConsolePreparationPauseKind.CONTEXT_COMPACTION: "compaction choice",
 }
 #: TASK-33621.20 review: the card's Problem line for a send that re-paused.
 _RESEND_PROBLEMS = {
@@ -233,9 +235,16 @@ def blocked_turn_reason(controller: Any) -> str:
         return ""  # Retry or Send without capture is running the turn now.
     preparation = getattr(controller, "trace_call_recovery_preparation", None)
     paused = preparation() if callable(preparation) else None
-    if trace_call_recovery_state(paused) is None:
-        # TASK-33621.6 AC#4: an unresolved response recovery refuses the next
-        # send too; the composer, rail and Inspect said so, the header "Ready".
+    # TASK-33621.4: a compaction hold's card needs the controller's numbers;
+    # without them it projected nothing, and the held send read "Ready".
+    hold_for = getattr(controller, "context_compaction_hold", None)
+    hold = (
+        hold_for(paused.preparation_id)
+        if callable(hold_for) and paused is not None
+        else None
+    )
+    if trace_call_recovery_state(paused, context_hold=hold) is None:
+        # TASK-33621.6: response recovery still blocks without a live hold.
         store = getattr(controller, "store", None)
         blocks = getattr(store, "dispatch_recovery_blocks_submission", None)
         if callable(blocks) and blocks(getattr(store, "active_session_id", None)):
