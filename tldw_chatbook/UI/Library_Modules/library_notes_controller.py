@@ -8025,6 +8025,15 @@ class LibraryNotesController:
         event.stop()
         if self._library_notes_mutation_fenced():
             # Review R0, m-5: say why on the Trash's own line, not silence.
+            # Polish-1b finishing pass (live, 2 of 10 runs): painting that line
+            # and clearing it at the release are syncs; one capturing while
+            # focus is parked on a pane grip fell back to the first row. Owe
+            # the row ``x`` was pressed on, as Cancel does.
+            prefix = "library-notes-trash-delete-"
+            button_id = str(getattr(getattr(event, "button", None), "id", "") or "")
+            if button_id.startswith(prefix):
+                self._trash_focus_role = f"trash-restore:{button_id.removeprefix(prefix)}"
+                self._trash_landing_settling = ""
             LibraryNotesController._say_library_notes_trash_busy(self)
             return
         if LibraryNotesController._library_notes_purge_confirm_open(self):

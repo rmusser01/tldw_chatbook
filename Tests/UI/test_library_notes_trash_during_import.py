@@ -31,7 +31,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import _NotesProfile

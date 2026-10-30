@@ -719,7 +719,12 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29, final review T6 m2 (same owner decision): the origin focus
     # return's docstring names it a backstop while the origin stays enabled:
     # 8893 -> 8896 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8896,
+    # 2026-10-29, polish-1b finishing pass (same owner decision): the live I-2
+    # check found ``x`` under an import losing its row to the first one when
+    # the release cleared the busy reason (a sync captured the pane grip);
+    # the fenced ``x`` owes its row, as the confirm's Cancel does:
+    # 8896 -> 8905 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8905,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
