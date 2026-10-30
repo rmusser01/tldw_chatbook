@@ -262,13 +262,13 @@ def test_boundary_requires_actual_settlements_and_registered_scope(native_dispat
     def child_done():
         return c.reply(
             "code_review_submit",
-            dict(
-                review_id=c.prepared.review_id,
-                kind="reviewer_complete",
-                records=[coverage(c, c.prepared)],
-                expected_revision=0,
-                submission_id="done",
-            ),
+            {
+                "review_id": c.prepared.review_id,
+                "kind": "reviewer_complete",
+                "records": [coverage(c, c.prepared)],
+                "expected_revision": 0,
+                "submission_id": "done",
+            },
         )
 
     c.run(reviewers=3, child_script=[child_done, "finished"], work_chain_id=c.chain_id)
