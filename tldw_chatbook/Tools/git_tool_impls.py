@@ -1583,7 +1583,12 @@ class ReviewGitReader:
         )
 
     def _listing(self, commit: str, directory: str) -> dict[str, ReviewGitEntry]:
-        """Every blob/tree entry of one pinned directory; callers check paths."""
+        """Every blob/tree/gitlink entry of one pinned directory.
+
+        Callers check paths. A submodule (gitlink, mode 160000) is kept so a
+        changed one is reported as unsupported instead of absent; blob()
+        refuses it and tree() omits it from listings.
+        """
         key = (self.commit(commit), directory)
         listing = self._listings.get(key)
         if listing is not None:
@@ -1595,7 +1600,7 @@ class ReviewGitReader:
                 continue
             meta, name = record.split(b"\t", 1)
             mode, kind, oid, size = meta.split()
-            if kind not in (b"blob", b"tree"):
+            if kind not in (b"blob", b"tree", b"commit"):
                 continue
             path = (
                 name.decode("utf-8")
@@ -1616,6 +1621,8 @@ class ReviewGitReader:
         self.safe_path(directory, directory=True)
         entries = []
         for entry in self._listing(commit, directory).values():
+            if entry.mode == "160000":
+                continue
             try:
                 self.safe_path(entry.path, directory=entry.mode == "040000")
             except LocalToolError:
