@@ -529,6 +529,14 @@ def store_completed_native_call(
             {"provider": "openai", "model": "gpt-4.1-mini", "output": 7},
             {"uncached_input": 0, "cache_read": 0, "cache_write": 0, "output": 7},
         ),
+        # A legacy row that never named its provider or model takes the
+        # call's own, as a raw provider payload does (review follow-up).
+        (
+            "openai",
+            "gpt-4.1-mini",
+            {"uncached_input": 5, "output": 7},
+            {"uncached_input": 5, "cache_read": 0, "cache_write": 0, "output": 7},
+        ),
     ],
 )
 def test_native_reader_loads_calls_whose_usage_is_nested(

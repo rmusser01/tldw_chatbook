@@ -500,6 +500,13 @@ def _normalized_usage_json(
         return None
     if set(payload) <= _PROVIDER_USAGE_FIELDS:
         normalized = ProviderUsage.from_json(json.dumps(payload))
+        if normalized is not None:
+            # A legacy row that never named them takes the call's own.
+            normalized = dataclasses.replace(
+                normalized,
+                provider=normalized.provider or provider,
+                model=normalized.model or model,
+            )
     else:
         normalized = ProviderUsage.from_provider_payload(
             payload, provider=provider, model=model
