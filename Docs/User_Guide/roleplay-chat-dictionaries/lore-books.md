@@ -27,9 +27,11 @@ yet, the rail reads "No lore books yet - use New or Import to add one."
   **off** (a book that is off has a muted name), with "3 entries" on a dim
   second line when the list is wide enough. Highlight a row and press
   **Space** to switch the book on or off without opening it; switching one
-  off says "{name} turned off · space to undo". The "Search..." box filters
-  by name only, and there is no "Sort:" or "Tag:" button. The toolbar
-  carries **New**, **Import**, and **Duplicate**.
+  off says "{name} turned off · space to undo". The search box filters by
+  name only, and there is no sort or **Tag** button: the toolbar holds the
+  search box and **+ New**. **Import…** sits on the rail's header row and
+  **Duplicate** in the Inspector. A search that matches nothing says so
+  ('No lore books match "x".') and lists the other kinds it does match.
 - **Detail** (centre) — three tabs: **Entries**, **Settings**, and
   **Attachments**, plus a status line underneath that reports the result of
   whatever you just did.
@@ -115,15 +117,19 @@ spoken several turns ago looks quieter here than it is in a live chat.
 
 ### Import and export
 
-**Import** opens a picker titled "Import World Book". JSON only, and files
-over 10 MB are refused with "Import failed: file is larger than 10 MB." Three
-shapes are understood: this app's own exports, the character-book array form
-found inside character cards, and SillyTavern "World Info" files — including
-their "key", "keysecondary", "caseSensitive" and "disable" field names and
-their numbered positions. Bad files are rejected before anything is written,
-naming the entry ("Entry 3 has no keys."). If the name is already taken the
-book is imported under a new one: "Imported 'Ashfall'. Renamed to avoid a name
-clash." Export lives on the Settings tab.
+**Import…** (on the rail's header row) opens the one Import picker
+described on the [parent page](../roleplay-chat-dictionaries.md); a lore
+book lands in Lore whatever mode is showing. A lore book is a JSON file, and
+files over 10 MB are refused before they are read ("{file} is larger than
+10 MB; nothing was imported."). Three shapes are understood: this app's
+own exports, the character-book array form found inside character cards,
+and SillyTavern "World Info" files — including their "key",
+"keysecondary", "caseSensitive" and "disable" field names and their
+numbered positions. Bad files are rejected before anything is written,
+naming the entry ("Entry 3 has no keys."). The toast names where it went:
+"Imported Ashfall · in Lore books". If the name is already taken the book is
+imported under a new one: "Imported Ashfall 2 · in Lore books. Renamed to
+avoid a name clash." Export lives on the Settings tab.
 
 ### Attaching a book to a character
 
@@ -139,8 +145,9 @@ character card that ships with a lorebook attaches one automatically
 ## Common tasks
 
 ### Create a world book and add its first entry
-1. In Lore mode, click **New** (or press **Ctrl+N**). A book called "Untitled
-   world book" appears — or "Untitled world book 2", "3", … if those names
+1. In Lore mode, click **+ New** (or press **Ctrl+N**) and press **Enter**
+   on "Lore book". A book called "Untitled world book" appears — or
+   "Untitled world book 2", "3", … if those names
    are taken — and the Settings tab opens with the name selected.
 2. Type a real name and click **Save settings**.
 3. Switch to the **Entries** tab, type your trigger words into "Keys
@@ -165,8 +172,9 @@ character card that ships with a lorebook attaches one automatically
    **Attach**. The toast reads "Attached to conversation."
 
 ### Import a SillyTavern world info file
-1. Click **Import** in the rail toolbar.
-2. Pick the JSON file in the "Import World Book" dialog.
+1. Click **Import…** on the rail's header row.
+2. Pick the JSON file in the Import picker (if it could also be a card or a
+   chat dictionary, answer "Import {file} as:" with **Lore book**).
 3. Open the new book's Entries tab and spot-check a few rows — positions and
    the disabled flag are translated on the way in.
 
@@ -174,8 +182,8 @@ character card that ships with a lorebook attaches one automatically
 
 | Key | Action |
 |---|---|
-| Ctrl+N | Create a new lore book |
-| Ctrl+F | Jump to the rail's "Search..." box |
+| Ctrl+N | Open the **New** chooser on "Lore book" (Enter creates it) |
+| Ctrl+F | Jump to the rail's search box |
 | Space | Turn the highlighted book on or off (in the rail's list) |
 | Ctrl+Enter | Run the injection preview (when the preview pane has focus) |
 
