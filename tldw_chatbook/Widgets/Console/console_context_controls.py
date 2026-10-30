@@ -40,7 +40,10 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryOriginKind,
 )
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
-from tldw_chatbook.Chat.console_prepared_request import resolve_request_capacity
+from tldw_chatbook.Chat.console_prepared_request import (
+    resolve_request_capacity,
+    tagged_memory_message,
+)
 from tldw_chatbook.Chat.cost_display import format_cost_amount
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -106,7 +109,8 @@ def compaction_forecast_rows(
         )
         if memory is None or start < 0:
             return None
-        rows.append({"role": "user", "content": memory.summary_text})
+        # Wrapped as the send carries it: the wrapper's safety copy counts.
+        rows.append(dict(tagged_memory_message(memory.summary_text)))
     elif effective_memory.kind is not EffectiveMemoryKind.RAW:
         return None
     turns = 0
