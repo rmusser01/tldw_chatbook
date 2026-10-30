@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
@@ -1374,11 +1375,11 @@ def test_working_tree_capture_reads_the_index_once_per_pass(source_case, monkeyp
         doc.relative_path for doc in manifest.initial_sources if doc.side == "staged"
     }
     assert set(names) <= staged
-    # Per pass (capture, then the fresh drift re-check): one index read for
-    # the changed paths and one case-insensitive check of untracked ones.
+    # One index read for capture and one fresh read for the drift re-check,
+    # covering the changed and the untracked paths alike.
     listings = [call for call in calls if call[0] == "ls-files"]
-    assert len([call for call in listings if call[1] == "--stage"]) == 2
-    assert len([call for call in listings if call[1] == "-z"]) == 2
+    assert len(listings) == 2
+    assert all(call[1] == "--stage" for call in listings)
 
 
 def test_index_change_between_capture_passes_is_still_drift(source_case, monkeypatch):
@@ -1407,16 +1408,89 @@ def test_index_change_between_capture_passes_is_still_drift(source_case, monkeyp
     assert restaged
 
 
-@pytest.mark.parametrize("variant", ["MAIN.PY", "Main.py"])
-def test_case_variant_of_a_tracked_file_is_not_an_untracked_selection(
+_NFD_NAIVE = unicodedata.normalize("NFD", "na\u00efve.py")
+
+
+@pytest.mark.parametrize("variant", ["MAIN.PY", "Main.py", "NA\u00cfVE.py", _NFD_NAIVE])
+def test_variant_spelling_of_a_tracked_file_is_not_an_untracked_selection(
     source_case, variant
 ):
-    """On a case-insensitive filesystem the variant opens the tracked file."""
+    """A case/normalization-insensitive filesystem opens the tracked file.
+
+    Only the exact stored spelling is listed, so the variant refuses; where the
+    filesystem does not alias it, the variant is simply a missing file.
+    """
     c = source_case
-    with pytest.raises(ReviewRefused, match="invalid_untracked_selection"):
+    (c.root / "na\u00efve.py").write_text("tracked\n")
+    _commit_paths(c.root, "non-ascii", "na\u00efve.py")
+    aliased = (c.root / variant).exists()
+    with pytest.raises(ReviewRefused) as refused:
         c.capture(
             c.working_tree_target.model_copy(update={"untracked_paths": (variant,)})
         )
+    assert refused.value.reason == (
+        "invalid_untracked_selection" if aliased else "source_unavailable"
+    )
+
+
+def test_distinct_case_spelling_is_accepted_on_a_case_sensitive_filesystem(
+    source_case, monkeypatch
+):
+    """A real MAIN.PY beside tracked main.py is an untracked selection."""
+    from tldw_chatbook.Agents import code_review_source as module
+
+    c = source_case
+    if (c.root / "MAIN.PY").exists():
+        # Case-insensitive volume: simulate the listing a case-sensitive one
+        # gives when both spellings are stored.
+        listed = module._listed_names
+        monkeypatch.setattr(
+            module,
+            "_listed_names",
+            lambda directory: (
+                listed(directory) | {"MAIN.PY"}
+                if directory == c.root
+                else listed(directory)
+            ),
+        )
+    else:
+        (c.root / "MAIN.PY").write_text("distinct untracked file\n")
+    manifest = c.capture(
+        c.working_tree_target.model_copy(update={"untracked_paths": ("MAIN.PY",)})
+    )
+    assert ("worktree", "MAIN.PY") in {
+        (doc.side, doc.relative_path) for doc in manifest.initial_sources
+    }
+
+
+def test_nfd_spelling_of_an_excluded_non_ascii_file_is_refused(source_case, tmp_path):
+    """An NFD spelling escapes the (unnormalized) exclusion match; the listing
+    check keeps it from reading the excluded NFC file on APFS."""
+    c = source_case
+    excluded = c.root / "na\u00efve.txt"
+    excluded.write_text("private\n")
+    authority = replace(
+        c.authority,
+        admitted=replace(c.authority.admitted, exclusions_provider=lambda: (excluded,)),
+    )
+    variant = unicodedata.normalize("NFD", "na\u00efve.txt")
+    context = c.store.create(target_digest="0" * 64)
+    with pytest.raises(ReviewRefused):
+        capture_review_source(
+            c.working_tree_target.model_copy(update={"untracked_paths": (variant,)}),
+            authority,
+            c.store,
+            context.review_id,
+        )
+    context = c.store.create(target_digest="0" * 64)
+    manifest = capture_review_source(
+        c.working_tree_target.model_copy(update={"context_paths": (variant,)}),
+        authority,
+        c.store,
+        context.review_id,
+    )
+    assert variant not in {doc.relative_path for doc in manifest.initial_sources}
+    assert "optional_context_unavailable" in [gap.reason for gap in manifest.gaps]
 
 
 @pytest.mark.parametrize("variant", ["SECRET.TXT", "Secret.Txt"])
