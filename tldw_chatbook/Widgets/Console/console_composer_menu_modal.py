@@ -70,7 +70,8 @@ def build_composer_menu_entries(
     can_save_chatbook: bool = False,
     draft_available: bool = False,
     improvement_undo_available: bool = False,
-    save_enables_capture: bool = False,
+    save_enables_capture: bool | None = None,
+    next_send_capture: bool | None = None,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
@@ -97,7 +98,11 @@ def build_composer_menu_entries(
         improvement_undo_available: Whether a Prompt change can be undone.
         save_enables_capture: Whether saving the temporary chat turns capture
             on (``console_exchange_capture.saved_chat_capture``). Only then
-            does the Save chat row say so (TASK-37811); False never promises.
+            does the Save chat row say so (TASK-37811); None (unknown) makes
+            no capture claim either way.
+        next_send_capture: The chat's one-time Next send Capture choice, or
+            None. Promotion keeps it and it outranks the chat's setting for
+            one send, so when it differs the hint names that send.
 
     Returns:
         The menu entries in display order.
@@ -204,17 +209,44 @@ def build_composer_menu_entries(
     return (
         ComposerMenuEntry(
             ACTION_SAVE_CHAT,
-            *(
-                (
-                    SAVE_CHAT_ENABLES_CAPTURE_LABEL,
-                    "Not saved locally; records no traces until saved",
-                )
-                if save_enables_capture
-                else (SAVE_CHAT_LABEL, "Not saved locally; traces stay off once saved")
-            ),
+            *_save_chat_copy(save_enables_capture, next_send_capture),
         ),
         *entries,
     )
+
+
+def _save_chat_copy(
+    save_enables_capture: bool | None, next_send_capture: bool | None
+) -> tuple[str, str]:
+    """Return the Save chat row's label and hint: what saving will do.
+
+    TASK-37811 (owner decision 2026-10-29): '(enables capture)' only when
+    the saved chat captures. Review of TASK-37811: a one-time Next send
+    choice survives promotion and outranks that for one send, so a hint
+    that ignored it said traces stay off right before a captured send.
+
+    Args:
+        save_enables_capture: The Capture the saved chat follows, or None
+            when it could not be read.
+        next_send_capture: The one-time Next send Capture choice, or None.
+
+    Returns:
+        The row's label and its hint.
+    """
+    if save_enables_capture is None:
+        return SAVE_CHAT_LABEL, "Not saved locally"
+    label = SAVE_CHAT_ENABLES_CAPTURE_LABEL if save_enables_capture else SAVE_CHAT_LABEL
+    if next_send_capture is None or next_send_capture == save_enables_capture:
+        hint = (
+            "Not saved locally; records no traces until saved"
+            if save_enables_capture
+            else "Not saved locally; saving keeps traces off"
+        )
+    elif next_send_capture:
+        hint = "Not saved locally; once saved, only your next send is traced"
+    else:
+        hint = "Not saved locally; once saved, traces start after your next send"
+    return label, hint
 
 
 class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"]):
@@ -268,7 +300,8 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
         can_save_chatbook: bool = False,
         draft_available: bool = False,
         improvement_undo_available: bool = False,
-        save_enables_capture: bool = False,
+        save_enables_capture: bool | None = None,
+        next_send_capture: bool | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the menu.
@@ -284,7 +317,10 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             draft_available: Whether the active composer has a nonblank draft.
             improvement_undo_available: Whether a Prompt change can be undone.
             save_enables_capture: Whether saving the temporary chat turns
-                capture on, which decides the Save chat row's wording.
+                capture on, which decides the Save chat row's wording; None
+                when unknown.
+            next_send_capture: The one-time Next send Capture choice, which
+                the Save chat hint names when it differs.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -295,6 +331,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             draft_available=draft_available,
             improvement_undo_available=improvement_undo_available,
             save_enables_capture=save_enables_capture,
+            next_send_capture=next_send_capture,
         )
 
     def compose(self) -> ComposeResult:

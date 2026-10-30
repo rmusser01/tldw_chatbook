@@ -734,8 +734,8 @@ Durable captures stay local to the device's conversation database and are never
 synced. A temporary chat records no traces. Saving it (**Save chat** in the
 composer **Menu**, or the **Temporary · traces off** segment of the status
 strip) hands its later sends to its own Capture choice, else the global
-default; the Menu row reads **Save chat (enables capture)** only when that is
-Capture On.
+default (a one-time **Next send** choice still decides the next send); the
+Menu row reads **Save chat (enables capture)** only when that is Capture On.
 
 If you turn Capture On in a chat that is still temporary, a Capture On call
 needs **Save & Send** first, or you send that message once with Capture Off.

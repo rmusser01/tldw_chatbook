@@ -328,9 +328,8 @@ def temporary_chat_capture(
     TASK-33621.17 (owner decision 2026-10-27): a Temporary chat records no
     traces unless someone turned Capture on for it, so its sends never pause
     for Save & Send. The default lives here, at resolution, rather than as a
-    stored Off: saving the chat ("Save chat (enables capture)") must hand
-    Capture back to the global setting, and a stored Off would be saved with
-    the chat.
+    stored Off: saving the chat must hand Capture back to its own choice,
+    else the global setting, and a stored Off would be saved with the chat.
 
     Args:
         conversation: The chat's sparse Capture override, or None to inherit.
@@ -351,8 +350,9 @@ def saved_chat_capture(conversation: bool | None, *, global_enabled: bool) -> bo
     TASK-37811 (owner decision 2026-10-29): the Save chat row may say it
     enables capture only when this is True. A saved chat is no longer
     temporary, so ``temporary_chat_capture`` lets its stored choice through
-    and the controller resolves that over the global setting; a one-shot
-    next-send choice is not the chat's setting and is left out.
+    and the controller resolves that over the global setting. A one-shot
+    next-send choice is not the chat's setting and is left out here; the
+    Save chat hint names it separately when it differs.
 
     Args:
         conversation: The chat's stored Capture choice, or None to inherit.

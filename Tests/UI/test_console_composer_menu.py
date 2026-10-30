@@ -1086,16 +1086,66 @@ def test_save_chat_row_promises_capture_only_when_saving_turns_it_on():
         assert entry.action_id == ACTION_SAVE_CHAT
         return entry.label, entry.description
 
-    assert save_row(save_enables_capture=True) == (
+    enables = (
         "Save chat (enables capture)",
         "Not saved locally; records no traces until saved",
     )
-    assert save_row(save_enables_capture=False) == (
-        "Save chat",
-        "Not saved locally; traces stay off once saved",
+    stays_off = ("Save chat", "Not saved locally; saving keeps traces off")
+    assert save_row(save_enables_capture=True) == enables
+    assert save_row(save_enables_capture=False) == stays_off
+    # A one-time Next send choice that agrees changes nothing ...
+    assert save_row(save_enables_capture=True, next_send_capture=True) == enables
+    assert (
+        save_row(save_enables_capture=False, next_send_capture=False) == stays_off
     )
-    # A caller that does not know never gets the promise.
-    assert save_row() == save_row(save_enables_capture=False)
+    # ... and one that differs is named, because promotion keeps it and it
+    # outranks the chat's setting for that one send (review of TASK-37811).
+    assert save_row(save_enables_capture=False, next_send_capture=True) == (
+        "Save chat",
+        "Not saved locally; once saved, only your next send is traced",
+    )
+    assert save_row(save_enables_capture=True, next_send_capture=False) == (
+        "Save chat (enables capture)",
+        "Not saved locally; once saved, traces start after your next send",
+    )
+    # A caller that does not know makes no claim either way.
+    assert save_row() == ("Save chat", "Not saved locally")
+    assert save_row(next_send_capture=True) == save_row()
+
+
+@pytest.mark.unit
+def test_menu_state_opens_without_a_capture_claim_when_policy_is_unreadable():
+    """Review of TASK-37811: only KeyError was caught, so any other failure
+    reading the capture policy stopped the Menu (and palette composer
+    actions) opening in a Temporary chat. Unknown now makes no claim."""
+    from tldw_chatbook.UI.Console_Modules.composer_run_controls import (
+        composer_menu_state,
+    )
+
+    def unreadable(_session_id):
+        raise RuntimeError("capture policy hydration failed")
+
+    controller = SimpleNamespace(
+        store=SimpleNamespace(active_session_id="s1"),
+        capture_policy_snapshot=unreadable,
+    )
+    screen = SimpleNamespace(
+        _console_composer_or_none=lambda: None,
+        _console_active_session_is_ephemeral=lambda: True,
+        _console_pending_attachment_kind=lambda: "none",
+        _console_chatbook_action_available=lambda: False,
+        _ensure_console_chat_controller=lambda: controller,
+    )
+
+    state = composer_menu_state(screen)
+
+    assert (state["save_enables_capture"], state["next_send_capture"]) == (None, None)
+    entry = build_composer_menu_entries(**state)[0]
+    assert (entry.action_id, entry.label, entry.description) == (
+        ACTION_SAVE_CHAT,
+        "Save chat",
+        "Not saved locally",
+    )
 
 
 def _bare_promote_screen(store):
