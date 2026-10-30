@@ -1357,3 +1357,48 @@ def test_non_utf8_changed_file_is_a_gap_but_a_selected_file_refuses(source_case)
                 update={"untracked_paths": ("selected.txt",)}
             )
         )
+
+
+def test_working_tree_capture_reads_the_index_once_per_pass(source_case, monkeypatch):
+    c = source_case
+    names = [f"staged{index}.py" for index in range(6)]
+    for name in names:
+        (c.root / name).write_text("first\n")
+    _commit_paths(c.root, "staged files", *names)
+    for name in names:
+        (c.root / name).write_text("staged change\n")
+    git(c.root, "add", "--", *names)
+    calls = _git_calls(monkeypatch)
+    manifest = c.capture()
+    staged = {
+        doc.relative_path for doc in manifest.initial_sources if doc.side == "staged"
+    }
+    assert set(names) <= staged
+    # One read for capture and one fresh read for the drift re-check.
+    assert len([call for call in calls if call[0] == "ls-files"]) == 2
+
+
+def test_index_change_between_capture_passes_is_still_drift(source_case, monkeypatch):
+    from tldw_chatbook.Agents import code_review_source as module
+
+    c = source_case
+    original = module._read_mutable
+    restaged = False
+
+    def restage_after_read(root, exclusions, path):
+        nonlocal restaged
+        data = original(root, exclusions, path)
+        if path == "main.py" and not restaged:
+            (c.root / "main.py").write_text("restaged during capture\n")
+            git(c.root, "add", "main.py")
+            (c.root / "main.py").write_text(data.decode())
+            restaged = True
+        return data
+
+    monkeypatch.setattr(module, "_read_mutable", restage_after_read)
+    context = c.store.create(target_digest="0" * 64)
+    with pytest.raises(ReviewRefused, match="source_drift"):
+        capture_review_source(
+            c.working_tree_target, c.authority, c.store, context.review_id
+        )
+    assert restaged

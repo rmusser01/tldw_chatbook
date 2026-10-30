@@ -1468,6 +1468,7 @@ class ReviewGitReader:
         # list each pinned directory once per reader (one capture or query).
         self._commits: set[str] = set()
         self._listings: dict[tuple[str, str], dict[str, ReviewGitEntry]] = {}
+        self._object_sizes: dict[str, int] = {}  # an object's size never changes
 
     def _read(self, args: list[str], *, limit: int = GIT_MAX_OUTPUT_BYTES) -> bytes:
         result = _run_git_bytes(
@@ -1613,6 +1614,8 @@ class ReviewGitReader:
                 mode.decode("ascii"),
                 int(size) if size != b"-" else 0,
             )
+            if kind == b"blob":
+                self._object_sizes[listing[path].oid] = listing[path].size
         self._listings[key] = listing
         return listing
 
@@ -1652,20 +1655,64 @@ class ReviewGitReader:
         return None
 
     def index(self, path: str) -> ReviewGitEntry | None:
-        self.safe_path(path)
-        raw = self._read(["ls-files", "--stage", "-z", "--", _literal_pathspec(path)])
-        records = [item for item in raw.split(b"\0") if item]
-        if not records:
-            return None
-        if len(records) != 1:
-            raise LocalToolError("unmerged_source")
-        meta, name = records[0].split(b"\t", 1)
-        mode, oid, stage = meta.split()
-        if stage != b"0" or name.decode("utf-8") != path:
-            raise LocalToolError("unmerged_source")
-        selected = self._oid(oid.decode("ascii"))
-        size = int(self._read(["cat-file", "-s", selected]).strip())
-        return ReviewGitEntry(path, selected, mode.decode("ascii"), size)
+        return self.index_entries((path,))[path]
+
+    def index_entries(self, paths) -> dict[str, ReviewGitEntry | None]:
+        """Stage-0 index entries for ``paths`` from one fresh index read.
+
+        Every call re-reads the index (drift checks stay real); only object
+        sizes, which an object ID fixes, are memoized. A path that is a
+        directory or has several stages refuses as before.
+        """
+        paths = tuple(dict.fromkeys(paths))
+        for path in paths:
+            self.safe_path(path)
+        found: dict[str, list[tuple[bytes, str]]] = {path: [] for path in paths}
+        chunk: list[str] = []
+        chunks = [chunk]
+        size = 0
+        for path in paths:  # bounded argv per git process
+            if chunk and size + len(path) > 64 * 1024:
+                chunk, size = [], 0
+                chunks.append(chunk)
+            chunk.append(path)
+            size += len(path) + 16
+        for chunk in chunks:
+            if not chunk:
+                continue
+            raw = self._read(
+                ["ls-files", "--stage", "-z", "--", *map(_literal_pathspec, chunk)]
+            )
+            for record in raw.split(b"\0"):
+                if not record:
+                    continue
+                meta, name = record.split(b"\t", 1)
+                name = name.decode("utf-8")
+                parts = PurePosixPath(name).parts
+                for depth in range(1, len(parts) + 1):
+                    owner = "/".join(parts[:depth])
+                    if owner in found:
+                        found[owner].append((meta, name))
+        entries = {}
+        for path, records in found.items():
+            if not records:
+                entries[path] = None
+                continue
+            if len(records) != 1:
+                raise LocalToolError("unmerged_source")
+            meta, name = records[0]
+            mode, oid, stage = meta.split()
+            if stage != b"0" or name != path:
+                raise LocalToolError("unmerged_source")
+            selected = self._oid(oid.decode("ascii"))
+            if selected not in self._object_sizes:
+                self._object_sizes[selected] = int(
+                    self._read(["cat-file", "-s", selected]).strip()
+                )
+            entries[path] = ReviewGitEntry(
+                path, selected, mode.decode("ascii"), self._object_sizes[selected]
+            )
+        return entries
 
     def blob(
         self, entry: ReviewGitEntry, *, max_bytes: int = GIT_MAX_OUTPUT_BYTES
