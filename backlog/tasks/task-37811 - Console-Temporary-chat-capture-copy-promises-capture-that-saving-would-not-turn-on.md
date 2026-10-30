@@ -3,11 +3,11 @@ id: TASK-37811
 title: >-
   Console: Temporary-chat capture copy promises capture that saving would not
   turn on
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-29 17:30'
-updated_date: '2026-10-30 00:47'
+updated_date: '2026-10-30 04:56'
 labels:
   - console
   - copy
@@ -38,6 +38,8 @@ That is only true when the saved chat resolves Capture On. With global capture O
 - [x] #2 The menu row, its hint and the User Guide match what saving resolves to: global capture On, global capture Off, and a stored conversation Capture Off
 - [x] #3 A test pins the menu copy for each of the three cases
 - [x] #4 No other Temporary-chat copy (the Trace screen's Exchange Capture Policy temporary guidance, the chip tooltip constant, the tab-strip User Guide line) says that saving turns capture on when it would not
+- [x] #5 A one-time Next send Capture choice that differs from what the saved chat resolves to is named in the Save chat hint, so the row never says traces stay off before a captured send or promises capture before an uncaptured one; a test pins both cases
+- [x] #6 The Trace screen's Exchange Capture Policy temporary guidance says Capture On for This conversation pauses each send and On for Next send pauses only that send; a test pins it
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -89,4 +91,14 @@ User Guide: semantic-trace-capture.md, context-and-rag.md and sessions-tabs-work
 - These files have no new reds against dev: test_console_exchange_capture, test_console_library_controls_workflow, test_console_received_import_contract, test_console_unsent_turn, test_console_staged_evidence_dispatch_pin, test_console_roleplay_model_workspace (dev's new file, after the session.py merge), test_console_global_capture_settings, and test_console_chat_controller_exchanges (2 reds, both also red on dev, which has 6).
 - Module-size ratchet: the same 8 pre-existing reds as dev. The rebase merged dev's session.py row (6990, TASK-37620) with this branch's two dated raises (6990 -> 6994 -> 7001, the measured count).
 - UI-ready module census: 4 passed. Boot CSS budget: 1 passed. ./scripts/preflight.sh: exit 0.
+
+**Review fix (2026-10-29, AC#5).** The pre-merge review found the copy wrong when a one-time Next send Capture choice was set: promotion keeps the one-shot and it outranks the chat's own setting for one manual send, so with global Off and Next send On the row said 'traces stay off once saved' and the first send after saving was captured (mirror: global On with Next send Off promised capture and the first send was not captured). Reproduced first: the extended mounted test was red on both new cases for that reason.
+
+Fix: `composer_menu_state` now passes the snapshot's `next_capture_enabled` as `next_send_capture`. When it differs from what the saved chat resolves to, the hint names that send: 'Not saved locally; once saved, only your next send is traced' (label 'Save chat') or 'Not saved locally; once saved, traces start after your next send' (label 'Save chat (enables capture)', because later sends are captured). Also from the review: the Off hint now reads 'Not saved locally; saving keeps traces off' (the old 'traces stay off once saved' read as permanent, but a chat with no choice of its own follows the global default if it changes); an unreadable capture policy (any exception, not only KeyError) makes no capture claim ('Save chat' / 'Not saved locally') and the Menu still opens; ADR-097's amendment says saving hands Capture to the conversation's own choice, else the global setting; the User Guide says a Next send choice pauses only the next send and names the one-shot hints.
+
+Tests: `Tests/UI/test_console_temporary_save_copy.py` adds global Off + Next send On and global On + Next send Off, and now reads both the next send's and the later sends' capture after saving (the later read spends the one-shot through the dialog's own `set_next_trace_privacy`). Unit pins cover every row variant and the unreadable-policy path. Mutations: dropping the one-shot (`return saved, None`) turned the mounted test red on both new cases; catching only KeyError turned the unreadable-policy test red with the RuntimeError.
+
+Live (fix head, 160x45, real Anthropic claude-haiku-4-5 via the review proxy): global Off + Next send On -> row 'Save chat', hint '...once saved, only your next send is traced'; after saving, sends logged capture_enabled=true then false (replies 'OK 41', 'OK 42'). Global On + Next send Off -> 'Save chat (enables capture)', hint '...once saved, traces start after your next send'; after saving, capture_enabled=false then true ('OK 43', 'OK 44'). Global Off alone -> 'Save chat' / 'Not saved locally; saving keeps traces off'.
+
+Follow-ups filed: TASK-37840 (the always-visible Temporary surfaces no longer say 'not saved'; owner call), TASK-37841 (the Impersonate payload test's stale controller double, red on dev).
 <!-- SECTION:NOTES:END -->
