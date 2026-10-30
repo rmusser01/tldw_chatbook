@@ -18,7 +18,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`scripts/ui_lane_shard_replay.py --write` can only re-order the census tail. Every whole-census re-deal of the UI Fast Lane so far has used an uncommitted search, so none can be reproduced from the repo:
+`scripts/ui_lane_shard_replay.py` has no search that can re-deal a census this size. `--tail` accepts the whole entry count, but `flattest_tail` runs 300 restarts of an all-pairs swap loop, re-scoring the whole census after every swap, so it cannot finish on more than 1,100 entries. And under the header rule, the first entry would take the header block with it. Every whole-census re-deal of the UI Fast Lane so far has used an uncommitted search, so none can be reproduced from the repo:
 - TASK-36512's 13-shard deal (#3231);
 - PR #3228's 17-shard deal;
 - the 28-shard deal now on dev.
@@ -36,4 +36,5 @@ Its review found the tool sound but its determinism test unable to fail, because
 - [ ] #1 A committed replay mode re-deals the whole census for a given shard count from measured shard logs, and a second run on the same logs changes nothing
 - [ ] #2 The deal's shard sets do not depend on the census's input order, and a test fails if they do
 - [ ] #3 Comments stay with their entries, and the census header stays in place
+- [ ] #4 On the logs it is given, the deal's heaviest shard, scored at each entry's worst observed time, is no heavier than the census as listed, and the tool prints both
 <!-- AC:END -->
