@@ -114,6 +114,49 @@ def test_first_use_reuses_the_key_a_previous_run_provisioned(db, tmp_path):
     assert [kind for kind, _thread in backend.calls].count("set") == 1
 
 
+def test_chatbook_ownership_wiring_composes_without_the_key(
+    db, tmp_path, monkeypatch
+):
+    """The app's second composition site defers the key as well.
+
+    ``_wire_citation_artifact_ownership`` builds its own repository whenever
+    it runs without one for the current database (the Chatbook wiring can
+    run before the chat services are wired, or after the database changes).
+    The mounted Console test pins the other site
+    (``_wire_chat_conversation_services``), the one the constructor reaches.
+    """
+    import keyring
+
+    from types import SimpleNamespace
+
+    from tldw_chatbook import app_service_wiring
+
+    backend = _Keyring()
+    monkeypatch.setattr(keyring, "get_keyring", lambda: backend)
+    monkeypatch.setattr(app_service_wiring, "get_user_data_dir", lambda: tmp_path)
+    # Records on, as shipped, without reading this process's config file.
+    monkeypatch.setattr(
+        CitationProvenanceRuntimePolicy, "from_config", classmethod(lambda _cls: ON)
+    )
+    monkeypatch.setattr(
+        app_service_wiring,
+        "CitationArtifactOwnershipCoordinator",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    app = SimpleNamespace(
+        chachanotes_db=db,
+        local_chatbook_service=SimpleNamespace(
+            set_citation_ownership_coordinator=lambda _coordinator: None
+        ),
+    )
+
+    app_service_wiring.ServiceWiringMixin._wire_citation_artifact_ownership(app)
+
+    assert app.citation_trace_repository.db is db
+    assert app.citation_trace_repository.fingerprint_key_state == "pending"
+    assert backend.calls == []
+
+
 def test_eager_composition_keeps_acquiring_at_compose_time(db, tmp_path):
     """Chatbook export/import keep the factory's eager default."""
     backend = _Keyring()
