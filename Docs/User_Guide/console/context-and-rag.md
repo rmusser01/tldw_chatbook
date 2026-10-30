@@ -617,8 +617,8 @@ supporting detail, not additional spend to add to the transcript total.
 or ambiguous identity disables drill-in rather than guessing another turn.
 A capture load failure leaves usage figures available and says why it failed.
 Only a busy store offers **Select this turn again to retry**; a stored capture
-that cannot be decoded says a retry will not help, and any other failure names
-its error type. The app log records the reason and error type.
+that cannot be decoded says a retry will not help, and any other failure is
+reported as an unexpected error. The app log records the reason and error type.
 
 Each turn is one row, with its basis (**Estimated** or **Reported**) and cost
 before the token counts; a list too narrow for the whole row clips the token
