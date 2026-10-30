@@ -312,8 +312,9 @@ async def test_exchange_tab_states_adapter_boundary_caveat() -> None:
     """Review finding I2: the spec requires the adapter-boundary caveat
     STATED IN THE UI (twice), not just the User Guide -- a user on the
     Exchange tab has no other in-surface signal that capture happens at the
-    provider-adapter boundary (not the raw HTTP layer) and that llama.cpp
-    is the one exception."""
+    provider-adapter boundary (not the raw HTTP layer). TASK-33621.9 moved
+    the llama.cpp exception onto llama.cpp calls themselves
+    (``test_llama_cpp_capture_note_appears_only_on_llama_cpp_calls``)."""
     app = InspectorHarness(**_default_kwargs(initial_tab=TAB_EXCHANGE))
 
     async with app.run_test(size=(120, 44)) as pilot:
@@ -322,7 +323,7 @@ async def test_exchange_tab_states_adapter_boundary_caveat() -> None:
         caveat = modal.query_one("#console-inspector-exchange-caveat", Static)
         text = str(caveat.renderable)
         assert "adapter" in text.lower()
-        assert "llama.cpp" in text
+        assert "adapter" in str(caveat.tooltip).lower()
 
 
 def _capture(
@@ -1179,3 +1180,174 @@ def test_detail_worker_creation_can_be_cancelled_before_coroutine_exists(pane_id
     finally:
         if inspect.iscoroutine(queued[0]):
             queued[0].close()
+
+
+# --- TASK-33621.9: captured calls load, failures say why -------------------
+
+
+def _detail_text(modal: ConsoleConversationInspector, pane_id: str) -> str:
+    from textual.widgets import TextArea
+
+    return modal.query_one(f"#{pane_id}").query_one(TextArea).text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model", "usage_name"),
+    [
+        ("anthropic", "claude-haiku-4-5", "_ANTHROPIC_USAGE"),
+        ("openai", "gpt-4.1-mini", "_OPENAI_USAGE"),
+    ],
+)
+async def test_nested_usage_call_loads_from_the_real_reader_and_exports(
+    tmp_path: Path, provider: str, model: str, usage_name: str
+) -> None:
+    """A real stored call reaches the Inspector, and its export opens."""
+    from Tests.Chat import test_console_trace_native_reader as stored
+    from tldw_chatbook.Chat.console_trace_native_reader import (
+        ConsoleTraceNativeReader,
+    )
+    from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Console_Modules.context_spend import (
+        _build_console_inspector_exchanges_loader,
+    )
+    from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
+        ConsoleExchangeExportDialog,
+    )
+
+    database = CharactersRAGDB(tmp_path / "inspector-native.sqlite", "inspector")
+    try:
+        assistant_id, _call_id = stored.store_completed_native_call(
+            database,
+            provider=provider,
+            model=model,
+            usage=getattr(stored, usage_name),
+        )
+        projection = ConsoleTraceProjection(
+            legacy_reader=database.get_message_exchanges,
+            normalized_reader=ConsoleTraceNativeReader(database).read_calls,
+            normalized_reads_enabled=True,
+        )
+        loader = _build_console_inspector_exchanges_loader(
+            {"n1": SimpleNamespace(exchanges=(), persisted_message_id=assistant_id)},
+            projection.read_calls,
+        )
+        app = InspectorHarness(
+            **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            detail = modal.query_one("#console-inspector-exchange-detail")
+            detail.select("turn:0")
+            await _wait_until(
+                pilot,
+                lambda: "call:n1:0" in [row.key for row in detail.sections],
+                attempts=60,
+            )
+            assert "Capture unavailable" not in _detail_text(
+                modal, "console-inspector-exchange-detail"
+            )
+            detail.select("call:n1:0")
+            export = modal.query_one("#console-inspector-export-call", Button)
+            await _wait_until(pilot, lambda: not export.disabled, attempts=60)
+            assert model in _detail_text(modal, "console-inspector-exchange-detail")
+            export.press()
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ConsoleExchangeExportDialog),
+                attempts=60,
+            )
+    finally:
+        database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "expected", "retry_offered"),
+    [
+        (
+            TypeError("Object of type mappingproxy is not JSON serializable"),
+            "could not be decoded",
+            False,
+        ),
+        (ValueError("private stored body"), "could not be decoded", False),
+        (__import__("sqlite3").OperationalError("database is locked"), "busy", True),
+        (RuntimeError("private runtime body"), "(RuntimeError)", False),
+    ],
+)
+async def test_capture_load_failure_names_its_reason_and_logs_the_type(
+    error: Exception, expected: str, retry_offered: bool
+) -> None:
+    async def loader(_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        raise error
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)))
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            modal = app.screen
+            modal.query_one("#console-inspector-exchange-detail").select("turn:0")
+            await _wait_until(
+                pilot,
+                lambda: "Could not load captures"
+                in _detail_text(modal, "console-inspector-exchange-detail"),
+                attempts=60,
+            )
+            text = _detail_text(modal, "console-inspector-exchange-detail")
+    finally:
+        logger.remove(sink_id)
+
+    assert expected in text
+    assert ("Select this turn again to retry" in text) is retry_offered
+    assert str(error) not in text
+    logged = "".join(records)
+    assert f"exception_type={type(error).__name__}" in logged
+    assert str(error) not in logged
+
+
+@pytest.mark.asyncio
+async def test_llama_cpp_capture_note_appears_only_on_llama_cpp_calls() -> None:
+    from dataclasses import replace
+
+    hosted = _capture("hosted", 0, "2026-10-29T00:00:00Z", "claude-haiku-4-5")
+    local = replace(
+        _capture("local", 1, "2026-10-29T00:00:01Z", "qwen3"), provider="llama_cpp"
+    )
+
+    async def loader(_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        return [(hosted, False), (local, False)]
+
+    app = InspectorHarness(
+        **_default_kwargs(exchanges_loader=loader, initial_tab=TAB_EXCHANGE)
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        caveat = modal.query_one("#console-inspector-exchange-caveat", Static)
+        assert "llama.cpp" not in str(caveat.render())
+        assert "llama.cpp" not in str(caveat.tooltip)
+        detail = modal.query_one("#console-inspector-exchange-detail")
+        detail.select("turn:0")
+        await _wait_until(pilot, lambda: len(detail.sections) == 3, attempts=60)
+
+
+        def call_detail(model: str) -> bool:
+            # The turn summary lists every call; a call's own reader starts
+            # with its title and carries the request heading.
+            text = _detail_text(modal, "console-inspector-exchange-detail")
+            return text.startswith("call ") and model in text.splitlines()[0]
+
+        detail.select("call:n1:0")
+        await _wait_until(pilot, lambda: call_detail("claude-haiku-4-5"), attempts=60)
+        assert "llama.cpp" not in _detail_text(
+            modal, "console-inspector-exchange-detail"
+        )
+        detail.select("call:n1:1")
+        await _wait_until(pilot, lambda: call_detail("qwen3"), attempts=60)
+        assert "llama.cpp" in _detail_text(modal, "console-inspector-exchange-detail")

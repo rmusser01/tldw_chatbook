@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import sqlite3
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -136,9 +137,44 @@ def _selection_now() -> datetime:
 _EXCHANGE_ADAPTER_BOUNDARY_CAVEAT = (
     "Captured where Console hands the request to the provider adapter, not "
     "at the raw HTTP layer -- provider-internal framing and injected "
-    "prompt-cache markers are not visible here (llama.cpp is the exception: "
-    "its capture is the literal wire payload)."
+    "prompt-cache markers are not visible here."
 )
+# TASK-33621.9: the one route whose capture IS the wire payload
+# (``console_provider_gateway``'s llama.cpp branch takes these two keys); the
+# note belongs on those calls only, not on every provider's.
+_LLAMA_CPP_PROVIDERS = frozenset({"llama_cpp", "local_llamacpp"})
+_LLAMA_CPP_CAPTURE_NOTE = "llama.cpp: this capture is the literal payload sent."
+
+
+def _capture_load_failure(exc: BaseException) -> tuple[str, str]:
+    """Classify a capture-load failure for the reader and the log.
+
+    Args:
+        exc: What the injected capture loader raised.
+
+    Returns:
+        ``(reason_code, copy)``. Only a busy store offers a retry: a stored
+        capture that cannot be decoded fails the same way every time.
+    """
+    if isinstance(exc, sqlite3.OperationalError) and any(
+        word in str(exc).casefold() for word in ("locked", "busy")
+    ):
+        return (
+            "storage_busy",
+            "Could not load captures: storage was busy. "
+            "Select this turn again to retry.",
+        )
+    if isinstance(exc, (TypeError, ValueError, KeyError)):
+        return (
+            "decode_error",
+            "Could not load captures: this turn's stored capture could not be "
+            "decoded, so selecting it again will not help. Usage figures are "
+            "unaffected; the app log names the error.",
+        )
+    return (
+        "unexpected",
+        f"Could not load captures ({type(exc).__name__}). The app log names the error.",
+    )
 
 
 @dataclass(frozen=True)
@@ -634,7 +670,7 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                         "", id="console-inspector-capture-status", markup=False
                     )
                     caveat = Static(
-                        "Provider-adapter capture; HTTP framing may differ. llama.cpp captures its sent payload.",
+                        "Provider-adapter capture; HTTP framing may differ.",
                         id="console-inspector-exchange-caveat",
                         markup=False,
                     )
@@ -842,18 +878,20 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                 self.query_one(
                     "#console-inspector-show-exchanges", Button
                 ).disabled = not calls
-        except Exception:  # noqa: BLE001 - injected authority/loaders fail closed
+        except Exception as exc:  # noqa: BLE001 - injected authority/loaders fail closed
+            reason, copy_text = _capture_load_failure(exc)
+            # Type and class only: the exception text can carry stored content.
+            logger.warning(
+                "Inspector capture load failed reason={} exception_type={}",
+                reason,
+                type(exc).__name__,
+            )
             if (
                 generation == self._disclosure_generation
                 and self.is_mounted
                 and self._capture_revision_is_current()
             ):
-                pane.set_detail(
-                    key,
-                    "Capture unavailable",
-                    prefix
-                    + "\n\nCould not load captures. Select this turn again to retry.",
-                )
+                pane.set_detail(key, "Capture unavailable", prefix + "\n\n" + copy_text)
 
     @staticmethod
     def _usage_detail_text(row: ConsoleCostRow) -> str:
@@ -884,6 +922,11 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
             self._exchange_call_title(capture, abandoned)
             + "\n"
             + self._call_cost_line(capture)
+            + (
+                "\n" + _LLAMA_CPP_CAPTURE_NOTE
+                if capture.provider in _LLAMA_CPP_PROVIDERS
+                else ""
+            )
             + "\n\nRequest (adapter boundary) · "
             + self._messages_summary(capture)
             + "\n"
