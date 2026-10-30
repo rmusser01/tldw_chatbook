@@ -18,7 +18,7 @@ def _wf() -> dict:
 def test_triggers_are_dev_events_only():
     on = _wf()[True]
     assert set(on) == {"pull_request", "push"}
-    assert on["pull_request"] == {"types": ["auto_merge_enabled", "auto_merge_disabled", "closed"], "branches": ["dev"]}
+    assert on["pull_request"] == {"types": ["auto_merge_enabled", "auto_merge_disabled", "closed", "synchronize"], "branches": ["dev"]}
     assert on["push"] == {"branches": ["dev"]}
 
 
