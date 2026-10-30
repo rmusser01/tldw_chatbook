@@ -6130,10 +6130,10 @@ class ConsoleComposerBar(Horizontal):
     def _caret_token(self) -> _DraftSegment | None:
         """Return the collapsed/confirm token the caret is on (TASK-33622.1).
 
-        The caret never sits inside a token, so "on" is either edge. Between
-        two tokens a pending confirm wins, then the token on the left. A
-        paste's edge line break is drawn outside its chip, parting that edge
-        from the chip, so it does not count until a click arms the token.
+        Owner ruling 2026-10-29 (TASK-37800): a collapsed token counts only
+        with the caret right before it, never after it, and not when a
+        paste's leading line break (drawn outside its chip) parts the two. A
+        pending confirm owns Enter at either edge and wins between tokens.
         """
         touching: list[_DraftSegment] = []
         start = 0
@@ -6141,12 +6141,11 @@ class ConsoleComposerBar(Horizontal):
         for segment in self._segments:
             end = start + len(segment.text)
             state = segment.collapse_state
-            if state in {"collapsed", "confirm"} and start <= cursor <= end:
-                leading, trailing = "", ""
-                if segment.origin == "paste" and not segment.label:
-                    leading, trailing = self._paste_edge_line_breaks(segment.text)
-                parted = (cursor == start and leading) or (cursor == end and trailing)
-                if state == "confirm" or not parted:
+            if state == "confirm" and start <= cursor <= end:
+                touching.append(segment)
+            elif state == "collapsed" and cursor == start:
+                unbroken = segment.origin != "paste" or bool(segment.label)
+                if unbroken or not self._paste_edge_line_breaks(segment.text)[0]:
                     touching.append(segment)
             start = end
         pending = [item for item in touching if item.collapse_state == "confirm"]
@@ -6162,10 +6161,10 @@ class ConsoleComposerBar(Horizontal):
     def activate_focused_paste_token(self) -> bool:
         """Advance the collapsed token the caret is on, for Enter.
 
-        TASK-33622.1 (owner decision 2026-10-27): Enter expands a token only
-        when the caret is on it; with the caret anywhere else this returns
-        False and Enter sends. It used to step the FIRST token in the draft,
-        so a draft holding a token never sent on one Enter.
+        TASK-33622.1/TASK-37800 (owner rulings 2026-10-27, 2026-10-29): Enter
+        expands a token only with the caret on it (right before it); anywhere
+        else, right after a token included, this returns False and Enter
+        sends. It used to step the FIRST token, so a token draft never sent.
 
         Returns:
             True when a paste token was advanced.

@@ -8,8 +8,12 @@ typed question took three Enters (live on dev 38c9d2edcf, 160x45).
 
 The owner decided on 2026-10-27 that Enter expands a token only when the
 caret is on it; otherwise Enter sends. The caret never sits inside a token
-(it snaps to the token's edges), so "on it" means at either edge. These tests
-drive the real ChatScreen and composer with real keys.
+(it snaps to the token's edges). The first reading counted either edge, so a
+draft that ENDED in a token still took three Enters. The owner ruled on
+2026-10-29 (TASK-37800): paste then Enter sends. Only a caret on a token or
+immediately before it (its left edge) expands it; a caret right after a
+token does not. These tests drive the real ChatScreen and composer with real
+keys.
 """
 
 from __future__ import annotations
@@ -44,7 +48,7 @@ def _paste_confirm(text: str) -> str:
 
 
 def _type(host, text: str) -> None:
-    names = {" ": "space", "?": "question_mark"}
+    names = {" ": "space", "?": "question_mark", ":": "colon"}
     for char in text:
         press(host, names.get(char, char), char)
 
@@ -105,7 +109,8 @@ async def test_one_enter_sends_a_token_and_typed_question_with_the_full_text(tok
 async def test_enter_advances_only_the_token_the_caret_is_on():
     """AC#2: with two tokens, Enter steps the caret's token, never the first.
 
-    The pre-fix Enter always stepped the first collapsed token in the draft.
+    Left from the end of the draft puts the caret on the second token (its
+    left edge). The pre-fix Enter always stepped the first collapsed token.
     """
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -119,6 +124,9 @@ async def test_enter_advances_only_the_token_the_caret_is_on():
         draft = first + " and " + second
         assert composer.draft_text() == draft
         assert composer.cursor_index == len(draft)
+        await pilot.press("left")
+        await pilot.pause()
+        assert composer.cursor_index == len(first + " and ")
 
         await pilot.press("enter")
         await pilot.pause()
@@ -162,6 +170,7 @@ async def test_escape_returns_a_pending_confirm_to_the_collapsed_chip():
         composer = await _focused_composer(host, pilot)
         pasted = "P" * (composer.paste_collapse_threshold + 1)
         composer.insert_pasted_text(pasted)
+        await pilot.press("left")
         await pilot.press("enter")
         await pilot.pause()
         assert composer._display_draft_text() == _paste_confirm(pasted)
@@ -184,6 +193,7 @@ async def test_a_file_token_keeps_its_name_through_the_confirm():
         composer.insert_file_segment(FILE_TEXT, FILE_LABEL)
         await pilot.pause()
         assert composer._display_draft_text() == f"{FILE_LABEL} | Expand"
+        await pilot.press("left")
 
         await pilot.press("enter")
         await pilot.pause()
@@ -338,6 +348,154 @@ async def test_moving_the_caret_off_a_pending_confirm_answers_no_and_enter_sends
             assert not composer.has_pending_paste_confirmation()
             assert gateway.stream_calls == 0
 
+            users = await _send_once_and_read_users(
+                host, pilot, gateway, console, composer
+            )
+
+            assert users == [expected]
+
+
+PROMPT_NAME = "Triage"
+PROMPT_BODY = "Triage this incident: list the failing worker, the cause and a fix. " * 2
+QUESTION = "Summarize this log: "
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flow",
+    ["paste", "question_then_paste", "prompt_insert", "file_insert", "after_mid_token"],
+)
+async def test_one_enter_sends_with_the_caret_right_after_a_token(
+    flow, tmp_path, monkeypatch
+):
+    """TASK-37800 (owner ruling 2026-10-29): paste then Enter sends.
+
+    A caret right after a collapsed token is not on it. The four flows the
+    ruling names leave the caret after a token that ends the draft; the
+    fifth moves it to just after a token mid-draft. Each sends on one Enter,
+    carrying the full text. The pre-change build armed the expand confirm
+    instead (and dev stepped the token to a bare "Expand?").
+    """
+    host, gateway, _timeline = build()
+    if flow == "prompt_insert":
+        from Tests.UI.test_console_command_composer import (
+            _real_prompt_scope_service,
+        )
+
+        db, service = _real_prompt_scope_service(tmp_path)
+        db.add_prompt(
+            name=PROMPT_NAME,
+            author="",
+            details="",
+            system_prompt="",
+            user_prompt=PROMPT_BODY,
+            keywords=[],
+        )
+        host.app_instance.prompt_scope_service = service
+    if flow == "file_insert":
+        import tldw_chatbook.Chat.attachment_core as attachment_core
+
+        original = attachment_core.load_processed_file
+
+        async def _rooted(file_path, *, allowed_root=None):
+            # The file lives in tmp_path, outside $HOME: widen the safety root.
+            return await original(file_path, allowed_root=str(tmp_path))
+
+        monkeypatch.setattr(attachment_core, "load_processed_file", _rooted)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            gateway.validation_release.set()
+            if flow == "paste":
+                expected = LOG
+                host.post_message(Paste(LOG))
+            elif flow == "question_then_paste":
+                expected = QUESTION + LOG
+                _type(host, QUESTION)
+                await until(lambda: composer.draft_text() == QUESTION)
+                host.post_message(Paste(LOG))
+            elif flow == "prompt_insert":
+                expected = PROMPT_BODY
+                assert len(PROMPT_BODY) > composer.paste_collapse_threshold
+                composer.load_draft(f"/prompt {PROMPT_NAME}")
+                await pilot.pause()
+                # The command's own Enter: it replaces the draft with the body.
+                press(host, "enter", "\r")
+            elif flow == "file_insert":
+                path = tmp_path / "photosynthesis.md"
+                path.write_text(FILE_TEXT)
+                # The real "insert a text file" path: the file's handler
+                # shapes the inlined text, so read back what it inserted.
+                await console._process_console_attachment(str(path))
+                await until(
+                    lambda: "photosynthesis.md" in composer._display_draft_text()
+                )
+                expected = composer.draft_text()
+                assert FILE_TEXT.strip() in expected
+            else:
+                expected = LOG + " why"
+                host.post_message(Paste(LOG))
+                await until(lambda: composer.draft_text() == LOG)
+                _type(host, " why")
+                await until(lambda: composer.draft_text() == expected)
+                for _ in " why":
+                    press(host, "left")
+                await until(lambda: composer.cursor_index == len(LOG))
+            await until(lambda: composer.draft_text() == expected)
+            await pilot.pause(0.2)
+            if flow != "after_mid_token":
+                assert composer.cursor_index == len(expected)
+            # One collapsed token stands for the body; it is not armed.
+            assert composer.has_paste_segments()
+            assert "| Expand" in composer._display_draft_text()
+            assert not composer.has_pending_paste_confirmation()
+            assert gateway.stream_calls == 0
+
+            users = await _send_once_and_read_users(
+                host, pilot, gateway, console, composer
+            )
+
+            assert users == [expected]
+
+
+@pytest.mark.asyncio
+async def test_left_onto_a_trailing_token_then_enter_still_expands_it():
+    """TASK-37800: Left from the end reaches a trailing token to expand it.
+
+    The ruling keeps the token's left edge as "on" it: Enter asks, a second
+    Enter puts the full text in place, and neither sends. Once expanded, the
+    next Enter sends the same full text.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            gateway.validation_release.set()
+            _type(host, QUESTION)
+            await until(lambda: composer.draft_text() == QUESTION)
+            host.post_message(Paste(LOG))
+            expected = QUESTION + LOG
+            await until(lambda: composer.draft_text() == expected)
+            press(host, "left")
+            await until(lambda: composer.cursor_index == len(QUESTION))
+
+            press(host, "enter", "\r")
+            await until(composer.has_pending_paste_confirmation)
+            await pilot.pause()
+            assert composer._display_draft_text() == QUESTION + _paste_confirm(LOG)
+
+            press(host, "enter", "\r")
+            await until(lambda: composer._display_draft_text() == expected)
+            await pilot.pause(0.3)
+            assert gateway.stream_calls == 0
+            assert composer.draft_text() == expected
+
+            press(host, "end")
+            await until(lambda: composer.cursor_index == len(expected))
             users = await _send_once_and_read_users(
                 host, pilot, gateway, console, composer
             )

@@ -277,7 +277,9 @@ async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
             f"Pasted text | {len(pasted)} characters | Expand"
         )
 
-        # TASK-33622.1: the caret sits right after the token, so it is on it.
+        # TASK-37800: right after the token the caret is not on it (Enter
+        # would send); Left puts it on the token's left edge, which is.
+        await pilot.press("left")
         await pilot.press("enter")
         await pilot.pause()
 
