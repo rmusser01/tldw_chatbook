@@ -759,10 +759,14 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
 
     composer = screen._console_composer_or_none()
     ephemeral = screen._console_active_session_is_ephemeral()
+    save_enables_capture, next_send_capture = (
+        _save_chat_capture(screen) if ephemeral else (None, None)
+    )
     return {
         "attachment_kind": screen._console_pending_attachment_kind(),
         "ephemeral": ephemeral,
-        "save_enables_capture": ephemeral and _save_chat_enables_capture(screen),
+        "save_enables_capture": save_enables_capture,
+        "next_send_capture": next_send_capture,
         # Same input the action-row button read before it moved to the menu,
         # so Save Chatbook's available/unavailable copy is unchanged.
         "can_save_chatbook": screen._console_chatbook_action_available(),
@@ -773,24 +777,36 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
     }
 
 
-def _save_chat_enables_capture(screen: Any) -> bool:
-    """Return whether saving the active temporary chat turns capture on.
+def _save_chat_capture(screen: Any) -> tuple[bool | None, bool | None]:
+    """Return what saving the active temporary chat does to capture.
 
     TASK-37811 (owner decision 2026-10-29): the Save chat row promises
-    capture only when the saved chat will capture. Read from the same
-    snapshot the Trace Privacy dialog shows; a chat closed meanwhile has no
-    snapshot and gets no promise.
+    capture only when the saved chat will capture, and names a one-time
+    Next send choice that differs (it survives promotion). Read from the
+    same snapshot the Trace Privacy dialog shows. When that cannot be read
+    (a chat closed meanwhile, a failed hydration) the row makes no capture
+    claim, and the Menu still opens.
+
+    Returns:
+        The Capture the saved chat follows and the one-time Next send
+        choice, or ``(None, None)`` when unknown.
     """
     from ...Chat.console_exchange_capture import saved_chat_capture
 
-    controller = screen._ensure_console_chat_controller()
     try:
-        snapshot = controller.capture_policy_snapshot(controller.store.active_session_id)
-    except KeyError:
-        return False
-    return saved_chat_capture(
-        snapshot.conversation_capture_enabled, global_enabled=snapshot.enabled
-    )
+        controller = screen._ensure_console_chat_controller()
+        snapshot = controller.capture_policy_snapshot(
+            controller.store.active_session_id
+        )
+        saved = saved_chat_capture(
+            snapshot.conversation_capture_enabled, global_enabled=snapshot.enabled
+        )
+    except Exception as exc:
+        logger.bind(error_type=type(exc).__name__).debug(
+            "composer_menu_save_chat_capture_unavailable"
+        )
+        return None, None
+    return saved, snapshot.next_capture_enabled
 
 
 async def open_composer_menu(screen: Any) -> None:

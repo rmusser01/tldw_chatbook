@@ -39,11 +39,16 @@ has none; the sends it made while temporary keep no trace. The Menu row says
 which: it reads **Save chat (enables capture)**, with the hint "records no
 traces until saved", only when saving will turn capture on. With the global
 default Off, or Capture Off chosen for this conversation, it reads **Save chat**
-and its hint says traces stay off once saved.
+and its hint says saving keeps traces off; a saved chat with no Capture choice
+of its own still follows the global default if you change it later. A
+one-time **Next send** choice is kept when you save and decides that one send,
+so when it differs the hint says so instead: "once saved, only your next send
+is traced", or "once saved, traces start after your next send".
 
-If you turn Capture On for a chat that is still temporary (**This
-conversation** or **Next send** in Trace Privacy), each send pauses before the
-provider, because a Capture On call needs a durable owner. The transcript shows
+If you turn Capture On for a chat that is still temporary, a send pauses
+before the provider, because a Capture On call needs a durable owner: every
+send while **This conversation** is On, or only the next one when you chose
+**Next send**. The transcript shows
 **Save chat to capture this send** with **Save & Send**, **Send without
 capture** and **Cancel send**. **Save & Send** saves the current lineage and
 its trace ownership, then sends that message; **Send without capture** sends
