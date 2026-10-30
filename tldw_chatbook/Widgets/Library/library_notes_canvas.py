@@ -369,6 +369,8 @@ PURGE_KEPT_FILE_CLAUSE = "Its file in the synced folder stays on disk."
 PURGE_SERVER_COPY_CLAUSE = "Copies on your sync server are not removed."
 #: Review R0, m-5: why Delete forever did nothing, on the Trash's own line.
 PURGE_BUSY_NOTICE = "Delete forever waits: another change to your notes is still running."
+#: Re-review NB-1, residual R-3: why Restore did nothing under an import.
+RESTORE_BUSY_NOTICE = "Restore waits: another change to your notes is still running."
 #: Review R0, m-5: the button's tooltip (static text, no markup to escape).
 PURGE_TOOLTIP = "Delete this note forever (x) — asks first"
 
