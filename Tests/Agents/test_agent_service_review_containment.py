@@ -282,15 +282,20 @@ def test_unexpected_launch_failure_releases_the_unaccepted_claim(
     assert c.outcome.subagents_spawned == 1
 
 
+@pytest.mark.parametrize("scheduled", [False, True])
 @pytest.mark.parametrize("inline", [False, True])
 def test_check_actor_refusal_retires_the_half_applied_attach(
-    dispatch_case, monkeypatch, inline
+    dispatch_case, monkeypatch, inline, scheduled
 ):
     c = dispatch_case
     refused = []
 
     def refuse_once(c):
         original = c.primary.store.bind_check_actor
+        if scheduled:
+            # A boundary wake / stage acceptance pinned the verifier attempt.
+            with c.store.lease(c.prepared.review_id) as context:
+                context.scheduled_attempts["V1"] = "scheduled-v1"
 
         def bind(primary_run_id, review_id, attempt_id):
             if not refused:
@@ -321,6 +326,9 @@ def test_check_actor_refusal_retires_the_half_applied_attach(
     children = [a for a, _ in c.calls if a.kind == "subagent"]
     assert children and refused[0] not in {a.run_id for a in children}
     assert "verification_attempt_closed" in json.dumps(c.calls[1][1])
+    if scheduled:
+        # The retry relaunched the SAME scheduled attempt, not a stale refusal.
+        assert c.store._tab.runs[children[0].run_id].attempt_id == "scheduled-v1"
 
 
 @pytest.mark.parametrize(
@@ -333,6 +341,8 @@ def test_check_actor_refusal_retires_the_half_applied_attach(
         ("run_row", True, 1),
         # The child dispatched model turns, then crashed in post-loop code.
         ("after_model_turn", True, 1),
+        # _run_owned returned; the inline cleanup after it raised.
+        ("after_return", True, 1),
     ],
 )
 def test_failed_spawn_returns_its_slot_only_when_no_child_ran(
@@ -356,6 +366,17 @@ def test_failed_spawn_returns_its_slot_only_when_no_child_ran(
         fail_once(agent_service, "get_internal_prompt")
     elif case == "run_row":
         fail_once(AgentService, "_fork_review_child")
+    elif case == "after_return":
+        from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+
+        finished = set()
+
+        def second_finish(owner):
+            seen = owner in finished
+            finished.add(owner)
+            return owner.child and seen
+
+        fail_once(ExecutionOwner, "finish_root", second_finish)
     else:
         fail_once(
             AgentService, "_persist", lambda self, run_id, *a: run_id != "primary"
@@ -372,7 +393,8 @@ def test_failed_spawn_returns_its_slot_only_when_no_child_ran(
 
     monkeypatch.setattr(agent_service, "run_agent_loop", loop)
     c.run(inline=inline)
-    assert remaining == [(2, left, case == "after_model_turn")]
+    ran = case in {"after_model_turn", "after_return"}
+    assert remaining == [(2, left, ran)]
 
 
 def test_thread_start_refusal_survives_a_refused_launch_retirement(
@@ -430,6 +452,82 @@ def test_wait_notice_cleanup_failure_still_returns_the_refusal(
     assert c.outcome.status == "done"
     primary = [request for actor, request in c.calls if actor.kind == "primary"]
     assert "check_notice_transport_unavailable" in json.dumps(primary[-1])
+
+
+def test_thread_start_refusal_keeps_a_scheduled_attempt_launchable(
+    dispatch_case, monkeypatch
+):
+    import threading
+
+    c = dispatch_case
+    original_start = threading.Thread.start
+    started = []
+
+    def start(thread):
+        if thread.name.startswith("fleet-") and not started:
+            started.append(thread)
+            raise RuntimeError("scripted fleet start failure")
+        return original_start(thread)
+
+    def pin(c):
+        with c.store.lease(c.prepared.review_id) as context:
+            context.scheduled_attempts["R1"] = "scheduled-r1"
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    c.run(replay=True, prepare_hook=pin)
+    children = [a for a, _ in c.calls if a.kind == "subagent"]
+    assert started and children
+    assert c.store._tab.runs[children[0].run_id].attempt_id == "scheduled-r1"
+
+
+def test_inline_review_child_gets_a_second_settlement_attempt(
+    dispatch_case, monkeypatch
+):
+    c = dispatch_case
+    original = CodeReviewService.settle_review_run
+    failures = []
+
+    def settle_once_failing(self, run_id, **kwargs):
+        if not failures:
+            failures.append(run_id)
+            raise OSError("transient settlement failure")
+        return original(self, run_id, **kwargs)
+
+    monkeypatch.setattr(CodeReviewService, "settle_review_run", settle_once_failing)
+    c.run(inline=True)
+    assert failures
+    with c.store.lease(c.prepared.review_id) as context:
+        settled = [
+            stream.terminal_status
+            for (slot, _attempt), stream in context.streams.items()
+            if slot == "R1"
+        ]
+    assert settled == ["done"]
+
+
+def test_automatic_budget_refusal_ends_unstarted_checks(monkeypatch):
+    from tldw_chatbook.Agents import automatic_work_runtime
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    def refuse():
+        raise AutomaticWorkRefused("budget_exhausted")
+
+    service, config, ended = _checked_service(lambda: ToolResult(ok=True))
+    # code_review_read/submit dispatch on the definitive-after-start path.
+    monkeypatch.setattr(
+        service.registry,
+        "execution_policy_for",
+        lambda name: ToolExecutionPolicy.DEFINITIVE_AFTER_START,
+    )
+    monkeypatch.setattr(
+        automatic_work_runtime,
+        "current_automatic_work",
+        lambda: SimpleNamespace(check=refuse),
+    )
+    result = _invoke(service, config)
+    assert not result.ok and result.dispatch_state == "not_started"
+    assert [reason for _run, reason, _kw in ended] == [result.error]
 
 
 # -- wake-claim predecessor check ------------------------------------------------

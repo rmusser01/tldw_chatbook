@@ -638,7 +638,7 @@ def make_invoke_tool(
                         automatic_work.check()
                     except AutomaticWorkRefused:
                         return runtime.ToolResult.blocked(
-                            "automatic work refused before dispatch"
+                            f"{TOOL_ADMISSION_REFUSED}automatic work refused before dispatch"
                         )
                 review_owner = self.registry.resolve_owner_for_name(
                     "code_review_prepare"
