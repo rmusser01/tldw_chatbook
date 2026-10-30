@@ -152,7 +152,9 @@ class ConsoleTraceNativeReader:
         # mappingproxy children, and the raw keys would still fail the
         # capture contract, which carries normalized ProviderUsage (as the
         # gateway's own capture does). Usage is supplementary: one that
-        # cannot be normalized is omitted, never the whole call.
+        # cannot be normalized is omitted (and listed as such), never the
+        # whole call; an empty payload reported nothing, so it stays None
+        # rather than becoming an all-zero "reported" record.
         try:
             usage_json = (
                 _normalized_usage_json(
@@ -160,12 +162,12 @@ class ConsoleTraceNativeReader:
                     provider=call.provider_name or "",
                     model=call.model_name or "",
                 )
-                if call.usage is not None
+                if call.usage
                 else None
             )
         except (TypeError, ValueError, RecursionError):
             usage_json = None
-        if call.usage is not None and usage_json is None:
+        if call.usage and usage_json is None:
             omitted.append("usage")
         capture = ExchangeCapture(
             run_tag=call.run_id,
