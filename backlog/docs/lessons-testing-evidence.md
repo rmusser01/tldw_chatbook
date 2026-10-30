@@ -22061,3 +22061,37 @@ explicit, commented allowlist of what is kept on purpose, plus a negative
 control: a table the delete was never told about that holds the title inside
 JSON. Do not count a logical index check (`MATCH`, `fts5vocab`,
 `integrity-check`) as evidence that bytes are gone.
+
+## A paired run against the previous round's head calls your own red "pre-existing" (TASK-34000 polish-1b, 2026-10-29)
+
+Task 9 (Ctrl+S in every editor) moved the Media edit interlock claim into
+`_save_library_media_edit_from_form` in its first commit. That turned
+`Tests/UI/test_library_multiselect_media.py::test_every_media_mutation_claims_the_interlock_at_one_audited_seam`
+red. Fix rounds 1 and 2 each ran their paired comparison against the head
+the previous review had seen. By then the red was on both arms, so each round
+counted it as pre-existing, and the file is not censused, so CI never saw it
+either. Only review r2 caught it, by reading the claim's new location. Round 3
+re-paired against the task's original base, `500d09c43a`, and the red showed
+up as head-only at once.
+
+The final fix wave on the same branch missed a red for a related reason: the
+comparison covered too few files. Its brief said to re-run "Architecture and
+the ratchets", and the agent ran the two ratchets it already knew: the screen
+ratchet and the Library-modules ratchet (`70 passed`). The C-1 fix added 18
+lines to `app_service_wiring.py`, and that made
+`test_module_size_ratchet[app_service_wiring.py]` red. That is a third ratchet
+file, which neither run included. The next agent found it by running the whole
+of `Tests/Architecture` on both arms and comparing JUnit results by test name.
+
+**What to do.** A paired comparison answers "what did this work break?" only if
+its base is from before the work started.
+- Pair every fix round against the task's original BASE, not the last reviewed
+  head.
+- Pair the final fix wave against the base of the whole branch, or at least
+  against the head the final review saw.
+- Choose the files to compare by what the diff can reach, not by area name. A
+  wiring, size or import ratchet keyed on a file you touched counts as a
+  covering test.
+- Run `Tests/Architecture` whole on both arms rather than "the ratchets you
+  know". It has at least three size-ratchet files: screen, Library modules,
+  and module size.
