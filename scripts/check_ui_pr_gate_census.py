@@ -1251,10 +1251,16 @@ MINIMUM_FILES = 2439
 #   test_library_notes_trash_pages_reach_every_deleted_note.py. Alone at load
 #   ~10-12: the original ~20 s (two 100x30 boots), the sibling ~12 s, with
 #   and without the w1b plugin: 934 -> 935.
+# - polish-1b final fix wave (2026-10-29, the live I-2 check's find): Tests/UI/
+#   test_library_notes_trash_x_under_import_keeps_its_row.py (``x`` under a
+#   held import keeps focus on its row through the release: one production-CSS
+#   Library boot at 120x36 over a real ChaChaNotes database and the real import
+#   executor, ~10-12 s alone at load ~17, with and without the w1b plugin; kept
+#   out of its ~10 s sibling so neither nears the budget): 935 -> 936.
 # Rebased 2026-11-20 onto dev d85e90bc9e (2439 entries, floor 2439): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2439 + 19 = 2458.
-MINIMUM_FILES = 2458
+# moves; the floor is the measured entry count: 2439 + 20 = 2459.
+MINIMUM_FILES = 2459
 
 
 def read_census(path: Path) -> list[str]:
