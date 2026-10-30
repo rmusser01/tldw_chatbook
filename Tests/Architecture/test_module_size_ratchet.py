@@ -362,7 +362,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-36361: staged completion delegates to the same-owner helper (-45).
     # TASK-36387: five badge branches read the category list's table (-3).
     # TASK-36388: the context-window suppress queue nothing wrote goes (-13).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35602,
+    # 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 35602 -> 35593.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35593,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
