@@ -3160,7 +3160,8 @@ Per-run provider/model choices use existing routing permission and consent and d
 not change the saved team. `[tools] code_review_enabled` controls the feature
 (on by default); its switch is **Multi-model code review** under
 Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates. With it off, no
-review tools are offered and review wording is ordinary chat.
+review tools are offered and review wording is ordinary chat; a review already in
+progress keeps its accepted automatic continuations.
 
 Ask “Review my changes with my default team”, identifying the selected workspace
 folder and scope. You can also supply exact commit-range/PR base and head commits
@@ -3175,9 +3176,11 @@ request, diff, commit, patch or changes) reports that a folder is needed; other
 “review …” wording, such as “Review my resume”, stays an ordinary chat.
 
 Each reviewer gets the same captured source and general brief, plus its optional
-focus. A changed binary or symlink file is listed by path as a coverage gap, and
-changed files hidden by exclusions or sensitive-path rules are counted without
-names; neither blocks the rest of the review. Originals open in **Review reports**
+focus. A changed binary, symlink, submodule or over-size file is listed by path as
+a coverage gap, and changed files hidden by exclusions or sensitive-path rules are
+counted without names; neither blocks the rest of the review. The assistant states
+these gaps (up to eight, plus a count of the rest) before launching reviewers, and
+each reviewer's first listing of the review scope shows them. Originals open in **Review reports**
 before verification; press **u** in the
 owning Console chat to reopen them. Read originals, raw output, target identity,
 requested/actual provider-model routes, fallback changes and coverage separately.
