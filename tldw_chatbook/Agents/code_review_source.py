@@ -345,7 +345,12 @@ def capture_review_source(
 # A changed file the view cannot hold as text is a named coverage gap, not a
 # refusal of the whole target (spec: excluded/binary material is coverage).
 _UNREADABLE_CHANGE = frozenset(
-    {"binary_source", "unsupported_source_type", "source_truncated"}
+    {
+        "binary_source",
+        "unsupported_source_type",
+        "unsupported_source_encoding",
+        "source_truncated",
+    }
 )
 #: Capture gaps shown to the primary (prepare) and on a reviewer's first scope
 #: listing are bounded; withheld sensitive changes never carry names.

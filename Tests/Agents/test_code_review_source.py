@@ -1332,3 +1332,28 @@ def test_first_scope_listing_reports_bounded_capture_gaps(source_case):
     assert reasons[8] == "capture_gaps_omitted: 3 more"
     assert [gap.reason for gap in again.gaps] == reasons
     assert "secret.txt" not in first.model_dump_json()
+
+
+def test_non_utf8_changed_file_is_a_gap_but_a_selected_file_refuses(source_case):
+    c = source_case
+    (c.root / "latin1.txt").write_bytes(b"caf\xe9\n")
+    (c.root / "plain.py").write_text("plain\n")
+    head = _commit_paths(c.root, "encodings", "latin1.txt", "plain.py")
+    manifest = c.capture(
+        c.committed_target.model_copy(
+            update={"base_commit": c.head, "head_commit": head}
+        )
+    )
+    assert "unsupported_source_encoding: latin1.txt" in [
+        g.reason for g in manifest.gaps
+    ]
+    assert ("head", "plain.py") in {
+        (doc.side, doc.relative_path) for doc in manifest.initial_sources
+    }
+    (c.root / "selected.txt").write_bytes(b"caf\xe9\n")
+    with pytest.raises(ReviewRefused, match="unsupported_source_encoding"):
+        c.capture(
+            c.working_tree_target.model_copy(
+                update={"untracked_paths": ("selected.txt",)}
+            )
+        )
