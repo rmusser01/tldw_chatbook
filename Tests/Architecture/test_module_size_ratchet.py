@@ -108,7 +108,14 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3690,
+    # 2026-10-29, TASK-34000.29 polish-1b final review C-1 (same owner
+    # decision): 3690 -> 3708 (+18, measured) -- Sync v2's ``note_exists``
+    # seam, ``_sync_v2_note_ids_present`` (reads the ChaChaNotes DB at call
+    # time; no DB means nothing is held) and its kwarg at the
+    # ``LocalFirstSyncService`` construction, so a purged note's queued
+    # upsert never leaves the device. Missed by the wave's own ratchet
+    # re-runs; found by the finishing pass's full Tests/Architecture pair.
+    "tldw_chatbook/app_service_wiring.py": 3708,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
