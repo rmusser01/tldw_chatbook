@@ -38,6 +38,21 @@ when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
 bright-black run) or by the message the transcript shows after the send, not by
 the `.txt` row.
 
+## Text typed after a Console window closes can run as message shortcuts (TASK-33620.8, 2026-10-29)
+
+**Incident.** In the first TASK-33620.8 live round, the Cited sources window was
+closed with its Close button and a follow-up was typed with `tmux send-keys -l`.
+Focus had gone back to the assistant message, not the composer, so the letters
+ran as message actions. The cited reply was regenerated without its evidence
+(the new reply said it had no information), an Edit Message window opened, and
+the Trace view opened. Nothing was sent as a follow-up, and the round had to be
+redone on a fresh profile.
+
+**What to do.** After any modal closes, click the composer (or check in a
+capture that it holds focus) before typing. When a round goes wrong after a
+close, look for a regenerated or edited message before blaming the change under
+test.
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured
