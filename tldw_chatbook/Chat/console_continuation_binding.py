@@ -43,9 +43,17 @@ def require_target_matches_resolution(
     from tldw_chatbook.Chat.console_provider_endpoints import (
         normalize_generic_endpoint_for_compare as endpoint,
     )
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key as key
 
+    # One normalization on both sides; either the execution key or the
+    # identity spelling may pin the target (a swapped custom-ep pins the
+    # execution key; split thinking/continuation doubles pin the identity).
     if (
-        target.provider != (resolution.execution_key or resolution.provider)
+        key(target.provider)
+        not in {
+            key(resolution.execution_key or resolution.provider),
+            key(resolution.provider),
+        }
         or (
             target.selected_provider
             != (resolution.selected_provider or resolution.provider)

@@ -676,7 +676,7 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
             or descriptor.inputs[1].inputs != (descriptor.inputs[0],)
         ):
             raise TraceProvenanceAlignmentError(
-                "completed replay requires its exact saved continuation owner"
+                "completed replay transform requires its exact saved continuation owner"
             )
         return
     required_artifacts = {
