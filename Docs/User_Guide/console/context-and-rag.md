@@ -1127,6 +1127,17 @@ do next, such as unlocking or restoring the keyring and restarting
 Chatbook. Chatbook never creates a new key for records that already
 exist.
 
+Two cases work differently for now:
+
+- **Temporary chats** aren't saved, so their replies have no citation
+  records. A reply in a Temporary chat can still show `[S1]` labels, but no
+  **Cited sources** button.
+- **Older installs** may keep citation records off. Chatbook writes its
+  default settings into `config.toml` when a profile is first set up, so a
+  profile set up before records were on by default can have
+  `canonical_writes_enabled = false` there. To turn records on, change it
+  to `true` under `[rag_citations]` and restart Chatbook.
+
 Dim notices under the reply track verification: "Checking citations…",
 then "Citations repaired" or "Citations repaired · View original attempt"
 (the **View original attempt** message action toggles an inline preview
