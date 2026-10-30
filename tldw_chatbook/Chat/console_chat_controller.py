@@ -343,6 +343,7 @@ from tldw_chatbook.Chat.console_configuration_capture import (
     capture_skill_context_maximum as capture_skill_context_maximum,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
 )
 from tldw_chatbook.Chat.console_turn_context import (
+    commit_fence_configuration,
     read_session_change_review_admission,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
@@ -23625,14 +23626,7 @@ class ConsoleChatController:
                 owner.context_policy_overrides,
                 self._global_context_policy_overrides(),
                 policy_revision,
-                replace(
-                    configuration,
-                    skill_context_maximum={
-                        key: value
-                        for key, value in configuration.skill_context_maximum.items()
-                        if key != "plugin_run_id"
-                    },
-                ),
+                commit_fence_configuration(configuration),
                 resolution.provider,
                 resolution.model or "",
                 getattr(resolution, "base_url", None),
