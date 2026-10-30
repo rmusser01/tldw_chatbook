@@ -553,6 +553,7 @@ from ...Widgets.Console.console_transcript import (
 from ...Widgets.Console.console_settings_summary import (
     build_console_readiness_presentation,
 )
+from ...Widgets.Console.console_send_authority_summary import COMPACTION_PAUSE_RUN_COPY
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
@@ -17440,6 +17441,8 @@ class ChatScreen(BaseAppScreen):
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             if reason := blocked_turn_reason(controller):  # TASK-33621.2: stuck
                 return f"Blocked — {reason}"
+            if self._context_spend.compaction_pause_expected():  # TASK-33621.4
+                return COMPACTION_PAUSE_RUN_COPY  # about the next send: first
             send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
             acknowledgement = send_ack.run_copy(session_id) if send_ack is not None else ""
             return acknowledgement or (rule_status(rule_state) if rule_state is not None else "")

@@ -138,12 +138,13 @@ and memory:
 - **Off** never compacts.
 
 You can see the pause coming. Once the chat's history is over its trigger
-under **Ask**, the header badge reads **Next send pauses to compact**,
-Inspect's "What happens if I send now?" Run line reads **Pauses for
-compaction**, and the Context chip in the status strip starts with **Next
-send pauses to compact** (its tooltip gives the numbers). While a message is
-held, the badge reads **Blocked** and the Run line **Blocked — compaction
-ask**. F1 help lists the same in its **Context limit** group.
+under **Ask**, the header badge reads **Next send pauses to compact** (on
+narrow terminals the badge has no room for it), Inspect's "What happens if I
+send now?" Run line and the run chip at the start of the status strip read
+**Pauses for compaction**, and the Context chip starts with **Next send
+pauses to compact** (its tooltip gives the numbers). While a message is held,
+the badge reads **Blocked** and the Run line and run chip **Blocked —
+compaction ask**. F1 help lists the same in its **Context limit** group.
 
 To compact without sending, type `/compact` or choose **Console: Compact
 context now** from the command palette (Ctrl+P). Both run the same summary as
