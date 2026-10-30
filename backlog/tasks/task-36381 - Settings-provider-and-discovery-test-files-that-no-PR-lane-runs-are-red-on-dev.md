@@ -111,6 +111,6 @@ Re-verified:
 - preflight passed;
 - module ratchet: the settings_screen row passes, and the same 8 untouched rows are red on dev too.
 
-The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8 failed. All 8 were already private-profile tests whose bodies this task does not change. The same 8 run at dev ff815f8559 under the same load failed 6 and passed 2, so this is the load-sensitivity recorded under AC#1.
+The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8 failed. 6 of the 8 are this task's own conversions: they are plain tests on dev, so they are red there through RecoveryRequired, the bug AC#3 explains. The other 2 were already private-profile tests on dev and passed there. At head, all 8 passed on a rerun at lower load, so the head failures are load-related, not regressions.
 
 **Files.** `tldw_chatbook/UI/Screens/settings_screen.py` (TOOLS guidance), `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_settings_model_discovery_journeys.py`, `Tests/UI/test_settings_endpoint_probe.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/app_factory.py` (docstring), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
