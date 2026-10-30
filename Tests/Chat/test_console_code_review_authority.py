@@ -842,3 +842,27 @@ def test_no_second_offer_once_verification_has_started(native_dispatch):
     c.coordinator.on_settled(c.prepared.review_id)
     assert len(offers) == 1
     assert "chat" not in c.coordinator._offers
+
+
+def test_refused_stage_admission_stays_evictable(native_review):
+    """Compose binds the admission before accept_stage; a refusal must not pin it."""
+    c = native_review
+    first = None
+    for _ in range(64):
+        message = c.accept("Verify the review.")
+        first = first or message
+        c.coordinator.bind_stage_admission(
+            message.id,
+            capacity=None,
+            routing=None,
+            app_config={},
+            destination_check=None,
+        )
+        with pytest.raises(ReviewRefused, match="review_scope_mismatch"):
+            c.coordinator.accept_stage(
+                "review-unknown", "verify", accepted_message_id=message.id
+            )
+    latest = c.accept("Review my changes.")
+    assert latest.id in c.coordinator._requests
+    assert first.id not in c.coordinator._requests
+    assert first.id not in c.coordinator._stage_admissions
