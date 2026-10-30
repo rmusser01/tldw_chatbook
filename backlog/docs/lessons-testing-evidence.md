@@ -61,6 +61,30 @@ with `raw_source_selection_changed`, run it with that probe plugin on both trees
 and compare failing ids. Delete the plugin before committing. This is a local
 measurement aid, not a fix: the suite still fails in a lane that runs it plain.
 
+## A bounded result test can certify missing diagnostics (TASK-37630, 2026-10-29)
+
+The CLI report showed the same-tool three-failure stop but omitted error bodies.
+A real command with 6,000 stdout characters and a unique stderr diagnostic
+proved that the executor retained stderr while the provider's second 4,000-char
+slice erased it. The existing success test asserted only that output stayed
+within 4,000 characters, so it certified the lossy behavior. Assert independent
+stdout/stderr retention at the provider boundary, and separately exercise the
+executor's genuine storage limits. GNU grep no-match exits also reproduced the
+stop despite normal process settlement; successful dispatch alone does not
+establish that the outcome classification is suitable for search results.
+
+## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
+
+The real Windows workspace worker could preview a write but failed creation at
+stdlib os.open(directory). Selecting native retained-directory operations fixed
+creation, but CAS then failed because Windows byte locks prevent a second
+handle's read, and ordinary rename cannot replace the open locked target.
+Reading through the retained lock handle and explicit FileRenameInformationEx
+POSIX rename semantics passed native replacement. The regression attempts a
+competing lock immediately inside the replacement call, proving the original
+lock remains held, and independently refuses a late target-inode substitution.
+Releasing the lock to make rename succeed would discard the guarantee under test.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its

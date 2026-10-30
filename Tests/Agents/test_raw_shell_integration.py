@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import RUN_DONE, AgentConfig, ToolCall
+from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    AgentConfig,
+    FirstRequestSchemaPlan,
+    ToolCall,
+)
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
 from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
@@ -137,7 +142,7 @@ def test_approved_call_reuses_runtime_and_returns_bounded_success(
     assert request.caller == "model"
     assert request.console_session_id == "console-session"
     assert request.command == "printf hello"
-    assert len(result.content) <= 4000
+    assert runtime.stdout in result.content
     assert "terminal_state: exited" in result.content
     assert "truncated: true" in result.content
     assert "cleanup_proven: true" in result.content
@@ -266,6 +271,7 @@ def _native_call(name: str, arguments: dict[str, object], call_id: str) -> dict:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
     tmp_path: Path,
 ) -> None:
@@ -300,6 +306,14 @@ def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
             model="test-model",
             system_prompt="You are helpful.",
             allowed_tools=("shell_exec",),
+            native_tools=False,
+        ),
+        first_request_schema_plan=FirstRequestSchemaPlan(
+            active_schemas=(provider.load_schema("shell_exec"),),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt="You are helpful.",
         ),
         api_endpoint="llama_cpp",
         should_cancel=lambda: False,
@@ -535,9 +549,9 @@ def test_nonzero_exit_result_carries_one_labeled_hint(tmp_path: Path) -> None:
         result = provider.invoke("shell_exec", {"command": "pyest -q"})
 
     assert result.ok is False
-    assert "bash: pyest: command not found" in (result.error or ""), (
-        "original output must be intact"
-    )
+    assert "bash: pyest: command not found" in (
+        result.error or ""
+    ), "original output must be intact"
     assert (result.error or "").count("[tool hint]") == 1
     assert (result.error or "").index("command not found") < (result.error or "").index(
         "[tool hint]"

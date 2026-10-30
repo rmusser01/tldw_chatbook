@@ -1763,6 +1763,12 @@ string, parse pipes or redirection, expand environment variables, or invoke a
 host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
 `stat`, `git_status`, `git_diff`, `git_log`, `git_blame`, and `git_branches`.
 
+The model receives the supported argument forms with the tool schema. Virtual
+`ls` accepts `-a`, `-A`, `--all`, `--almost-all`, `-l`, and combinations such as
+`-la`. Listings already include hidden entries; `-l` adds type/permissions and
+byte size. Unsupported arguments return the selected command's usage. These
+are fixed virtual commands, so other host-command flags are not implied.
+
 The tool is discoverable only when local tools are enabled and the run admitted
 at least one valid Workspace folder, but discoverability is not authorization.
 Before each invocation, Chatbook resolves the selected command under the
@@ -1873,6 +1879,16 @@ altered, and unrecognized failures return exactly as before. Model
 bounded agent tool history and local run logs; they do not create a
 `local_command` record. Generic diagnostics retain content-free execution
 metadata rather than command or output bodies.
+
+Shell results retain the executor's stdout and stderr without an additional
+4,000-character cut. Existing stream, storage and agent-context budgets still
+apply. A simple `grep`, `rg`, or `findstr` command that exits 1 without stderr is
+reported as a successful empty search, retaining its actual exit code. It does
+not consume the three-failure limit. Other command errors and compound shell
+expressions retain the existing failure handling.
+
+On Windows, `cmd` receives the command text without argument-list re-escaping,
+so quoted arguments retain their intended spaces and characters.
 
 ### Persistent Terminal: user-only interactive PTY
 
