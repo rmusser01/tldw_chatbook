@@ -21,6 +21,25 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 
 ## Consequences
 
+### Amendment 2026-10-30: reserve a qualification slot for the observed front (TASK-38101)
+
+Preflight may read the live open dev PR queue to classify scheduling. Match
+`line_of`: armed, non-draft, same-repository, human-authored PRs, ordered by
+arming time and PR number. Follow all pages within the queue's 1,000-PR bound;
+partial/malformed reads and API failures fall back to background. Only with the
+queue on, an event head matching the live front, and a fresh matching candidate
+identity/head/arming timestamp does the caller receive the front slot.
+
+Classification grants no merge, approval or write authority. It is a snapshot;
+a changed front cannot preempt useful in-progress work. The existing queue
+remains responsible for rebases, held-run approval, failed-job-only retries and
+eviction. Preserve its control jobs and required context outside admission slots.
+
+The owner rejected queue-only qualification for now because authors should still
+receive full regression feedback before arming a PR. Native bounded queues avoid
+a separate scheduler while limiting competing qualifications. See ADR-103 and
+`Docs/superpowers/specs/2026-10-29-ci-admission-options.md` for the bound and limits.
+
 ### Amendment 2026-10-29: cancel only obsolete PR-head CI (TASK-37800)
 
 The owner approved a separate synchronize-triggered cleanup job in the existing

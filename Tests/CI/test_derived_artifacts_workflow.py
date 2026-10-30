@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.CI.workflow_helpers import derived_workflow
+
 yaml = pytest.importorskip("yaml")
 
 
@@ -69,7 +71,7 @@ VERDICTS = {
 
 
 def _workflow() -> dict:
-    return yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    return derived_workflow(PROJECT_ROOT)
 
 
 def _job() -> dict:
@@ -92,27 +94,13 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     `queue-tick` (the merge queue, spec 2026-10-03) runs after the aggregate and
     is never a required context.
     """
-    assert list(_workflow()["jobs"]) == [
+    assert set(_workflow()["jobs"]) == {
         "preflight",
-        "pr-fast-lane",
-        # TASK-34916: the PR Fast Lane's admission-sensitive pytest invocation,
-        # moved out when the two steps together reached the 35-min cap.
-        "pr-fast-lane-admission",
-        # TASK-35575: the admission-sensitive suites' second job, split out
-        # when Phase 9's targets took the first to 29.8 of its 35 min.
-        "pr-fast-lane-admission-2",
-        "ui-fast-lane",
-        # TASK-33621.27: the Console review's P0 regression tests, moved out
-        # of pr-fast-lane when they took it to 33m41s of its 35-min cap.
-        "console-p0-gate",
-        # TASK-34986: PR2921's Dreams/Guardian steps, moved out of
-        # console-p0-gate when they took it to 18.7 min of its 20-min cap.
-        "dreams-boundary",
-        # TASK-34929: Tests/Dreams/test_track_service.py, in no PR lane before.
-        "dreams-tracking",
+        "qualification",
         "derived-artifacts",
         "queue-tick",
-    ]
+        *VERDICTS,
+    }
 
 
 def test_required_aggregator_fails_when_either_lane_fails():
@@ -123,12 +111,12 @@ def test_required_aggregator_fails_when_either_lane_fails():
     "guard nobody is gated on" shape this whole workflow exists to replace.
     """
     job = _workflow()["jobs"]["derived-artifacts"]
-    assert job.get("needs") == ["preflight", *VERDICTS]
+    assert job.get("needs") == ["preflight", "qualification"]
     for lane, step_name in VERDICTS.items():
         verdict = next(step for step in job["steps"] if step.get("name") == step_name)
         # Round 4: `!cancelled()` so one red lane cannot skip the next verdict.
         assert verdict["if"] == (
-            f"${{{{ !cancelled() && ({LANES}) && needs.{lane}.result != 'success' }}}}"
+            f"${{{{ !cancelled() && ({LANES}) && needs.qualification.outputs.{lane} != 'success' }}}}"
         )
         assert "exit 1" in verdict["run"]
 
@@ -161,7 +149,7 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     # entries joined (heaviest shard 15.2 pytest min at nine, 13.7 at ten).
     # TASK-37236: 28 smaller slices, with the former 17-runner ceiling.
     assert strategy["matrix"]["shard"] == list(range(1, 29))
-    assert strategy["max-parallel"] == 17
+    assert strategy["max-parallel"] == "${{ inputs.queue_front && 17 || 8 }}"
     assert job["timeout-minutes"] == 20
 
     install = next(
@@ -302,7 +290,8 @@ def test_checker_steps_survive_an_earlier_failure():
     drift in a single run while still failing the job.
     """
     checker_steps = [
-        step for step in _steps()
+        step
+        for step in _steps()
         if any(checker in step.get("run", "") for checker in CHECKERS)
     ]
     assert len(checker_steps) == len(CHECKERS)
@@ -331,10 +320,16 @@ def test_preflight_must_pass_before_every_application_lane():
     assert preflight["timeout-minutes"] == 10
     assert not preflight.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in preflight["steps"])
+    assert jobs["qualification"]["needs"] == ["preflight"]
+    assert jobs["qualification"]["if"] == LANES
     for lane in VERDICTS:
-        assert jobs[lane]["needs"] == ["preflight"]
+        assert "needs" not in jobs[lane]
         assert jobs[lane]["if"] == LANES
-    verdict = next(step for step in _job()["steps"] if step.get("name") == "Require successful preflight")
+    verdict = next(
+        step
+        for step in _job()["steps"]
+        if step.get("name") == "Require successful preflight"
+    )
     assert verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
     assert "exit 1" in verdict["run"]
     assert _job()["if"] == "${{ always() }}"
@@ -342,14 +337,22 @@ def test_preflight_must_pass_before_every_application_lane():
 
 def test_preflight_checks_selectors_without_installing_or_loading_the_application():
     steps = _steps()
-    install = next(step for step in steps if step.get("name") == "Install preflight test tools")
+    install = next(
+        step for step in steps if step.get("name") == "Install preflight test tools"
+    )
     assert install["run"] == "python -m pip install pytest PyYAML"
-    selector = next(step for step in steps if step.get("name") == "PR lane test targets resolve without overlaps")
+    selector = next(
+        step
+        for step in steps
+        if step.get("name") == "PR lane test targets resolve without overlaps"
+    )
     assert selector["if"] == "${{ !cancelled() }}"
     assert "--noconftest" in selector["run"]
     assert "test_every_pr_lane_pytest_step_has_disjoint_targets" in selector["run"]
     assert "test_every_node_id_target_in_a_pr_lane_step_resolves" in selector["run"]
-    assert "uses" not in _job()["steps"][0], "aggregate must not repeat checkout or setup"
+    assert (
+        "uses" not in _job()["steps"][0]
+    ), "aggregate must not repeat checkout or setup"
 
 
 def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
@@ -370,11 +373,18 @@ def test_dispatch_inputs_name_the_pr_or_the_run_to_wait_for():
     queue's own kick names the run its tick waits for (spec V4: the queue wakes through this file,
     the only queue file on main, so the only one GitHub will dispatch)."""
     dispatch = _workflow()[True]["workflow_dispatch"]
-    assert dispatch["inputs"]["pr"] == {"description": "PR number (manual full-gate dispatch)", "required": False,
-                                        "type": "string", "default": ""}
+    assert dispatch["inputs"]["pr"] == {
+        "description": "PR number (manual full-gate dispatch)",
+        "required": False,
+        "type": "string",
+        "default": "",
+    }
     assert dispatch["inputs"]["wait_run"] == {
         "description": "A run the queue tick waits for before deciding (set by the merge queue)",
-        "required": False, "type": "string", "default": ""}
+        "required": False,
+        "type": "string",
+        "default": "",
+    }
 
 
 def test_queue_tick_runs_after_ci_and_is_never_required():
@@ -389,9 +399,16 @@ def test_queue_tick_runs_after_ci_and_is_never_required():
         "the payload's auto_merge is a trigger-time snapshot; disarm-push-rearm leaves it null, "
         "so gating on it means red author runs never wake the queue"
     )
-    assert "github.event.pull_request.head.repo.full_name == github.repository" in tick["if"]
+    assert (
+        "github.event.pull_request.head.repo.full_name == github.repository"
+        in tick["if"]
+    )
     assert "push" not in tick["if"], "pushes to dev are merge-queue.yml's job"
-    assert tick["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}
+    assert tick["permissions"] == {
+        "contents": "write",
+        "pull-requests": "write",
+        "actions": "write",
+    }
     assert _workflow()["permissions"] == {"contents": "read"}
     checkout = tick["steps"][0]
     assert checkout["uses"] == "actions/checkout@v4" and checkout["with"] == {
@@ -399,8 +416,11 @@ def test_queue_tick_runs_after_ci_and_is_never_required():
         "persist-credentials": False,
     }
     assert tick["steps"][1]["run"] == "python3 scripts/merge_queue.py"
-    assert tick["steps"][1]["env"] == {"GH_TOKEN": "${{ github.token }}", "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}",
-                                       "WAIT_RUN": "${{ inputs.wait_run }}"}
+    assert tick["steps"][1]["env"] == {
+        "GH_TOKEN": "${{ github.token }}",
+        "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}",
+        "WAIT_RUN": "${{ inputs.wait_run }}",
+    }
 
 
 def test_branch_dispatch_without_pr_runs_the_gate():
@@ -439,7 +459,9 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
             if not run.lstrip().startswith("pytest"):
                 continue
             tokens = shlex.split(run.replace("\\\n", " "))
-            targets = tuple(t for t in tokens[1:] if t == "Tests" or t.startswith("Tests/"))
+            targets = tuple(
+                t for t in tokens[1:] if t == "Tests" or t.startswith("Tests/")
+            )
             steps.append((f"{job_name}: {step['name']}", targets))
     return steps
 
@@ -495,7 +517,16 @@ def test_every_node_id_target_in_a_pr_lane_step_resolves():
 
 
 @pytest.mark.parametrize(
-    "mutation", ["wrong-job", "moved-back", "missing", "duplicate", "order", "overlap", "unresolved"]
+    "mutation",
+    [
+        "wrong-job",
+        "moved-back",
+        "missing",
+        "duplicate",
+        "order",
+        "overlap",
+        "unresolved",
+    ],
 )
 def test_pr_step_contract_rejects_location_and_target_drift(monkeypatch, mutation):
     workflow = _workflow()
@@ -553,7 +584,7 @@ _PR3023_STEP = (
 def test_pr3023_critical_targets_run_in_required_admission_step():
     steps = _pytest_step_targets()
     targets = dict(steps)[_PR3023_STEP]
-    assert tuple(targets[-len(_PR3023_CRITICAL_TARGETS):]) == _PR3023_CRITICAL_TARGETS
+    assert tuple(targets[-len(_PR3023_CRITICAL_TARGETS) :]) == _PR3023_CRITICAL_TARGETS
     for target in _PR3023_CRITICAL_TARGETS:
         assert sum(targets.count(target) for _, targets in steps) == 1, target
 
@@ -569,13 +600,22 @@ def test_pr3023_membership_rejects_actual_workflow_drift(monkeypatch, mutation):
         step["run"] = step["run"].replace(target, "", 1)
     elif mutation == "wrong-step":
         step["run"] = step["run"].replace(target, "", 1)
-        other = next(s for s in steps if s.get("name") == "Run the sandboxed Console P0 regression tests")
+        other = next(
+            s
+            for s in steps
+            if s.get("name") == "Run the sandboxed Console P0 regression tests"
+        )
         other["run"] += " " + target
     elif mutation == "duplicate":
         step["run"] += " " + target
     else:
         following = _PR3023_CRITICAL_TARGETS[1]
-        step["run"] = step["run"].replace(target, "PR3023_SWAP", 1).replace(following, target, 1).replace("PR3023_SWAP", following, 1)
+        step["run"] = (
+            step["run"]
+            .replace(target, "PR3023_SWAP", 1)
+            .replace(following, target, 1)
+            .replace("PR3023_SWAP", following, 1)
+        )
     monkeypatch.setattr(f"{__name__}._workflow", lambda: workflow)
     with pytest.raises(AssertionError):
         test_pr3023_critical_targets_run_in_required_admission_step()

@@ -1,7 +1,7 @@
 """Every statement of the UI Fast Lane's shard count agrees with its matrix.
 
 The count runs in one place: the ``shard`` matrix of ``ui-fast-lane`` in
-``.github/workflows/derived-artifacts.yml``. Comments and documents repeat it
+``.github/workflows/ci-qualification.yml``. Comments and documents repeat it
 in words or numerals, and the review of #3057 found them pinned by nothing (TASK-33007
 took the lane from four shards to seven while the replay's usage said eight).
 This fails when the matrix changes and one of them is left behind.
@@ -17,7 +17,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ".github/workflows/derived-artifacts.yml"
+WORKFLOW = ".github/workflows/ci-qualification.yml"
 ADR = "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md"
 _WORDS = (
     "zero one two three four five six seven eight nine ten eleven twelve"
@@ -40,6 +40,8 @@ _STATEMENTS = (
     (ADR, r"UI lane currently runs (\d+) shards", "shards"),
     (ADR, r"now requests (\d+) test runners in parallel", "runners"),
     (ADR, r"test runners in parallel, (\d+) with perf-guard", "runners+perf"),
+    (ADR, r"Background qualifications request (\d+) application runners", "background"),
+    (ADR, r"combined application ceiling of (\d+)", "combined"),
 )
 
 
@@ -55,20 +57,25 @@ def _counts() -> dict[str, int]:
     a second matrix job among them fails here instead of miscounting.
     """
     jobs = _jobs(WORKFLOW)
-    needs = [name for name in jobs["derived-artifacts"]["needs"] if name != "preflight"]
-    if "preflight" in jobs:
-        assert all(jobs[name].get("needs") == ["preflight"] for name in needs)
-    assert [job for job in needs if "strategy" in jobs[job]] == ["ui-fast-lane"]
-    shards = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
-    eligible = shards + len(needs) - 1
-    limit = jobs["ui-fast-lane"]["strategy"].get("max-parallel", shards)
-    runners = min(shards, limit) + len(needs) - 1
+    assert [name for name, job in jobs.items() if "strategy" in job] == ["ui-fast-lane"]
+    strategy = jobs["ui-fast-lane"]["strategy"]
+    shards = len(strategy["matrix"]["shard"])
+    eligible = shards + len(jobs) - 1
+    limits = re.fullmatch(
+        r"\$\{\{ inputs.queue_front && (\d+) \|\| (\d+) \}\}", strategy["max-parallel"]
+    )
+    assert limits, "Expected explicit front/background matrix limits"
+    front, background = map(int, limits.groups())
+    runners = min(shards, front) + len(jobs) - 1
+    background_runners = min(shards, background) + len(jobs) - 1
     perf = _jobs(".github/workflows/perf-guard.yml")
     assert not [job for job in perf.values() if "strategy" in job]
     return {
         "shards": shards,
         "eligible": eligible,
         "runners": runners,
+        "background": background_runners,
+        "combined": runners + background_runners,
         "runners+perf": runners + len(perf),
     }
 
@@ -78,29 +85,19 @@ def _jobs(workflow: str) -> dict:
 
 
 @pytest.mark.parametrize(
-    ("shards", "limit", "eligible", "parallel"),
-    [
-        (28, 17, 34, 23),
-        (28, 4, 34, 10),
-        (17, None, 23, 23),
-    ],
+    ("shards", "front", "background", "eligible", "parallel", "combined"),
+    [(28, 17, 8, 34, 23, 37), (28, 4, 2, 34, 10, 18), (10, 17, 8, 16, 16, 30)],
 )
-@pytest.mark.parametrize("preflight", [False, True])
 def test_counts_distinguish_eligible_jobs_from_parallel_runners(
-    monkeypatch, shards, limit, eligible, parallel, preflight
+    monkeypatch, shards, front, background, eligible, parallel, combined
 ):
-    needs = ["ui-fast-lane", *[f"lane-{index}" for index in range(6)]]
-    jobs = {name: {} for name in needs}
-    strategy = {"matrix": {"shard": list(range(1, shards + 1))}}
-    if limit is not None:
-        strategy["max-parallel"] = limit
-    jobs["ui-fast-lane"] = {"strategy": strategy}
-    jobs["derived-artifacts"] = {"needs": needs}
-    if preflight:
-        for name in needs:
-            jobs[name]["needs"] = ["preflight"]
-        jobs["preflight"] = {}
-        jobs["derived-artifacts"]["needs"] = ["preflight", *needs]
+    jobs = {name: {} for name in ["ui-fast-lane", *[f"lane-{i}" for i in range(6)]]}
+    jobs["ui-fast-lane"] = {
+        "strategy": {
+            "matrix": {"shard": list(range(1, shards + 1))},
+            "max-parallel": f"${{{{ inputs.queue_front && {front} || {background} }}}}",
+        }
+    }
     monkeypatch.setitem(
         globals(), "_jobs", lambda name: jobs if name == WORKFLOW else {"perf": {}}
     )
@@ -108,6 +105,7 @@ def test_counts_distinguish_eligible_jobs_from_parallel_runners(
     assert counts["runners"] == parallel
     assert counts["runners+perf"] == parallel + 1
     assert counts["eligible"] == eligible
+    assert counts["combined"] == combined
 
 
 @pytest.mark.parametrize(("path", "pattern", "counts"), _STATEMENTS)

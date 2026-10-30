@@ -36,7 +36,8 @@ from functools import lru_cache
 from pathlib import Path
 
 import pytest
-import yaml
+
+from Tests.CI.workflow_helpers import derived_workflow
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
@@ -60,21 +61,21 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
     ),
     "TASK-35520": ("Tests/UI/test_console_partial_resize.py",),
     "TASK-34807": (
-        'Tests/Chat/test_response_rules_preparation_custody.py',
-        'Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]',
-        'Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics',
-        'Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant',
-        'Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload',
-        'Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation',
-        'Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated',
-        'Tests/Chat/test_response_rules_trace_admission.py',
-        'Tests/Chat/test_response_rules_goal_intersection.py',
-        'Tests/Chat/test_response_rules_runtime.py::test_first_send_checks_stored_global_rule_without_prior_manager_use',
-        'Tests/Chat/test_response_rules_runtime.py::test_cancelled_rule_db_call_keeps_real_handle_until_own_cleanup',
-        'Tests/Chat/test_response_rules_runtime.py::test_real_completed_tool_work_is_retained_during_native_repair',
-        'Tests/Chat/test_response_rules_external_hook.py',
-        'Tests/Chat/test_response_rules_write_contention.py',
-        'Tests/UI/test_response_rules_modal.py::test_saved_edit_stays_selected_and_pinned_for_next_manager_action',
+        "Tests/Chat/test_response_rules_preparation_custody.py",
+        "Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]",
+        "Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload",
+        "Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation",
+        "Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated",
+        "Tests/Chat/test_response_rules_trace_admission.py",
+        "Tests/Chat/test_response_rules_goal_intersection.py",
+        "Tests/Chat/test_response_rules_runtime.py::test_first_send_checks_stored_global_rule_without_prior_manager_use",
+        "Tests/Chat/test_response_rules_runtime.py::test_cancelled_rule_db_call_keeps_real_handle_until_own_cleanup",
+        "Tests/Chat/test_response_rules_runtime.py::test_real_completed_tool_work_is_retained_during_native_repair",
+        "Tests/Chat/test_response_rules_external_hook.py",
+        "Tests/Chat/test_response_rules_write_contention.py",
+        "Tests/UI/test_response_rules_modal.py::test_saved_edit_stays_selected_and_pinned_for_next_manager_action",
     ),
     # Default sends to OpenAI/Anthropic 400'd on built-in tool schemas.
     "TASK-33621.1": (
@@ -122,15 +123,20 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
     ),
     # Choose folder froze the app; a handler error left Ctrl+Q dead.
     "TASK-33621.13": (
-        _CHOOSE + "test_choose_folder_opens_picker_and_applies_the_chosen_binding[choose]",
-        _CHOOSE + "test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]",
-        _CHOOSE + "test_cancelling_the_picker_returns_to_a_responsive_inspector[escape]",
+        _CHOOSE
+        + "test_choose_folder_opens_picker_and_applies_the_chosen_binding[choose]",
+        _CHOOSE
+        + "test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]",
+        _CHOOSE
+        + "test_cancelling_the_picker_returns_to_a_responsive_inspector[escape]",
         _KEEP + "test_ctrl_q_quits_after_a_screen_handler_error_while_a_modal_is_up",
         _KEEP + "test_a_screen_handler_error_leaves_only_live_screens_on_the_stack",
         # The keep-alive's in-process contract (each well under a second).
-        _KEEP + "test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_exit",
+        _KEEP
+        + "test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_exit",
         _KEEP + "test_a_recovery_that_raises_is_logged_before_the_loud_exit",
-        _KEEP + "test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_it",
+        _KEEP
+        + "test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_it",
         _KEEP + "test_pump_loop_ended_matches_what_textual_does_to_the_pump",
         _KEEP + "test_a_retired_screen_is_torn_down_however_its_loop_ended",
         _KEEP + "test_a_dead_screen_whose_unmount_raises_is_still_dropped",
@@ -199,7 +205,7 @@ def _census_module():
 
 
 def _step_targets(job: str, name: str) -> tuple[str, ...]:
-    jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    jobs = derived_workflow(PROJECT_ROOT)["jobs"]
     step = next(s for s in jobs[job]["steps"] if s.get("name") == name)
     tokens = shlex.split(step["run"].replace("\\\n", " "))
     return tuple(token for token in tokens if token.startswith("Tests"))
@@ -209,7 +215,9 @@ def _lanes() -> dict[str, tuple[str, ...]]:
     census = _census_module()
     return {
         "UI Fast Lane census": tuple(census.read_census(census.CENSUS_PATH)),
-        "PR Fast Lane (sandboxed)": _step_targets("pr-fast-lane", "Run fast PR contract"),
+        "PR Fast Lane (sandboxed)": _step_targets(
+            "pr-fast-lane", "Run fast PR contract"
+        ),
         "PR Fast Lane (admission-sensitive)": _step_targets(
             "pr-fast-lane-admission", "Run admission-sensitive suites"
         ),
@@ -247,7 +255,11 @@ def _contains(outer: str, inner: str) -> bool:
     and its methods), or anything under `outer` when it is a directory.
     """
     outer = outer.rstrip("/")
-    if inner == outer or inner.startswith(outer + "::") or inner.startswith(outer + "["):
+    if (
+        inner == outer
+        or inner.startswith(outer + "::")
+        or inner.startswith(outer + "[")
+    ):
         return True
     directory = "::" not in outer and not outer.endswith(".py")
     return directory and _file(inner).startswith(outer + "/")
@@ -266,7 +278,8 @@ def _overlaps(target: str, lane_targets: tuple[str, ...]) -> bool:
     ``file::test_x[1]`` and vice versa.
     """
     return any(
-        _contains(listed, target) or _contains(target, listed) for listed in lane_targets
+        _contains(listed, target) or _contains(target, listed)
+        for listed in lane_targets
     )
 
 
@@ -280,10 +293,13 @@ def _conftest_bootstrap_filenames(conftest: Path = CONFTEST) -> frozenset[str]:
     tree = ast.parse(conftest.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "keep_bootstrap_profile"
-            for t in node.targets
-        )):
+        if not (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "keep_bootstrap_profile"
+                for t in node.targets
+            )
+        ):
             continue
         for compare in ast.walk(node.value):
             if not isinstance(compare, ast.Compare):
@@ -327,7 +343,8 @@ def _uses_bootstrap_profile(target: str, root: Path = PROJECT_ROOT) -> bool:
         return False  # reported by test_every_p0_target_resolves
     module_marked = any(
         isinstance(item, (ast.Assign, ast.AnnAssign))
-        and "pytestmark" in ast.unparse(item.targets[0] if isinstance(item, ast.Assign) else item.target)
+        and "pytestmark"
+        in ast.unparse(item.targets[0] if isinstance(item, ast.Assign) else item.target)
         and _marks_bootstrap(item.value)
         for item in tree.body
         if getattr(item, "value", None) is not None
@@ -356,7 +373,9 @@ def _uses_bootstrap_profile(target: str, root: Path = PROJECT_ROOT) -> bool:
         for item in ast.walk(tree)
         for decorator in getattr(item, "decorator_list", [])
     ) or any(
-        _class_pytestmark(item) for item in ast.walk(tree) if isinstance(item, ast.ClassDef)
+        _class_pytestmark(item)
+        for item in ast.walk(tree)
+        if isinstance(item, ast.ClassDef)
     )
 
 
@@ -381,7 +400,9 @@ def test_every_p0_regression_test_runs_in_exactly_one_required_lane(task, target
         "Put it back in scripts/ui_pr_gate_census.txt or the Console P0 "
         "regression gate's step it came from."
     )
-    overlapping = [name for name, targets in lanes.items() if _overlaps(target, targets)]
+    overlapping = [
+        name for name, targets in lanes.items() if _overlaps(target, targets)
+    ]
     assert len(overlapping) == 1, f"{target} runs in more than one lane: {overlapping}"
 
 
@@ -434,7 +455,9 @@ def test_overlap_check_sees_both_directions():
     # Review round 4: a test and its parametrizations, a class and its methods.
     assert _overlaps(node, (node + "[1]",))
     assert _overlaps(node + "[1]", (node,))
-    assert _overlaps("Tests/Chat/test_x.py::TestC", ("Tests/Chat/test_x.py::TestC::test_y",))
+    assert _overlaps(
+        "Tests/Chat/test_x.py::TestC", ("Tests/Chat/test_x.py::TestC::test_y",)
+    )
     assert not _overlaps(node, ("Tests/Chat/test_x.py::test_yz",))
 
 
@@ -447,7 +470,6 @@ def test_bootstrap_detection_uses_the_conftest_rule_not_a_substring():
     assert not _uses_bootstrap_profile("Tests/CI/test_console_p0_regression_gate.py")
     # Node-level marker: only the marked node of a mixed file is bootstrap.
     assert _uses_bootstrap_profile("Tests/Chat/test_console_compaction_failure.py")
-
 
 
 def test_bootstrap_detection_reads_a_class_body_pytestmark(tmp_path):

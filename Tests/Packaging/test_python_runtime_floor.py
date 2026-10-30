@@ -14,7 +14,9 @@ def _text(relative_path: str) -> str:
 
 
 def _job_block(workflow: str, job_name: str) -> str:
-    start = workflow.index(f"  {job_name}:")
+    match = re.search(rf"^  {re.escape(job_name)}:\s*$", workflow, re.MULTILINE)
+    assert match is not None, f"Missing job: {job_name}"
+    start = match.start()
     following = re.search(r"^  [a-z0-9-]+:\s*$", workflow[start + 1 :], re.MULTILINE)
     if following is None:
         return workflow[start:]
@@ -81,8 +83,9 @@ def test_active_terminal_qualification_example_uses_python_312() -> None:
 
 def test_ci_jobs_that_install_or_parse_chatbook_use_python_312() -> None:
     derived = _text(".github/workflows/derived-artifacts.yml")
-    for job_name in ("pr-fast-lane", "derived-artifacts"):
-        assert "python-version: '3.12" in _job_block(derived, job_name)
+    qualification = _text(".github/workflows/ci-qualification.yml")
+    assert "python-version: '3.12" in _job_block(qualification, "pr-fast-lane")
+    assert "python-version: '3.12" in _job_block(derived, "preflight")
 
     comprehensive = _text(".github/workflows/test.yml")
     assert 'python-version: ["3.12"]' in _job_block(

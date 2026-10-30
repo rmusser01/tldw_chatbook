@@ -74,7 +74,7 @@ def lane_targets(lane):
             if line.strip() and not line.lstrip().startswith("#")
         )
     workflow = yaml.safe_load(
-        (ROOT / ".github/workflows/derived-artifacts.yml").read_text()
+        (ROOT / ".github/workflows/ci-qualification.yml").read_text()
     )
     step = next(
         s for s in workflow["jobs"][LANE_JOBS[lane]]["steps"] if s.get("name") == lane
@@ -102,7 +102,7 @@ def test_membership_checks_executable_targets_in_copied_workflow(
     tmp_path, monkeypatch, case
 ):
     workflow = yaml.safe_load(
-        (ROOT / ".github/workflows/derived-artifacts.yml").read_text()
+        (ROOT / ".github/workflows/ci-qualification.yml").read_text()
     )
     step = next(
         s
@@ -117,7 +117,7 @@ def test_membership_checks_executable_targets_in_copied_workflow(
         step["run"] += "\n# " + target + "\n"
     executable = shlex.split(step["run"].replace("\\\n", " "), comments=True)
     assert (target in executable) is (case == "current")
-    copied = tmp_path / ".github/workflows/derived-artifacts.yml"
+    copied = tmp_path / ".github/workflows/ci-qualification.yml"
     copied.parent.mkdir(parents=True)
     copied.write_text(yaml.safe_dump(workflow))
     monkeypatch.setitem(globals(), "ROOT", tmp_path)
@@ -144,7 +144,7 @@ def test_lane_targets_preserve_quoted_hash_and_continuation(tmp_path, monkeypatc
             "pr-fast-lane": {"steps": [{"name": "Run fast PR contract", "run": run}]}
         }
     }
-    copied = tmp_path / ".github/workflows/derived-artifacts.yml"
+    copied = tmp_path / ".github/workflows/ci-qualification.yml"
     copied.parent.mkdir(parents=True)
     copied.write_text(yaml.safe_dump(workflow))
     monkeypatch.setitem(globals(), "ROOT", tmp_path)

@@ -32,6 +32,11 @@ def test_each_file_is_scored_at_its_slowest_run():
     assert replay.worst_case(runs) == {"a": 25.0, "b": 60.0}
 
 
+def test_called_workflow_job_prefix_preserves_file_timings():
+    nested = _LOG.replace("UI Fast Lane", "Qualification / UI Fast Lane")
+    assert replay.file_seconds(nested) == replay.file_seconds(_LOG)
+
+
 def test_shards_are_round_robin_and_node_ids_share_their_files_time():
     seconds = {"Tests/UI/test_a.py": 100.0, "Tests/UI/test_b.py": 40.0}
     entries = [
