@@ -213,6 +213,83 @@ def build_console_citation_source_rows(
     return tuple(rows)
 
 
+#: TASK-33620.8 (AC#5): why sources cannot be shown, and what to do next.
+#: Keyed by the repository's ``fingerprint_key_state`` value when the key is
+#: what failed, else by the lookup outcome.
+CITATION_SOURCES_UNAVAILABLE_COPY: dict[str, str] = {
+    "writes_disabled": (
+        "Sources unavailable: citation records are turned off. To save sources "
+        "for new replies, set canonical_writes_enabled = true under "
+        "[rag_citations] in config.toml, then restart Chatbook."
+    ),
+    "keyring_unavailable": (
+        "Sources unavailable: Chatbook needs a secure system keyring to protect "
+        "citation records, and none could be used. Set up or unlock your system "
+        "keyring, then restart Chatbook."
+    ),
+    "key_unreadable": (
+        "Sources unavailable: Chatbook can't read the key that protects this "
+        "reply's citation record. Unlock or restore your system keyring, then "
+        "restart Chatbook."
+    ),
+    "unavailable": (
+        "Sources unavailable: Chatbook couldn't open its citation records. "
+        "Restart Chatbook; if this keeps happening, check the app log."
+    ),
+    "record_missing": (
+        "Sources unavailable: no citation record was saved for this reply. "
+        "Sources are saved for new replies that cite Library evidence."
+    ),
+    "reply_changed": (
+        "Sources unavailable: this reply changed after its sources were saved, "
+        "so they no longer match it. Regenerate the reply to save new sources."
+    ),
+    "sources_removed": (
+        "Sources unavailable: these sources were removed or are no longer "
+        "available to this profile."
+    ),
+    "load_failed": (
+        "Sources unavailable: the sources couldn't be loaded. Close this window "
+        "and try again; if this keeps happening, check the app log."
+    ),
+}
+
+
+def citation_sources_unavailable_cause(
+    repository: Any,
+    state: ActiveCitationTraceState | None,
+    hydration: CitationHydrationResult | None = None,
+) -> str:
+    """Name why one reply's sources cannot be shown.
+
+    Args:
+        repository: The citation repository the window read through.
+        state: The active-trace lookup state, when the lookup ran.
+        hydration: The hydration result, when hydration ran.
+
+    Returns:
+        A key of ``CITATION_SOURCES_UNAVAILABLE_COPY``.
+    """
+
+    key_state = getattr(repository, "fingerprint_key_state", "ready")
+    if key_state in CITATION_SOURCES_UNAVAILABLE_COPY:
+        return key_state
+    if state is ActiveCitationTraceState.NOT_FOUND:
+        return "record_missing"
+    if state in (
+        ActiveCitationTraceState.BODY_MISMATCH,
+        ActiveCitationTraceState.UNVERIFIABLE,
+    ):
+        return "reply_changed"
+    hydration_state = getattr(hydration, "state", None)
+    if hydration_state is not None and hydration_state not in (
+        CitationHydrationState.AUTHORIZED,
+        CitationHydrationState.TRACE_NOT_FOUND,
+    ):
+        return "sources_removed"
+    return "load_failed"
+
+
 class ConsoleCitationSourcesModal(
     SafeModalDismissMixin, ModalScreen[dict[str, str] | None]
 ):
@@ -239,6 +316,7 @@ class ConsoleCitationSourcesModal(
         self._request_generation = 0
         self._worker_started = False
         self.display_rows: tuple[ConsoleCitationSourceRow, ...] = ()
+        self.unavailable_cause = "load_failed"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-citation-sources-modal"):
@@ -307,6 +385,11 @@ class ConsoleCitationSourcesModal(
 
     def _hydrate_rows(self) -> tuple[ConsoleCitationSourceRow, ...] | None:
         repository = self._repository
+        self.unavailable_cause = "load_failed"
+        # TASK-33620.8: the app defers the key to first use (off the loop).
+        ensure_key = getattr(repository, "ensure_local_fingerprint_key", None)
+        if callable(ensure_key):
+            ensure_key()
         active = repository.get_active_trace_for_current_message(
             self._persisted_message_id,
             self._current_body,
@@ -317,6 +400,9 @@ class ConsoleCitationSourcesModal(
             or summary is None
             or not repository.verify_active_trace_result(active)
         ):
+            self.unavailable_cause = citation_sources_unavailable_cause(
+                repository, getattr(active, "state", None)
+            )
             return None
 
         identity = repository.identity_context
@@ -334,7 +420,12 @@ class ConsoleCitationSourcesModal(
         )
         if not repository.verify_active_trace_result(active):
             return None
-        return build_console_citation_source_rows(hydration)
+        rows = build_console_citation_source_rows(hydration)
+        if not rows:
+            self.unavailable_cause = citation_sources_unavailable_cause(
+                repository, ActiveCitationTraceState.ACTIVE, hydration
+            )
+        return rows
 
     def _request_is_current(self, generation: int) -> bool:
         if generation != self._request_generation or not self.is_mounted:
@@ -349,6 +440,7 @@ class ConsoleCitationSourcesModal(
             rows = await asyncio.to_thread(self._hydrate_rows)
         except Exception:
             rows = None
+            self.unavailable_cause = "load_failed"
         if not self._request_is_current(generation):
             return
         if not rows:
@@ -361,9 +453,14 @@ class ConsoleCitationSourcesModal(
         source_list = self.query_one("#console-citation-source-list", ListView)
         await source_list.clear()
         self.query_one("#console-citation-sources-state", Static).update(
-            "Sources unavailable"
+            CITATION_SOURCES_UNAVAILABLE_COPY.get(
+                self.unavailable_cause,
+                CITATION_SOURCES_UNAVAILABLE_COPY["load_failed"],
+            )
         )
         self._update_detail(None)
+        # Nothing to list: the cause and its next step are the whole window.
+        self.query_one("#console-citation-sources-body").display = False
 
     async def _show_rows(
         self,
