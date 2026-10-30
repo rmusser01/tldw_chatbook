@@ -77,7 +77,12 @@ retry dispatch retain their owning session's file aliases and Library scope when
 another tab becomes visible, in both native and fenced tool protocols.
 
 Console evidence formatting permits authorized file evidence alongside Library
-references. File claims name their paths; `[S#]` labels refer only to the supplied
+references. Greetings, small talk, thanks and acknowledgements need no evidence,
+source searches, citations or missing-file notices. Mixed requests handle the
+conversational part normally and ground the source-dependent part. Retrieved
+snippets must support the actual question; empty results describe only the
+scope searched and do not establish that no relevant files exist.
+File claims name their paths; `[S#]` labels refer only to the supplied
 Library bundle. A mixed answer can omit Library labels when it uses no Library
 evidence: canonical Console citation repair does not manufacture attribution.
 Unknown and malformed labels still require repair. Dedicated Library answers and

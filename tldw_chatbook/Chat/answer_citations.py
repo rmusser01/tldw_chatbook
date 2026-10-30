@@ -23,10 +23,13 @@ MAX_CITATION_ARTIFACT_SUMMARY_IDS = 20
 MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES = 200
 
 CONSOLE_CITATION_INSTRUCTIONS = (
-    "- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+    '- Answer the user\'s actual request. Greetings, small talk (for example, "How are you today?"), thanks, and acknowledgements do not require Library or workspace evidence; respond naturally without searching for sources, adding citations, or reporting missing files.',
+    "- For questions that depend on Library content or workspace files, ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+    "- For mixed requests, respond to the conversational part normally and ground the source-dependent part in relevant evidence.",
+    "- Retrieved snippets may be unrelated to the request; use them only when they support the answer.",
     "- Use [S#] labels only for the supplied Library references; cite claims supported by those references with their labels.",
     "- Identify workspace file evidence by its binding label, relative path, and line range when available; do not assign Library labels to it.",
-    "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.",
+    "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. If a source-dependent question cannot be answered from the available sources, explain what support is missing instead of guessing. An empty search result does not prove that no relevant files exist; describe only the scope actually searched.",
     "- Do not invent citation labels; unknown labels are untrusted.",
 )
 
