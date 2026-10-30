@@ -609,8 +609,20 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # A/B, drift and content-sized-box cases (five tests, four app runs), and its
 # structural-sequence case (one test, one app run), each about 18 s locally
 # at load 34, so no existing entry changes shard: dev's 1141 + 2 = 1143.
-MINIMUM_FILES = 1145
-MINIMUM_FILES = 1144
+# TASK-33626.2 (2026-10-29) appends 2 node entries at the tail: the Console
+# modal literal-colour ratchet and one light-theme rendered-contrast case
+# (both under 5 s locally), so no existing entry changes shard: dev's 1141
+# + 2 = 1143. Rebased 2026-10-29 onto dev's 1142: 1142 + 2 = 1144.
+# Rebased 2026-10-29 onto dev's 1143: 1143 + 2 = 1145.
+# Rebased 2026-10-29 onto dev's 1145 entries (dev carried two
+# MINIMUM_FILES lines, 1145 and 1144; one kept): 1145 + 2 = 1147.
+# TASK-33626.1 (2026-10-29) appends 2 node entries at the tail: the
+# Hands-free consent gate and the Esc-during-model-preparation cancel (one
+# mounted ChatScreen case each, ~10 s locally), so no existing entry changes
+# shard: 1143 + 2 = 1145. Rebased 2026-10-29 onto dev's 1142: 1144 + 2 = 1146.
+# Rebased 2026-10-29 onto dev's 1143: 1145 + 2 = 1147.
+# Rebased 2026-10-29 onto dev's 1145 entries: 1147 + 2 = 1149.
+MINIMUM_FILES = 1149
 
 
 def read_census(path: Path) -> list[str]:

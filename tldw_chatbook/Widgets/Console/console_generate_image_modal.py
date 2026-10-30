@@ -66,8 +66,9 @@ class ConsoleGenerateImageModal(SafeModalDismissMixin, ModalScreen["str | None"]
     #console-generate-image-modal {
         width: 70;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 

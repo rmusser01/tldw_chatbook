@@ -1,5 +1,19 @@
 # Lessons: verifying against the real thing
 
+## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
+
+**Incident.** The first live capture of the Console header on the branch measured
+the new "Off" state word at #2F3031 on #151719, 1.36:1, and every other header run
+just as low. Nothing was wrong with the word: on dev 3efe8476ce a `ready`-mode launch
+opens the "Check model lists online?" consent over the Console after the header has
+painted, and a modal's backdrop dims every cell behind it. After Esc the same word
+measured #A7ABAF on #242F38, 5.91:1.
+
+**What to do.** Before measuring anything from a capture, check that the screen you
+are measuring is on top: look at the PNG, or grep the `.txt` for a dialog title.
+Dismiss first-run and catalog dialogs after the app renders, then capture. A uniformly
+low ratio across unrelated widgets points at a backdrop, not at your change.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.

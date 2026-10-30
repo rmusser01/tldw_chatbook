@@ -2005,9 +2005,14 @@ AutoSpeakConsentModal #console-auto-speak-consent-modal {
     width: 68;
     max-width: 95%;
     height: auto;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
+}
+
+AutoSpeakConsentModal #console-auto-speak-consent-modal Static {
+    color: $text;
 }
 
 AutoSpeakConsentModal #console-auto-speak-consent-actions {
@@ -2050,7 +2055,7 @@ ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
 
 ConsoleConversationInspector #console-inspector-modal {
     width: 110; max-width: 95%; height: 42; max-height: 90%;
-    border: tall gray; padding: 1 2;
+    border: tall $tldw-boundary; padding: 1 2;
 }
 ConsoleConversationInspector #console-inspector-header { height: auto; }
 ConsoleConversationInspector #console-inspector-policy-status { height: auto; color: $text-muted; }
@@ -2058,8 +2063,8 @@ ConsoleConversationInspector #console-inspector-tabs { height: 1fr; margin-top: 
 ConsoleConversationInspector #console-inspector-costs-rows { height: 1fr; }
 ConsoleConversationInspector .console-inspector-cost-row { height: auto; }
 ConsoleConversationInspector #console-inspector-costs-totals { height: auto; margin-top: 1; text-style: bold; }
-ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: gray; margin-bottom: 1; }
-ConsoleConversationInspector #console-inspector-capture-status { height: auto; color: yellow; }
+ConsoleConversationInspector #console-inspector-exchange-caveat { height: auto; color: $text-muted; margin-bottom: 1; }
+ConsoleConversationInspector #console-inspector-capture-status { height: auto; color: $text-warning; }
 ConsoleConversationInspector #console-inspector-exchange-turns { height: 1fr; }
 ConsoleConversationInspector .console-inspector-exchange-turn { height: auto; }
 ConsoleConversationInspector .console-inspector-exchange-call { height: auto; }
@@ -2070,7 +2075,7 @@ ConsoleConversationInspector #console-inspector-actions { height: auto; margin-t
 
 ConsoleConversationInspector #console-inspector-next-send-pane { height: 1fr; }
 ConsoleConversationInspector #console-inspector-next-send-header { height: auto; }
-ConsoleConversationInspector #console-inspector-next-send-warning { height: auto; color: yellow; }
+ConsoleConversationInspector #console-inspector-next-send-warning { height: auto; color: $text-warning; }
 ConsoleConversationInspector #console-inspector-next-send-loading { display: none; }
 ConsoleConversationInspector #console-inspector-next-send-loading.loading { display: block; }
 ConsoleConversationInspector #console-inspector-next-send-tabs { height: 1fr; }
@@ -2087,14 +2092,16 @@ ConsoleConversationInspector .console-inspector-selection-row {
 ConsoleEditThinkingModal #console-edit-thinking-modal {
     width: 92;
     height: 28;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 
 ConsoleEditThinkingModal #console-edit-thinking-context {
     height: auto;
     margin: 1 0 1 0;
+    color: $text;
 }
 
 ConsoleEditThinkingModal #console-edit-thinking-body {
@@ -2106,7 +2113,7 @@ ConsoleEditThinkingModal #console-edit-thinking-body {
 ConsoleEditThinkingModal #console-edit-thinking-error {
     height: auto;
     min-height: 1;
-    color: red;
+    color: $text-error;
 }
 
 ConsoleEditThinkingModal #console-edit-thinking-actions {
@@ -2131,14 +2138,15 @@ ConsoleEditThinkingModal #console-edit-thinking-save {
 ConsoleFeedbackCommentModal #console-feedback-comment-modal {
     width: 56;
     height: auto;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 
 ConsoleFeedbackCommentModal #console-feedback-comment-quote {
     height: 5;
-    border: round gray;
+    border: round $tldw-boundary;
     padding: 0 1;
     margin: 1 0;
     color: $text-muted;
@@ -2522,8 +2530,9 @@ ConsoleReviewNotesModal #console-review-notes-modal {
     width: 76;
     max-height: 90%;
     height: auto;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 
@@ -2539,7 +2548,7 @@ ConsoleReviewNotesModal #console-review-notes-list {
 
 ConsoleReviewNotesModal .console-review-notes-row {
     height: auto;
-    border: round gray;
+    border: round $tldw-boundary;
     padding: 0 1;
     margin: 0 0 1 0;
 }
@@ -2618,19 +2627,20 @@ ConsoleSaveMarkdownModal #console-save-markdown-actions {
 ConsoleSideChatModal #console-side-chat-modal {
     width: 92;
     height: 30;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 
 ConsoleSideChatModal #console-side-chat-identity {
     height: auto;
-    color: gray;
+    color: $text-muted;
 }
 
 ConsoleSideChatModal #console-side-chat-quote {
     height: 5;
-    border: round gray;
+    border: round $tldw-boundary;
     padding: 0 1;
     margin: 1 0;
     color: $text-muted;
@@ -2678,8 +2688,9 @@ ConsoleSummarizePreviewModal #console-summarize-preview-modal {
     width: 64;
     max-width: 95%;
     height: auto;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 
@@ -2879,8 +2890,9 @@ ProjectSkillsImportModal #project-skills-modal {
     width: 76;
     height: auto;
     max-height: 34;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 

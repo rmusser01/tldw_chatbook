@@ -22,8 +22,9 @@ class ConsoleSaveAsModal(SafeModalDismissMixin, ModalScreen[str | None]):
     #console-save-as-modal {
         width: 72;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 

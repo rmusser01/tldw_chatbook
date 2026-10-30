@@ -98,8 +98,9 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
         width: 76;
         height: auto;
         max-height: 34;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 

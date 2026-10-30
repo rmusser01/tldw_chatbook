@@ -467,7 +467,7 @@ class ConsoleHandsFreeController:
         request_auto_speak_resume: Callable[[], None],
         request_auto_speak_retry: Callable[[], None],
         sync_auto_speak_controls: Callable[[bool, bool, bool], None],
-        sync_hands_free_state: Callable[[bool], None],
+        sync_hands_free_state: Callable[[bool, bool], None],
         runtime_accessor: Callable[[], Any],
         project_voice_preview: Callable[[VoicePreviewProjection], None],
         clear_voice_preview: Callable[[], None],
@@ -475,6 +475,8 @@ class ConsoleHandsFreeController:
             [SpeechPresentation, Callable[[], bool]], Callable[[], bool]
         ]
         | None = None,
+        request_dictation_cancel: Callable[[], None] | None = None,
+        request_hands_free_consent: Callable[..., bool] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -547,6 +549,13 @@ class ConsoleHandsFreeController:
                 orphan-supervisor authorities.
             project_voice_preview: View-only provisional transcript projection.
             clear_voice_preview: View-only provisional transcript removal.
+            request_dictation_cancel: Quietly abandons a `starting` capture
+                (TASK-33626.1: every Hands-free exit cancels model
+                preparation, so a late start can never open the microphone).
+            request_hands_free_consent: The Speak replies consent, asked
+                before Hands-free turns on: ``(on_accepted, on_declined, *,
+                realtime_label)`` -> whether it was asked. ``None`` refuses
+                entry rather than starting the microphone unasked.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -571,6 +580,8 @@ class ConsoleHandsFreeController:
         self._project_voice_preview_fn = project_voice_preview
         self._clear_voice_preview_fn = clear_voice_preview
         self._bind_speech_presentation = bind_speech_presentation
+        self._request_dictation_cancel_fn = request_dictation_cancel
+        self._request_hands_free_consent_fn = request_hands_free_consent
         self._voice_status_announcer: VoiceStatusAnnouncementThrottle | None = None
 
         # The pipeline engine's own state, moved verbatim from
@@ -605,8 +616,20 @@ class ConsoleHandsFreeController:
         entry/exit for the mode; every session lifecycle change repaints it
         so it never disagrees with reality. No-op when the header controls
         are not mounted (pre-mount, mid-teardown).
+
+        TASK-33626.1: an active pipeline loop whose capture is still
+        `starting` (speech-model preparation) reads "Starting…".
         """
-        self._sync_hands_free_state_fn(active)
+        starting = (
+            active
+            and isinstance(self._console_hands_free, ConsoleHandsFreeSession)
+            and self._console_dictation_state == "starting"
+        )
+        self._sync_hands_free_state_fn(active, starting)
+
+    def sync_console_hands_free_presentation(self) -> None:
+        """Repaint the header control after a dictation state change."""
+        self._sync_hands_free_switch(self.console_hands_free_exit_available())
 
     def _run_qualified_console_voice_result(self, result: Any) -> bool:
         """Supervise optional async view cleanup without retaining text."""
@@ -1073,7 +1096,109 @@ class ConsoleHandsFreeController:
         )
         if (enabled is True) == active:
             return
-        self.action_toggle_console_hands_free()
+        self.request_console_hands_free_toggle()
+
+    def request_console_hands_free_toggle(self) -> None:
+        """A user's Hands-free gesture: exit at once, or ask before entering.
+
+        TASK-33626.1. The header control and Ctrl+Shift+H come here; the
+        spoken "hands free" command reaches `request_console_hands_free_
+        entry` directly. `action_toggle_console_hands_free` stays the
+        consent-free mechanism those gestures end in.
+        """
+        if self.console_hands_free_exit_available():
+            self.action_toggle_console_hands_free()
+            return
+        self.request_console_hands_free_entry(
+            capture_live=self._console_dictation_state == "recording"
+        )
+
+    def request_console_hands_free_entry(self, *, capture_live: bool) -> None:
+        """Turn Hands-free on only after the Speak replies consent.
+
+        Entry used to start dictation, audio and the speech-model load at
+        once, although Hands-free speaks every reply through the TTS
+        provider Speak replies asks about. Refusals that need no audio run
+        first, so the question is never asked for a mode that cannot start;
+        then the consent; nothing of the speech pipeline starts before
+        Enable, and declining leaves Hands-free Off.
+
+        Args:
+            capture_live: Whether a live one-shot capture should become the
+                loop's first turn. Re-read at acceptance, since the capture
+                can end while the question is open.
+        """
+        if self.console_hands_free_exit_available():
+            # Re-entry (a spoken "hands free" mid-loop): no new consent.
+            self._enter_console_hands_free_loop(capture_live=capture_live)
+            return
+        refusal = self._console_hands_free_entry_refusal()
+        if refusal is not None:
+            message, severity = refusal
+            self.app_instance.notify(message, severity=severity, markup=False)
+            self._sync_hands_free_switch(False)
+            return
+
+        def accepted() -> None:
+            if self.console_hands_free_exit_available():
+                return
+            self._enter_console_hands_free_loop(
+                capture_live=self._console_dictation_state == "recording"
+            )
+
+        def declined() -> None:
+            self._sync_hands_free_switch(self.console_hands_free_exit_available())
+
+        ask = self._request_hands_free_consent_fn
+        if ask is None or not ask(
+            accepted, declined, realtime_label=self._console_realtime_consent_label()
+        ):
+            # Not asked: another speech question or a Speak replies enable is
+            # in flight, no conversation is active, or the Console is
+            # tearing down. The copy claims none of those in particular.
+            self.app_instance.notify(
+                "Hands-free couldn't ask for the speech consent just now, so "
+                "it stays Off. Try again in a moment.",
+                severity="warning",
+            )
+            declined()
+
+    def _console_hands_free_entry_refusal(self) -> tuple[str, str] | None:
+        """Why Hands-free cannot start at all, from checks that need no audio.
+
+        Returns:
+            ``(message, severity)``, or None when entry may ask for consent.
+            The engine paths repeat these checks after acceptance.
+        """
+        owner = getattr(self.app_instance, "meeting_session_owner", None)
+        if owner is not None and getattr(owner, "is_active", False):
+            return (
+                "Meeting in progress: stop it in Meetings before using hands-free.",
+                "warning",
+            )
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
+        if resolve_handsfree_engine() == "realtime":
+            if not realtime_enabled():
+                return CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE, "warning"
+            return None
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash is not a refusal
+            return None
+        if availability.ok:
+            return None
+        reason = availability.reason or "dictation is unavailable"
+        remedy = str(availability.remedy or "").strip()
+        return f"{reason} {remedy}".strip(), "error"
+
+    def _console_realtime_consent_label(self) -> str | None:
+        """The realtime engine's provider, when it is the one that will run."""
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
+        if resolve_handsfree_engine() != "realtime":
+            return None
+        provider = console_voice_input.realtime_provider()
+        model = console_voice_input.realtime_model()
+        return f"{provider} realtime voice ({model})"
 
     async def _resolve_console_auto_speak_destination(
         self,
@@ -1610,9 +1735,19 @@ class ConsoleHandsFreeController:
 
     def _console_hands_free_close_capture(self) -> None:
         """`CloseCapture`: idempotent-safe via `_request_console_dictation_
-        stop`'s own guard -- a no-op unless genuinely `recording`."""
-        if self._console_dictation_state == "recording":
+        stop`'s own guard -- a no-op unless genuinely `recording`.
+
+        TASK-33626.1: a capture still `starting` (the speech model loading)
+        is cancelled, not left running. Before, Esc ended the loop while the
+        chip read "Preparing speech model…" 80 s later and a late start could
+        still open the microphone; the cancel drops the session, so the
+        start worker releases whatever it opens instead of recording.
+        """
+        state = self._console_dictation_state
+        if state == "recording":
             self._request_console_dictation_stop()
+        elif state == "starting" and self._request_dictation_cancel_fn is not None:
+            self._request_dictation_cancel_fn()
 
     def _console_hands_free_countdown_tick(self, remaining: float) -> None:
         """`CountdownTick`: record the remaining seconds for the chip."""

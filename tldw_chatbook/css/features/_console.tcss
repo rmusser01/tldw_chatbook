@@ -153,12 +153,25 @@
 #console-speech-controls {margin:$ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;}
 
 #console-auto-speak-label,
-#console-hands-free-label {width:auto;height:$ds-size-1;margin-right:$ds-space-1;}
+#console-hands-free-label {width:auto;height:$ds-size-1;margin-right:$ds-space-0;}
 
+/* TASK-33626.1: each control is its state word (Off/On/Paused, Off/
+   Starting…/On), muted when off. Every ink is a theme-guarded readable hue
+   (AA on $panel, the header fill). Focus inverts the word into a
+   $ds-active-fg bar ($text-primary, pinned 4.5:1 on $panel) instead of the
+   reset's outline, which painted over the value. */
 #console-auto-speak,
 #console-hands-free-switch {
-    width:$ds-size-5;min-width:$ds-size-5;max-width:$ds-size-5;height:$ds-size-1;min-height:$ds-size-1;max-height:$ds-size-1;
-    padding:$ds-space-0;margin:$ds-space-0;border:none;
+    width:auto;min-width:$ds-size-0;height:$ds-size-1;min-height:$ds-size-1;max-height:$ds-size-1;
+    padding:$ds-space-0 $ds-space-1;margin:$ds-space-0;border:none;background:transparent;color:$text-muted;
+}
+#console-auto-speak.-on,
+#console-hands-free-switch.-on {color:$text-success;text-style:bold;}
+#console-auto-speak.-paused,
+#console-hands-free-switch.-starting {color:$text-warning;text-style:bold;}
+#console-auto-speak:focus,
+#console-hands-free-switch:focus {
+    outline:none;border:none;background:$ds-active-fg;color:$ds-surface-panel;text-style:bold;
 }
 
 #console-auto-speak {margin-right:$ds-space-1;}

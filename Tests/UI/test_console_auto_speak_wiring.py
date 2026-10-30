@@ -1078,6 +1078,9 @@ class TestSuspendGuardUnit:
 
         class _StubCoordinator:
             modal_result_pending = False
+            # TASK-33626.1: suspend also asks whether Hands-free's consent
+            # is the open one (a live capture survives only that modal).
+            hands_free_consent_pending = False
 
             def unmount(self) -> None:
                 unmounted.append(True)

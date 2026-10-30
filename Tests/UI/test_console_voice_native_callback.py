@@ -29,6 +29,7 @@ from Tests.Chat.test_console_speculative_voice import (
 )
 from Tests.Chat.test_console_speculative_voice_session import Transcript
 from Tests.integration.test_speculative_voice_pipeline import _frame
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from tldw_chatbook.Audio.voice_preprocessor import VoicePreprocessor
 from tldw_chatbook.Audio.native_duplex_stream import (
     AudioShutdownUnconfirmed,
@@ -320,6 +321,7 @@ async def test_native_failure_copy_is_actionable_and_content_free(monkeypatch, e
             _ReadyResolutionGateway().resolve_for_send,
         )
         assert await pilot.click("#console-hands-free-switch")
+        await accept_hands_free_consent(host, pilot)
         await pilot.pause()
         if edge in {"runtime", "runtime-cleanup"}:
             callbacks["on_runtime_failure"](failure)
@@ -373,9 +375,10 @@ async def test_late_native_cleanup_cannot_notify_or_repaint_replacement(monkeypa
             _ReadyResolutionGateway().resolve_for_send,
         )
         assert await pilot.click("#console-hands-free-switch")
+        await accept_hands_free_consent(host, pilot)
         await pilot.pause()
         console.action_exit_console_hands_free()
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         replacement = console._console_hands_free
         notices.clear()

@@ -791,6 +791,7 @@ class ConsoleDictationController:
         undo_histories_accessor: Callable[[], dict[str, Any]],
         visible_draft_session_id_accessor: Callable[[], str | None],
         dictation_service_factory: Callable[..., Any] | None = None,
+        on_state_changed: Callable[[str], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -922,6 +923,9 @@ class ConsoleDictationController:
             visible_draft_session_id_accessor: Reads `ChatScreen._console_
                 visible_draft_session_id` -- the session id the mounted
                 composer's draft currently reflects, screen-owned.
+            on_state_changed: Told every lifecycle state change, after the
+                composer (TASK-33626.1: the header Hands-free control reads
+                "Starting…" while its capture is `starting`).
         """
         self._maintenance_paused = False
         self._maintenance_calls = 0
@@ -945,6 +949,7 @@ class ConsoleDictationController:
         self._undo_histories_accessor = undo_histories_accessor
         self._visible_draft_session_id_accessor = visible_draft_session_id_accessor
         self._dictation_service_factory = dictation_service_factory
+        self._on_state_changed_fn = on_state_changed
         self._buddy_listening: tuple[Any, str] | None = None
         self._retry_dialog: ConfirmationDialog | None = None
 
@@ -1188,6 +1193,8 @@ class ConsoleDictationController:
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.sync_dictation_state(state)
+        if self._on_state_changed_fn is not None:
+            self._on_state_changed_fn(state)
 
     def _release_buddy_listening(self) -> None:
         """Release this capture's exact voice lease, even after context changes."""
@@ -2136,15 +2143,21 @@ class ConsoleDictationController:
             exit_on_error=False,
         )
 
-    async def _discard_console_dictation_session(self, session: Any) -> None:
+    async def _discard_console_dictation_session(
+        self, session: Any, *, announce: bool = True
+    ) -> None:
         """Retain the admitted worker through its final UI publication."""
         self._maintenance_calls += 1
         try:
-            await self._discard_console_dictation_session_body(session)
+            await self._discard_console_dictation_session_body(
+                session, announce=announce
+            )
         finally:
             self._maintenance_calls -= 1
 
-    async def _discard_console_dictation_session_body(self, session: Any) -> None:
+    async def _discard_console_dictation_session_body(
+        self, session: Any, *, announce: bool = True
+    ) -> None:
         """Release a cancelled capture's microphone off the UI thread.
 
         `discard()` is documented as non-blocking (`abandon()` never joins), but
@@ -2155,6 +2168,8 @@ class ConsoleDictationController:
         Args:
             session: The session to abandon. Failures are logged, never raised
                 -- cancelling must not produce an error the user did not cause.
+            announce: Speak "Discarded." once released (False when the
+                cancel is a side effect of leaving Hands-free).
         """
         try:
             await self._maintenance_native_call(session.discard)
@@ -2167,9 +2182,10 @@ class ConsoleDictationController:
         # and `_speak_status`'s state check cannot see that -- so acking from
         # the caller talks straight into a still-open mic. Its check is still
         # what refuses if the user has opened a NEW capture in the meantime.
-        self._speak_status("Discarded.")
+        if announce:
+            self._speak_status("Discarded.")
 
-    def _request_console_dictation_cancel(self) -> None:
+    def _request_console_dictation_cancel(self, *, announce: bool = True) -> None:
         """Abandon a capture that is `starting` or `recording`, without waiting.
 
         The `starting` phase now covers a speech-model load, which is a
@@ -2201,6 +2217,11 @@ class ConsoleDictationController:
         refuses), but the clear immediately below still applies regardless:
         "Console, send." then "Console, discard." inside that same window
         must drop the queued `send` even though the capture finishes normally.
+
+        Args:
+            announce: Toast and speak the cancel. TASK-33626.1: leaving
+                Hands-free while its capture is `starting` cancels quietly;
+                the user asked to leave the mode, not to discard dictation.
         """
         # Unconditional, ahead of the guard below, for exactly that reason.
         self._console_pending_voice_action = None
@@ -2229,10 +2250,12 @@ class ConsoleDictationController:
             # The worker speaks "Discarded." once the microphone is actually
             # released; see `_discard_console_dictation_session`.
             self.run_worker(
-                self._discard_console_dictation_session(session),
+                self._discard_console_dictation_session(session, announce=announce),
                 group="console-dictation-cancel",
                 exit_on_error=False,
             )
+        if not announce:
+            return
         self.app_instance.notify("Dictation cancelled.", severity="information")
         if session is None:
             # Nothing to release, so nothing to wait for.

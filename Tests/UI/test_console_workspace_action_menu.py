@@ -178,7 +178,7 @@ async def test_marker_menus_claim_escape_before_hands_free_exit(monkeypatch) -> 
         await pilot.pause(_MENU_SETTLE_SECONDS)
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         await _click_tree_marker(pilot, tree, tree.workspace_nodes["ws-alpha"])

@@ -77,15 +77,16 @@ ConsolePromptComparisonModal #console-prompt-comparison-modal {
     height: 88%;
     max-height: 40;
     min-height: 16;
-    border: tall gray;
-    background: black;
+    border: tall $tldw-boundary;
+    background: $panel;
+    color: $text;
     padding: 1 2;
 }
 
 ConsolePromptComparisonModal .console-prompt-comparison-label {
     width: 100%;
     height: 1;
-    color: gray;
+    color: $text-muted;
     text-style: bold;
 }
 
@@ -94,8 +95,8 @@ ConsolePromptComparisonModal #console-prompt-comparison-after {
     width: 100%;
     height: 1fr;
     min-height: 4;
-    border: solid gray;
-    background: black;
+    border: solid $tldw-boundary;
+    background: $surface;
 }
 
 ConsolePromptComparisonModal #console-prompt-comparison-actions {

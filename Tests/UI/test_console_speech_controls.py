@@ -90,6 +90,14 @@ async def test_each_user_gesture_posts_one_request() -> None:
         hands_free.focus()
         await pilot.press("enter")
         await pilot.pause()
+        # TASK-33626.1 (rewritten on purpose): like Speak replies, the
+        # request no longer repaints the control On. Turning Hands-free on
+        # asks for consent first, so only the session's state may say On.
+        assert hands_free.value is False
+        assert app.hands_free_requests == [True]
+
+        app.controls.sync_hands_free_state(True)
+        await pilot.pause()
         assert hands_free.value is True
         assert app.hands_free_requests == [True]
 
