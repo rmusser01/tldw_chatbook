@@ -615,6 +615,23 @@ consumer (here the projection the Inspector's loader uses), not just the
 function that crashed. Use a payload the provider actually stored (read it from
 a live profile's database) rather than a flat fixture that both layers accept.
 
+## A layout fix on a shared class lands on every list that wears it (TASK-33621.9 review, 2026-10-29)
+
+**Incident.** To stop a wrapped usage row leaving its basis label alone on a
+line, `text-wrap: nowrap; text-overflow: ellipsis` went on
+`.inspector-section-list`, the class all three Inspector tabs share. The
+painted-frame tests passed: they drew the Usage list and the Exchange *turn*
+rows, both short. Review flagged the other consumers, and a painted-frame
+probe at 235x52 confirmed it: the Context list cut "Current · Retained messages (12)" to "Retained messag…" and
+every Exchange *call* row to "Call · call 0 [complete] …", dropping counts,
+model, cost and capture detail. The rule moved to `.inspector-usage-detail
+.inspector-section-list`.
+
+**What to do.** Before changing a rule on a shared class, list every widget
+that carries the class and paint each one at the reference sizes with its
+longest real label, not only the one you are fixing. Scope the rule to the
+consumer that needs it unless all of them do.
+
 ## A focused list that "scrolls down one row" may be painted over, not scrolled (TASK-33621.9, 2026-10-29)
 
 **Incident.** The review and its triage both described the Conversation
