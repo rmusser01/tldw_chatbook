@@ -646,6 +646,31 @@ focus-coloured highlight) and single-line rows fixed it.
 widget's region (`screen._compositor.render_strips()`). An outline occupies no
 layout space, so geometry and scroll offsets look correct while a row is hidden.
 
+## Turning a fail-closed default on exposes everything it hid (TASK-33620.8, 2026-10-29)
+
+**Incident.** Citation records shipped off. TASK-33620.8 turned them on, and
+the owner asked for a check in a running app. Two defects then appeared that
+dev had been hiding behind the off switch. They showed up in different ways.
+- With records forced on, a mounted send wrote its trace and the screen
+  counted one source. The "Cited sources" row never appeared. The TASK-34958
+  transcript tick gate (c6d91555a4) keys on the store's display token. A
+  count found after the run had settled changed nothing the gate could see,
+  so the follow-up sync was skipped.
+- In the live check, the second send after a cited reply was refused with
+  "Couldn't save the prepared turn". The cause was "Conversation already has
+  an active dispatch checkpoint". TASK-22302's terminal path writes the
+  sealed citation but never settled the turn's checkpoint. Every suite that
+  pinned records on stopped after one send. A mounted probe on origin/dev
+  with records on reproduced it.
+
+**What to do.** Before flipping a default that gates a whole path, run that
+path end to end with the flag on, through at least two turns. That means
+the real screen sync and the next send, not only the write. For any state a
+worker pushes after the run settles, check that it gets through the tick
+gate. When a probe against dev shows the defect, write the test first:
+here, the mounted test's second send and the store-level test both failed
+without the fix.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
