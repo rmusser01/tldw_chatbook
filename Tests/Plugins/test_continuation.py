@@ -498,6 +498,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
         ProviderToolCalls,
         ProviderTurnMetadata,
     )
@@ -535,8 +536,11 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
     class Gateway:
         calls = 0
 
-        def expand_provider_continuation(self, checkpoint):
-            return []
+        # The production translator: it projects the checkpoint's rounds, so
+        # the resumed request carries the native batch the checkpoint owns.
+        expand_provider_continuation = staticmethod(
+            ConsoleProviderGateway.expand_provider_continuation
+        )
 
         async def resolve_for_send(self, selection):
             return provider_resolution(
@@ -570,6 +574,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
             else:
                 if legacy:
                     assert not rig.service._live_runs
+                self.resumed = [dict(message) for message in messages]
                 current = store.get_message(owner.id).provider_continuation
                 final = replace(
                     current,
@@ -667,6 +672,12 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
         )
         assert resumed, controller.run_state_for(session.id).visible_copy
         assert gateway.calls == 2
+        call_id = _active_checkpoint().rounds[0].calls[0].call_id
+        assert [
+            message["tool_calls"][0]["id"]
+            for message in gateway.resumed
+            if message.get("tool_calls")
+        ] == [call_id]
         final = store.get_message(owner.id).provider_continuation
         assert final.schema_version == 3 and final.state == "complete"
         assert final.rounds[0].calls[0].state == "completed"
