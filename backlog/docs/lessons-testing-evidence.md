@@ -24014,3 +24014,23 @@ and its `<failure message=...>` gave the reason in one line:
 commit, pass `--basetemp=<scratch dir>` and read the child's `pytest.xml`
 failure message before calling the red "for the right reason". A red you cannot
 read is not evidence of anything.
+
+## preflight.sh does not run the UI-ready module census
+
+**TASK-33621.4, 2026-10-29.** The branch passed `./scripts/preflight.sh`, the
+UI latency guardrails, `test_app_import_weight` and the boot worker census, and
+was reported ready. Review then ran
+`Tests/Performance/test_ui_ready_module_census.py` (CI's perf-guard job runs it;
+preflight does not): 1033 and 1034 modules against the ADR-097 limit of 1031,
+while the merge-base passed twice. The cause was one new module-scope import in
+`Chat/console_chat_controller.py`, which is already resident at `_ui_ready`.
+The new `console_compaction_gate` came in with it, and so did
+`console_context_budget_copy`, which the gate imported and which dev keeps lazy
+on purpose for this census. Moving the import into the four call sites put the
+census back at dev's count.
+
+**What to do.** After adding a module-scope import to any module that is loaded
+by `_ui_ready` (the Console controller, `chat_screen.py`, the widgets it
+mounts), run `Tests/Performance/test_ui_ready_module_census.py` yourself; it
+takes about 15 seconds. Its failure names the new residents. A green preflight
+says nothing about this census.
