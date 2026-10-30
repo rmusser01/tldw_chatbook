@@ -398,40 +398,18 @@ _OPENAI_USAGE = {
 }
 
 
-@pytest.mark.parametrize(
-    ("provider", "model", "usage", "buckets"),
-    [
-        (
-            "anthropic",
-            "claude-haiku-4-5",
-            _ANTHROPIC_USAGE,
-            {"uncached_input": 3, "cache_read": 0, "cache_write": 14058, "output": 26},
-        ),
-        (
-            "openai",
-            "gpt-4.1-mini",
-            _OPENAI_USAGE,
-            {"uncached_input": 210, "cache_read": 1024, "cache_write": 0, "output": 12},
-        ),
-        # Rows imported from legacy captures already hold ProviderUsage.
-        (
-            "openai",
-            "gpt-4.1-mini",
-            {"provider": "openai", "model": "gpt-4.1-mini", "output": 7},
-            {"uncached_input": 0, "cache_read": 0, "cache_write": 0, "output": 7},
-        ),
-    ],
-)
-def test_native_reader_loads_calls_whose_usage_is_nested(
+def store_completed_native_call(
     database: CharactersRAGDB,
+    *,
     provider: str,
     model: str,
     usage: dict[str, object],
-    buckets: dict[str, int],
-) -> None:
-    from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
-    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+) -> tuple[str, str]:
+    """Store one completed native call with ``usage`` through the real repository.
 
+    Returns:
+        The assistant message id the call answered, and the call id.
+    """
     repository = ConsoleTraceRepository()
     conversation_id = database.add_conversation({"title": "nested usage"})
     assert conversation_id is not None
@@ -526,10 +504,51 @@ def test_native_reader_loads_calls_whose_usage_is_nested(
             call_id=call.call_id,
         )
 
+    return assistant_id, call.call_id
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "usage", "buckets"),
+    [
+        (
+            "anthropic",
+            "claude-haiku-4-5",
+            _ANTHROPIC_USAGE,
+            {"uncached_input": 3, "cache_read": 0, "cache_write": 14058, "output": 26},
+        ),
+        (
+            "openai",
+            "gpt-4.1-mini",
+            _OPENAI_USAGE,
+            {"uncached_input": 210, "cache_read": 1024, "cache_write": 0, "output": 12},
+        ),
+        # Rows imported from legacy captures already hold ProviderUsage.
+        (
+            "openai",
+            "gpt-4.1-mini",
+            {"provider": "openai", "model": "gpt-4.1-mini", "output": 7},
+            {"uncached_input": 0, "cache_read": 0, "cache_write": 0, "output": 7},
+        ),
+    ],
+)
+def test_native_reader_loads_calls_whose_usage_is_nested(
+    database: CharactersRAGDB,
+    provider: str,
+    model: str,
+    usage: dict[str, object],
+    buckets: dict[str, int],
+) -> None:
+    from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    assistant_id, call_id = store_completed_native_call(
+        database, provider=provider, model=model, usage=usage
+    )
+    repository = ConsoleTraceRepository()
     reader = ConsoleTraceNativeReader(database, repository=repository)
     (loaded,) = reader.read_calls(assistant_id)
 
-    assert loaded.call_id == call.call_id
+    assert loaded.call_id == call_id
     assert loaded.verification_status == "verified"
     assert loaded.uncertainty_codes == ()
     # The capture contract carries normalized ProviderUsage, the shape the
