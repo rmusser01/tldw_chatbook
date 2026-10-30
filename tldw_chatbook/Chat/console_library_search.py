@@ -166,6 +166,54 @@ async def automatic_search_outcome(
             controller._set_run_state(previous, session_id=session_id)
 
 
+async def capture_automatic_evidence(
+    controller: Any, draft: str, bundle: Any, session: Any
+) -> tuple[Any, Any, Any, Any]:
+    """Capture an Automatic send's evidence the way staged evidence is captured.
+
+    TASK-33620.8 (AC#2): the prepared bundle used to go straight into the
+    prompt with [S#] instructions and no trace builder, so an Automatic reply
+    could never show Cited sources. It now runs through the staged path's
+    canonical capture (fresh source authorization, exact prompt blocks,
+    trace builder, prompt evidence set). Without an app to capture through,
+    or if capture fails, the evidence still goes out, unlabelled.
+
+    Args:
+        controller: The Console chat controller sending the turn.
+        draft: The executed draft.
+        bundle: The ``EvidenceBundle`` the Automatic preparation produced.
+        session: The turn's own session, whose scope authorizes the evidence.
+
+    Returns:
+        ``(context, builder, prompt_evidence_set_id, repair_contract)``.
+    """
+    from tldw_chatbook.Chat.answer_citations import (
+        format_console_evidence_without_labels,
+    )
+
+    app = getattr(controller, "app", None)
+    if app is not None:
+        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+            capture_console_prepared_evidence_for_chat,
+        )
+
+        try:
+            captured = await capture_console_prepared_evidence_for_chat(
+                app, bundle, user_message=draft, session=session
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- fall back to unlabelled
+            logger.error(
+                "Automatic Console RAG capture unavailable; "
+                "reason=capture_provider_failure; exception_type={}",
+                type(exc).__name__,
+            )
+        else:
+            return controller._normalize_rag_capture(captured)
+    return format_console_evidence_without_labels(bundle) or None, None, None, None
+
+
 def pause_interrupted_retry(controller: Any, preparation: Any) -> None:
     """Return a send whose Retry search was cancelled to a Library pause.
 

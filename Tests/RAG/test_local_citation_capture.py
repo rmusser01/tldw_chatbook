@@ -1439,7 +1439,9 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
             ).to_payload(),
         },
     )
-    app = _CaptureApp(media_ids=())
+    # TASK-33620.8: [S#] ordinals (and the repair contract) exist only when a
+    # citation record can cover the reply, so this send has a repository.
+    app = _CaptureApp(media_ids=(), repository=_CaptureRepository())
     media_db = _InMemoryMediaDB("m2")
     app.media_db = media_db
     try:
@@ -1592,7 +1594,12 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
 
 
 @pytest.mark.asyncio
-async def test_console_builder_unavailable_returns_exact_repair_contract():
+async def test_console_builder_unavailable_sends_evidence_without_labels():
+    """TASK-33620.8 (AC#4): no citation record can cover this reply.
+
+    The evidence still goes to the model, by title and without [S#] labels
+    nobody could trace, and no repair contract asks for markers.
+    """
     title = "Legacy staged source"
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -1624,17 +1631,15 @@ async def test_console_builder_unavailable_returns_exact_repair_contract():
         user_message="ordinary prompt",
     )
 
+    from tldw_chatbook.Chat.answer_citations import unrecorded_evidence_text
+
     assert captured == cre.LocalRagContextResult(
-        context="[S1] MEDIA — Legacy staged source\nlegacy body",
+        context=unrecorded_evidence_text(["MEDIA — Legacy staged source\nlegacy body"]),
         citation_builder=None,
-        citation_repair_contract=CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=(1,),
-            evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
-            require_markers=False,
-        ),
+        citation_repair_contract=None,
     )
+    assert "[S1] MEDIA" not in captured.context
+    assert "not saved as citations for this reply" in captured.context
     assert captured.prompt_evidence_set_id is None
 
 

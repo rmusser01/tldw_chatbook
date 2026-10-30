@@ -50,6 +50,7 @@ from ...RAG_Search.local_citation_capture import (
     NormalizedLocalResult,
     format_console_evidence_context,
     format_local_evidence_context,
+    format_unrecorded_console_evidence,
     normalize_console_evidence_references,
     normalize_local_result,
 )
@@ -659,17 +660,33 @@ def _active_console_session(app: "TldwCli") -> Optional[Any]:
 def _capture_request_scope_session(app: "TldwCli") -> _RequestScopeSession | None:
     """Copy the active session identity before retrieval can change it."""
 
-    session = _active_console_session(app)
+    return _request_scope_session_for(_active_console_session(app))
+
+
+def _request_scope_session_for(session: Any) -> _RequestScopeSession | None:
+    """Copy one Console session's scope identity (the turn's own session).
+
+    The session's ``"global"`` sentinel and the registry's Default workspace
+    are one state (task-15120 owner ruling), and only the latter has a
+    registry row, so the scope read uses the registry's spelling.
+    """
+
     if session is None:
         return None
     try:
+        from ...Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+        from ...Workspaces.models import DEFAULT_WORKSPACE_ID
+
         holder = getattr(session, "rag_scope_holder", None)
+        workspace_id = getattr(session, "workspace_id", None)
+        if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            workspace_id = DEFAULT_WORKSPACE_ID
         return _RequestScopeSession(
             id=getattr(session, "id", None),
             persisted_conversation_id=getattr(
                 session, "persisted_conversation_id", None
             ),
-            workspace_id=getattr(session, "workspace_id", None),
+            workspace_id=workspace_id,
             rag_scope_holder=holder if isinstance(holder, SessionScopeHolder) else None,
         )
     except Exception:
@@ -1774,6 +1791,67 @@ async def capture_console_staged_evidence_for_chat(
             "Console RAG evidence unavailable; reason=invalid_evidence_bundle"
         )
         return LocalRagContextResult(None, None)
+    return await _capture_console_evidence_bundle(
+        app,
+        bundle,
+        requested_top_k=payload.get("requested_top_k"),
+        user_message=user_message,
+        stage="console_rag",
+        request_session=None,
+    )
+
+
+async def capture_console_prepared_evidence_for_chat(
+    app: "TldwCli",
+    bundle: Any,
+    *,
+    user_message: str,
+    session: Any = None,
+) -> LocalRagContextResult:
+    """Capture Automatic Library evidence exactly as staged evidence is captured.
+
+    TASK-33620.8 (AC#2): the Automatic (prepared-bundle) send path used to
+    format its bundle straight into the prompt with [S#] citation
+    instructions and no trace builder, so its replies could never show Cited
+    sources. It now gets the staged path's fresh source authorization, exact
+    prompt blocks, request-scoped builder and prompt evidence set.
+
+    Args:
+        app: Running app with local source databases and citation repository.
+        bundle: The ``EvidenceBundle`` an Automatic preparation produced.
+        user_message: The executed draft, used when the bundle has no query.
+        session: The turn's own Console session. The search can outlast a tab
+            switch, so its scope is authorized against this session, never
+            the one on screen at capture time.
+
+    Returns:
+        The same contract as ``capture_console_staged_evidence_for_chat``.
+    """
+
+    if not isinstance(bundle, EvidenceBundle):
+        return LocalRagContextResult(None, None)
+    return await _capture_console_evidence_bundle(
+        app,
+        bundle,
+        requested_top_k=None,
+        user_message=user_message,
+        stage="console_automatic_rag",
+        request_session=(
+            _request_scope_session_for(session) if session is not None else None
+        ),
+    )
+
+
+async def _capture_console_evidence_bundle(
+    app: "TldwCli",
+    bundle: EvidenceBundle,
+    *,
+    requested_top_k: Any,
+    user_message: str,
+    stage: str,
+    request_session: _RequestScopeSession | None,
+) -> LocalRagContextResult:
+    """Authorize, format and (when records are available) capture one bundle."""
 
     references = bundle.available_references()
     normalized = normalize_console_evidence_references(references)
@@ -1786,7 +1864,8 @@ async def capture_console_staged_evidence_for_chat(
     if not normalized:
         return LocalRagContextResult(None, None)
 
-    request_session = _capture_request_scope_session(app)
+    if request_session is None:
+        request_session = _capture_request_scope_session(app)
     authorization = await _authorize_local_results_for_prompt(
         app,
         normalized,
@@ -1797,19 +1876,30 @@ async def capture_console_staged_evidence_for_chat(
             "Console RAG evidence unavailable; reason=prompt_authority_failure"
         )
         return LocalRagContextResult(None, None)
+
+    # TASK-33620.8: the boot composition defers the fingerprint key; this is
+    # its first use, acquired (or provisioned) off the UI loop.
+    from ...Chat.citation_key_first_use import ensure_fingerprint_key_off_loop
+
+    await ensure_fingerprint_key_off_loop(
+        getattr(app, "citation_trace_repository", None)
+    )
+    builder = _create_local_capture_builder(app)
+    if builder is None:
+        # AC#4: no citation record will cover this reply (records off, or the
+        # key unavailable), so the evidence goes out without [S#] labels.
+        unrecorded = format_unrecorded_console_evidence(authorization.candidates)
+        logger.info(
+            "Console RAG evidence sent without citation labels; "
+            "reason=citation_records_unavailable"
+        )
+        return LocalRagContextResult(unrecorded or None, None)
+
     formatted = format_console_evidence_context(authorization.candidates)
     context = formatted.context if formatted.context.strip() else None
     if context is None:
         return LocalRagContextResult(None, None)
     repair_contract = _repair_contract_for_local_evidence(formatted, require_markers=False)
-
-    builder = _create_local_capture_builder(app)
-    if builder is None:
-        return LocalRagContextResult(
-            context,
-            None,
-            citation_repair_contract=repair_contract,
-        )
 
     try:
         scope_resolution = await resolve_scope_for_session(
@@ -1822,8 +1912,7 @@ async def capture_console_staged_evidence_for_chat(
                 candidate.source_kind for candidate in authorization.candidates
             )
         )
-        requested_top_k = payload.get("requested_top_k", len(normalized))
-        if isinstance(requested_top_k, bool):
+        if requested_top_k is None or isinstance(requested_top_k, bool):
             requested_top_k = len(normalized)
         try:
             requested_top_k = int(requested_top_k)
@@ -1835,7 +1924,7 @@ async def capture_console_staged_evidence_for_chat(
         )
         captured_at = datetime.now(UTC)
         run_id = builder.record_retrieval_run(
-            stage="console_rag",
+            stage=stage,
             raw_query=bundle.query or user_message,
             candidates=tuple(
                 candidate.to_candidate_capture(candidate_rank=rank)
@@ -1845,7 +1934,7 @@ async def capture_console_staged_evidence_for_chat(
                 )
             ),
             retrieval_metadata=LocalRetrievalRunMetadata(
-                search_mode="console_rag",
+                search_mode=stage,
                 requested_top_k=requested_top_k,
                 max_context_characters=len(context),
                 rerank_enabled=False,
@@ -1875,7 +1964,7 @@ async def capture_console_staged_evidence_for_chat(
 
     logger.info(
         "Console canonical RAG capture completed; "
-        f"candidates={len(authorization.candidates)}; "
+        f"stage={stage}; candidates={len(authorization.candidates)}; "
         f"prompt_entries={len(formatted.entries)}"
     )
     return LocalRagContextResult(

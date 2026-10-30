@@ -541,6 +541,33 @@ def format_console_evidence_context(
     )
 
 
+def format_unrecorded_console_evidence(
+    normalized_results: Sequence[NormalizedLocalResult],
+) -> str:
+    """Format Console evidence for a reply that will have no citation record.
+
+    The canonical blocks carry ``[S#]`` headers that only a saved record can
+    trace back to a document (TASK-33620.8). With citation records off, or
+    the fingerprint key unavailable, the same evidence goes out without
+    labels, under guidance to refer to sources by title.
+
+    Args:
+        normalized_results: Authorized normalized results in retrieval order.
+
+    Returns:
+        The unlabelled evidence text, or an empty string when there is none.
+    """
+    from ..Chat.answer_citations import unrecorded_evidence_text
+
+    return unrecorded_evidence_text(
+        [
+            f"{_SOURCE_LABELS[result.source_kind]} — {result.title}\n{result.content}"
+            for result in tuple(normalized_results)[:EVIDENCE_ENTRIES_PER_PROMPT_MAX]
+            if isinstance(result, NormalizedLocalResult)
+        ]
+    )
+
+
 __all__ = [
     "FINAL_SCORE_KIND_KEY",
     "FINAL_SCORE_KIND_RERANKER",
@@ -552,6 +579,7 @@ __all__ = [
     "SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY",
     "format_console_evidence_context",
     "format_local_evidence_context",
+    "format_unrecorded_console_evidence",
     "normalize_console_evidence_references",
     "normalize_local_result",
 ]
