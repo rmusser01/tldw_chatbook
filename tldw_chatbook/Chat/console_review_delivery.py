@@ -308,8 +308,7 @@ async def compose_turn_review_provider(
     except Exception as exc:  # noqa: BLE001 - review tools are optional
         logger.warning(
             "Console review tools unavailable; continuing the agent turn "
-            "without them | session_id={} exception_type={}",
-            session_id,
+            "without them | exception_type={}",
             type(exc).__name__,
         )
     return None
