@@ -19,6 +19,9 @@ if TYPE_CHECKING:
         ToolResult,
     )
 
+#: Every tool-admission refusal (capacity or automatic budget) starts with this.
+TOOL_ADMISSION_REFUSED = "tool call refused: "
+
 
 def make_call_model(
     self,
@@ -683,7 +686,7 @@ def make_invoke_tool(
             try:
                 operation = owner.reserve_tool() if owner is not None else None
             except CapacityRefused as exc:
-                return runtime.ToolResult.blocked(f"tool call refused: {exc}")
+                return runtime.ToolResult.blocked(f"{TOOL_ADMISSION_REFUSED}{exc}")
             result = runtime.ToolResult(
                 ok=False, error=f"tool call failed: {call.name}"
             )
@@ -778,7 +781,7 @@ def make_invoke_tool(
         except CapacityRefused as exc:
             return runtime.ToolResult(
                 ok=False,
-                error=f"tool call refused: {exc}",
+                error=f"{TOOL_ADMISSION_REFUSED}{exc}",
                 dispatch_state="not_started",
             )
         try:
@@ -800,13 +803,6 @@ def make_invoke_tool(
     def observed_invoke_tool(call: ToolCall) -> ToolResult:
         observation_started = self.clock()
         result = invoke_tool(call)
-        if check_owner is not None and not result.ok:
-            from .code_review_tool_provider import CodeReviewToolProvider
-
-            if type(check_owner[1]) is CodeReviewToolProvider:
-                check_owner[1].service.end_check_actor(
-                    run_id, result.error or "tool_unavailable", unstarted_only=True
-                )
         if install_post_checkpoint is not None:
             install_post_checkpoint(call, result)
         self._fire_post_tool_dispatch(
@@ -820,10 +816,13 @@ def make_invoke_tool(
 def settle_review_capture(
     self, service, run_id: str, receipt_id: str | None, close_capture: bool
 ) -> None:
-    """Close only an actually associated attempt after native status persistence."""
-    from tldw_chatbook.Agents import agent_service as runtime
+    """Close only an actually associated attempt after native status persistence.
 
-    from .code_review_models import ReviewRefused
+    Never raises: callers are teardown seams (a fleet child's ``finally``
+    right before its settled signal, end-of-turn abandonment, ``_persist``),
+    and a store/DB/UI failure here must not cost them their next step.
+    """
+    from tldw_chatbook.Agents import agent_service as runtime
 
     try:
         binding = service.store._tab.runs.get(run_id)
@@ -865,5 +864,63 @@ def settle_review_capture(
         # No review-store lock may cross the wake/DB notification boundary.
         if service.native_coordinator is not None:
             service.native_coordinator.on_settled(binding.review_id)
-    except (ReviewRefused, OSError, KeyError):
-        runtime.logger.warning("review_terminal_capture_unavailable")
+    except Exception as exc:  # noqa: BLE001 - never break the caller's teardown
+        runtime.logger.warning(
+            "review_terminal_capture_unavailable run_id={} error_type={}",
+            run_id,
+            runtime._safe_exception_type(exc),
+        )
+
+
+def end_review_checks(
+    self, run_id: str, reason: str, *, unstarted_only: bool = False
+) -> None:
+    """Signal this run's pending review checks; never raises.
+
+    Callers are containment seams (end-of-turn settling, post-dispatch
+    observation): a check-store failure must not skip the fleet settle or
+    discard an already executed tool result.
+    """
+    from tldw_chatbook.Agents import agent_service as runtime
+
+    try:
+        owner = self.registry.resolve_owner_for_name("code_review_read")
+        if owner is None:
+            return
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        if type(owner[1]) is CodeReviewToolProvider:
+            owner[1].service.end_check_actor(
+                run_id, reason, unstarted_only=unstarted_only
+            )
+    except Exception as exc:  # noqa: BLE001 - never break the caller's seam
+        runtime.logger.warning(
+            "could not end review checks run_id={} error_type={}",
+            run_id,
+            runtime._safe_exception_type(exc),
+        )
+
+
+def end_checks_after_refusal(self, call, result, run_id: str) -> None:
+    """End this run's unstarted review checks only when ``call`` could not start.
+
+    The design's check section has an actual tool-admission refusal resolve
+    unstarted checks (including when a waiting verifier occupies the only tool
+    worker) and a denial of the claimed execution release the wait. Every
+    other failure leaves the claim pending: review-tool errors the verifier
+    guide says to retry (``invalid_source_range``,
+    ``submission_revision_conflict``), the check gate's block of a
+    non-matching ``shell_exec`` (the very claim it protects) and unrelated
+    tool failures. A started claimed execution settles through its own
+    activation scope; primary finalization ends whatever remains.
+    """
+    if result.ok:
+        return
+    admission = (result.error or "").startswith(TOOL_ADMISSION_REFUSED)
+    # shell_exec is the only process tool a claimed check binds
+    # (CodeReviewService.prepare_check_process).
+    denial = result.outcome == "review_denied" and call.name == "shell_exec"
+    if admission or denial:
+        end_review_checks(
+            self, run_id, result.error or "tool_unavailable", unstarted_only=True
+        )
