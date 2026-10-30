@@ -5187,16 +5187,22 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller._library_notes_mutation_fenced()
 
     def _release_library_notes_mutation(self) -> None:
-        """Release the Notes interlock; run a visit reload it held back.
+        """Release the Notes interlock through the ONE release body (I-3).
 
-        Class-forwarded (``LibraryScreen._release_library_notes_mutation(
-        self)``) from the tree mutation, whose orchestration tests run it on
-        a fake that carries a notes state and no controller.
+        ``LibraryNotesController._release_library_notes_mutation`` is the
+        only body: it clears the flag through the shared notes state and
+        runs everything a release owes (the held-back visit reload, a Trash
+        page read queued under a Restore, the Trash's busy reason). Class-
+        forwarded (``LibraryScreen._release_library_notes_mutation(self)``)
+        from the tree mutation, whose orchestration tests run it on a fake
+        that carries a notes state and no controller -- that fake is then
+        the receiver, and owes nothing.
         """
-        self._notes_state.mutation_in_flight = False
-        controller = getattr(self, "_notes_controller", None)
-        if controller is not None:
-            controller._run_owed_library_notes_tree_reload()
+        from ..Library_Modules.library_notes_controller import LibraryNotesController
+
+        LibraryNotesController._release_library_notes_mutation(
+            getattr(self, "_notes_controller", None) or self
+        )
 
     def _begin_library_notes_operation(
         self, kind: Literal["import", "export", "copy", "console"]

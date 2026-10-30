@@ -598,7 +598,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #   trash_focused_row_purge.py (Delete forever on the focused row only: one
 #   production-CSS Library boot at 120x36 over a real ChaChaNotes database,
 #   ~5 s alone at load ~5, no plugin): 931 -> 932.
-MINIMUM_FILES = 932
+# - polish-1b final fix wave (2026-10-29, final review I-2/I-3/m-3): Tests/UI/
+#   test_library_notes_trash_during_import.py (the Trash's reads under a running
+#   import and the one interlock release: one production-CSS Library boot at
+#   120x36 over a real ChaChaNotes database and the real import executor,
+#   ~9 s alone at load ~7, w1b plugin): 932 -> 933.
+MINIMUM_FILES = 933
 
 
 def read_census(path: Path) -> list[str]:

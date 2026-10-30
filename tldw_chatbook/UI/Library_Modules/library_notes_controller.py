@@ -1710,15 +1710,34 @@ class LibraryNotesController:
             getattr(self, "_library_notes_mutation_in_flight", False)
             or self._library_note_import_execution_active()
         )
+    def _library_notes_writer_held(self) -> bool:
+        """Whether a Notes mutation holds the single-writer interlock, alone.
+
+        TASK-34000.29 (final review I-2). The Trash's READS -- the opener,
+        Previous, Next and Retry -- wait behind this and nothing else: a
+        running import fences every WRITE (``_library_notes_mutation_fenced``)
+        but releases nothing for a read, so a page press queued behind it
+        stayed silent until the import ended (and the stale owed role then
+        fired on an unrelated release). A read behind a running Restore is
+        still queued for that Restore's release, which runs it once.
+        """
+        return bool(getattr(self, "_library_notes_mutation_in_flight", False))
     def _release_library_notes_mutation(self) -> None:
         """Release the Notes single-writer interlock (ruling T7-f).
 
-        A visit reload the interlock held back runs here, once, now that no
-        mutation can land under it. Class-forwarded at every release site
-        (``LibraryNotesController._release_library_notes_mutation(self)``):
-        the delete/undo orchestration tests run those methods on a fake.
+        THE one release (final review I-3): every site goes through this
+        body -- the controller's claim sites, the screen's class-forwarded
+        copy (``LibraryScreen._release_library_notes_mutation``), the bulk
+        workers' ``finally`` and the import's settle path. A visit reload
+        the interlock held back runs here, once, now that no mutation can
+        land under it; so does a Trash page read a press queued under a
+        Restore; and the Trash's busy reason clears. Class-forwarded at every
+        release site (``LibraryNotesController._release_library_notes_mutation
+        (self)``): the delete/undo orchestration tests run those methods on
+        a fake that carries a notes state and no controller, so the flag is
+        cleared through the state object every receiver shares.
         """
-        self._library_notes_mutation_in_flight = False
+        self._notes_state.mutation_in_flight = False
         LibraryNotesController._run_owed_library_notes_tree_reload(self)
         LibraryNotesController._run_owed_library_notes_trash_reload(self)
         LibraryNotesController._clear_library_notes_trash_busy(self)
@@ -1738,7 +1757,7 @@ class LibraryNotesController:
     def _run_owed_library_notes_trash_reload(self) -> None:
         """Run the Trash page read a press made under the interlock (T8-d)."""
         role = getattr(self, "_trash_reload_owed", "")
-        if not role or self._library_notes_mutation_fenced():
+        if not role or LibraryNotesController._library_notes_writer_held(self):
             return
         self._trash_reload_owed = ""
         self._refresh_library_notes_trash(focus_role=role)
@@ -6238,9 +6257,20 @@ class LibraryNotesController:
                 self._sync_library_notes_reader_layout_from_shell()
             _sync_library_canvas(self, "notes")
     def _refresh_after_library_note_import(self) -> None:
-        """Refresh local list/count and folder tree after execution settles."""
+        """Refresh local list/count and folder tree after execution settles.
+
+        Final review I-2: an import ending is a release like any other --
+        the one release body runs after the reload (which settles any owed
+        tree reload itself), so a Trash page read queued under a Restore
+        runs once and the Trash's busy reason ("Delete forever waits…")
+        clears without the user pressing anything.
+        """
         self._refresh_local_source_snapshot()
         self._request_library_notes_tree_initial_load()
+        # A writer that was already in flight when the import began owns its
+        # own release (its ``finally``); the import must not clear its flag.
+        if not LibraryNotesController._library_notes_writer_held(self):
+            LibraryNotesController._release_library_notes_mutation(self)
     def _publish_library_notes_lasting_sync_snapshot(
         self, snapshot: LibraryNotesLastingSyncSnapshot
     ) -> None:
@@ -7285,7 +7315,13 @@ class LibraryNotesController:
                         type(exc).__name__,
                     )
         finally:
-            self._library_notes_mutation_in_flight = False
+            # Final review I-3: the one release, so what it owes runs here
+            # too. The bulk's own in-place refresh (``_finish_library_notes_
+            # bulk`` below) IS the reload a held-back visit owed (ruling
+            # T7-f), rows kept, so the release must not start a fresh visit
+            # over the selection first.
+            self._tree_reload_owed = False
+            LibraryNotesController._release_library_notes_mutation(self)
         total = len(note_ids)
         receipt = (
             f"Moved {len(moved)} of {total} {_notes_noun(total)} to {destination_label}"
@@ -7429,7 +7465,10 @@ class LibraryNotesController:
             )
             label, changed, unchanged, failed = keyword, [], [], list(note_ids)
         finally:
-            self._library_notes_mutation_in_flight = False
+            # Final review I-3: the one release; the in-place refresh below is
+            # the owed reload (see ``_run_library_notes_bulk_move``).
+            self._tree_reload_owed = False
+            LibraryNotesController._release_library_notes_mutation(self)
         done = len(changed)
         receipt = (
             f"Removed '{label}' from {done} {_notes_noun(done)}"
@@ -7855,7 +7894,9 @@ class LibraryNotesController:
             event: Press event emitted by the "Recently deleted (N)" row.
         """
         event.stop()
-        if self._library_notes_mutation_fenced():
+        # Final review I-2: the open is a read -- a running import must not
+        # swallow it (the view it opens answers every write with its reason).
+        if LibraryNotesController._library_notes_writer_held(self):
             return
         self._library_notes_view = "trash"
         # TASK-34000.29 (N-29): the view opens on the newest deletions.
@@ -7904,6 +7945,10 @@ class LibraryNotesController:
         self._library_notes_view = "list"
         self._trash_focus_role = ""
         self._trash_landing_settling = ""
+        # Final review m-3: a page read queued under a Restore and then
+        # abandoned by leaving is dropped -- its role must never fire on a
+        # later, unrelated release.
+        self._trash_reload_owed = ""
         # Review R0 m-7: the next visit starts on page 1, and the list view's
         # own reloads (a delete, a visit) read page 1 meanwhile.
         self._library_notes_trash_page = 1
@@ -8210,8 +8255,9 @@ class LibraryNotesController:
 
         The same page the failed read asked for (a failed Next retries the
         next page). A read, so no interlock; under a running Restore it is
-        queued like a page press. Once it lands focus goes to the first row,
-        or Back when the Trash is empty.
+        queued like a page press (never under an import: final review I-2).
+        Once it lands focus goes to the first row, or Back when the Trash is
+        empty.
 
         Args:
             event: Press event emitted by the Trash failure line's Retry.
@@ -8223,7 +8269,7 @@ class LibraryNotesController:
         role = "trash-restore:0"
         self._trash_focus_role = role
         self._trash_landing_settling = ""
-        if self._library_notes_mutation_fenced():
+        if LibraryNotesController._library_notes_writer_held(self):
             self._trash_reload_owed = role
             return
         self._refresh_library_notes_trash(focus_role=role)
@@ -8235,8 +8281,10 @@ class LibraryNotesController:
         START under one either: a press while a Restore holds it moves
         ``trash_page`` and is queued (``_trash_reload_owed``) for the
         release, which reads that page once -- the press is never dropped.
-        The target is counted from the page last ASKED for, so a second
-        Next before the first page lands still moves on.
+        Only the writer interlock queues it (final review I-2): a running
+        import fences writes, not reads, and releases nothing a read could
+        wait for. The target is counted from the page last ASKED for, so a
+        second Next before the first page lands still moves on.
 
         Args:
             step: ``-1`` for Previous, ``1`` for Next.
@@ -8253,7 +8301,7 @@ class LibraryNotesController:
         self._library_notes_trash_page = target
         self._trash_focus_role = role
         self._trash_landing_settling = ""
-        if self._library_notes_mutation_fenced():
+        if LibraryNotesController._library_notes_writer_held(self):
             self._trash_reload_owed = role
             return
         self._refresh_library_notes_trash(focus_role=role)

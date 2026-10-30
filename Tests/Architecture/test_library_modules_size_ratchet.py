@@ -709,7 +709,14 @@ _BUDGETS: dict[str, int] = {
     # the page read's "what stays elsewhere" facts for the confirm (m-9), and
     # a roleless read dropping a replaced landing's marker (R4 residual):
     # 8739 -> 8845 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8845,
+    # 2026-10-29, TASK-34000.29 polish-1b final review I-2/I-3/m-3 (same owner
+    # decision): the Trash's reads (opener, Previous/Next, Retry) wait behind
+    # the writer interlock alone (``_library_notes_writer_held``), never an
+    # import's fence; the ONE release body (every site, the bulk workers'
+    # ``finally`` and the import's settle path through it) runs the owed
+    # Trash read and clears the busy reason; leaving the Trash drops a queued
+    # read: 8845 -> 8893 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8893,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

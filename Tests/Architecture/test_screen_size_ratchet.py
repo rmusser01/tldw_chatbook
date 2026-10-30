@@ -1219,7 +1219,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (``_focused_library_notes_trash_delete``) and action, and the
     #: real-input withdrawal dropping the Trash settling marker (parked R4-1):
     #: 38819 -> 38885 lines, 1397 -> 1400 methods (measured with ``_measure``).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38885, 1400),
+    #: 2026-10-29, TASK-34000.29 polish-1b final review I-3 (same owner
+    #: decision): the screen's class-forwarded interlock release goes through
+    #: the controller's ONE release body (its docstring names what a release
+    #: owes): 38885 -> 38891 lines, 1400 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38891, 1400),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
