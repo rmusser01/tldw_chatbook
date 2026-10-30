@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from .assistant_generation_state import normalize_assistant_generation_state
 
 # One object, re-imported from the stdlib-only leaf (TASK-23020): Chat-leg
@@ -809,6 +811,9 @@ def _clear_unrecorded_references(
     at a retrieval event only the live search route records. One such link
     made the whole conversation unexportable. The link is cleared and its
     field marked ``not_available``, which lands it in ``missing_metadata``.
+    Each clearing pass logs a metadata-only warning (count, field names and
+    event kinds), so a new producer that leaves orphans shows up in the app
+    log and not only inside the bundles people share.
 
     Args:
         records: Snapshot records in ledger order.
@@ -819,6 +824,7 @@ def _clear_unrecorded_references(
     """
     known = {str(record.event_id) for record in records}
     cleared: set[tuple[str, str]] = set()
+    kinds: set[str] = set()
     result: list[TrajectoryRecord] = []
     for record in records:
         fields = [
@@ -836,7 +842,17 @@ def _clear_unrecorded_references(
                 },
             )
             cleared.update((str(record.event_id), field) for field in fields)
+            kinds.add(str(record.kind))
         result.append(record)
+    if cleared:
+        # Names only: event ids embed conversation ids.
+        logger.warning(
+            "Trace export cleared {} reference(s) to unrecorded events "
+            "fields={} event_kinds={}",
+            len(cleared),
+            sorted({field for _, field in cleared}),
+            sorted(kinds),
+        )
     return tuple(result), frozenset(cleared)
 
 
