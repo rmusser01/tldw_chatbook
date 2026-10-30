@@ -163,6 +163,10 @@ def test_gateway_admission_counts_private_continuation_and_effective_fallback(
         base_url="https://api.deepseek.com/v1",
         execution_key="deepseek",
         readiness_key="deepseek",
+        # Pinned exactly as resolve_for_send pins deepseek: a child derives its
+        # continuation target from the resolution, not the parent's target.
+        api_mode="responses",
+        continuation_protocol="responses",
         context_window=ContextWindowResolution(8192, "server metadata", True),
     )
     target = ContinuationRestoreTarget(

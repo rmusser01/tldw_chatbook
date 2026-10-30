@@ -1259,6 +1259,16 @@ def _completed_replay_plan(messages, groups):
             }
 
         terminal = visible(messages[index])
+        call_ids = {call.call_id for round_ in group.rounds for call in round_.calls}
+        owner_call_ids = {
+            call.get("id")
+            for call in terminal.get("tool_calls") or ()
+            if isinstance(call, Mapping)
+        }
+        if owner_call_ids and owner_call_ids <= call_ids:
+            # Native rows are already inline with the owner on its batch (the
+            # pre-replay shape); the adapter matches those rows itself.
+            continue
         if (
             terminal.get("role") != "assistant"
             or type(terminal.get("content")) is not str
@@ -1266,7 +1276,6 @@ def _completed_replay_plan(messages, groups):
         ):
             raise ValueError("completed continuation owner changed")
         canonical = (*canonical, terminal)
-        call_ids = {call.call_id for round_ in group.rounds for call in round_.calls}
         native_indices = [
             i
             for i, row in enumerate(messages)

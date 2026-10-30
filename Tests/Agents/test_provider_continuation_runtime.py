@@ -2000,10 +2000,25 @@ def test_collected_body_reaches_native_payload_and_private_db_with_capture_off()
                 ),
             )
 
+        from functools import partial
+
+        from tldw_chatbook.Chat.provider_continuation import ContinuationRestoreTarget
+
+        # A persistent primary's store write is bound to the host-captured
+        # destination, exactly as the bridge (its only product caller) binds it.
+        target = ContinuationRestoreTarget(
+            "deepseek",
+            "deepseek-v4-flash",
+            "responses",
+            "https://api.deepseek.com/v1",
+            selected_provider="deepseek",
+        )
         deps = _deps(
             [],
             order=[],
-            persist=store.persist_provider_continuation_event,
+            persist=partial(
+                store.persist_provider_continuation_event, continuation_target=target
+            ),
             invoke=lambda c: pytest.fail("catalog dispatch"),
             context=ContinuationEventContext(owner.id, "run", "primary", "persistent"),
         )

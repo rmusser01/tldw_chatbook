@@ -4724,10 +4724,26 @@ def test_current_continuation_projection_preserves_rows_and_other_owners(
         rounds,
         selected_provider="custom-ep:private",
     )
+    # A canonical completed engine owner: every custom-hosted round carries
+    # its native calls (a call-free round is only valid for moonshot).
     historical = dataclasses.replace(
         current,
         state="complete",
-        rounds=(ContinuationRound("prior answer", ("PRIVATE-OLD",), ()),),
+        rounds=(
+            ContinuationRound(
+                "",
+                ("PRIVATE-OLD",),
+                (
+                    ContinuationCall(
+                        "old",
+                        "check_agents",
+                        "{}",
+                        "completed",
+                        ContinuationResult("ok"),
+                    ),
+                ),
+            ),
+        ),
     )
     old_group = ContinuationOwnerGroup("old-owner", historical, historical.rounds)
     source = [

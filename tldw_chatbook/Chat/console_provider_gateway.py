@@ -3699,8 +3699,14 @@ class ConsoleProviderGateway:
         if continuation_target is not None and (
             continuation_target.provider
             != (resolution.execution_key or resolution.provider)
-            or continuation_target.selected_provider
-            != (resolution.selected_provider or resolution.provider)
+            or (
+                continuation_target.selected_provider
+                != (resolution.selected_provider or resolution.provider)
+                if continuation_target.selected_provider is not None
+                # An unbound legacy target cannot prove a custom selection
+                # (the same rule as validate_continuation_restore).
+                else continuation_target.provider == "custom-hosted"
+            )
             or continuation_target.model != (resolution.model or "")
             or normalize_generic_endpoint_for_compare(continuation_target.api_base_url)
             != normalize_generic_endpoint_for_compare(resolution.base_url)

@@ -567,6 +567,7 @@ class _CaptureStore(ConsoleChatStore):
         self,
         event: Any,
         *,
+        continuation_target: Any = None,
         checkpoint_finalizer: Any = None,
     ) -> None:
         # TASK-19642.7: the bridge's persist callback grew the
@@ -577,7 +578,9 @@ class _CaptureStore(ConsoleChatStore):
         # persisted".
         try:
             super().persist_provider_continuation_event(
-                event, checkpoint_finalizer=checkpoint_finalizer
+                event,
+                continuation_target=continuation_target,
+                checkpoint_finalizer=checkpoint_finalizer,
             )
         except Exception as exc:
             self.continuation_errors.append(f"{type(exc).__name__}: {exc}")
@@ -690,6 +693,9 @@ def test_console_runs_two_native_calls_with_private_continuation(
                     protocol="chat_completions",
                     model="kimi-k3",
                     api_base_url=_resolution(server, provider).base_url,
+                    # The first run bound its checkpoint to this selection,
+                    # as production restore targets always are.
+                    selected_provider="moonshot",
                 ),
                 continuation_owner_key="_owner",
             )
@@ -805,6 +811,63 @@ def test_hosted_tool_error_continues_structurally(
     assert call.state == "failed"
     assert call.result is not None
     assert call.result.value.startswith("ERROR: ")
+
+
+@pytest.mark.allow_network
+def test_ephemeral_endpoint_native_loop_runs_without_durable_continuation(
+    tmp_path: Any,
+) -> None:
+    """A session-only endpoint keeps its tool loop; it is just not resumable."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_endpoint_provenance import (
+        ConsoleEndpointProvenance,
+    )
+
+    provider = "zai"
+    with _scripted_server(
+        [_tool_turn(provider), _final_turn(provider)],
+        [_initial_validator(provider), _continuation_validator(provider)],
+    ) as server:
+        db = AgentRunsDB(tmp_path / "ephemeral-endpoint.db", client_id="hosted")
+        chat_db = CharactersRAGDB(tmp_path / "ephemeral-endpoint-chat.db", "hosted")
+        store = _CaptureStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(title="Session-only endpoint")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Calculate two expressions.",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=db, store=store, provider_gateway=_CaptureGateway()
+        )
+        _run_id, outcome = bridge.run_reply(
+            conversation_id="ephemeral-endpoint-conversation",
+            session_id=session.id,
+            resolution=replace(
+                _resolution(server, provider),
+                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
+            ),
+            assistant_message_id=assistant.id,
+            model="glm-5.2",
+            session_system_prompt="",
+            agent_messages=[{"role": "user", "content": "Calculate two expressions."}],
+            should_cancel=lambda: False,
+            native_tools_enabled=True,
+        )
+        owner = store.get_message(assistant.id)
+        chat_db.close_connection()
+
+    assert outcome.status == "done", [step.summary for step in outcome.steps]
+    assert outcome.final_text == _FINAL
+    assert store.continuation_errors == []
+    assert server.validation_errors == []
+    # Nothing session-only was written to durable continuation state.
+    assert owner.provider_continuation is None
 
 
 @pytest.mark.allow_network
