@@ -917,11 +917,29 @@ Selectors, source location, target physical witnesses, capture artifacts and
 cancellation are checked through existing native owners. This authenticates the
 prepared snapshots under exclusion; it is not a fresh live-row fingerprint read.
 
-The current coordinator always reports precise body-free outstanding native
-writer/consumer/field/RunLog duties after its actual readers retire, before owner
-or import effects. It does not claim an empty or populated operation is ready.
-Disposable native component tests qualify retirement-to-owner access separately.
-The following serial fixed-writer increment must install real owning transactions
-and concrete required consumers here, including committed receipt-first recovery.
-No generic handler registry, callback, grant flag, budget reset, source-reader
-reopen, runtime RunLog authority or public migration activation is provided.
+R107 established the same-operation coordinator and reader-retirement boundary;
+the later fixed-owner delivery implements the native writers and consumers inside
+that coordinator. `_consolidate` derives and qualifies the complete supported
+Chat/Workspace/Runs input, references, lifecycle, consumer duties, receipts and
+prospective file readability in one frame and on one original allowance before
+its first publication or owner effect. All native readers retire before publication
+and owner admission. Pure `require_complete()` guards still refuse; saved plans and
+readiness objects remain non-authoritative.
+
+The fixed Chat, Workspace and Runs transactions atomically commit rows, typed
+identity maps, body-free provenance, exact authority holds and separate completion
+receipts. Runs also commits the passive `history.command` master/children, and its
+receipt validates that complete component. Recovery reads actual committed receipts
+first: a valid receipt skips exactly, a qualified absent receipt may be written,
+and partial or mismatched state refuses. Current consumers enforce definition
+advertising filters, imported checkpoint quarantine with explicit Discard only,
+Fleet/delivery exclusion, Goal and chain mutation holds, local Goal payload privacy,
+and ordinary RunLog access through receipt-bound native roots/members and original-ID
+filtering (see `Backup_Recovery/mobile_native_operation.py`,
+`DB/mobile_consolidation_receipts.py`, `DB/mobile_imported_run_log.py` and
+`DB/mobile_imported_goal_privacy.py`).
+
+Public B final verification, cutover, completion and pending retirement remain
+pending, as does ordinary RunLog/consumer E2E on the same produced target. Full
+Task8/API/mobile and hardware qualification are not complete; this owner delivery
+does not activate public migration or cutover.
