@@ -223,3 +223,29 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     review_reports.attach_app(bare, app)
     assert bare.review_report_presenter is review_reports.present_code_review_original
     assert getattr(bare, "_review_present_task", None) is None
+
+
+def test_activation_with_no_owner_loop_is_left_unhandled():
+    """An off-loop activation with no running owner loop records no switch.
+
+    The next real switch or fresh claim must still present the chat's pending
+    originals, so the switch is not marked handled.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import review_reports
+
+    calls = []
+    controller = SimpleNamespace(
+        store=SimpleNamespace(active_session_id="chat"),
+        _fleet_wake=SimpleNamespace(_loop=None),
+        _code_review=SimpleNamespace(
+            _reviews={"review-1": object()}, present_pending=calls.append
+        ),
+    )
+
+    review_reports.session_activated(controller)
+
+    assert getattr(controller, "_review_active_session", None) is None
+    assert getattr(controller, "_review_present_task", None) is None
+    assert calls == []

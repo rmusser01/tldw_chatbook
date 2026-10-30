@@ -95,6 +95,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
     import asyncio
     from types import SimpleNamespace
 
+    from textual.screen import Screen
     from textual.widgets import TextArea
 
     from Tests.Chat.test_console_agent_swap import _controller
@@ -149,7 +150,20 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
                 report,
             )
             assert not isinstance(app.screen, ConsoleCodeReviewModal)
-            app.console_runtime.view = object()  # re-attached
+            # Re-attached but suspended: the reusable chat route keeps the view
+            # attached while another screen is current, so nothing is pushed
+            # over that screen.
+            console_view, covering = app.screen, Screen()
+            app.console_runtime.view = console_view
+            await app.push_screen(covering)
+            assert not await asyncio.to_thread(
+                controller._present_review_report,
+                session.id,
+                prepared.review_id,
+                report,
+            )
+            assert app.screen is covering
+            await app.pop_screen()  # resumed: the Console view is current again
             accepted = await asyncio.to_thread(
                 controller._present_review_report,
                 session.id,
@@ -717,3 +731,30 @@ def test_review_reports_key_is_advertised_and_inert_under_the_setup_card():
         _ensure_console_chat_controller=unreachable,
     )
     assert ChatScreen.action_open_code_review_reports(blocked) is None
+
+
+def test_console_resume_presents_pending_review_originals(monkeypatch):
+    """ChatScreen's resume handler hands the controller to ``view_resumed``."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    resumed, visible = [], []
+    monkeypatch.setattr(review_reports, "view_resumed", resumed.append)
+    controller = SimpleNamespace(on_console_view_visibility_changed=visible.append)
+    screen = SimpleNamespace(
+        call_after_refresh=lambda *args: None,
+        _console_chat_controller=controller,
+        _pending_character_return_focus_id=None,
+        _console_attach_reconciled=False,
+        _console_attach_resume_in_progress=False,
+        _console_attach_reconcile_retry_exhausted=False,
+        _reconcile_console_after_attach=None,
+    )
+
+    ChatScreen.on_screen_resume(screen)
+
+    assert visible == [True]
+    assert resumed == [controller]
+
