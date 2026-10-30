@@ -10672,7 +10672,10 @@ WorktreeRecoveryDialog {
 
 ConsoleInspectorDetailPane { height: $ds-height-fill; min-height: $ds-size-0; }
 .inspector-detail-body { height: $ds-height-fill; min-height: $ds-size-0; }
-.inspector-section-list { width: $ds-inspector-section-width; min-width: $ds-size-0; height: $ds-height-fill; border: none; }
+.inspector-section-list { width: $ds-inspector-section-width; min-width: $ds-size-0; height: $ds-height-fill; border: none; text-wrap: nowrap; text-overflow: ellipsis; }
+
+.inspector-section-list:focus { outline: none; background: $ds-action-focus 12%; }
+.inspector-section-list:focus > .option-list--option-highlighted { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
 .inspector-detail-reader { width: $ds-width-fill; min-width: $ds-size-0; height: $ds-height-fill; }
 .inspector-detail-title { height: $ds-control-height-compact; text-style: $ds-text-strong; text-wrap: nowrap; text-overflow: ellipsis; }
 .inspector-detail-text { height: $ds-height-fill; min-height: $ds-size-0; border: solid $ds-grid-line; }
