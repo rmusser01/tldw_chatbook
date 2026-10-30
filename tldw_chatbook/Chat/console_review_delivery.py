@@ -73,7 +73,7 @@ def present_review_offer(controller: Any, session_id, review_id) -> bool:
 def present_review_report(controller: Any, session_id, review_id, report) -> bool:
     """Present one settled original through the Console view's presenter.
 
-    The presenter (``UI.Console_Modules.review_reports``) is installed when a
+    The presenter (``UI.Console_Modules.wiring``) is installed when a
     Console view attaches. Until then an original stays pending, and the
     attach presents it (``ConsoleCodeReviewCoordinator.present_pending``).
     """

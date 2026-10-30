@@ -144,12 +144,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
-from .agent_request_execution import (
-    attach_review_launch,
-    end_checks_after_refusal,
-    end_review_checks,
-    settle_review_capture,
-)
 from .agent_routing import (
     AgentsRoutingConfig,
     RoutingError,
@@ -3219,6 +3213,8 @@ class AgentService:
         self, call: ToolCall, result: ToolResult, duration: float, run_id: str
     ) -> None:
         """Deliver one completion to the observer; never let it break the run."""
+        from .agent_request_execution import end_checks_after_refusal
+
         end_checks_after_refusal(self, call, result, run_id)
         hook = self.post_tool_dispatch
         if hook is None:
@@ -4399,8 +4395,11 @@ class AgentService:
         if review_capture is not None:
             self._settle_review_capture(review_capture, run_id, terminal_event_id or "")
 
-    # Close only an actually associated attempt; never raises (see helper).
-    _settle_review_capture = settle_review_capture
+    def _settle_review_capture(self, *args, **kwargs) -> None:
+        """Close only an actually associated attempt; never raises (see helper)."""
+        from .agent_request_execution import settle_review_capture
+
+        settle_review_capture(self, *args, **kwargs)
 
     def _fork_review_child(
         self, service, *, actor, max_tool_result_chars: int, grant=None
@@ -4675,6 +4674,8 @@ class AgentService:
                 parent_run_id,
                 label=subagent_display_label(agent_definition, task),
             )
+            from .agent_request_execution import attach_review_launch
+
             attach_review_launch(review_service, review_launch, run_id)
             self = self._fork_review_child(
                 review_service,
@@ -5367,6 +5368,7 @@ class AgentService:
                         ok=False, error="could not create durable sub-agent run"
                     )
                 if child_kwargs.get("review_launch") is not None:
+                    from .agent_request_execution import attach_review_launch
                     from .code_review_models import ReviewRefused
 
                     try:
@@ -6749,6 +6751,8 @@ class AgentService:
                         limit = review_owner[1].service.result_limit
                         overhead = len(json.dumps(payload, separators=(",", ":")))
                         if overhead > limit:
+                            from .agent_request_execution import end_review_checks
+
                             end_review_checks(
                                 self,
                                 run_id,
@@ -9409,6 +9413,8 @@ class AgentService:
         # the two calls below, which is the run-log writer's lifetime
         # question -- owned by Task 3, not answered here. Nothing in this
         # ordering changes for it: whatever still settles, settles first.
+        from .agent_request_execution import end_review_checks
+
         end_review_checks(self, run_id, "primary_ended")
         try:
             self._settle_fleet(config, should_cancel, turn_started)

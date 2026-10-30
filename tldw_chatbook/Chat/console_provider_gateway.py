@@ -130,9 +130,6 @@ from tldw_chatbook.Chat.console_history_budget import (
     is_deleted_history_value,
     provider_continuation_owner_groups,
 )
-from tldw_chatbook.Chat.console_continuation_binding import (
-    require_target_matches_resolution,
-)
 from tldw_chatbook.Chat.provider_continuation import (
     project_provider_continuation,
     ContinuationRestoreTarget,
@@ -3698,6 +3695,8 @@ class ConsoleProviderGateway:
         if thinking_sidecars and not thinking_owner_key:
             raise ValueError("thinking owner key is required for thinking history")
         if continuation_target is not None:
+            from .console_continuation_binding import require_target_matches_resolution
+
             require_target_matches_resolution(continuation_target, resolution)
         if isinstance(messages, PreparedConsoleRequest):
             continuation_groups = (

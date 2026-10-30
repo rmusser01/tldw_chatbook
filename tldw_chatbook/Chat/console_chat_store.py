@@ -240,12 +240,6 @@ if TYPE_CHECKING:
         ResolvedVoicePromotionDestination,
         VoicePromotionContext,
     )
-from tldw_chatbook.Chat.console_continuation_binding import (
-    claims_resume_owner,
-    continuation_event_value,
-    require_live_native_owner,
-    validate_durable_continuation_binding,
-)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsolePromotionTransactionContribution,
 )
@@ -16521,6 +16515,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self._reject_quarantined_generation_mutation(message)
             if message.role is not ConsoleMessageRole.ASSISTANT:
                 raise ValueError("Only assistant messages can own generations.")
+            from .console_continuation_binding import claims_resume_owner
+
             if claims_resume_owner(
                 message,
                 expected_continuation,
@@ -21043,6 +21039,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Recheck acknowledged current ownership in the trace writer transaction."""
         with self._generation_owner_scope(message_id):
             self._require_generation_attempt_locked(message_id, generation_token)
+            from .console_continuation_binding import require_live_native_owner
+
             require_live_native_owner(
                 cursor,
                 self._message_or_raise(message_id),
@@ -21091,6 +21089,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise RuntimeError(
                 "Provider continuation could not be saved; retry or discard the interrupted run."
             )
+
+        from .console_continuation_binding import (
+            continuation_event_value,
+            validate_durable_continuation_binding,
+        )
 
         checkpoint, content = continuation_event_value(message, event)
         validate_durable_continuation_binding(
