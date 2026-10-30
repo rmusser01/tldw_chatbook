@@ -666,8 +666,12 @@ def _capture(target, authority, store, context, root, exclusions):
             if _read_mutable(root, exclusions, path) != previous:
                 raise ReviewRefused("source_drift")
         # A fresh listing: a respelled selection (same bytes) is still drift.
+        # Only for what is still read; a gap'd path is ignored, as its bytes are.
         fresh = {}
-        if any(not _spelled_as_stored(root, path, fresh) for path in spelled):
+        if any(
+            path in mutable and not _spelled_as_stored(root, path, fresh)
+            for path in spelled
+        ):
             raise ReviewRefused("source_drift")
         if target.kind == "working_tree":
             now = (

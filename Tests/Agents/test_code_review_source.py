@@ -1550,8 +1550,33 @@ def test_context_path_respelled_before_the_drift_check_refuses(
     assert renamed
 
 
+def test_context_path_dropped_to_a_gap_is_not_rechecked_for_spelling(
+    source_case, monkeypatch
+):
+    """A gap is never read, so its respelling is not drift (content is ignored too)."""
+    from tldw_chatbook.Agents import code_review_source as module
+
+    c = source_case
+    (c.root / "notes.py").write_text("notes\n")
+    original = module._read_mutable
+
+    def respell_then_fail(root, exclusions, path):
+        if path == "notes.py":
+            (c.root / "notes.py").rename(c.root / "notes.tmp")
+            (c.root / "notes.tmp").rename(c.root / "Notes.py")
+            raise module.LocalToolError("unreadable")
+        return original(root, exclusions, path)
+
+    monkeypatch.setattr(module, "_read_mutable", respell_then_fail)
+    manifest = c.capture(
+        c.working_tree_target.model_copy(update={"context_paths": ("notes.py",)})
+    )
+    assert "optional_context_unavailable" in [gap.reason for gap in manifest.gaps]
+
+
 @pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root can list any directory"
+    (hasattr(os, "geteuid") and os.geteuid() == 0) or os.name == "nt",
+    reason="root can list any directory; Windows ignores the POSIX mode bits",
 )
 def test_unlistable_directory_is_unavailable_not_a_variant_spelling(source_case):
     c = source_case
