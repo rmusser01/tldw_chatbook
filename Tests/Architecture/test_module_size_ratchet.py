@@ -149,6 +149,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
+    # 2026-10-29 (TASK-33621.8, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): +8. Retrieved-context trace events
+    # name only a retrieval event the turn actually wrote, so staged-Library
+    # turns stop leaving a dangling parent that blocked every trace export.
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
