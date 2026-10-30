@@ -254,9 +254,7 @@ def test_continuation_publication_refreshes_warm_history(publication):
         expected_content = prefix
         expected_request_ids = {user.id}
         if publication == "final":
-            store.persist_provider_continuation_event(
-                event, continuation_target=target
-            )
+            store.persist_provider_continuation_event(event, continuation_target=target)
             expected_content = "The answer is 4."
             completed_round = replace(
                 active.rounds[0],
