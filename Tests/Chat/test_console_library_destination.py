@@ -530,3 +530,62 @@ def test_destination_v1_bytes_and_v2_size_limit_are_unchanged():
     ):
         with pytest.raises(ConsoleDispatchCheckpointValidationError):
             parse_console_resolved_destination_json(payload)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "",
+        "https://user:secret@example.com/v1",
+        "https://example.com/v1?key=value",
+        "https://example.com/v1#fragment",
+        "https://example.com/" + "x" * 2100,
+    ],
+    ids=["empty", "credentials", "query", "fragment", "oversized"],
+)
+def test_plain_send_destination_degrades_when_continuation_cannot_be_durable(
+    base_url,
+):
+    """A send never fails because its continuation cannot be recorded durably."""
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        dump_console_resolved_destination_json,
+    )
+
+    destination = resolve_console_destination(
+        ConsoleProviderResolution(
+            provider="custom-ep:plain",
+            selected_provider="custom-ep:plain",
+            execution_key="custom-hosted",
+            model="plain-model",
+            base_url=base_url,
+            ready=True,
+            continuation_protocol="chat_completions",
+        )
+    )
+
+    assert destination.provider == "custom-ep:plain"
+    assert (
+        destination.continuation_provider,
+        destination.continuation_protocol,
+        destination.continuation_base_url,
+    ) == (None, None, None)
+    assert "secret" not in dump_console_resolved_destination_json(destination)
+
+
+def test_engine_preset_without_configured_base_pins_the_engine_default():
+    """An unconfigured engine preset is durable at the URL the engine sends to."""
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    destination = resolve_console_destination(
+        ConsoleProviderResolution(
+            provider="arcee",
+            execution_key="arcee",
+            model="arcee-model",
+            base_url="",
+            ready=True,
+            continuation_protocol="chat_completions",
+        )
+    )
+
+    assert destination.continuation_provider == "arcee"
+    assert destination.continuation_base_url == RECORDS_BY_KEY["arcee"].default_base_url
