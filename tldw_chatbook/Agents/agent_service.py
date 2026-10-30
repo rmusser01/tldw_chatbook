@@ -3213,15 +3213,9 @@ class AgentService:
         self, call: ToolCall, result: ToolResult, duration: float, run_id: str
     ) -> None:
         """Deliver one completion to the observer; never let it break the run."""
-        if not result.ok:
-            review_owner = self.registry.resolve_owner_for_name("code_review_read")
-            if review_owner is not None:
-                from .code_review_tool_provider import CodeReviewToolProvider
+        from .agent_request_execution import end_checks_after_refusal
 
-                if type(review_owner[1]) is CodeReviewToolProvider:
-                    review_owner[1].service.end_check_actor(
-                        run_id, result.error or "tool_unavailable", unstarted_only=True
-                    )
+        end_checks_after_refusal(self, call, result, run_id)
         hook = self.post_tool_dispatch
         if hook is None:
             return
@@ -9405,10 +9399,10 @@ class AgentService:
         # the two calls below, which is the run-log writer's lifetime
         # question -- owned by Task 3, not answered here. Nothing in this
         # ordering changes for it: whatever still settles, settles first.
+        from .agent_request_execution import end_review_checks
+
+        end_review_checks(self, run_id, "primary_ended")
         try:
-            review_owner = self.registry.resolve_owner_for_name("code_review_prepare")
-            if review_owner is not None:
-                review_owner[1].service.end_check_actor(run_id, "primary_ended")
             self._settle_fleet(config, should_cancel, turn_started)
         except Exception:  # noqa: BLE001 — the answer is already produced
             # Defence in depth for the class of bug the `thread.start()`
