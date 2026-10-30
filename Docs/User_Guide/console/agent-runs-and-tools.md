@@ -3182,7 +3182,8 @@ counted without names; neither blocks the rest of the review. The assistant stat
 these gaps (up to eight, plus a count of the rest) before launching reviewers, and
 each reviewer's first listing of the review scope shows them. Originals open in **Review reports**
 before verification; press **u** in the
-owning Console chat to reopen them. Read originals, raw output, target identity,
+owning Console chat to reopen them. A review that finished while Console was closed
+opens when you return to Console. Read originals, raw output, target identity,
 requested/actual provider-model routes, fallback changes and coverage separately.
 A failed or incomplete report is not an empty successful review. Later edits to
 your files do not change captured evidence.

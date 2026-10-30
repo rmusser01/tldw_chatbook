@@ -153,29 +153,68 @@ def test_review_offer_on_its_owner_loop_presents_without_deadlock():
 
 @pytest.mark.asyncio
 async def test_view_attach_installs_presenter_and_presents_pending_originals():
-    """A Console view attach is what lets settled originals reach the screen."""
+    """Only a fresh view claim re-presents pending originals, one pass at a time.
+
+    ``attach_app`` runs on every ensure call; a refresh of the same claim must
+    schedule nothing, and a failed pass is retrieved and logged.
+    """
     import asyncio
+    import threading
     from types import SimpleNamespace
+
+    from loguru import logger
 
     from tldw_chatbook.UI.Console_Modules import review_reports
 
-    calls = []
+    calls, release = [], threading.Event()
+
+    def present_pending():
+        calls.append("pending")
+        release.wait(5)
+        if len(calls) == 2:
+            raise RuntimeError("PRIVATE failure text")
+
+    runtime = SimpleNamespace(view=object(), _attached_generation=1)
+    app = SimpleNamespace(console_runtime=runtime)
     coordinator = SimpleNamespace(
-        _reviews={"review-1": object()},
-        present_pending=lambda: calls.append("pending"),
+        _reviews={"review-1": object()}, present_pending=present_pending
     )
     controller = SimpleNamespace(_code_review=coordinator)
-    review_reports.attach_app(controller, "app")
 
-    assert controller.app == "app"
+    review_reports.attach_app(controller, app)
+    assert controller.app is app
     assert controller.review_report_presenter is (
         review_reports.present_code_review_original
     )
-    await asyncio.gather(*list(review_reports._REPRESENTING))
+    first = controller._review_present_task
+    runtime._attached_generation = 2  # a fresh claim while the first pass runs
+    review_reports.attach_app(controller, app)
+    assert controller._review_present_task is first  # at most one in flight
+    release.set()
+    await first
     assert calls == ["pending"]
+
+    for _ in range(3):  # refreshes of the same claim schedule nothing
+        review_reports.attach_app(controller, app)
+        await asyncio.sleep(0)
+    assert calls == ["pending"]
+
+    runtime._attached_generation = 3
+    logged = []
+    sink = logger.add(lambda record: logged.append(str(record)), level="WARNING")
+    try:
+        review_reports.attach_app(controller, app)
+        task = controller._review_present_task
+        await asyncio.wait({task})
+        await asyncio.sleep(0)
+    finally:
+        logger.remove(sink)
+    assert calls == ["pending", "pending"]
+    assert any("RuntimeError" in line for line in logged)
+    assert not any("PRIVATE" in line for line in logged)
 
     # No loaded review owner: nothing is built, nothing is scheduled.
     bare = SimpleNamespace(_code_review=None)
-    review_reports.attach_app(bare, "app")
+    review_reports.attach_app(bare, app)
     assert bare.review_report_presenter is review_reports.present_code_review_original
-    assert not review_reports._REPRESENTING
+    assert getattr(bare, "_review_present_task", None) is None

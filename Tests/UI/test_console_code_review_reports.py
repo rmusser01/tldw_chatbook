@@ -138,8 +138,18 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
                 report,
             )
             assert not isinstance(app.screen, ConsoleCodeReviewModal)
-            # A view attach installs the presentation-layer presenter.
+            # A view attach installs the presentation-layer presenter, which
+            # presents only while a Console view is attached to the runtime.
+            app.console_runtime = SimpleNamespace(view=None, _attached_generation=1)
             review_reports.attach_app(controller, app)
+            assert not await asyncio.to_thread(
+                controller._present_review_report,
+                session.id,
+                prepared.review_id,
+                report,
+            )
+            assert not isinstance(app.screen, ConsoleCodeReviewModal)
+            app.console_runtime.view = object()  # re-attached
             accepted = await asyncio.to_thread(
                 controller._present_review_report,
                 session.id,

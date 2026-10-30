@@ -213,10 +213,15 @@ original page to a mounted `ConsoleCodeReviewModal` for the exact active session
 only successful display acknowledges presentation before an authorized verifier.
 The modal is presentation-layer code, so the Chat-layer controller reaches it only
 through `review_report_presenter`, which `UI/Console_Modules/review_reports.attach_app`
-installs when a Console view attaches (beside `controller.app`). A review that
-settles with no view (the launch wake attaches only the app) keeps its originals
-pending; the attach runs `ConsoleCodeReviewCoordinator.present_pending` off the
-loop, which presents them and then raises the verification offer.
+installs when a Console view attaches (beside `controller.app`). The presenter shows
+nothing while no Console view is attached to the runtime, so a review that settles
+with no view (the launch wake attaches only the app, or Console was closed) keeps its
+originals pending. Only a fresh view claim (a new runtime attach generation, or a
+controller that has not seen this claim) runs `ConsoleCodeReviewCoordinator.present_pending`
+off the loop, one pass at a time; ordinary ensure calls on the same view schedule
+nothing. The pass skips fenced (Stop/closed) sessions and raises the verification offer
+only after it presents a previously pending original, so an answered offer is never
+raised again. A failed pass is logged by exception type only.
 The transcript carries a body-free session reference. Reusing the reader for R2
 updates both selector and body and fences older reads with a generation counter.
 `ConsoleFleetWakeCoordinator.on_review_boundary` preserves ordinary-spawn counts,
