@@ -929,15 +929,26 @@ def chat_with_openai(
                     # undercount by policy).
                     openai_stream_final_usage = None
                     for line in response.iter_lines(decode_unicode=True):
-                        if line and line.strip():
-                            if '"usage"' in line:
-                                usage_candidate = _openai_stream_line_usage(line)
-                                if usage_candidate is not None:
-                                    openai_stream_final_usage = usage_candidate
-                            # Pass through OpenAI's SSE lines directly.
-                            # Ensure they end with \n\n if not already.
-                            # OpenAI's SSE usually includes double newlines.
-                            yield line if line.endswith("\n") else line + "\n"
+                        if not line or not line.strip():
+                            continue  # Skip keep-alive newlines
+                        if not line.startswith("data:"):
+                            # SSE comment frames (": keep-alive") and other
+                            # non-data fields are transport heartbeats, not
+                            # content -- relaying them streamed the comment
+                            # text into the Console transcript.
+                            logger.debug(
+                                "OpenAI stream: non-data line ignored: %r",
+                                line[:120],
+                            )
+                            continue
+                        if '"usage"' in line:
+                            usage_candidate = _openai_stream_line_usage(line)
+                            if usage_candidate is not None:
+                                openai_stream_final_usage = usage_candidate
+                        # Pass through OpenAI's SSE lines directly.
+                        # Ensure they end with \n\n if not already.
+                        # OpenAI's SSE usually includes double newlines.
+                        yield line if line.endswith("\n") else line + "\n"
                     if openai_stream_final_usage:
                         _session_ledger().record_provider_payload(
                             openai_stream_final_usage,
