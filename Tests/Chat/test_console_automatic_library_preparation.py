@@ -999,6 +999,45 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
 
 
 @pytest.mark.asyncio
+async def test_a_failed_automatic_capture_sends_no_evidence(monkeypatch):
+    """TASK-33620.8 review: a capture that raises fails closed, as staged does.
+
+    The staged path sends no evidence when its capture raises. The Automatic
+    path used to send the bundle anyway, unlabelled and never re-authorized
+    against current sources. Now the turn goes out with the user's text only.
+    """
+    from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
+
+    async def failing_capture(*_args, **_kwargs):
+        raise RuntimeError("capture failed")
+
+    monkeypatch.setattr(
+        chat_rag_events,
+        "capture_console_prepared_evidence_for_chat",
+        failing_capture,
+    )
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    gateway = _StreamingFence()
+    service = _RagService(
+        {"runtime_backend": "local", "results": [_row("needle body")]}
+    )
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    controller.app = _capture_app(service, "note-1")
+
+    result = await controller.submit_draft("exact user text")
+
+    assert result.accepted
+    assert len(service.calls) == 1
+    assert gateway.provider_calls == 1
+    final_user = next(
+        row for row in reversed(gateway.messages) if row["role"] == "user"
+    )
+    assert "exact user text" in final_user["content"]
+    assert "needle body" not in final_user["content"]
+
+
+@pytest.mark.asyncio
 async def test_live_state_reaches_dispatch_started_only_at_provider_attempt():
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)

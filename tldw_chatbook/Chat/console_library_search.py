@@ -175,8 +175,9 @@ async def capture_automatic_evidence(
     prompt with [S#] instructions and no trace builder, so an Automatic reply
     could never show Cited sources. It now runs through the staged path's
     canonical capture (fresh source authorization, exact prompt blocks,
-    trace builder, prompt evidence set). Without an app to capture through,
-    or if capture fails, the evidence still goes out, unlabelled.
+    trace builder, prompt evidence set). If capture fails, no evidence goes
+    out, as on the staged path: the bundle was never re-authorized. Without
+    an app to capture through, the evidence goes out unlabelled.
 
     Args:
         controller: The Console chat controller sending the turn.
@@ -203,14 +204,14 @@ async def capture_automatic_evidence(
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 -- fall back to unlabelled
+        except Exception as exc:  # noqa: BLE001 -- fail closed, as staged does
             logger.error(
                 "Automatic Console RAG capture unavailable; "
                 "reason=capture_provider_failure; exception_type={}",
                 type(exc).__name__,
             )
-        else:
-            return controller._normalize_rag_capture(captured)
+            return None, None, None, None
+        return controller._normalize_rag_capture(captured)
     return format_console_evidence_without_labels(bundle) or None, None, None, None
 
 
