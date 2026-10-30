@@ -23696,3 +23696,12 @@ queued, running and completed states) failed against the first cleanup script.
 Preserving runs once either job appears made all six pass; a failed job-inventory
 read also stops cleanup. Test control jobs as well as test jobs when pruning
 obsolete CI: a stale commit does not imply the entire run has become disposable.
+
+## Actions job timestamps can be unusable for queue-wait calculations (TASK-38100)
+
+Replaying saved run 40909862501 for the 2026-10-29 CI cost report found 33 of
+34 application jobs with `created_at` later than `started_at`; execution duration
+was still valid and totalled 401.3 runner-minutes. The cause of those inverted
+timestamps was not established. Report unavailable wait rows explicitly instead
+of clamping negative durations to zero. A median over the one remaining valid
+row is a partial sample, not the workflow's overall queue delay.

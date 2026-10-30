@@ -816,7 +816,12 @@ def _assert_required_aggregation(workflow: dict) -> None:
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
-    assert all(not step.get("continue-on-error", False) for step in required["steps"])
+    reports = [step for step in required["steps"] if step.get("name") == "Report qualification cost"]
+    assert len(reports) == 1 and reports[0]["continue-on-error"] is True
+    assert all(
+        not step.get("continue-on-error", False)
+        for step in required["steps"] if step is not reports[0]
+    )
     preflight = workflow["jobs"]["preflight"]
     assert not preflight.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in preflight["steps"])
