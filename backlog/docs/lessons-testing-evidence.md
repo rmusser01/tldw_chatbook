@@ -39,6 +39,28 @@ rescued the end state. Assert setup claims against what Textual actually did
 test. When two mechanisms can restore the same state, switch one off to test
 the other.
 
+## A Tests/UI suite that errors at setup locally can still run, under the bootstrap profile (TASK-33621.51 review, 2026-10-29)
+
+**Incident.** The review of the Library outcome line asked whether its new
+transcript row kind broke selection, windowing or pruning. The suites that answer
+that (selection contract, annotation markers, transcript region, window reconcile,
+pruning, turn attention) errored at setup on this machine on both trees with
+`RecoveryRequired: raw_source_selection_changed`, and none of them is in the PR UI
+census, so no pull-request lane runs them either. The question was about to be
+left for "CI after merge". The error is the per-test config sandbox meeting a
+config module already registered for the collection-time profile;
+`bootstrap_profile` tests keep that profile instead. A throwaway pytest plugin
+under `Tests/UI/` that adds the marker to every collected item
+(`def pytest_collection_modifyitems(items): item.add_marker(pytest.mark.bootstrap_profile)`),
+loaded with `-p Tests.UI.<module>`, made twelve such suites run on the branch and
+on a detached dev worktree. turn_attention went from 41 setup errors to 38 passed
+and 3 failed, the same 3 ids on dev. No failure appeared only on the branch.
+
+**What to do.** Before writing "unverified locally" for a Tests/UI suite that dies
+with `raw_source_selection_changed`, run it with that probe plugin on both trees
+and compare failing ids. Delete the plugin before committing. This is a local
+measurement aid, not a fix: the suite still fails in a lane that runs it plain.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
