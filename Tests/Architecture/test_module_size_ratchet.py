@@ -179,6 +179,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the local MCP control service gets a storage provider (+1), which
     # reports the DBs unavailable before the bundle is published (+1).
+    # 2026-10-29, TASK-34000.29 polish-1b final review C-1 (same owner
+    # decision): 3690 -> 3708 (+18, measured) -- Sync v2's ``note_exists``
+    # seam, ``_sync_v2_note_ids_present`` (reads the ChaChaNotes DB at call
+    # time; no DB means nothing is held) and its kwarg at the
+    # ``LocalFirstSyncService`` construction, so a purged note's queued
+    # upsert never leaves the device. Missed by the wave's own ratchet
+    # re-runs; found by the finishing pass's full Tests/Architecture pair.
     "tldw_chatbook/app_service_wiring.py": 3704,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
