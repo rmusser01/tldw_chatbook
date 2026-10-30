@@ -607,7 +607,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 #   test_library_notes_entry_focus_read_through.py (the entry reconcile's
 #   detach window reads through to the captured control: one production-CSS
 #   Library boot, ~8 s alone at load ~13, w1b plugin): 933 -> 934.
-MINIMUM_FILES = 934
+# - polish-1b final fix wave (2026-10-29, the 8a Pilot split): Tests/UI/test_
+#   library_notes_trash_pages_and_purges.py measured 30.26 s alone with its
+#   three boots under load, over the 30 s budget, so its slowest boot (the
+#   160x45 paging and Restore-clamp arm, 10.78 s) moved by name to Tests/UI/
+#   test_library_notes_trash_pages_reach_every_deleted_note.py. Alone at load
+#   ~10-12: the original ~20 s (two 100x30 boots), the sibling ~12 s, with
+#   and without the w1b plugin: 934 -> 935.
+MINIMUM_FILES = 935
 
 
 def read_census(path: Path) -> list[str]:
