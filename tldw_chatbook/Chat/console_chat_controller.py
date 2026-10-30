@@ -365,10 +365,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.console_trace_errors import (  # ADR-097 boot ratchet
     TraceCallPersistenceError,
 )
-from tldw_chatbook.Chat.library_preparation import (
-    LibraryPreparationContribution,
-    library_preparation_event_for_outcome,
-)
+from tldw_chatbook.Chat.library_preparation import LibraryPreparationContribution
 from tldw_chatbook.Chat.rag_scope import EffectiveScope
 from tldw_chatbook.Agents.agent_models import (
     ApprovalDecision,
@@ -7358,22 +7355,6 @@ class ConsoleChatController:
             )
         return EffectiveScope(state="scoped", allowlist=allowlist, cause=None)
 
-    @staticmethod
-    def _preparation_contribution(
-        outcome: Literal["zero_matches", "bypassed"],
-        preparation: ConsoleTurnPreparation,
-    ) -> LibraryPreparationContribution:
-        event = library_preparation_event_for_outcome(
-            outcome,
-            attempt_id=preparation.attempt_id,
-            result_count=0,
-            source_types=ConsoleChatController._frozen_rag_source_types(
-                preparation.execution_context
-            ),
-        )
-        assert event is not None
-        return LibraryPreparationContribution(event=event)
-
     def preparation_outcome(
         self, preparation_id: str
     ) -> ConsolePreparationOutcome | None:
@@ -7669,12 +7650,14 @@ class ConsoleChatController:
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id)
             )
+        from .console_library_preparation import bypass_contribution
+
         outcome = ConsolePreparationOutcome(
             preparation_id=ready.preparation_id,
             attempt_id=ready.attempt_id,
             state=ready.state,
             evidence_bundle=None,
-            contribution=self._preparation_contribution("bypassed", ready),
+            contribution=bypass_contribution(self, ready),  # TASK-33621.51
             error_code=None,
         )
         self._preparation_outcomes[preparation_id] = outcome

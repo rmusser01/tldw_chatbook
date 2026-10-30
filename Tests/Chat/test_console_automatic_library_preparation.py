@@ -688,7 +688,13 @@ async def test_evidence_success_uses_exact_draft_fixed_categories_and_exact_bund
         outcome.evidence_bundle
         is controller.preparation_outcome(preparation.preparation_id).evidence_bundle
     )
-    assert outcome.contribution is None
+    # TASK-33621.51: a grounded send records how many references it carried.
+    assert isinstance(outcome.contribution, LibraryPreparationContribution)
+    assert outcome.contribution.event.outcome == "evidence_sent"
+    assert outcome.contribution.event.result_count == len(
+        outcome.evidence_bundle.references
+    )
+    assert outcome.contribution.event.result_count == 1
     assert service.calls == [
         {
             "query": "immutable executed draft",

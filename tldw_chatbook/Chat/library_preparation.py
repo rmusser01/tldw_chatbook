@@ -25,7 +25,14 @@ _EVENT_KEYS = (
     "result_count",
     "source_types",
 )
-_DISCLOSURE_OUTCOMES = frozenset({"zero_matches", "bypassed"})
+_DISCLOSURE_OUTCOMES = frozenset({"zero_matches", "bypassed", "evidence_sent"})
+#: TASK-33621.51: why a paused send went out without Library evidence. The key
+#: is written only when a reason is known, so a reasonless row keeps its exact
+#: v1 bytes; an app version from before the reason reads a reasoned row (or an
+#: ``evidence_sent`` one) as unknown and leaves that turn inert, as it always
+#: has for an unknown row.
+LIBRARY_PREPARATION_BYPASS_REASONS = ("timed_out", "stopped", "failed")
+_BYPASS_REASON_KEY = "bypass_reason"
 _NO_EVENT_OUTCOMES = frozenset(
     {
         "cancelled",
@@ -43,13 +50,19 @@ class LibraryPreparationValidationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class LibraryPreparationEvent:
-    """The only durable outcomes produced by automatic preparation."""
+    """The only durable outcomes produced by automatic preparation.
+
+    ``result_count`` is the number of evidence references a send carried
+    (``evidence_sent`` only, and then at least one); ``bypass_reason`` says
+    why a ``bypassed`` send skipped its search, when that is known.
+    """
 
     version: Literal[1]
-    outcome: Literal["zero_matches", "bypassed"]
+    outcome: Literal["zero_matches", "bypassed", "evidence_sent"]
     attempt_id: str
     result_count: int
     source_types: tuple[Literal["notes", "media", "conversations"], ...]
+    bypass_reason: Literal["timed_out", "stopped", "failed"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,9 +70,10 @@ class LibraryPreparationView:
     """One safe disclosure projected onto its active durable USER turn."""
 
     turn_id: str
-    outcome: Literal["zero_matches", "bypassed"]
+    outcome: Literal["zero_matches", "bypassed", "evidence_sent"]
     result_count: int
     source_types: tuple[str, ...]
+    bypass_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +127,7 @@ def library_preparation_event_for_outcome(
     attempt_id: str,
     result_count: int,
     source_types: tuple[str, ...],
+    bypass_reason: str | None = None,
 ) -> LibraryPreparationEvent | None:
     """Create a disclosure event, or no event for cancelled/failure outcomes."""
     if outcome is None or outcome in _NO_EVENT_OUTCOMES:
@@ -123,13 +138,14 @@ def library_preparation_event_for_outcome(
         )
     event = LibraryPreparationEvent(
         version=1,
-        outcome=cast(Literal["zero_matches", "bypassed"], outcome),
+        outcome=cast(Literal["zero_matches", "bypassed", "evidence_sent"], outcome),
         attempt_id=attempt_id,
         result_count=result_count,
         source_types=cast(
             tuple[Literal["notes", "media", "conversations"], ...],
             source_types,
         ),
+        bypass_reason=cast(Literal["timed_out", "stopped", "failed"], bypass_reason),
     )
     _validate_event(event)
     return event
@@ -145,6 +161,8 @@ def encode_library_preparation_event(event: LibraryPreparationEvent) -> str:
         "result_count": event.result_count,
         "source_types": list(event.source_types),
     }
+    if event.bypass_reason is not None:
+        payload[_BYPASS_REASON_KEY] = event.bypass_reason
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > LIBRARY_PREPARATION_MAX_BYTES:
         raise LibraryPreparationValidationError(
@@ -154,7 +172,11 @@ def encode_library_preparation_event(event: LibraryPreparationEvent) -> str:
 
 
 def decode_library_preparation_event(value: object) -> LibraryPreparationEvent:
-    """Decode an exact bounded v1 payload, rejecting every additive field."""
+    """Decode an exact bounded v1 payload, rejecting every additive field.
+
+    The one optional key is ``bypass_reason`` (TASK-33621.51), present only
+    on a ``bypassed`` record whose reason is known.
+    """
     if type(value) is not str:
         raise LibraryPreparationValidationError("Invalid Library preparation payload.")
     try:
@@ -189,7 +211,10 @@ def decode_library_preparation_event(value: object) -> LibraryPreparationEvent:
         raise LibraryPreparationValidationError(
             "Invalid Library preparation payload."
         ) from exc
-    if type(data) is not dict or set(data) != set(_EVENT_KEYS):
+    if type(data) is not dict or set(data) - {_BYPASS_REASON_KEY} != set(_EVENT_KEYS):
+        raise LibraryPreparationValidationError("Invalid Library preparation payload.")
+    # A present key must hold a reason; null is not the canonical "no reason".
+    if _BYPASS_REASON_KEY in data and type(data[_BYPASS_REASON_KEY]) is not str:
         raise LibraryPreparationValidationError("Invalid Library preparation payload.")
 
     source_types = data["source_types"]
@@ -197,12 +222,18 @@ def decode_library_preparation_event(value: object) -> LibraryPreparationEvent:
         raise LibraryPreparationValidationError("Invalid Library preparation payload.")
     event = LibraryPreparationEvent(
         version=cast(Literal[1], data["version"]),
-        outcome=cast(Literal["zero_matches", "bypassed"], data["outcome"]),
+        outcome=cast(
+            Literal["zero_matches", "bypassed", "evidence_sent"], data["outcome"]
+        ),
         attempt_id=cast(str, data["attempt_id"]),
         result_count=cast(int, data["result_count"]),
         source_types=cast(
             tuple[Literal["notes", "media", "conversations"], ...],
             tuple(source_types),
+        ),
+        bypass_reason=cast(
+            Literal["timed_out", "stopped", "failed"] | None,
+            data.get(_BYPASS_REASON_KEY),
         ),
     )
     _validate_event(event)
@@ -259,6 +290,7 @@ def project_library_preparation(
                 outcome=event.outcome,
                 result_count=event.result_count,
                 source_types=tuple(event.source_types),
+                bypass_reason=event.bypass_reason,
             )
         )
     return tuple(views)
@@ -279,6 +311,14 @@ def _validate_event(event: LibraryPreparationEvent) -> None:
         type(event.result_count) is not int
         or event.result_count < 0
         or event.result_count > LIBRARY_PREPARATION_RESULT_COUNT_MAX
+    ):
+        raise LibraryPreparationValidationError("Invalid Library preparation event.")
+    if event.outcome == "evidence_sent" and event.result_count < 1:
+        raise LibraryPreparationValidationError("Invalid Library preparation event.")
+    if event.bypass_reason is not None and (
+        event.outcome != "bypassed"
+        or type(event.bypass_reason) is not str
+        or event.bypass_reason not in LIBRARY_PREPARATION_BYPASS_REASONS
     ):
         raise LibraryPreparationValidationError("Invalid Library preparation event.")
     if type(event.source_types) is not tuple:

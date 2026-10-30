@@ -146,7 +146,10 @@ _BUDGETS: dict[str, int] = {
     # (29,043), the Library-pause fixes measure 29,055: dev's TASK-35992
     # extraction already moved out the Library preparation body that these
     # fixes used to shrink here, so their stop/shelf/card wiring now shows.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29055,
+    # TASK-33621.51 (2026-10-29): the Library preparation record builders
+    # moved to console_library_preparation (preparation_contribution,
+    # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -416,7 +419,14 @@ _BUDGETS: dict[str, int] = {
     # 505. Round 2: a key the save would refuse is named in its receipt: 516.
     # Round 3: a model id it cannot write is named, not the key: 518.
     "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 518,
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
+    # TASK-33621.51 (2026-10-29, owner rule 2026-10-04: a fix over a size
+    # ratchet raises the row by its own lines, dated, never squeezes other
+    # code): +25 for the Automatic Library outcome row under a USER turn
+    # (setter, row plan, Static build, protected click class). Raised by this
+    # branch's delta only: dev ed7481a30c already measures 8,821 against the
+    # old 8,353, and that overrun is not this task's to absorb, so the row
+    # stays red until it is decomposed or re-pinned by its owner.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8378,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
