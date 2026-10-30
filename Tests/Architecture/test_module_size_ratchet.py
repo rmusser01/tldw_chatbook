@@ -157,6 +157,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29 (TASK-33621.4, same owner rule): +13, Continue, Regenerate
     # and Retry ask console_compaction_gate before commit (one import, four
     # lines per call site) so a deliberate Ask hold never marks a turn Failed.
+    # 2026-10-29 (TASK-33621.4, same owner rule): +17, the composer hold's
+    # admission check also refuses a queued or Buddy send at the Ask trigger
+    # before commit (the refusal itself lives in console_compaction_gate);
+    # live, a queued follow-up was marked Failed under the dispatch panel.
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,

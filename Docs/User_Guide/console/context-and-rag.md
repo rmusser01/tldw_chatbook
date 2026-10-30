@@ -153,9 +153,14 @@ report the result in the chat.
 
 **Continue**, **Regenerate** and **Retry** cannot show the card. Over the
 trigger they stop before anything is saved, and a note gives the numbers and
-the way on: run `/compact`, then try again, or change **When limit nears**. A
-queued prompt still stops with a note after it is accepted: run `/compact` or
-**Compact now**, then send again.
+the way on: run `/compact`, then try again, or change **When limit nears**.
+Queued prompts and Buddy replies cannot show it either. A queued prompt that
+reaches the trigger is not sent: it goes back to the front of the queue, the
+queue pauses on **Start refused**, and the note starts "Not sent from the
+queue". Run `/compact`, then **Try again** (compacting changes the context, so
+the queue first asks you to review it), or change **When limit nears**. A
+Buddy reply over the trigger is not sent either; Buddy keeps your text and
+shows the same note, and the Console composer is left as it was.
 
 When compacting cannot make enough room, the message is not sent and the note
 says what fills the window and what to change:
