@@ -1262,3 +1262,46 @@ def test_unstaged_binary_change_is_a_gap_not_a_refusal(source_case):
     manifest = c.capture()
     assert "main.py" in {doc.relative_path for doc in manifest.initial_sources}
     assert [gap.reason for gap in manifest.gaps].count("binary_source: data.bin") == 1
+
+
+def test_changed_submodule_is_an_unsupported_type_gap(source_case):
+    c = source_case
+    git(c.root, "update-index", "--add", "--cacheinfo", f"160000,{c.base},vendor/lib")
+    git(c.root, "commit", "-qm", "submodule")
+    head = git(c.root, "rev-parse", "HEAD")
+    manifest = c.capture(
+        c.committed_target.model_copy(
+            update={"base_commit": c.head, "head_commit": head}
+        )
+    )
+    assert ("head", "vendor/lib") not in manifest.absent_sources
+    assert "unsupported_source_type: vendor/lib" in [g.reason for g in manifest.gaps]
+    assert "main.py" in {doc.relative_path for doc in manifest.initial_sources}
+
+
+def test_oversized_changed_file_is_a_gap_but_a_selected_file_refuses(
+    source_case, monkeypatch
+):
+    from tldw_chatbook.Agents import code_review_source as module
+
+    c = source_case
+    (c.root / "big.py").write_text("x" * 200 + "\n")
+    (c.root / "small.py").write_text("small\n")
+    head = _commit_paths(c.root, "sizes", "big.py", "small.py")
+    monkeypatch.setattr(module, "MAX_READ_FILE_BYTES", 100)
+    manifest = c.capture(
+        c.committed_target.model_copy(
+            update={"base_commit": c.head, "head_commit": head}
+        )
+    )
+    assert "source_truncated: big.py" in [gap.reason for gap in manifest.gaps]
+    assert ("head", "small.py") in {
+        (doc.side, doc.relative_path) for doc in manifest.initial_sources
+    }
+    (c.root / "large-untracked.py").write_text("y" * 200 + "\n")
+    with pytest.raises(ReviewRefused, match="source_truncated"):
+        c.capture(
+            c.working_tree_target.model_copy(
+                update={"untracked_paths": ("large-untracked.py",)}
+            )
+        )

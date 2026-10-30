@@ -344,7 +344,9 @@ def capture_review_source(
 
 # A changed file the view cannot hold as text is a named coverage gap, not a
 # refusal of the whole target (spec: excluded/binary material is coverage).
-_UNREADABLE_CHANGE = frozenset({"binary_source", "unsupported_source_type"})
+_UNREADABLE_CHANGE = frozenset(
+    {"binary_source", "unsupported_source_type", "source_truncated"}
+)
 
 
 def _within_file_quota(store, files):
@@ -501,6 +503,10 @@ def _capture(target, authority, store, context, root, exclusions):
         else:
             size = entry.size if entry else 0
         if size > MAX_READ_FILE_BYTES:
+            if path in changed_paths:
+                unreadable(path, "source_truncated")
+                selected.pop((side, path))
+                continue
             if (side, path) in required:
                 raise ReviewRefused("source_truncated")
             gaps.append(CoverageGap(reason="optional_context_unavailable"))
