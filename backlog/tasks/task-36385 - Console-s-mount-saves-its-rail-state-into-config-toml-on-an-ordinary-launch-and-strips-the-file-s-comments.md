@@ -146,7 +146,7 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - The whole file: 44 passed at head.
 - Lesson: a follow-up paragraph on the TASK-22988 entry in `lessons-testing-evidence.md`.
 - **Re-sync 2026-10-30 onto dev ff815f8559:**
-  - Conflicts: the lessons file (both kept, this task's entry just below dev's newer ones) and the ChatScreen ratchet row (dev's comments kept, this task's +19 and +3 lines appended). The row is now 24353/737, dev's 24331/737 plus 22, and the ratchet confirms it is exact.
+  - Conflicts: the lessons file (both kept, this task's entry just below dev's newer ones) and the ChatScreen ratchet row (dev's comments kept, this task's +19 and +3 lines appended). The resolution first set the row to 24353/737, dev's 24331/737 plus 22; dev's row carried 4 lines of slack, so a follow-up commit set it to the measured 24349.
   - The comment-only ratchet commit dropped out as empty: its wording is in the resolution.
   - No code changed.
   - Runs at the new head (`-n 4`):
@@ -154,4 +154,11 @@ No User Guide change: no page says that a launch rewrites config.toml.
     - The credential round trip, both cases: 3 of 3 runs passed, at load average 95 to 143.
     - Screen ratchet: 4 passed.
     - Preflight passed.
+- **Re-sync 2026-10-30 onto dev 134108dd84:**
+  - One conflict: the credential round trip in `test_console_settings_unsaved_guard.py`. Both kept: this task's `has_user_work` assertion, then dev's `_sync_console_control_bar_now` call (661df2d434).
+  - Dev left `chat_screen.py` and the ratchet alone, so the row stays the measured 24349. No code changed.
+  - Runs at the new head (`-n 8`), across the 9 test files this PR touches: 193 passed, 3 failed, 31 errors.
+    - The 3 failures are compact_access display checks. At dev the same file has 4 failures, these 3 among them.
+    - The 31 errors are `raw_source_selection_changed` in `Tests/Wizards/test_first_run_setup_integration.py`. Dev shows the same 7 passed and 31 errors; this PR changes only a docstring there. CI gates one test from that file, `test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone` (pr-fast-lane-admission-2), and it passes at head.
+  - Preflight passed.
 <!-- SECTION:NOTES:END -->
