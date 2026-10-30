@@ -1,5 +1,7 @@
 """Raw command outcomes distinguish empty searches and preserve diagnostics."""
 
+import sys
+
 import pytest
 
 from Tests.Agents.test_agent_runtime import fence, make_deps
@@ -57,6 +59,63 @@ def test_empty_search_respects_cmd_quote_and_expansion_rules(command, expected):
     from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
 
     assert is_empty_search(command, 1, "", shell="cmd.exe") is expected
+
+
+@pytest.mark.parametrize(
+    "shell",
+    [
+        "powershell.exe",
+        "pwsh.exe",
+        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+    ],
+)
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        (r"C:\Windows\System32\findstr.exe /C:absent NUL", True),
+        (
+            r'findstr "absent\"; Write-Output COMPOUND_RAN; cmd /c exit 1; # \""',
+            False,
+        ),
+    ],
+)
+def test_empty_search_preserves_powershell_backslashes(command, expected, shell):
+    from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
+
+    assert is_empty_search(command, 1, "", shell=shell) is expected
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native PowerShell quoting")
+@pytest.mark.parametrize("compound", [False, True])
+def test_native_powershell_search_distinguishes_compound_failure(tmp_path, compound):
+    import shutil
+    import subprocess
+
+    from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
+
+    shell = shutil.which("powershell.exe")
+    search = shutil.which("findstr.exe")
+    if shell is None or search is None:
+        pytest.skip("PowerShell and findstr are required")
+    command = (
+        r'findstr "absent\"; Write-Output COMPOUND_RAN; cmd /c exit 1; # \""'
+        if compound
+        else f"{search} /C:cli_recovery_absent NUL"
+    )
+    result = subprocess.run(
+        [shell, "-NoProfile", "-NonInteractive", "-Command", command],
+        cwd=tmp_path,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 1
+    assert result.stderr == ""
+    assert result.stdout.strip() == ("COMPOUND_RAN" if compound else "")
+    assert is_empty_search(command, result.returncode, result.stderr, shell=shell) is (
+        not compound
+    )
 
 
 def test_shell_failure_keeps_stdout_and_stderr_beyond_old_model_cap(tmp_path):

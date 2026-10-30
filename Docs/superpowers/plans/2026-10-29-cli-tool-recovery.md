@@ -70,3 +70,11 @@ native helper if necessary, focused atomic-write/real-worker tests.
 - [x] Obtain one fresh review; resolve material findings with regression tests.
 - [x] Check every AC, mark completed tasks Done through the CLI, and leave the
   isolated worktree attached with a concise outcome and any limitations.
+
+## PR review follow-up (TASK-37630)
+
+The user selected requesting-code-review in place of Qodo. The current-head
+review reproduced PowerShell backslash handling that both rejected full-path
+searches and concealed compound failures. Eight pure/native regressions failed
+before preserving backslashes for PowerShell. Focused recovery checks passed33;
+the full raw-provider/integration selection passed88. Existing ADR-254 applies.

@@ -2,10 +2,12 @@
 id: TASK-37630
 title: Repair raw shell output and search outcome handling
 status: Done
-created_date: 2026-10-29 22:34
 assignee:
-- '@codex'
-updated_date: 2026-10-30 04:24
+  - '@codex'
+created_date: 2026-10-29 22:34
+updated_date: '2026-10-30T04:47:00Z'
+labels: []
+dependencies: []
 ---
 
 ## Description
@@ -28,19 +30,18 @@ Keep raw shell error details available to models, let empty searches complete wi
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes. ADR path: backlog/decisions/254-cli-search-outcomes-and-listing-compatibility.md. Reason: refine search outcomes and optional listing worker arguments while retaining ADR-078/094/101 authority. Follow Docs/superpowers/plans/2026-10-29-cli-tool-recovery.md with focused red/green tests, implementation, documentation, targeted checks and fresh review.
 PR routine follow-up: add a fail-first CI routing contract, select the new regression modules in bounded separate invocations of the existing Tool Recovery job, retain the two-version matrix and timeout, and verify the contract before publication. ADR required: no new ADR; existing ADR-254 and CI execution structure apply.
+
+Current-head review follow-up: reproduce PowerShell backslash/quote parsing with simple full-path searches and compound failure controls; add failing classifier and real-shell regressions, preserve backslashes for PowerShell without broadening recognized command forms, run scoped verification, and have the reviewer verify the fix. ADR required: no new ADR; implements the existing ADR-254 unambiguous-command rule.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
-<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Removed the redundant 4000-character provider slice and retain executor stdout/stderr. Simple grep/rg/findstr exit-1 results with complete empty stderr are successful empty searches; genuine errors, compounds, cmd expansions and truncated previews retain failures. Exact cmd text is launched without CRT re-escaping. Final review reproduced hidden stderr under the executor cap; added RED/GREEN accumulator-to-provider coverage and excluded truncated results from normalization. Fixed the integration fixture to select its schema/profile explicitly, and made the fresh-import refusal fixture use its owned directory instead of POSIX /tmp. Evidence: agents-final 80 passed; review-green 25 passed; real-process/native/import run 142 passed with 7 explicit POSIX skips, plus repaired import fixture 1 passed. New files lint clean; no new E9/F diagnostics over base. ADR-254 and user/architecture docs updated. No full suite, push or PR requested.
-PR routine: the new regressions were absent from PR selections. Added separate raw-agent and real-worker selections to the existing bounded Linux3.12/3.14 Tool Recovery matrix, retained the job budget and artifact receipts, and added a CI routing contract. Routing RED:1 failure; GREEN:5 contract/workflow-safety tests. No dependency or platform-matrix expansion.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
-## Final Summary
+<!-- SECTION:NOTES:BEGIN -->
+Removed the provider-only 4000-character slice while retaining executor/storage bounds. Simple complete grep/rg/findstr no-match outcomes no longer consume the failure streak; diagnostics, compounds, truncated previews and ambiguous commands remain failures. Native cmd command text is preserved. Earlier targeted evidence: 80 agent checks; 142 process/native/import checks with 7 POSIX skips plus one repaired import fixture. Existing unrelated E9/F findings were unchanged.
 
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+The PR Tool Recovery workflow now selects raw-agent and real-worker regressions separately on Linux Python 3.12/3.14 with bundle equality and result artifacts. The fail-first CI routing contract passed 5 checks. No dependency or matrix expansion.
 
-<!-- SECTION:FINAL_SUMMARY:END -->
+The user selected superpowers:requesting-code-review instead of Qodo for PR #3314. Its current-head review found POSIX backslash escaping could reject PowerShell full-path searches and conceal compound failures. Eight classifier/native cases failed before preserving PowerShell backslashes, then 33 recovery and 88 provider/integration checks passed. The reviewer verified both native outcomes and found no remaining material production issue. Its minor stdin concern was addressed with DEVNULL; both native cases passed again. Ruff lint/format and diff checks pass; GitHub CI remains pending.
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+Modified shell helper/provider/executor, regression fixtures/tests, CI routing, architecture/user docs and testing lessons. ADR-254 governs the outcome and worker contracts; this review fix needs no new ADR because it implements the existing unambiguous-command rule. No full suite was run.
+<!-- SECTION:NOTES:END -->
