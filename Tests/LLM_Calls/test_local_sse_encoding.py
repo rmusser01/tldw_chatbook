@@ -99,6 +99,7 @@ def test_local_sse_preserves_text_and_closes_response(
     content = "".join(
         json.loads(chunk.removeprefix("data:"))["choices"][0]["delta"]["content"]
         for chunk in chunks
+        if chunk  # SSE control lines yield empty checkpoints for Stop handling.
     )
     assert content == reply
     assert raw.closed
