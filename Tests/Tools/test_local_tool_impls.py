@@ -1,6 +1,7 @@
 import hashlib
 import json
 import multiprocessing
+import os
 import threading
 from pathlib import Path
 
@@ -23,12 +24,16 @@ from tldw_chatbook.Tools.local_tool_impls import (
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 
 
-def _write_while_locked(workspace: str, expected: str, outcomes) -> None:
+def _write_while_locked(workspace: str, expected: str, outcomes, ready, resume) -> None:
+    ready.set()
+    assert resume.wait(30), "parent did not start the lock-refusal probe"
     try:
-        write_file(
-            "AGENTS.md",
+        # Exercise the same admitted-root body as the real isolated worker;
+        # public-path policy resolution would bootstrap unrelated app state.
+        local_tool_impls._write_relative_file(
+            Path("AGENTS.md"),
             "replacement",
-            workspace_root=Path(workspace),
+            workspace=Path(workspace),
             expected_sha256=expected,
         )
     except LocalToolError:
@@ -360,6 +365,7 @@ def test_fs_write_overwrites(tmp_path):
     assert (ws / "f.txt").read_text() == "new"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows uses ACLs, not POSIX mode bits")
 def test_fs_write_preserves_existing_file_mode(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -377,7 +383,7 @@ def test_fs_write_dry_run_returns_bounded_exact_state_without_mutation(tmp_path)
     ws = tmp_path / "ws"
     ws.mkdir()
     target = ws / "AGENTS.md"
-    target.write_text("old\n")
+    target.write_bytes(b"old\n")
 
     result = json.loads(
         write_file(
@@ -489,16 +495,20 @@ def test_expected_digest_write_respects_cross_process_target_lock(tmp_path):
     context = multiprocessing.get_context("spawn")
     outcomes = context.Queue()
 
+    ready, resume = context.Event(), context.Event()
+    process = context.Process(
+        target=_write_while_locked,
+        args=(str(ws), expected, outcomes, ready, resume),
+    )
+    process.start()
+    # Bound the actual write separately from Windows spawn/import startup.
+    assert ready.wait(30), "CAS writer did not finish starting"
     with target.open("r+b") as handle:
         portalocker.lock(
             handle,
             portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
         )
-        process = context.Process(
-            target=_write_while_locked,
-            args=(str(ws), expected, outcomes),
-        )
-        process.start()
+        resume.set()
         process.join(timeout=10)
         if process.is_alive():
             process.terminate()

@@ -793,6 +793,25 @@ def test_streams_stay_distinct_invalid_utf8_is_replaced_and_nonzero_is_exited(
     assert {event.stream for event in events} == {"stdout", "stderr"}
 
 
+@pytest.mark.skipif(os.name != "nt", reason="native cmd command text")
+def test_cmd_preserves_quoted_spaces_and_shell_metacharacters(tmp_path):
+    command = _python_command(
+        "import os;os.write(1,b'quoted spaces & literal | characters');"
+        "os.write(2,b'error details');raise SystemExit(4)"
+    )
+    result = _executor().execute(
+        _request(tmp_path, command),
+        cancel_event=threading.Event(),
+        on_event=lambda _: None,
+        admit_worker=_admit,
+    )
+    assert result.terminal_state == "exited"
+    assert result.exit_code == 4
+    assert result.stdout_preview == "quoted spaces & literal | characters"
+    assert result.stderr_preview == "error details"
+    assert result.cleanup_proven
+
+
 def test_timeout_and_cancellation_share_idempotent_tree_cleanup(
     tmp_path: Path,
     spool_owners: list[Any],

@@ -51,6 +51,27 @@ Tool results that exceed budgets spill into the chat's private scratch space (`t
 
 `fs_write` is CAS-capable (`expected_sha256`/`expected_absent`, portalocker inode lock, `O_NOFOLLOW` descriptor writes) and the provider injects stale-write guards from the per-run ReadLedger — a write to a file the run has not (re)read refuses with "Re-read the file and retry".
 
+## CLI adapters
+
+`RawShellToolProvider` projects all executor-provided stdout/stderr without a
+second 4,000-character slice; existing executor and run-context budgets remain.
+`Tools/shell_search_outcomes.py` conservatively recognizes simple grep/rg/findstr
+exit-1/no-stderr results as empty successful searches. Compound expressions and
+genuine errors retain ordinary failure outcomes and the runtime retry guard.
+Windows `cmd /D /S /C` receives an explicitly constructed command line rather
+than applying CRT argument escaping to the command body (ADR-254).
+
+`VirtualCliProvider` discloses shared `VIRTUAL_CLI_USAGE` forms. `ls` supports
+all/long aliases and combined `-la`; optional `fs_list.long_format` is validated
+by the shared wire decoder and rendered only for admitted entries, including
+the generated stdlib remote worker. Absent/false preserves existing output.
+
+Atomic Windows file-tool writes use the native file facade for retained parent
+and file handles. CAS reads reuse the locked target handle; replacing that open
+target uses explicit native POSIX rename semantics while retaining the lock.
+Windows creations/replacements use the facade's private DACL policy, whereas
+POSIX writes retain existing mode preservation. No authority checks are relaxed.
+
 ## Skills as tools
 
 `SkillToolProvider` lists skills from a per-run snapshot (`{name, description, argument_hint}`; the schema is a single free-form `args` string). Its `invoke()` **raises `RuntimeError` by design** — skill tools never dispatch through the registry. The Console bridge intercepts skill names before registry dispatch and runs them through the run-scoped skill runner, which:

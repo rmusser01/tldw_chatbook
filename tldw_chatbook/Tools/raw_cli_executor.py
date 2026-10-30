@@ -759,8 +759,13 @@ class _OutputAccumulator:
 
 def _launch_shell(argv: tuple[str, ...], request: RawCliRequest) -> Any:
     """Launch the fixed outer shell as a non-interactive ordinary process."""
+    command_line = (
+        f'{subprocess.list2cmdline(list(argv[:-1]))} "{argv[-1]}"'
+        if os.name == "nt" and ntpath.basename(argv[0]).lower() == "cmd.exe"
+        else argv
+    )
     return subprocess.Popen(
-        argv,
+        command_line,
         shell=False,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,

@@ -879,3 +879,36 @@ def test_loopback_spawns_isolated_interpreter(
     assert argv[1] == "-I"
     assert argv[2] == "-c"
     assert argv[3].startswith("import sys,zlib;exec(compile(")
+
+
+def test_fs_list_long_roundtrip_retains_exclusions_and_plain_output(tmp_path: Path) -> None:
+    """Dropping long_format in the shipped decoder or dispatch loses metadata."""
+    import stat
+
+    root = tmp_path / "long-workspace"
+    root.mkdir()
+    visible = root / ".visible"
+    visible.write_bytes(b"twelve bytes")
+    (root / "private.txt").write_text("private", encoding="utf-8")
+    (root / "docs").mkdir()
+    chain = _ping_chain(root)
+    arguments = {
+        "path": ".",
+        "sensitive_exclusions": [{"kind": "subtree", "value": "private.txt"}],
+    }
+    plain = run_bundle_loopback(root, _request(root, "fs_list", arguments, chain=chain))
+    assert plain["outcome"] == "success", plain
+    assert plain["result"] == "docs/\n.visible"
+    disabled = run_bundle_loopback(
+        root, _request(root, "fs_list", {**arguments, "long_format": False}, chain=chain)
+    )
+    assert disabled["outcome"] == "success", disabled
+    assert disabled["result"] == plain["result"]
+    result = run_bundle_loopback(
+        root, _request(root, "fs_list", {**arguments, "long_format": True}, chain=chain)
+    )
+    assert result["outcome"] == "success", result
+    assert result["result"].splitlines() == [
+        f"{stat.filemode((root / 'docs').lstat().st_mode)} {(root / 'docs').lstat().st_size} docs/",
+        f"{stat.filemode(visible.lstat().st_mode)} 12 .visible",
+    ]

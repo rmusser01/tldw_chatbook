@@ -51,6 +51,9 @@ _WRITE_THROUGH = 2
 _REPARSE = 0x400
 _DIRECTORY = 0x10
 _SHARE_ALL = 7
+_FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
+_FILE_RENAME_POSIX_SEMANTICS = 0x00000002
+_FILE_RENAME_INFORMATION_EX = 65
 _EPOCH_100NS = 116444736000000000
 
 
@@ -99,8 +102,10 @@ class _BasicInfo(C.Structure):
 
 
 class _RenameInfo(C.Structure):
+    # Ex uses ULONG Flags; legacy BOOLEAN ReplaceIfExists occupies its low byte,
+    # followed by zero padding to the same RootDirectory alignment.
     _fields_ = [
-        ("replace", _U32),
+        ("flags", _U32),
         ("root", _HANDLE),
         ("length", _U32),
         ("name", _U16 * 1),
@@ -298,8 +303,10 @@ class _Native:
             (self.advapi, "ConvertSidToStringSidW", [_P, C.POINTER(_P)], _I32),
             (self.advapi, "GetSecurityDescriptorLength", [_P], _U32),
             (
-                self.advapi, "GetSecurityDescriptorOwner",
-                [_P, C.POINTER(_P), C.POINTER(_I32)], _I32,
+                self.advapi,
+                "GetSecurityDescriptorOwner",
+                [_P, C.POINTER(_P), C.POINTER(_I32)],
+                _I32,
             ),
             (
                 self.advapi,
@@ -470,7 +477,9 @@ class _Native:
                 size = self.advapi.GetSecurityDescriptorLength(descriptor)
                 if 20 <= size <= 4096:
                     data = C.string_at(descriptor, size)
-                    projected = self._decoded_security(data, is_directory, self.user_sid)
+                    projected = self._decoded_security(
+                        data, is_directory, self.user_sid
+                    )
                     return (*projected, data) if with_descriptor else projected
             if with_descriptor:
                 raise OSError(errno.EACCES, "windows_admission_descriptor_unavailable")
@@ -484,12 +493,16 @@ class _Native:
         descriptor = C.create_string_buffer(data)
         owner, dacl = _P(), _P()
         defaulted, present = _I32(), _I32()
-        self.check(self.advapi.GetSecurityDescriptorOwner(
-            descriptor, C.byref(owner), C.byref(defaulted)
-        ))
-        self.check(self.advapi.GetSecurityDescriptorDacl(
-            descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
-        ))
+        self.check(
+            self.advapi.GetSecurityDescriptorOwner(
+                descriptor, C.byref(owner), C.byref(defaulted)
+            )
+        )
+        self.check(
+            self.advapi.GetSecurityDescriptorDacl(
+                descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
+            )
+        )
         return self._decode_security(owner, dacl, is_directory, user_sid)
 
     def _decode_security(self, owner, dacl, is_directory, user_sid):
@@ -880,13 +893,17 @@ class WindowsOS:
                     observed = None
                 else:
                     try:
-                        observed = self._stat_handle(current.handle, with_descriptor=True)
+                        observed = self._stat_handle(
+                            current.handle, with_descriptor=True
+                        )
                     finally:
                         close_handle(current)
                     if failed:
                         raise _AdmissionMetadataCloseError(failed)
                 identity = (
-                    None if observed is None else (observed[0].st_dev, observed[0].st_ino)
+                    None
+                    if observed is None
+                    else (observed[0].st_dev, observed[0].st_ino)
                 )
                 if identity != identities.get(node):
                     raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
@@ -919,7 +936,8 @@ class WindowsOS:
 
         result = _os.stat_result(
             (
-                (_stat.S_IFDIR if info.attributes & _DIRECTORY else _stat.S_IFREG) | mode,
+                (_stat.S_IFDIR if info.attributes & _DIRECTORY else _stat.S_IFREG)
+                | mode,
                 (info.index_high << 32) | info.index_low,
                 info.volume,
                 info.links,
@@ -997,7 +1015,25 @@ class WindowsOS:
     def replace(self, src, dst, *, src_dir_fd=None, dst_dir_fd=None):
         self._rename(src, dst, src_dir_fd, dst_dir_fd, True)
 
-    def _rename(self, src, dst, src_fd, dst_fd, replace, *, link=False):
+    def replace_open_target(
+        self,
+        src: str | _os.PathLike[str],
+        dst: str | _os.PathLike[str],
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        """Atomically replace while callers retain a share-delete target handle.
+
+        Args:
+            src: Source name relative to its retained directory.
+            dst: Destination name relative to its retained directory.
+            src_dir_fd: Optional retained source directory descriptor.
+            dst_dir_fd: Optional retained destination directory descriptor.
+        """
+        self._rename(src, dst, src_dir_fd, dst_dir_fd, True, posix=True)
+
+    def _rename(self, src, dst, src_fd, dst_fd, replace, *, link=False, posix=False):
         native = _native()
         with (
             _parent(src, src_fd) as (source, name),
@@ -1013,8 +1049,9 @@ class WindowsOS:
                 size = C.sizeof(_RenameInfo) + len(encoded)
                 buffer = C.create_string_buffer(size)
                 info = _RenameInfo.from_buffer(buffer)
-                info.replace, info.root, info.length = (
-                    int(replace),
+                info.flags, info.root, info.length = (
+                    (_FILE_RENAME_REPLACE_IF_EXISTS if replace else 0)
+                    | (_FILE_RENAME_POSIX_SEMANTICS if posix else 0),
                     target,
                     len(encoded),
                 )
@@ -1028,7 +1065,7 @@ class WindowsOS:
                         C.byref(status),
                         buffer,
                         size,
-                        11 if link else 10,
+                        11 if link else (_FILE_RENAME_INFORMATION_EX if posix else 10),
                     )
                 )
 

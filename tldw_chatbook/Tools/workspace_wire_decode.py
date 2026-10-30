@@ -107,7 +107,11 @@ WORKSPACE_OUTCOMES = frozenset({"admitted", "success", "failure"})
 ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
     "fs_list": (
         frozenset({"path", "sensitive_exclusions"}),
-        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
+        {
+            "path": "path",
+            "long_format": "bool",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
     ),
     "fs_read": (
         frozenset({"path", "sensitive_exclusions"}),
