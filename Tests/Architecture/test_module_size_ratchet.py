@@ -149,11 +149,14 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29030,
+    # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
+    # continuation binding moved to console_review_delivery/_project_dispatch/
+    # _continuation_binding; rows below re-pinned at their measured sizes.
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    "tldw_chatbook/Chat/console_chat_store.py": 22335,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -560,7 +563,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/config.py": 12245,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 11605,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 11603,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     "tldw_chatbook/Agents/agent_service.py": 9555,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
@@ -572,7 +575,7 @@ _BUDGETS: dict[str, int] = {
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8178,
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8161,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,

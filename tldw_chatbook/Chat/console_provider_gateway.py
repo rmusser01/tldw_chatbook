@@ -64,7 +64,6 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     effective_provider_endpoint,
     generic_endpoint_differs,
     meaningful_adapter_base_url,
-    normalize_generic_endpoint_for_compare,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
 )
@@ -131,9 +130,11 @@ from tldw_chatbook.Chat.console_history_budget import (
     is_deleted_history_value,
     provider_continuation_owner_groups,
 )
+from tldw_chatbook.Chat.console_continuation_binding import (
+    require_target_matches_resolution,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     project_provider_continuation,
-    ContinuationConflictError,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
     validate_continuation_restore,
@@ -3696,32 +3697,8 @@ class ConsoleProviderGateway:
             )
         if thinking_sidecars and not thinking_owner_key:
             raise ValueError("thinking owner key is required for thinking history")
-        if continuation_target is not None and (
-            continuation_target.provider
-            != (resolution.execution_key or resolution.provider)
-            or (
-                continuation_target.selected_provider
-                != (resolution.selected_provider or resolution.provider)
-                if continuation_target.selected_provider is not None
-                # An unbound legacy target cannot prove a custom selection
-                # (the same rule as validate_continuation_restore).
-                else continuation_target.provider == "custom-hosted"
-            )
-            or continuation_target.model != (resolution.model or "")
-            or normalize_generic_endpoint_for_compare(continuation_target.api_base_url)
-            != normalize_generic_endpoint_for_compare(resolution.base_url)
-        ):
-            raise ContinuationConflictError(
-                "Continuation restore target mismatch."
-            ) from None
-        if (
-            continuation_target is not None
-            and resolution.continuation_protocol is not None
-            and continuation_target.protocol != resolution.continuation_protocol
-        ):
-            raise ContinuationConflictError(
-                "Continuation restore target mismatch."
-            ) from None
+        if continuation_target is not None:
+            require_target_matches_resolution(continuation_target, resolution)
         if isinstance(messages, PreparedConsoleRequest):
             continuation_groups = (
                 tuple(

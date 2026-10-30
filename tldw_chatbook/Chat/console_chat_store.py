@@ -62,8 +62,6 @@ from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,
     ProviderContinuationEvent,
     ToolBatchReady,
-    ToolCallExecuting,
-    ToolCallFinished,
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
@@ -242,6 +240,12 @@ if TYPE_CHECKING:
         ResolvedVoicePromotionDestination,
         VoicePromotionContext,
     )
+from tldw_chatbook.Chat.console_continuation_binding import (
+    claims_resume_owner,
+    continuation_event_value,
+    require_live_native_owner,
+    validate_durable_continuation_binding,
+)
 from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsolePromotionTransactionContribution,
 )
@@ -274,7 +278,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
-    transition_provider_call,
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -16518,33 +16521,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self._reject_quarantined_generation_mutation(message)
             if message.role is not ConsoleMessageRole.ASSISTANT:
                 raise ValueError("Only assistant messages can own generations.")
-            if (
-                expected_continuation is not None
-                or expected_continuation_message_version is not None
+            if claims_resume_owner(
+                message,
+                expected_continuation,
+                expected_continuation_message_version,
+                self.persistence,
             ):
-                if (
-                    expected_continuation is None
-                    or expected_continuation.state != "active"
-                    or any(
-                        call.state == "executing"
-                        for round_ in expected_continuation.rounds
-                        for call in round_.calls
-                    )
-                    or message.provider_continuation != expected_continuation
-                    or not message.provider_continuation_actions_enabled
-                    or type(expected_continuation_message_version) is not int
-                    or message.provider_continuation_message_version
-                    != expected_continuation_message_version
-                    or message.persisted_message_id is None
-                    or self.persistence is None
-                    or self.persistence.get_message_version(
-                        message.persisted_message_id
-                    )
-                    != expected_continuation_message_version
-                ):
-                    raise RuntimeError(
-                        "Provider continuation owner changed before resume."
-                    )
                 message.status = "pending"
                 self._begin_new_terminal_attempt(message)
             with self._generation_owner_locks_guard:
@@ -21061,29 +21043,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Recheck acknowledged current ownership in the trace writer transaction."""
         with self._generation_owner_scope(message_id):
             self._require_generation_attempt_locked(message_id, generation_token)
-            message = self._message_or_raise(message_id)
-            if (
-                generation_token is None
-                or not self._message_is_on_active_path(message_id)
-                or message.provider_continuation_remote
-                or not message.provider_continuation_actions_enabled
-                or message.provider_continuation != checkpoint
-                or message.provider_continuation_message_version != message_version
-                or message.assistant_generation_state != "continuation_active"
-                or checkpoint.state != "active"
-            ):
-                raise ValueError("live_native_owner_changed")
-            row = cursor.execute(
-                "SELECT version, provider_continuation_json, assistant_generation_state "
-                "FROM messages WHERE id = ? AND deleted = 0",
-                (message.persisted_message_id,),
-            ).fetchone()
-            if row is None or tuple(row) != (
-                message_version,
-                dump_provider_continuation_json(checkpoint),
-                "continuation_active",
-            ):
-                raise ValueError("live_native_owner_changed")
+            require_live_native_owner(
+                cursor,
+                self._message_or_raise(message_id),
+                checkpoint=checkpoint,
+                message_version=message_version,
+                current=generation_token is not None
+                and self._message_is_on_active_path(message_id),
+            )
 
     @_fork_continuation_event_transition
     def persist_provider_continuation_event(
@@ -21125,57 +21092,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 "Provider continuation could not be saved; retry or discard the interrupted run."
             )
 
-        checkpoint, content = self._continuation_event_value(message, event)
-        if continuation_target is None:
-            raise RuntimeError("Durable continuation host target is unavailable.")
-        try:
-            validate_continuation_restore(checkpoint, continuation_target)
-            current = message.provider_continuation
-            if current is not None:
-                if current.schema_version == 3 and checkpoint.schema_version != 3:
-                    raise RuntimeError(
-                        "Provider continuation binding cannot be erased."
-                    )
-                validate_continuation_restore(current, continuation_target)
-                validate_continuation_restore(
-                    checkpoint,
-                    ContinuationRestoreTarget(
-                        provider=current.provider,
-                        protocol=current.protocol,
-                        model=current.model,
-                        api_base_url=current.api_base_url,
-                        selected_provider=current.selected_provider
-                        or continuation_target.selected_provider,
-                    ),
-                )
-                if current.managed_resume is not None and checkpoint_finalizer is None:
-                    raise RuntimeError("Managed continuation finalizer is unavailable.")
-            session_id = self._message_session_index[message.id]
-            dispatch_recovery = self.dispatch_recovery_for_session(session_id)
-            if (
-                dispatch_recovery is not None
-                and dispatch_recovery.checkpoint is not None
-            ):
-                if (
-                    dispatch_recovery.assistant_message_id != message.id
-                    or checkpoint.schema_version != 3
-                ):
-                    raise RuntimeError(
-                        "Durable continuation destination is unavailable."
-                    )
-                destination = dispatch_recovery.checkpoint.resolved_destination
-                validate_continuation_restore(
-                    checkpoint,
-                    ContinuationRestoreTarget(
-                        provider=destination.continuation_provider,
-                        protocol=destination.continuation_protocol,
-                        model=destination.model,
-                        api_base_url=destination.continuation_base_url,
-                        selected_provider=destination.provider,
-                    ),
-                )
-        except ValueError:
-            raise RuntimeError("Provider continuation destination mismatch.") from None
+        checkpoint, content = continuation_event_value(message, event)
+        validate_durable_continuation_binding(
+            message,
+            checkpoint,
+            continuation_target,
+            self.dispatch_recovery_for_session(self._message_session_index[message.id]),
+            has_finalizer=checkpoint_finalizer is not None,
+        )
         if checkpoint_finalizer is not None:
             session_id = self._message_session_index[message.id]
             conversation_id = self.persist_session_if_needed(session_id)
@@ -21412,54 +21336,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         ):
             return None
         return self._snapshot(message)
-
-    @staticmethod
-    def _continuation_event_value(
-        message: ConsoleChatMessage,
-        event: ProviderContinuationEvent,
-    ) -> tuple[ProviderContinuationCheckpoint, str]:
-        """Resolve a typed event without logging its private payload."""
-        current = message.provider_continuation
-        if isinstance(event, ToolBatchReady):
-            if event.expected_checkpoint_revision is None:
-                if current is not None:
-                    raise RuntimeError("Continuation revision conflict.")
-            elif (
-                current is None
-                or current.checkpoint_revision != event.expected_checkpoint_revision
-            ):
-                raise RuntimeError("Continuation revision conflict.")
-            return event.checkpoint, message.content
-        if isinstance(event, FinalContinuation):
-            if event.expected_checkpoint_revision is None:
-                if current is not None:
-                    raise RuntimeError("Continuation revision conflict.")
-            elif (
-                current is None
-                or current.checkpoint_revision != event.expected_checkpoint_revision
-            ):
-                raise RuntimeError("Continuation revision conflict.")
-            return event.checkpoint, event.assistant_content
-        if current is None:
-            raise RuntimeError("Durable continuation owner is unavailable.")
-        if isinstance(event, ToolCallExecuting):
-            checkpoint = transition_provider_call(
-                current,
-                call_id=event.call_id,
-                expected_revision=event.expected_checkpoint_revision,
-                target="executing",
-            )
-            return checkpoint, message.content
-        if isinstance(event, ToolCallFinished):
-            checkpoint = transition_provider_call(
-                current,
-                call_id=event.call_id,
-                expected_revision=event.expected_checkpoint_revision,
-                target=event.target_state,
-                result=event.result,
-            )
-            return checkpoint, message.content
-        raise RuntimeError("Unsupported continuation event.")
 
     def _enqueue_sync_v2_message_if_ready(
         self,

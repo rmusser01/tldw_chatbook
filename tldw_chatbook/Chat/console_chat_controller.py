@@ -544,6 +544,9 @@ from tldw_chatbook.Chat.thinking_blocks import (
     parse_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.console_continuation_binding import (
+    continuation_restore_target_for_resolution as _continuation_restore_target_for_resolution,
+)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
     is_vision_capable,
@@ -2607,74 +2610,6 @@ def _flatten_preflight_messages(
     return flattened
 
 
-def _continuation_restore_target_for_resolution(
-    resolution: Any,
-) -> ContinuationRestoreTarget | None:
-    """Build an exact target only from explicitly pinned resolution fields.
-
-    ``api_base_url`` is carried through VERBATIM. It used to be passed
-    through ``normalize_generic_endpoint_for_compare`` first, which expands
-    a base URL to its full chat-completions endpoint
-    (``https://api.moonshot.ai/v1`` -> ``.../v1/chat/completions``). That
-    silently broke every Resume: the checkpoint pins whatever
-    ``ConsoleAgentBridge`` recorded, and the bridge records
-    ``resolution.base_url`` RAW (see its ``ContinuationRestoreTarget(...)``
-    construction), so recovery compared an expanded URL against a
-    non-expanded one and ``validate_continuation_restore`` -- which is
-    byte-exact by design, down to a trailing slash -- rejected it with
-    "Pinned provider settings no longer match".
-
-    Normalizing BOTH sides instead would have been the wrong repair: the
-    exactness is deliberate (``test_provider_continuation`` pins that
-    ``https://api.deepseek.com/v1/`` and ``https://api.deepseek.com/v1``
-    are a MISMATCH), and this comparison is what stops a private
-    continuation from being replayed against a different endpoint than the
-    one that produced it. The two writers simply have to agree, and the
-    checkpoint's writer is the one that defines the format.
-
-    The provider field follows the same writer-agreement rule (ADR-179,
-    Qodo follow-up): checkpoints are pinned under the EXECUTION key
-    (engine records use their ``record.key`` -- "custom-hosted" for a
-    swapped custom-ep selection -- and moonshot/zai/deepseek spell theirs
-    identically), and ``ConsoleAgentBridge`` records targets from
-    ``resolution.execution_key`` VERBATIM. Building the target from
-    ``provider_config_key(resolution.provider)`` instead pinned the
-    IDENTITY spelling ("custom_ep:paid" for ``custom-ep:paid``), which no
-    checkpoint ever carries, so the durable resume/crash-recovery pre-gate
-    byte-compared a spelling that could never match. ``execution_key`` is
-    therefore preferred verbatim; only a resolution with an EMPTY
-    execution key (legacy doubles) falls back to the normalized
-    ``provider`` spelling, which is byte-identical to the old behavior for
-    every checkpoint-producing provider.
-    """
-    protocol = getattr(resolution, "continuation_protocol", None) or getattr(
-        resolution, "api_mode", None
-    )
-    base_url = getattr(resolution, "base_url", None)
-    model = getattr(resolution, "model", None)
-    if (
-        not protocol
-        or not isinstance(base_url, str)
-        or not base_url.startswith(("http://", "https://"))
-        or not model
-    ):
-        return None
-    execution_key = getattr(resolution, "execution_key", None)
-    provider_value = (
-        str(execution_key)
-        if isinstance(execution_key, str) and execution_key
-        else provider_config_key(str(getattr(resolution, "provider", "")))
-    )
-    return ContinuationRestoreTarget(
-        provider=provider_value,
-        model=str(model),
-        protocol=str(protocol),
-        api_base_url=base_url,
-        selected_provider=getattr(resolution, "selected_provider", None)
-        or resolution.provider,
-    )
-
-
 def _normalize_world_info_history(
     messages: "list[dict[str, Any]]",
 ) -> "list[dict[str, Any]]":
@@ -3641,67 +3576,11 @@ class ConsoleChatController:
         self, session, authorization, resolution, turn_context
     ):
         """Resolve only this accepted review target before capacity/schema freeze."""
-        from tldw_chatbook.Agents.code_review_models import ReviewRefused
-        from tldw_chatbook.DB.base_db import run_owned_db_call
+        from .console_review_delivery import resolve_accepted_review_capacity
 
-        receipt = authorization.review_boundary
-        context = authorization.context
-
-        def validate_binding():
-            if (
-                not self._fleet_wake.authorizes(authorization, session.id)
-                or not authorization.accepted
-                or self._disposed
-                or self._shutdown_requested.is_set()
-                or session.id in self._session_close_generations
-                or self.store._session_or_raise(session.id) is not session
-                or authorization.review_boundary is not receipt
-                or authorization.context is not context
-                or context.chain_id != receipt.chain_id
-                or context.attempt_id != authorization.attempt_id
-                or context.owner_id != authorization.owner_id
-                or receipt.session_id != session.id
-                or receipt.conversation_id != authorization.conversation_id
-                or resolution.resolved_destination != turn_context.resolved_destination
-                or not self._fleet_wake._priority_allows(session.id, accepting=True)
-            ):
-                raise ReviewRefused("review_boundary_unavailable")
-
-        def validate_attempt():
-            snapshot = context.check()
-            attempt = context.ledger.read_attempt(
-                context.attempt_id, owner_id=context.owner_id
-            )
-            if (
-                attempt.state != "accepted"
-                or attempt.review_boundary_id != receipt.boundary_id
-                or attempt.session_id != session.id
-                or attempt.conversation_id != receipt.conversation_id
-            ):
-                raise ReviewRefused("review_boundary_unavailable")
-            return snapshot
-
-        async def validate():
-            validate_binding()
-            snapshot = await run_owned_db_call(context.ledger._db, validate_attempt)
-            # Source/native guards use composition's off-loop owner; all locks
-            # are released before the optional metadata await.
-            await asyncio.to_thread(
-                self.code_review._accepted_boundary_service, receipt
-            )
-            validate_binding()
-            return snapshot
-
-        snapshot = await validate()
-        ceiling = self.PROVIDER_VALIDATION_TIMEOUT_SECONDS
-        if snapshot.deadline_at is not None:
-            ceiling = min(ceiling, max(0.0, snapshot.deadline_at - time.time()))
-        async with asyncio.timeout(ceiling):
-            window = await self.provider_gateway.resolve_context_window(resolution)
-            await validate()
-        if not window.verified:
-            raise ReviewRefused("review_context_capacity_unknown")
-        return replace(resolution, context_window=window)
+        return await resolve_accepted_review_capacity(
+            self, session, authorization, resolution, turn_context
+        )
 
     async def _auxiliary_compaction_resolution(self, main_selection, main_resolution):
         """Resolve a cheaper auxiliary model for compaction, or fall back.
@@ -10606,35 +10485,13 @@ class ConsoleChatController:
             origin is ConsoleSubmissionOrigin.AGENT_WAKE
             and wake_authorization.review_boundary is not None
         ):
-            try:
-                resolution = await self._resolve_accepted_review_capacity(
-                    session, wake_authorization, resolution, turn_context
-                )
-            except asyncio.CancelledError:
-                await self._fleet_wake._pause(
-                    wake_authorization.conversation_id,
-                    wake_authorization.work_chain_id,
-                    "review_preflight_cancelled",
-                )
-                raise
-            except Exception as exc:  # noqa: BLE001 - accepted work must fail closed
-                from tldw_chatbook.Agents.code_review_models import ReviewRefused
+            from .console_review_delivery import admit_review_wake
 
-                reason = (
-                    exc.reason
-                    if isinstance(exc, ReviewRefused)
-                    else "review_capacity_unavailable"
-                )
-                self.code_review.diagnostic = reason
-                await self._fleet_wake._pause(
-                    wake_authorization.conversation_id,
-                    wake_authorization.work_chain_id,
-                    reason,
-                )
-                return self._block(
-                    session.id,
-                    f"Review continuation blocked: {reason}. Reports are saved.",
-                )
+            resolution = await admit_review_wake(
+                self, session, wake_authorization, resolution, turn_context
+            )
+            if isinstance(resolution, ConsoleSubmitResult):
+                return resolution
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
@@ -24875,106 +24732,19 @@ class ConsoleChatController:
             register("usage-reattach", self._on_fleet_drained_reattach_usage)
 
     def _present_review_status(self, session_id, review_id, status):
-        def present():
-            if self._disposed or session_id in self._session_close_generations:
-                return
-            self.store.append_message(
-                session_id,
-                role=ConsoleMessageRole.ASSISTANT,
-                content=f"Review {review_id}: {status}. Captured progress is retained; a new explicit request can resume an available stage.",
-            )
+        from .console_review_delivery import present_review_status
 
-        loop = self._fleet_wake._loop
-        try:
-            on_loop = asyncio.get_running_loop() is loop
-        except RuntimeError:
-            on_loop = False
-        if on_loop:
-            present()
-        elif loop is not None and loop.is_running():
-            loop.call_soon_threadsafe(present)
+        present_review_status(self, session_id, review_id, status)
 
     def _present_review_offer(self, session_id, review_id):
-        def present():
-            if self._disposed or session_id in self._session_close_generations:
-                return False
-            self.store.append_message(
-                session_id,
-                role=ConsoleMessageRole.ASSISTANT,
-                content=f"Verification is available for review {review_id}. Reply yes to verify this review, or no to decline.",
-            )
-            return True
+        from .console_review_delivery import present_review_offer
 
-        async def hop():
-            return present()
-
-        loop = self._fleet_wake._loop
-        try:
-            on_loop = asyncio.get_running_loop() is loop
-        except RuntimeError:
-            on_loop = False
-        if on_loop:
-            # Blocking on a coroutine scheduled onto our own loop deadlocks.
-            return present()
-        if loop is not None and loop.is_running():
-            return asyncio.run_coroutine_threadsafe(hop(), loop).result()
-        return False
+        return present_review_offer(self, session_id, review_id)
 
     def _present_review_report(self, session_id, review_id, report):
-        """Acknowledge mounted native originals before an authorized verifier starts."""
-        from ..Widgets.Console.console_code_review_modal import ConsoleCodeReviewModal
+        from .console_review_delivery import present_review_report
 
-        def available():
-            return (
-                not self._disposed
-                and session_id not in self._session_close_generations
-                and self.store.active_session_id == session_id
-                and not (
-                    self._active_cancel_events.get(session_id) is not None
-                    and self._active_cancel_events[session_id].is_set()
-                )
-            )
-
-        async def present():
-            if not available():
-                return False
-            try:
-                _, service = self.code_review.report_service(session_id, review_id)
-                page = await asyncio.to_thread(
-                    ConsoleCodeReviewModal.literal_page, report["original_page"]
-                )
-                modal = self.app.screen
-                if (
-                    not isinstance(modal, ConsoleCodeReviewModal)
-                    or modal._review_id != review_id
-                ):
-                    modal = ConsoleCodeReviewModal(service=service, review_id=review_id)
-                    await self.app.push_screen(modal)
-                if not available():
-                    await modal.request_safe_cancel(source="review_closed")
-                    return False
-                if not modal.present_original(report["slot_id"], page):
-                    return False
-                self.store.append_message(
-                    session_id,
-                    role=ConsoleMessageRole.ASSISTANT,
-                    content=f"Original report {report['slot_id']} for review {review_id} is open in Review reports (u). Full originals and raw output are retained for this session; export to keep them. Saved chat references cannot restore an expired report bundle.",
-                )
-                return True
-            except Exception:
-                # A closed/unavailable screen does not acknowledge presentation.
-                return False
-
-        loop = self._fleet_wake._loop
-        try:
-            on_loop = asyncio.get_running_loop() is loop
-        except RuntimeError:
-            on_loop = False
-        if not on_loop and loop is not None and loop.is_running():
-            call_from_thread = getattr(self.app, "call_from_thread", None)
-            if callable(call_from_thread):
-                return bool(call_from_thread(present))
-        return False
+        return present_review_report(self, session_id, review_id, report)
 
     @property
     def code_review(self) -> Any:
@@ -25017,27 +24787,9 @@ class ConsoleChatController:
             bridge: The Console agent bridge to register on, or ``None``.
         """
         self._fleet_wake.capture_loop_if_running()
-        with self._code_review_lock:
-            database = getattr(bridge, "runs_db", None)
-            ledger = (
-                getattr(database, "automatic_work", None)
-                if self._code_review is not None
-                else None
-            )
-            if ledger is not self._review_ledger:
-                if self._review_ledger is not None:
-                    self._review_ledger.unregister_review_boundary_authority(
-                        self._fleet_wake.runtime_owner_id
-                    )
-                    self.code_review.reset_runtime()
-                self._review_ledger = ledger
-                if ledger is not None:
-                    ledger.register_review_boundary_authority(
-                        self._fleet_wake.runtime_owner_id,
-                        validate=self.code_review.validate_boundary,
-                        transition=self.code_review.boundary_transition,
-                        acceptance_scope=self.code_review.boundary_acceptance_scope,
-                    )
+        from .console_review_delivery import attach_review_ledger
+
+        attach_review_ledger(self, bridge)
         if bridge is None:
             return
         progress_register = getattr(bridge, "on_progress_enqueued", None)
@@ -26596,104 +26348,20 @@ class ConsoleChatController:
                             project_selection
                         ),
                     )
-                project_owner_loop = asyncio.get_running_loop()
+                from .console_project_dispatch import build_project_dispatch_callbacks
 
-                def on_owning_loop(callback):
-                    # Retained review authority may run on its captured app loop.
-                    try:
-                        if asyncio.get_running_loop() is project_owner_loop:
-                            return callback()
-                    except RuntimeError:
-                        pass
-                    app = self.app
-                    call_from_thread = getattr(app, "call_from_thread", None)
-                    # Textual only permits call_from_thread from another thread.
-                    if callable(call_from_thread) and threading.get_ident() != getattr(
-                        app, "_thread_id", None
-                    ):
-                        return call_from_thread(callback)
-                    return callback()
-
-                def project_activation_callback(event):
-                    return on_owning_loop(
-                        lambda: self._record_project_instruction_activation(
-                            session_id, event
-                        )
-                    )
-
-                def project_authority_guard():
-                    return bool(
-                        on_owning_loop(
-                            lambda: project_instruction_authority_is_current(
-                                store=self.store,
-                                session_id=session_id,
-                                registry=registry,
-                                expected_selection=project_selection,
-                            )
-                        )
-                    )
-
-                # Consent is checked against the state captured here; only
-                # this run's own commits may advance it (review destinations
-                # confirm again within the same run).
-                expected_project_state = state
-
-                def confirm_project_dispatch(snapshot, target_resolution=None):
-                    active_resolution = target_resolution or resolution
-                    active_notice_key = project_instruction_notice_key(
-                        project_selection.locator_fingerprint,
-                        active_resolution.execution_key or active_resolution.provider,
-                        getattr(active_resolution, "base_url", None),
-                    )
-
-                    def commit_and_record(decision):
-                        nonlocal expected_project_state
-                        committed = commit_project_instruction_dispatch_decision(
-                            store=self.store,
-                            session_id=session_id,
-                            registry=registry,
-                            expected_state=expected_project_state,
-                            expected_selection=project_selection,
-                            notice_key=active_notice_key,
-                            decision=decision,
-                        )
-                        if committed in {"proceed", "disable"}:
-                            current = next(
-                                (
-                                    item
-                                    for item in self.store.sessions()
-                                    if item.id == session_id
-                                ),
-                                None,
-                            )
-                            if current is not None:
-                                expected_project_state = (
-                                    current.project_instruction_state
-                                )
-                        if committed != "prompt":
-                            if committed == "proceed":
-                                self._remember_project_instruction_delivery(
-                                    session_id, snapshot
-                                )
-                            else:
-                                self._clear_project_instruction_delivery(session_id)
-                        return committed
-
-                    initial = on_owning_loop(lambda: commit_and_record(None))
-                    if initial != "prompt":
-                        return initial
-                    if self._chat_start.is_accepted(session_id):
-                        return "cancel"
-                    callback = self._confirm_project_instruction_dispatch
-                    notice = build_project_instruction_dispatch_notice(
-                        snapshot,
-                        session_id=session_id,
-                        resolution=active_resolution,
-                    )
-                    decision = callback(notice) if callback is not None else "cancel"
-                    if decision not in {"proceed", "cancel", "disable"}:
-                        decision = "cancel"
-                    return on_owning_loop(lambda: commit_and_record(decision))
+                (
+                    project_activation_callback,
+                    project_authority_guard,
+                    confirm_project_dispatch,
+                ) = build_project_dispatch_callbacks(
+                    self,
+                    session_id=session_id,
+                    registry=registry,
+                    project_selection=project_selection,
+                    state=state,
+                    resolution=resolution,
+                )
 
         self._active_assistant_message_ids[session_id] = assistant_message_id
         self._active_stream_tasks[session_id] = asyncio.current_task()
@@ -27063,78 +26731,23 @@ class ConsoleChatController:
                         trusted_profile_user_message = candidate
                 except KeyError:
                     pass
-            from tldw_chatbook.Agents.code_review_models import ReviewRefused
+            from .console_review_delivery import compose_turn_review_provider
 
-            from .console_code_review import compose_native_review_provider
-
-            def review_destination_check(target):
-                if (
-                    project_selection is None
-                    or project_authority_guard is None
-                    or not project_authority_guard()
-                ):
-                    return "source_authority_unavailable"
-                if confirm_project_dispatch is None or startup_candidate is None:
-                    return "destination_consent_required"
-                from tldw_chatbook.Agents.project_instruction_resolver import (
-                    InstructionChainDelivery,
-                    InstructionSnapshot,
-                )
-
-                snapshot = InstructionSnapshot(
-                    binding_id=startup_candidate.binding_id,
-                    binding_root=startup_candidate.binding_root,
-                    locator_fingerprint=startup_candidate.locator_fingerprint,
-                    dispatch_started_wall_ns=startup_candidate.dispatch_started_wall_ns,
-                    startup_source=startup_candidate.source,
-                    global_outcomes=startup_candidate.outcomes,
-                    primary_delivery=InstructionChainDelivery(
-                        source_digests=(), outcomes=startup_candidate.outcomes
-                    ),
-                    warning_codes=(),
-                )
-                selected = replace(
-                    resolution,
-                    provider=target.provider,
-                    execution_key=target.execution_provider or target.provider,
-                    model=target.model,
-                    base_url=target.base_url,
-                )
-                return (
-                    None
-                    if confirm_project_dispatch(snapshot, selected) == "proceed"
-                    else "destination_consent_required"
-                )
-
-            code_review_provider = None
-            try:
-                code_review_provider = await asyncio.to_thread(
-                    compose_native_review_provider,
-                    self,
-                    session_id=session_id,
-                    message=trusted_profile_user_message,
-                    roots=run_admitted_roots,
-                    resolution=resolution,
-                    destination_check=review_destination_check,
-                    conversation_id=conversation_id,
-                    wake_authorization=wake_authorization,
-                    tool_configuration=turn_context.tool_configuration,
-                    trusted_skill_bindings=skill_bindings,
-                )
-            except ReviewRefused as exc:
-                self.code_review.diagnostic = exc.reason
-                self.store.append_message(
-                    session_id,
-                    role=ConsoleMessageRole.ASSISTANT,
-                    content=f"Review needs attention: {exc.reason}. No review stage was admitted.",
-                )
-            except Exception as exc:  # noqa: BLE001 - review tools are optional
-                logger.warning(
-                    "Console review tools unavailable; continuing the agent turn "
-                    "without them | session_id={} exception_type={}",
-                    session_id,
-                    type(exc).__name__,
-                )
+            code_review_provider = await compose_turn_review_provider(
+                self,
+                session_id=session_id,
+                message=trusted_profile_user_message,
+                roots=run_admitted_roots,
+                resolution=resolution,
+                conversation_id=conversation_id,
+                wake_authorization=wake_authorization,
+                tool_configuration=turn_context.tool_configuration,
+                skill_bindings=skill_bindings,
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+                confirm_project_dispatch=confirm_project_dispatch,
+                startup_candidate=startup_candidate,
+            )
             profile_provider = None
             if personal_context_service is not None and session is not None:
                 profile_provider = await asyncio.to_thread(

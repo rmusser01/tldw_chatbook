@@ -219,7 +219,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support  # noqa: F401 - lazy request helper compatibility seam
-from tldw_chatbook.Chat.console_endpoint_provenance import ConsoleEndpointProvenance
+from tldw_chatbook.Chat.console_continuation_binding import continuation_can_be_durable
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,  # noqa: F401 - lazy request helper compatibility seam
 )
@@ -262,33 +262,6 @@ from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
-
-
-def _continuation_can_be_durable(
-    store: Any, session_id: str, assistant_message_id: str, resolution: Any
-) -> bool:
-    """Whether this run may write durable provider continuation state.
-
-    A temporary session or a session-only endpoint never is. Neither is a
-    dispatch whose checkpoint recorded no continuation tuple (pre-upgrade, or
-    a destination it could not record): the tool loop still runs, but its
-    continuation is not resumable.
-    """
-    if (
-        store.session_is_ephemeral(session_id)
-        or getattr(resolution, "endpoint_provenance", None)
-        == ConsoleEndpointProvenance.EPHEMERAL_SESSION
-    ):
-        return False
-    lookup = getattr(store, "dispatch_recovery_for_session", None)
-    recovery = lookup(session_id) if callable(lookup) else None
-    checkpoint = getattr(recovery, "checkpoint", None)
-    return (
-        checkpoint is None
-        or recovery.assistant_message_id != assistant_message_id
-        or not getattr(resolution, "continuation_protocol", None)
-        or checkpoint.resolved_destination.continuation_provider is not None
-    )
 
 
 def _retire_generation_attempt_after_reply(
@@ -7710,7 +7683,7 @@ class ConsoleAgentBridge:
                 continuation_owner_message_id=assistant_message_id,
                 continuation_durability=(
                     "persistent"
-                    if _continuation_can_be_durable(
+                    if continuation_can_be_durable(
                         self._store, session_id, assistant_message_id, resolution
                     )
                     else "ephemeral"

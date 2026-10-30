@@ -172,6 +172,7 @@ from ..Console_Modules.wiring import (
 )
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
+from ..Console_Modules import review_reports
 from ..Console_Modules import config_sync  # Resident at compose (context_spend).
 from ..Console_Modules.session import (
     _has_selected_text,
@@ -1911,6 +1912,7 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
         Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
+    action_open_code_review_reports = review_reports.open_code_review_reports  # u
 
     def check_action(
         self,
@@ -5331,29 +5333,6 @@ class ChatScreen(BaseAppScreen):
             group="console-character-switcher-handoff",
         )
         return True
-
-    def action_open_code_review_reports(self) -> None:
-        """Open retained review evidence for the current Console chat."""
-        if self._console_setup_modal_blocking():
-            return
-        from ...Agents.code_review_models import ReviewRefused
-        from ...Widgets.Console.console_code_review_modal import ConsoleCodeReviewModal
-
-        controller = self._ensure_console_chat_controller()
-        session_id = controller.store.active_session_id
-        if not session_id:
-            self.notify("No active conversation.", severity="warning")
-            return
-        try:
-            review_id, service = controller.code_review.report_service(session_id)
-        except ReviewRefused:
-            self.notify(
-                "No retained review reports in this session.", severity="warning"
-            )
-            return
-        self.app.push_screen(
-            ConsoleCodeReviewModal(service=service, review_id=review_id)
-        )
 
     def action_open_trajectory_view(self) -> None:
         """Open Trace for the active Console conversation (``y``)."""
