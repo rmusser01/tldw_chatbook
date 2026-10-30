@@ -162,6 +162,8 @@ Provider engines produce canonical execution state; `console_agent_bridge` binds
 
 The custom-hosted entry in `Chat_Functions.CUSTOM_PROVIDER_PARAM_MAP` forwards the existing `provider_continuations` argument, so a second native request includes the saved assistant call and completed result. This is the sole additional forwarding key relative to legacy custom endpoint maps. Moonshot, ZAI and the hosted engine retain their existing wire protocols. Private reasoning stays in the continuation/trace sidecar and is not projected into ordinary assistant text by the recovery translator. Session-only destinations remain ephemeral; their full bases are excluded from durable dispatch identity (ADRs 063, 147, 179).
 
+Durable continuation is optional for a send. `resolve_console_destination` pins the continuation tuple (execution provider, protocol, full base) only when the dispatch checkpoint can record it; an unconfigured engine preset pins its record default, the URL the engine itself sends to. A blank, credentialed, query/fragment-bearing or oversized base leaves the tuple empty: the send proceeds and is not resumable. `console_continuation_binding.continuation_can_be_durable` runs the native tool loop with ephemeral continuation durability for temporary sessions, session-only endpoints and dispatches whose checkpoint has no tuple (including pre-upgrade checkpoints, which dispatch recovery accepts on identity alone).
+
 ## Custom hosted streamed usage
 
 `CUSTOM_HOSTED` requests `stream_options.include_usage` on streaming requests
@@ -173,9 +175,12 @@ without rewriting the event. Automatic work still requires complete nonnegative
 integer usage: missing or malformed counts retain the reservation and pause the
 chain with `usage_unknown` (ADR-134). There is no estimate/refund fallback.
 
-A custom endpoint rejecting `stream_options` returns its ordinary typed provider
-error; the engine does not retry by silently removing the option. Such endpoints
-must use non-streaming requests or the existing legacy custom-engine switch.
+A custom endpoint that rejects the option is not a send failure:
+`hosted_chat.owned_json_post` retries once without `stream_options` when a 400
+body names it, as `chat_with_openai`/`chat_with_huggingface` do. Any other 400
+(or a second rejection) surfaces as the ordinary typed provider error, and the
+degraded stream simply carries no usage (so automatic work pauses with
+`usage_unknown` rather than estimating).
 The local synthetic two-request differential for TASK-35582 established that the
 qualification server omitted usage without the option and supplied complete
 usage with it. This diagnoses the current server behavior; the earlier retained
