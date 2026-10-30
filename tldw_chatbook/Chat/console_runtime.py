@@ -3261,6 +3261,22 @@ class ConsoleRuntime:
             user_message=draft,
         )
 
+    async def _capture_console_prepared_rag(
+        self, bundle: Any, *, user_message: str, session: Any = None
+    ) -> Any:
+        """Capture an Automatic send's prepared bundle as staged evidence is.
+
+        TASK-33620.8 (AC#2): the controller's Automatic seam. It lives beside
+        the staged capture so the Chat layer never imports the event handlers.
+        """
+        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+            capture_console_prepared_evidence_for_chat,
+        )
+
+        return await capture_console_prepared_evidence_for_chat(
+            self._app, bundle, user_message=user_message, session=session
+        )
+
     async def wait_for_turn(self, turn_id: str) -> Any:
         """Await one specific live custody task (narrow integration-test seam)."""
         record = self._turn_custody.get(turn_id)
@@ -5271,6 +5287,8 @@ class ConsoleRuntime:
             # (``staged_evidence_capture`` / ``staged_evidence_release``);
             # the controller no longer looks for them by name (TASK-34352).
             "rag_capture_provider": self._capture_console_staged_rag,
+            # TASK-33620.8 (AC#2): Automatic evidence, captured the same way.
+            "automatic_evidence_capture": self._capture_console_prepared_rag,
             "staged_evidence_provider": self._has_staged_evidence,
             "default_session_settings": functools.partial(
                 _default_session_settings_for_app,

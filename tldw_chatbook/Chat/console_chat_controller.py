@@ -3686,6 +3686,7 @@ class ConsoleChatController:
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
         rag_capture_provider: "Callable[..., Awaitable[Any]] | None" = None,
+        automatic_evidence_capture: "Callable[..., Awaitable[Any]] | None" = None,
         default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
         library_provider_factory: "Callable[..., Any | None] | None" = None,
         global_user_display_name: Callable[[], str] | None = None,
@@ -3760,6 +3761,7 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
+        self._automatic_evidence_capture = automatic_evidence_capture  # TASK-33620.8
         self._staged_evidence_provider = staged_evidence_provider
         # TASK-34352: the staged-evidence owner's freeze and exact-launch
         # capture, passed explicitly. They used to be found by private name

@@ -175,9 +175,10 @@ async def capture_automatic_evidence(
     prompt with [S#] instructions and no trace builder, so an Automatic reply
     could never show Cited sources. It now runs through the staged path's
     canonical capture (fresh source authorization, exact prompt blocks,
-    trace builder, prompt evidence set). If capture fails, no evidence goes
-    out, as on the staged path: the bundle was never re-authorized. Without
-    an app to capture through, the evidence goes out unlabelled.
+    trace builder, prompt evidence set) through the runtime-owned
+    ``automatic_evidence_capture`` seam. If capture fails, no evidence goes
+    out, as on the staged path: the bundle was never re-authorized. A
+    controller built without the seam sends the evidence unlabelled.
 
     Args:
         controller: The Console chat controller sending the turn.
@@ -192,27 +193,21 @@ async def capture_automatic_evidence(
         format_console_evidence_without_labels,
     )
 
-    app = getattr(controller, "app", None)
-    if app is not None:
-        from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
-            capture_console_prepared_evidence_for_chat,
+    capture = getattr(controller, "_automatic_evidence_capture", None)
+    if capture is None:
+        return format_console_evidence_without_labels(bundle) or None, None, None, None
+    try:
+        captured = await capture(bundle, user_message=draft, session=session)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- fail closed, as staged does
+        logger.error(
+            "Automatic Console RAG capture unavailable; "
+            "reason=capture_provider_failure; exception_type={}",
+            type(exc).__name__,
         )
-
-        try:
-            captured = await capture_console_prepared_evidence_for_chat(
-                app, bundle, user_message=draft, session=session
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 -- fail closed, as staged does
-            logger.error(
-                "Automatic Console RAG capture unavailable; "
-                "reason=capture_provider_failure; exception_type={}",
-                type(exc).__name__,
-            )
-            return None, None, None, None
-        return controller._normalize_rag_capture(captured)
-    return format_console_evidence_without_labels(bundle) or None, None, None, None
+        return None, None, None, None
+    return controller._normalize_rag_capture(captured)
 
 
 def pause_interrupted_retry(controller: Any, preparation: Any) -> None:
