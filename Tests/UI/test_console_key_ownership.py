@@ -789,7 +789,7 @@ async def test_type_to_compose_folds_a_row_menu_without_handing_focus_back(kind)
 @pytest.mark.parametrize("kind", ["conversation", "workspace"])
 @pytest.mark.asyncio
 async def test_a_closed_row_menu_does_not_eat_a_later_esc(kind):
-    """TASK-37620: once a row menu has closed, Esc from the transcript still
+    """TASK-37960: once a row menu has closed, Esc from the transcript still
     returns to the composer.
 
     The row menus shadowed Textual's private ``_detach`` (the hook that clears
