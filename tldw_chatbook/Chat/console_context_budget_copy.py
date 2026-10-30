@@ -188,3 +188,33 @@ def compaction_hold_detail(
         "To preview what would be summarized, use /rewind ▸ Summarize up to here."
     )
     return usage, choices, preview
+
+
+def ask_trigger_refusal_copy(
+    *,
+    action: str,
+    used_tokens: int,
+    budget_tokens: int,
+    trigger_tokens: int,
+    estimated: bool,
+) -> str:
+    """Compose the refusal for a turn that cannot show the hold card.
+
+    Args:
+        action: What did not happen, e.g. ``"continued"``.
+        used_tokens: Conversation tokens the turn would carry.
+        budget_tokens: The conversation budget.
+        trigger_tokens: Where Ask compaction starts.
+        estimated: True when the budget comes from an assumed window.
+
+    Returns:
+        Copy naming the numbers and how to go on (TASK-33621.4).
+    """
+
+    return (
+        f"Not {action}: this chat reached its compaction threshold "
+        f"({_tokens(used_tokens)} of {_tokens(budget_tokens)} tokens; trigger "
+        f"{_tokens(trigger_tokens)}). Run /compact to summarize older turns, "
+        "then try again, or change When limit nears in Chat settings ▸ "
+        f"Context and memory (Ctrl+O).{_estimate_window_sentence(estimated)}"
+    )
