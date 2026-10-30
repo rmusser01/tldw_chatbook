@@ -62,6 +62,8 @@ The recognizer preserves backslashes for PowerShell and cmd; PowerShell
 backtick escapes remain conservatively unclassified.
 Windows `cmd /D /S /C` receives an explicitly constructed command line rather
 than applying CRT argument escaping to the command body (ADR-254).
+Raw executor finalization skips abort signaling once its worker has died;
+termination can strand the worker-owned multiprocessing event lock.
 
 `VirtualCliProvider` discloses shared `VIRTUAL_CLI_USAGE` forms. `ls` supports
 all/long aliases and combined `-la`; optional `fs_list.long_format` is validated

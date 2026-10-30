@@ -80,6 +80,13 @@ observable output reproduced natively. Keep shell-specific escape rules and
 positive/negative real-shell controls; pure POSIX tokenization cannot certify
 Windows command outcomes. All eight new cases failed before that fix.
 
+The Linux Python3.14 ferry then timed out reading the launch Event after
+worker termination. Recording real parent-side signal requests avoids
+acquiring that potentially orphaned lock. A native retry exposed the
+executor finally block re-signaling the abort Event after cleanup too.
+A bounded fault-injection guard caught that call without another hang;
+skip dead-worker signaling rather than lengthening timeouts.
+
 ## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
 
 The real Windows workspace worker could preview a write but failed creation at
