@@ -542,3 +542,52 @@ async def test_rewind_summarize_works_while_a_send_is_held(
             await console._console_runtime().dispose()
         database.close()
 
+
+@private_profile_test
+async def test_continue_over_the_ask_trigger_stops_before_commit_not_failed(
+    request, monkeypatch, tmp_path
+):
+    """TASK-33621.4 AC#2 for a turn that cannot show the hold card.
+
+    On dev, Continue over the Ask trigger committed an empty assistant row,
+    marked it Failed and appended "Use Compact now in Chat settings ...". A
+    deliberate policy hold never marks a turn Failed: Continue now stops
+    before anything is committed and says how to compact.
+    """
+    from tldw_chatbook.UI.Console_Modules.trace_call_recovery import (
+        dispatch_trace_call_recovery_action,
+    )
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, _draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+            held = controller.store.preparation_for_session(session.id)
+            await dispatch_trace_call_recovery_action(
+                controller, "cancel", held.preparation_id
+            )
+            await pilot.pause()
+            rows_before = controller.store.messages_for_session(session.id)
+            last = [m for m in rows_before if m.role is ConsoleMessageRole.ASSISTANT][-1]
+            calls = len(adapter_calls)
+
+            result = await controller.continue_from_message(last.id)
+
+            assert not result.accepted
+            assert "/compact" in result.visible_copy
+            assert len(adapter_calls) == calls
+            rows = controller.store.messages_for_session(session.id)
+            assert [m for m in rows if m.status == "failed"] == []
+            assert [m.id for m in rows if m.role is ConsoleMessageRole.ASSISTANT] == [
+                m.id for m in rows_before if m.role is ConsoleMessageRole.ASSISTANT
+            ]
+            assert runtime.recoveries_for_session(session.id) == ()
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()

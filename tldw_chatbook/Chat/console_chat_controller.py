@@ -336,6 +336,7 @@ from tldw_chatbook.Chat.console_configuration_capture import (
     capture_prompt_transform_inputs as capture_prompt_transform_inputs,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
     capture_skill_context_maximum as capture_skill_context_maximum,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
 )
+from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
 from tldw_chatbook.Chat.console_turn_context import (
     commit_fence_configuration,
     read_session_change_review_admission,
@@ -18226,6 +18227,10 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "retried"
+        ):
+            return refusal  # TASK-33621.4: no new attempt to fail
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.RETRY,
@@ -18409,6 +18414,10 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "continued"
+        ):
+            return refusal  # TASK-33621.4: before commit, never Failed
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -18554,6 +18563,10 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "regenerated"
+        ):
+            return refusal  # TASK-33621.4: before the sibling, never Failed
         prefill = self._pinned_prefill_for_session(session_id)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(

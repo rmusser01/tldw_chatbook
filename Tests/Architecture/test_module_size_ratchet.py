@@ -154,10 +154,14 @@ _BUDGETS: dict[str, int] = {
     # console_turn_context.commit_fence_configuration, which the manual
     # summary's commit fence now compares (every /rewind Summarize went stale
     # on a per-capture plugin run id). Dev ed7481a30c measures 29,055.
+    # 2026-10-29 (TASK-33621.4, same owner rule): +13, Continue, Regenerate
+    # and Retry ask console_compaction_gate before commit (one import, four
+    # lines per call site) so a deliberate Ask hold never marks a turn Failed.
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
-    "tldw_chatbook/Chat/console_context_compaction.py": 4185,
+    # 2026-10-29 (TASK-33621.4): the queued-send refusal names /compact: -1.
+    "tldw_chatbook/Chat/console_context_compaction.py": 4184,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
