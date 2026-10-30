@@ -569,3 +569,49 @@ def test_native_reader_loads_calls_whose_usage_is_nested(
     (projected,) = projection.read_calls(assistant_id)
     assert projected.provenance == "native"
     assert projected.capture.usage_json == loaded.capture.usage_json
+
+
+@pytest.mark.parametrize(
+    ("usage", "omitted"),
+    [
+        # A shape ProviderUsage does not know (Gemini's native counters):
+        # the provider reported usage the reader cannot normalize, so the
+        # call says it left usage out.
+        ({"promptTokenCount": 12, "candidatesTokenCount": 4}, True),
+        # An empty payload reports nothing: no usage, and nothing omitted --
+        # never an all-zero "reported" record.
+        ({}, False),
+    ],
+)
+def test_native_reader_keeps_calls_whose_usage_it_cannot_normalize(
+    database: CharactersRAGDB,
+    usage: dict[str, object],
+    omitted: bool,
+) -> None:
+    """Review follow-up (TASK-33621.9): usage is supplementary. A call whose
+    usage cannot be normalized still loads through the production projection
+    -- verified, since its request and response are intact -- with the gap
+    disclosed in its omitted fields rather than as an uncertainty code (every
+    uncertainty code on a native call marks it unverified, and the projection
+    drops unverified native calls: the failure this task fixed)."""
+    from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
+
+    assistant_id, call_id = store_completed_native_call(
+        database, provider="google", model="gemini-2.5-flash", usage=usage
+    )
+    reader = ConsoleTraceNativeReader(database, repository=ConsoleTraceRepository())
+    (loaded,) = reader.read_calls(assistant_id)
+
+    assert loaded.call_id == call_id
+    assert loaded.verification_status == "verified"
+    assert loaded.uncertainty_codes == ()
+    assert loaded.capture.usage_json is None
+    assert ("usage" in loaded.capture.omitted_keys) is omitted
+    projection = ConsoleTraceProjection(
+        legacy_reader=database.get_message_exchanges,
+        normalized_reader=reader.read_calls,
+        normalized_reads_enabled=True,
+    )
+    (projected,) = projection.read_calls(assistant_id)
+    assert projected.provenance == "native"
+    assert projected.capture.response == {"role": "assistant", "content": "answer"}
