@@ -25,6 +25,20 @@ Assert what the user sees: hit-test each counted row with
 owner by type, not by id prefix. Before trusting a green, instrument the
 callback you added once and check that it actually runs.
 
+**The same kept row broke a focus guard too (review round).**
+`RecomposeCaptureGuard` predicts where Textual's focus reset will land "as
+if every child is removed", and restores a rebuilt row's focus only when
+focus sits on that prediction. Textual's reset avoids only pruned nodes, so
+it landed on the kept filter input. The prediction missed it, and the restore
+never ran. Focus stayed in the filter until the rail's slower recovery ran.
+All 30 rebuild-focus tests stayed green, including ten whose setup check
+promised "the reset lands on the header, so this is the tray's restore
+alone". That setup check read the guard's own wrong prediction, and the rail
+rescued the end state. Assert setup claims against what Textual actually did
+(record the first `set_focus` during the rebuild), not against the code under
+test. When two mechanisms can restore the same state, switch one off to test
+the other.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
