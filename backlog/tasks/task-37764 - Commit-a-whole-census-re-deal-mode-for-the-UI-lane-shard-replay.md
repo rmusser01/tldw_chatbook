@@ -18,7 +18,7 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`scripts/ui_lane_shard_replay.py` has no search that can re-deal a census this size. `--tail` accepts the whole entry count, but `flattest_tail` runs 300 restarts of an all-pairs swap loop, re-scoring the whole census after every swap, so it cannot finish on more than 1,100 entries. And under the header rule, the first entry would take the header block with it. Every whole-census re-deal of the UI Fast Lane so far has used an uncommitted search, so none can be reproduced from the repo:
+`scripts/ui_lane_shard_replay.py` has no search that can re-deal a census this size. `--tail` accepts the whole entry count, but `flattest_tail` runs 300 restarts of an all-pairs swap loop, re-scoring the whole census after every swap, so in practice it cannot finish on the 1,149-entry census. And under the header rule, the first entry would take the header block with it. Every whole-census re-deal of the UI Fast Lane so far has used an uncommitted search, so none can be reproduced from the repo:
 - TASK-36512's 13-shard deal (#3231);
 - PR #3228's 17-shard deal;
 - the 28-shard deal now on dev.
