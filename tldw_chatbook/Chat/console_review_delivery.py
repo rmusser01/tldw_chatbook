@@ -310,7 +310,7 @@ async def compose_turn_review_provider(
         # Ordinary turns stay silent; an explicit request learns why it got
         # no review (a safe reason, never the exception text).
         if _requests_review(
-            controller, session_id, message, skill_bindings, wake_authorization
+            controller, session_id, message, roots, skill_bindings, wake_authorization
         ):
             _review_needs_attention(controller, session_id, "review_tools_unavailable")
     return None
@@ -325,23 +325,24 @@ def _review_needs_attention(controller: Any, session_id, reason: str) -> None:
 
 
 def _requests_review(
-    controller: Any, session_id, message, skill_bindings, wake_authorization
+    controller: Any, session_id, message, roots, skill_bindings, wake_authorization
 ) -> bool:
-    """Whether this turn explicitly asks for review (wording, offer, or wake)."""
-    from .console_code_review import _OFFER_ACCEPT, _explicit_stages
+    """Whether composition would have treated this turn as a review request."""
+    from .console_code_review import classify_review_turn
 
-    if getattr(wake_authorization, "review_boundary", None) is not None:
-        return True
-    if message is None:
+    try:
+        kind = classify_review_turn(
+            controller,
+            session_id=session_id,
+            message=message,
+            roots=roots,
+            wake_authorization=wake_authorization,
+            trusted_skill_bindings=skill_bindings,
+        )
+    except Exception:  # noqa: BLE001 - an unreadable request is not a request
         return False
-    if _explicit_stages(message.content, skill_bindings):
-        return True
-    existing = getattr(controller, "_code_review", None)
-    if existing is None:
-        return False
-    with existing._lock:
-        offered = session_id in existing._offers
-    return offered and message.content.strip().lower() in _OFFER_ACCEPT
+    # A decline composes nothing even when healthy, so it needs no notice.
+    return kind in {"wake", "needs_source", "compose"}
 
 
 def attach_review_ledger(controller: Any, bridge: Any) -> None:

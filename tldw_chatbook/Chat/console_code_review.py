@@ -1118,6 +1118,67 @@ class ConsoleCodeReviewCoordinator:
             self.mark_continuation_blocked(receipt, "session_fenced")
 
 
+def _review_tools_enabled() -> bool:
+    """Read the ``[tools] code_review_enabled`` gate (default on)."""
+    from tldw_chatbook import config
+
+    tools = config.load_settings().get("tools", {})
+    return config.coerce_bool_setting(
+        tools.get(CODE_REVIEW_GATE_KEY, CODE_REVIEW_DEFAULT_ENABLED)
+        if isinstance(tools, dict)
+        else CODE_REVIEW_DEFAULT_ENABLED,
+        default=CODE_REVIEW_DEFAULT_ENABLED,
+    )
+
+
+def classify_review_turn(
+    controller,
+    *,
+    session_id,
+    message,
+    roots,
+    wake_authorization,
+    trusted_skill_bindings=(),
+) -> Literal["wake", "decline", "needs_source", "compose"] | None:
+    """Classify a turn exactly as review composition admits it.
+
+    Returns:
+        ``"wake"`` for an accepted review boundary, ``"decline"`` for an answer
+        declining a pending verification offer, ``"needs_source"`` for an
+        unmistakable code-review request without one bound local root,
+        ``"compose"`` for an admitted request, and ``None`` for an ordinary
+        turn (including any request while the ``[tools]`` gate is off).
+    """
+    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
+
+    if getattr(wake_authorization, "review_boundary", None) is not None:
+        return "wake"
+    if message is None:
+        return None
+    stages = _explicit_stages(message.content, trusted_skill_bindings)
+    reply = message.content.strip().lower()
+    existing = getattr(controller, "_code_review", None)
+    offered = has_review = False
+    if existing is not None:
+        with existing._lock:
+            offered = session_id in existing._offers
+            has_review = offered or any(
+                service.store._session_id == session_id
+                for service in existing._reviews.values()
+            )
+    if not stages and not (offered and reply in _OFFER_ACCEPT | _OFFER_DECLINE):
+        return None
+    if offered and reply in _OFFER_DECLINE:
+        return "decline"
+    if not _review_tools_enabled():
+        return None
+    if len(roots) != 1 or isinstance(roots[0].root, RemoteRoot):
+        if _CODE_REVIEW_WORDING.search(reply) or (has_review and stages != {"review"}):
+            return "needs_source"
+        return None
+    return "compose"
+
+
 def compose_native_review_provider(
     controller,
     *,
@@ -1147,7 +1208,6 @@ def compose_native_review_provider(
     from tldw_chatbook.Agents.code_review_source import ReviewSourceAuthority
     from tldw_chatbook.Agents.code_review_store import ReviewStore
     from tldw_chatbook.Agents.code_review_tool_provider import CodeReviewToolProvider
-    from tldw_chatbook.Tools.remote_root_types import RemoteRoot
 
     budget = RunBudget()
     limits = AutomaticWorkLimits.from_settings()
@@ -1160,52 +1220,37 @@ def compose_native_review_provider(
             budget.max_tool_result_chars // 4,
         )
 
-    receipt = getattr(wake_authorization, "review_boundary", None)
-    if receipt is not None:
+    kind = classify_review_turn(
+        controller,
+        session_id=session_id,
+        message=message,
+        roots=roots,
+        wake_authorization=wake_authorization,
+        trusted_skill_bindings=trusted_skill_bindings,
+    )
+    if kind == "wake":
+        receipt = wake_authorization.review_boundary
         if not wake_authorization.accepted:
             raise ReviewRefused("review_boundary_unavailable")
         service = controller.code_review.service_for_boundary(
             receipt, capacity=capacity, destination_check=destination_check
         )
         return CodeReviewToolProvider(service)
-    if message is None:
-        return None
-    stages = _explicit_stages(message.content, trusted_skill_bindings)
-    reply = message.content.strip().lower()
-    existing = getattr(controller, "_code_review", None)
-    offered = has_review = False
-    if existing is not None:
-        with existing._lock:
-            offered = session_id in existing._offers
-            has_review = offered or any(
-                service.store._session_id == session_id
-                for service in existing._reviews.values()
-            )
-    if not stages and not (offered and reply in _OFFER_ACCEPT | _OFFER_DECLINE):
-        return None
-    if offered and reply in _OFFER_DECLINE:
+    if kind == "decline":
         # A decline needs no source or tools: record it (consuming the offer)
         # even when the root is gone, and compose nothing.
-        existing.bind_accepted_request(
+        controller._code_review.bind_accepted_request(
             message.id,
             session_id=session_id,
             source_epoch=0,
             trusted_skill_bindings=trusted_skill_bindings,
         )
         return None
+    if kind == "needs_source":
+        raise ReviewRefused("source_selection_required")
+    if kind is None:
+        return None
     settings = config.load_settings()
-    tools = settings.get("tools", {})
-    if not config.coerce_bool_setting(
-        tools.get(CODE_REVIEW_GATE_KEY, CODE_REVIEW_DEFAULT_ENABLED)
-        if isinstance(tools, dict)
-        else CODE_REVIEW_DEFAULT_ENABLED,
-        default=CODE_REVIEW_DEFAULT_ENABLED,
-    ):
-        return None
-    if len(roots) != 1 or isinstance(roots[0].root, RemoteRoot):
-        if _CODE_REVIEW_WORDING.search(reply) or (has_review and stages != {"review"}):
-            raise ReviewRefused("source_selection_required")
-        return None
     coordinator = controller.code_review
     root = roots[0]
     # Source identity is retained with the exact admitted binding; its guard
