@@ -22,6 +22,11 @@ from pydantic import (
 
 from tldw_chatbook.Utils.input_validation import validate_text_input
 
+#: `[tools]` registration gate for native review (default ON: the guide alone
+#: starts no paid work). Read by composition, the service and the MCP hub.
+CODE_REVIEW_GATE_KEY = "code_review_enabled"
+CODE_REVIEW_DEFAULT_ENABLED = True
+
 MIB = 1024 * 1024
 RECORD_MAX_BYTES = 8 * 1024
 SUBMISSION_MAX_RECORDS = 8

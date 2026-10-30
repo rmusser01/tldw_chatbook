@@ -339,7 +339,9 @@ def test_declined_quoted_and_ambiguous_later_stage_cannot_grant(native_dispatch,
         "chat", role=ConsoleMessageRole.USER, content=text or " "
     )
     c.coordinator.bind_accepted_request(message.id, session_id="chat", source_epoch=0)
-    with pytest.raises(ReviewRefused, match="accepted_stage_intent_required"):
+    # Stage-free text records no acceptance at all (no lifetime quota slot).
+    assert message.id not in c.coordinator._requests
+    with pytest.raises(ReviewRefused, match="accepted_user_message_required"):
         c.coordinator.accept_stage(
             c.prepared.review_id, "verify", accepted_message_id=message.id
         )
@@ -357,7 +359,7 @@ def test_registered_grant_is_revoked_by_actual_user_edit(native_review):
 def test_standalone_yes_cannot_authorize_verification(native_review):
     c = native_review
     message = c.accept("yes")
-    assert not c.coordinator._requests[message.id].stages
+    assert message.id not in c.coordinator._requests
 
 
 def test_retry_reviewer_retains_previous_actual_settlement(native_dispatch):
@@ -401,7 +403,7 @@ def test_retry_reviewer_retains_previous_actual_settlement(native_dispatch):
 def test_contradictory_native_instruction_cannot_authorize(native_review, text):
     c = native_review
     message = c.accept(text)
-    assert not c.coordinator._requests[message.id].stages
+    assert message.id not in c.coordinator._requests
 
 
 def test_later_stage_revalidates_current_destination_without_mutation(native_dispatch):
@@ -437,7 +439,7 @@ def test_native_offer_decline_prevents_later_yes(native_dispatch):
         c.coordinator.bind_accepted_request(
             message.id, session_id="chat", source_epoch=0
         )
-    assert not c.coordinator._requests[message.id].stages
+    assert message.id not in c.coordinator._requests
 
 
 def test_concurrent_settlement_callbacks_present_each_original_once(native_dispatch):
@@ -511,7 +513,8 @@ def test_quoted_and_indirectly_negated_stage_controls_fail_closed(
 ):
     c = native_review
     message = c.accept(text)
-    assert c.coordinator._requests[message.id].stages == stages
+    accepted = c.coordinator._requests.get(message.id)
+    assert (accepted.stages if accepted else frozenset()) == stages
 
 
 @pytest.mark.parametrize(
@@ -641,3 +644,138 @@ async def test_concurrent_first_review_owner_matches_registered_ledger(
         await controller.shutdown()
         db.close()
         store.persistence.db.close()
+
+
+class _ComposeController:
+    """Only what composition reads before it needs the lazy review owner."""
+
+    def __init__(self, coordinator=None):
+        self._code_review = coordinator
+
+    @property
+    def code_review(self):
+        if self._code_review is None:
+            raise AssertionError("an ordinary chat turn built the review owner")
+        return self._code_review
+
+
+def _compose(controller, message, session_id, *, skills=()):
+    from tldw_chatbook.Chat.console_code_review import compose_native_review_provider
+
+    return compose_native_review_provider(
+        controller,
+        session_id=session_id,
+        message=message,
+        roots=(),
+        resolution=None,
+        destination_check=None,
+        conversation_id=None,
+        wake_authorization=None,
+        tool_configuration={},
+        trusted_skill_bindings=skills,
+    )
+
+
+@pytest.mark.parametrize("built", [False, True])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Review my cover letter please",
+        "Can you review my resume?",
+        "Review the logs and tell me what failed",
+    ],
+)
+def test_ordinary_review_wording_without_a_source_stays_silent(
+    native_review, text, built
+):
+    """No refusal means the controller persists no needs-attention message."""
+    c = native_review
+    message = c.chat_store.append_message(
+        c.session.id, role=ConsoleMessageRole.USER, content=text
+    )
+    controller = _ComposeController(c.coordinator if built else None)
+    assert _compose(controller, message, c.session.id) is None
+    assert not c.coordinator._requests
+    assert controller._code_review is (c.coordinator if built else None)
+
+
+@pytest.mark.parametrize(
+    "text,skills",
+    [
+        ("Review my changes", ()),
+        ("do multi-model code review", ()),
+        ("Review this patch and verify every finding.", ()),
+        ("Retry reviewer R1", ()),
+        ("$multi-model-review Review my work", ("multi-model-review",)),
+    ],
+)
+def test_unmistakable_code_review_without_a_source_needs_attention(
+    native_review, text, skills
+):
+    c = native_review
+    message = c.chat_store.append_message(
+        c.session.id, role=ConsoleMessageRole.USER, content=text
+    )
+    with pytest.raises(ReviewRefused, match="source_selection_required"):
+        _compose(_ComposeController(), message, c.session.id, skills=skills)
+    assert not c.coordinator._requests
+
+
+@pytest.mark.parametrize("value", [False, "false"])
+def test_disabled_review_gate_composes_nothing(native_review, monkeypatch, value):
+    from tldw_chatbook import config
+
+    c = native_review
+    monkeypatch.setattr(
+        config,
+        "load_settings",
+        lambda *a, **k: {"tools": {"code_review_enabled": value}},
+    )
+    message = c.chat_store.append_message(
+        c.session.id, role=ConsoleMessageRole.USER, content="Review my changes"
+    )
+    assert _compose(_ComposeController(), message, c.session.id) is None
+
+
+def test_unprepared_requests_are_evicted_oldest_first_per_session(native_review):
+    c = native_review
+    other = c.chat_store.create_session(ephemeral=True)
+    foreign = c.chat_store.append_message(
+        other.id, role=ConsoleMessageRole.USER, content="Review my changes"
+    )
+    c.coordinator.bind_accepted_request(foreign.id, session_id=other.id, source_epoch=0)
+    narrowed = c.accept("Review my changes")
+    c.grants(narrowed)
+    first = c.accept("Review my cover letter draft 0")
+    evicted = c.coordinator._requests[first.id]
+    for index in range(1, 64):
+        c.accept(f"Review my cover letter draft {index}")
+    latest = c.accept("Review my changes.")
+    assert first.id not in c.coordinator._requests
+    assert {narrowed.id, latest.id, foreign.id} <= set(c.coordinator._requests)
+    assert len(c.coordinator._requests) == 65
+    with pytest.raises(ReviewRefused, match="accepted_review_intent_required"):
+        c.coordinator.issuer.validate_intent(evicted)
+    review, _ = c.grants(latest)
+    c.coordinator.issuer.validate(review)
+
+
+@pytest.mark.parametrize("text", ["thanks", "yes", "What does this function do?"])
+def test_messages_without_stage_intent_record_nothing(native_review, text):
+    c = native_review
+    assert c.accept(text).id not in c.coordinator._requests
+
+
+def test_accepted_offer_is_consumed_by_its_first_yes(native_dispatch):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    c.coordinator.offer_stage(c.prepared.review_id)
+    replies = []
+    for _ in range(2):
+        reply = c.chat_store.append_message(
+            "chat", role=ConsoleMessageRole.USER, content="yes"
+        )
+        c.coordinator.bind_accepted_request(reply.id, session_id="chat", source_epoch=0)
+        replies.append(reply)
+    assert c.coordinator._requests[replies[0].id].stages == frozenset({"verify"})
+    assert replies[1].id not in c.coordinator._requests
+    assert "chat" not in c.coordinator._offers
