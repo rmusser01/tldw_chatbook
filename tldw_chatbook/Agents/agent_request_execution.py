@@ -815,7 +815,12 @@ def make_invoke_tool(
 
 
 def settle_review_capture(
-    self, service, run_id: str, receipt_id: str | None, close_capture: bool
+    self,
+    service,
+    run_id: str,
+    receipt_id: str | None = None,
+    *,
+    close_capture: bool = True,
 ) -> None:
     """Close only an actually associated attempt after native status persistence.
 

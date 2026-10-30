@@ -266,43 +266,56 @@ def test_check_actor_refusal_retires_the_half_applied_attach(
     assert "verification_attempt_closed" in json.dumps(c.calls[1][1])
 
 
-@pytest.mark.parametrize("inline", [False, True])
-def test_failed_spawn_gives_its_child_slot_back(dispatch_case, monkeypatch, inline):
+@pytest.mark.parametrize(
+    "case,inline,left",
+    [
+        # Child setup raises after the slot was counted: no run row, no child.
+        ("setup", False, 2),
+        ("setup", True, 2),
+        # A run row exists and nothing proves the child never ran: stays charged.
+        ("run_row", True, 1),
+        # The child dispatched model turns, then crashed in post-loop code.
+        ("after_model_turn", True, 1),
+    ],
+)
+def test_failed_spawn_returns_its_slot_only_when_no_child_ran(
+    dispatch_case, monkeypatch, case, inline, left
+):
     c = dispatch_case
     original_loop = agent_service.run_agent_loop
     remaining = []
-    if inline:
-        # The inline child's run row exists, but its launch raises before a turn.
-        original_fork = AgentService._fork_review_child
 
-        def fork(self, *args, **kwargs):
-            if not remaining:
+    def fail_once(owner, name, check=lambda *args: True):
+        original = getattr(owner, name)
+
+        def failing(*args, **kwargs):
+            if not remaining and check(*args):
                 raise RuntimeError("scripted spawn failure")
-            return original_fork(self, *args, **kwargs)
+            return original(*args, **kwargs)
 
-        monkeypatch.setattr(AgentService, "_fork_review_child", fork)
+        monkeypatch.setattr(owner, name, failing)
+
+    if case == "setup":
+        fail_once(agent_service, "get_internal_prompt")
+    elif case == "run_row":
+        fail_once(AgentService, "_fork_review_child")
     else:
-        # Child setup after the slot was counted raises before any launch.
-        original_prompt = agent_service.get_internal_prompt
-
-        def prompt(prompt_id):
-            if not remaining:
-                raise RuntimeError("scripted spawn failure")
-            return original_prompt(prompt_id)
-
-        monkeypatch.setattr(agent_service, "get_internal_prompt", prompt)
+        fail_once(
+            AgentService, "_persist", lambda self, run_id, *a: run_id != "primary"
+        )
 
     def loop(config, messages, schemas, deps):
         if config.review_binding is None and not remaining:
             before = c.primary.capacity().remaining_children
             with pytest.raises(RuntimeError, match="scripted spawn failure"):
                 deps.spawn(review_id=c.prepared.review_id, review_slot_id="R1")
-            remaining.append((before, c.primary.capacity().remaining_children))
+            ran = any(actor.kind == "subagent" for actor, _ in c.calls)
+            remaining.append((before, c.primary.capacity().remaining_children, ran))
         return original_loop(config, messages, schemas, deps)
 
     monkeypatch.setattr(agent_service, "run_agent_loop", loop)
     c.run(inline=inline)
-    assert remaining == [(2, 2)]
+    assert remaining == [(2, left, case == "after_model_turn")]
 
 
 def test_thread_start_refusal_survives_a_refused_launch_retirement(

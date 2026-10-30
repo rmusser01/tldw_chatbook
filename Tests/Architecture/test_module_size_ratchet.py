@@ -562,7 +562,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/config.py": 12245,
     "tldw_chatbook/Chat/console_agent_bridge.py": 11605,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9560,
+    "tldw_chatbook/Agents/agent_service.py": 9555,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
