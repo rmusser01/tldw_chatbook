@@ -806,6 +806,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "309370b810f8457222a6",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/trajectory_export.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 55,
       "diagnostic_digest": "844a856dd889bd9227d5",
       "owner": "TASK-494",
