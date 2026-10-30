@@ -1019,9 +1019,9 @@ def test_stored_unrecorded_references_are_cleared_disclosed_and_reimportable(
         } in payload["manifest"]["redaction_provenance"]
     assert _UNRECORDED_RETRIEVAL not in json.dumps(payload)
     imported = trajectory_import.load_imported_trace(payload)
-    assert imported.manifest["missing_metadata"] == payload["manifest"][
-        "missing_metadata"
-    ]
+    assert (
+        imported.manifest["missing_metadata"] == payload["manifest"]["missing_metadata"]
+    )
 
 
 def test_clearing_unrecorded_references_logs_metadata_only() -> None:
