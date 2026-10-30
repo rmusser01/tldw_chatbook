@@ -9,7 +9,7 @@ streams, and other live authority stay behind their existing runtime seams.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
@@ -781,3 +781,22 @@ class ConsoleTurnExecutionContext:
     def tool_policy_profile_id(self) -> str:
         """Return the workspace's named permission profile for this turn."""
         return self.configuration.tool_policy_profile_id
+
+
+def commit_fence_configuration(
+    configuration: ConsoleTurnConfigurationSnapshot,
+) -> ConsoleTurnConfigurationSnapshot:
+    """The configuration a manual commit fence compares (TASK-33621.4).
+
+    ``capture_skill_context_maximum`` mints a fresh ``pending:`` plugin run id
+    on every capture, so comparing whole snapshots made every /rewind
+    Summarize stale whenever a plugin skill was installed. A pending id names
+    a capture, not a configuration fact; a bound run id and everything else
+    still fence.
+    """
+
+    maximum = configuration.skill_context_maximum
+    if not str(maximum.get("plugin_run_id", "")).startswith("pending:"):
+        return configuration
+    stable = {key: value for key, value in maximum.items() if key != "plugin_run_id"}
+    return replace(configuration, skill_context_maximum=MappingProxyType(stable))
