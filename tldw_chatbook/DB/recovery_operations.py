@@ -302,6 +302,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (21, 22, _AGENT_RUNS_MIGRATION_21_22),
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
                 (23, 24, GOAL_MIGRATION),
+                (24, 25, REVIEW_BOUNDARY_MIGRATION),
             ),
         )
 
@@ -1344,7 +1345,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24),
+            (18, 21, 22, 23, 24, 25),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1665,6 +1666,18 @@ _AGENT_RUNS_SCHEMA += tuple(
     (24, goal_catalog(catalog))
     for version, catalog in _AGENT_RUNS_SCHEMA
     if version == 23
+)
+
+from .recovery_review_boundary_schema import (
+    REVIEW_BOUNDARY_MIGRATION,
+    review_boundary_catalogs,
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (25, variant)
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 24
+    for variant in dict.fromkeys(review_boundary_catalogs(catalog))
 )
 
 
