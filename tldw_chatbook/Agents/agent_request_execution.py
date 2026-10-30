@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
@@ -924,3 +925,25 @@ def end_checks_after_refusal(self, call, result, run_id: str) -> None:
         end_review_checks(
             self, run_id, result.error or "tool_unavailable", unstarted_only=True
         )
+
+
+def attach_review_launch(review_service, review_launch, run_id: str) -> None:
+    """Attach a review launch; undo a half-applied attach this call made.
+
+    ``attach_review_run`` binds the attempt (setting ``run_id``) before a
+    verifier's ``bind_check_actor``. When that refuses, no model turn has run,
+    so the bound attempt is retired through ``retire_unstarted_launch`` and the
+    claim unbound: callers then unwind an unstarted launch and the slot can
+    launch again. The refusal is re-raised either way.
+    """
+    from .code_review_models import ReviewRefused
+
+    bound_before = review_launch.run_id
+    try:
+        review_service.attach_review_run(review_launch, run_id)
+    except ReviewRefused:
+        if bound_before is None and review_launch.run_id == run_id:
+            with contextlib.suppress(ReviewRefused):
+                review_service.retire_unstarted_launch(review_launch, run_id)
+                review_launch.run_id = None
+        raise

@@ -144,6 +144,12 @@ from tldw_chatbook.Chat.provider_continuation import (
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
 )
+from .agent_request_execution import (
+    attach_review_launch,
+    end_checks_after_refusal,
+    end_review_checks,
+    settle_review_capture,
+)
 from .agent_routing import (
     AgentsRoutingConfig,
     RoutingError,
@@ -3213,8 +3219,6 @@ class AgentService:
         self, call: ToolCall, result: ToolResult, duration: float, run_id: str
     ) -> None:
         """Deliver one completion to the observer; never let it break the run."""
-        from .agent_request_execution import end_checks_after_refusal
-
         end_checks_after_refusal(self, call, result, run_id)
         hook = self.post_tool_dispatch
         if hook is None:
@@ -4404,8 +4408,6 @@ class AgentService:
         close_capture: bool = True,
     ) -> None:
         """Close only an actually associated attempt after native status persistence."""
-        from .agent_request_execution import settle_review_capture
-
         settle_review_capture(self, service, run_id, receipt_id, close_capture)
 
     def _fork_review_child(
@@ -4681,7 +4683,7 @@ class AgentService:
                 parent_run_id,
                 label=subagent_display_label(agent_definition, task),
             )
-            review_service.attach_review_run(review_launch, run_id)
+            attach_review_launch(review_service, review_launch, run_id)
             self = self._fork_review_child(
                 review_service,
                 actor=actor,
@@ -5375,8 +5377,10 @@ class AgentService:
                     from .code_review_models import ReviewRefused
 
                     try:
-                        child_kwargs["review_service"].attach_review_run(
-                            child_kwargs["review_launch"], child_run_id
+                        attach_review_launch(
+                            child_kwargs["review_service"],
+                            child_kwargs["review_launch"],
+                            child_run_id,
                         )
                     except ReviewRefused as exc:
                         # No worker was started. Settle the precreated native
@@ -5385,14 +5389,6 @@ class AgentService:
                         self._set_terminal_status(
                             child_run_id, RUN_ERROR, result=exc.reason
                         )
-                        launch = child_kwargs["review_launch"]
-                        if launch.run_id == child_run_id:
-                            # A verifier's bind_check_actor refused after the
-                            # attempt was bound: retire it like a refused start.
-                            with contextlib.suppress(ReviewRefused):
-                                child_kwargs["review_service"].retire_unstarted_launch(
-                                    launch, child_run_id
-                                )
                         return None, SpawnAdmissionRefusal(ok=False, error=exc.reason)
                 owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     child_run_id,
@@ -5776,9 +5772,10 @@ class AgentService:
                         # No child was created, so this spawn costs no slot --
                         # same rule as the cap refusal above.
                         if child_kwargs.get("review_launch") is not None:
-                            child_kwargs["review_service"].retire_unstarted_launch(
-                                child_kwargs["review_launch"], child_run_id
-                            )
+                            with contextlib.suppress(ReviewRefused):
+                                child_kwargs["review_service"].retire_unstarted_launch(
+                                    child_kwargs["review_launch"], child_run_id
+                                )
                         logger.warning("could not start sub-agent thread")
                         return None, SpawnAdmissionRefusal(
                             ok=False,
@@ -6587,6 +6584,7 @@ class AgentService:
             )
 
         def spawn(*args, **kwargs):
+            nonlocal sub_agent_spawns
             scoped = "review_id" in kwargs or "review_slot_id" in kwargs
             if scoped and (
                 args
@@ -6597,13 +6595,16 @@ class AgentService:
                 )
             ):
                 return SpawnAdmissionRefusal(ok=False, error="invalid_review_spawn")
-            result = None
+            spawns_before, result = sub_agent_spawns, None
             try:
                 result = _spawn(*args, **kwargs)
                 return result
             finally:
-                # An exception (result None) releases too: the service keeps any
-                # claim already bound to a run, so only an unaccepted one goes.
+                # An exception (result None) gives its slot back -- restored, as
+                # some paths already returned it -- and releases an unaccepted
+                # claim (the service keeps one already bound to a run).
+                if result is None:
+                    sub_agent_spawns = spawns_before
                 if (
                     (result is None or not result.ok)
                     and getattr(result, "error", "") != "review_launch_pending"
@@ -6753,7 +6754,8 @@ class AgentService:
                         limit = review_owner[1].service.result_limit
                         overhead = len(json.dumps(payload, separators=(",", ":")))
                         if overhead > limit:
-                            review_owner[1].service.end_check_actor(
+                            end_review_checks(
+                                self,
                                 run_id,
                                 "tool_check_notice_transport_unavailable",
                                 unstarted_only=True,
@@ -9412,8 +9414,6 @@ class AgentService:
         # the two calls below, which is the run-log writer's lifetime
         # question -- owned by Task 3, not answered here. Nothing in this
         # ordering changes for it: whatever still settles, settles first.
-        from .agent_request_execution import end_review_checks
-
         end_review_checks(self, run_id, "primary_ended")
         try:
             self._settle_fleet(config, should_cancel, turn_started)
