@@ -543,7 +543,7 @@ async def test_switching_to_a_chat_presents_its_pending_original_once(
     import asyncio
 
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Console_Modules import wiring
 
     c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
     store, review_id = c.chat_store, c.prepared.review_id
@@ -568,7 +568,7 @@ async def test_switching_to_a_chat_presents_its_pending_original_once(
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
-    review_reports.attach_app(controller, SimpleNamespace(console_runtime=runtime))
+    wiring.attach_review_presenter(controller, SimpleNamespace(console_runtime=runtime))
 
     async def switch(session_id, *, from_worker=False):
         if from_worker:  # e.g. a hydration worker activating the chat
@@ -607,7 +607,7 @@ async def test_resuming_console_presents_a_pending_original_once(native_dispatch
     """
     import asyncio
 
-    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Console_Modules import wiring
 
     c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
     review_id, current = c.prepared.review_id, []
@@ -629,7 +629,7 @@ async def test_resuming_console_presents_a_pending_original_once(native_dispatch
     )
     current.append(True)
     for _ in range(3):  # the resume, then repeated resumes
-        review_reports.view_resumed(controller)
+        wiring.review_view_resumed(controller)
         await controller._review_present_task
     assert len(presented) == 1 and offered == [review_id]
 

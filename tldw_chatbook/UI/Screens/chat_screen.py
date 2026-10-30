@@ -172,7 +172,7 @@ from ..Console_Modules.wiring import (
 )
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
-from ..Console_Modules import review_reports
+from ..Console_Modules import wiring
 from ..Console_Modules import config_sync  # Resident at compose (context_spend).
 from ..Console_Modules.session import (
     _has_selected_text,
@@ -1912,7 +1912,7 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
         Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
-    action_open_code_review_reports = review_reports.open_code_review_reports  # u
+    action_open_code_review_reports = wiring.open_code_review_reports  # u
 
     def check_action(
         self,
@@ -9258,7 +9258,7 @@ class ChatScreen(BaseAppScreen):
         # view-hook slot: this is the APP, which outlives every view. The
         # same call installs the review-report presenter and presents
         # originals left pending while no view was attached (ADR-281).
-        review_reports.attach_app(self._console_chat_controller, self.app_instance)
+        wiring.attach_review_presenter(self._console_chat_controller, self.app_instance)
         # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
         # seam + marks reads). getattr-guarded because several UI tests
         # swap in hand-built controller doubles before re-running this
@@ -22728,7 +22728,7 @@ class ChatScreen(BaseAppScreen):
         )
         if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
-            review_reports.view_resumed(controller)
+            wiring.review_view_resumed(controller)
         if self._pending_character_return_focus_id is not None:
             self.call_after_refresh(self._workspace.restore_character_navigation_focus)
         logger.debug("Chat screen resuming")

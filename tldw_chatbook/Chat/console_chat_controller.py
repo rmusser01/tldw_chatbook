@@ -544,9 +544,6 @@ from tldw_chatbook.Chat.thinking_blocks import (
     parse_thinking_blocks_json,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.console_continuation_binding import (
-    continuation_restore_target_for_resolution as _continuation_restore_target_for_resolution,
-)
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.model_capabilities import (
     is_vision_capable,
@@ -7068,7 +7065,9 @@ class ConsoleChatController:
             )
             return False
         assert turn_context is not None
-        target = _continuation_restore_target_for_resolution(resolution)
+        from . import console_continuation_binding as binding
+
+        target = binding.continuation_restore_target_for_resolution(resolution)
         if target is None:
             self.store.set_provider_continuation_warning(
                 message.id,
@@ -24787,9 +24786,11 @@ class ConsoleChatController:
             bridge: The Console agent bridge to register on, or ``None``.
         """
         self._fleet_wake.capture_loop_if_running()
-        from .console_review_delivery import attach_review_ledger
+        # Both stay None until the review owner loads, which re-registers.
+        if self._code_review is not None or self._review_ledger is not None:
+            from .console_review_delivery import attach_review_ledger
 
-        attach_review_ledger(self, bridge)
+            attach_review_ledger(self, bridge)
         if bridge is None:
             return
         progress_register = getattr(bridge, "on_progress_enqueued", None)
@@ -28051,7 +28052,9 @@ class ConsoleChatController:
             raise ContinuationConflictError(
                 "Active continuation requires explicit recovery."
             )
-        target = _continuation_restore_target_for_resolution(resolution)
+        from . import console_continuation_binding as binding
+
+        target = binding.continuation_restore_target_for_resolution(resolution)
         if target is None:
             return (), None
         owner_ids = {
@@ -28073,7 +28076,9 @@ class ConsoleChatController:
         tuple[ProviderContinuationSidecar, ...], ContinuationRestoreTarget | None
     ]:
         """Select policy-retained completed history before an active owner."""
-        target = _continuation_restore_target_for_resolution(resolution)
+        from . import console_continuation_binding as binding
+
+        target = binding.continuation_restore_target_for_resolution(resolution)
         if target is None:
             return (), None
         # TASK-19170: preserved-thinking retention follows the versioned kimi

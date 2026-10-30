@@ -100,7 +100,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
 
     from Tests.Chat.test_console_agent_swap import _controller
     from Tests.UI.consolidated_css import ConsolidatedCSSApp
-    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Console_Modules import wiring
     from tldw_chatbook.Widgets.Console.console_code_review_modal import (
         ConsoleCodeReviewModal,
     )
@@ -142,7 +142,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
             # A view attach installs the presentation-layer presenter, which
             # presents only while a Console view is attached to the runtime.
             app.console_runtime = SimpleNamespace(view=None, _attached_generation=1)
-            review_reports.attach_app(controller, app)
+            wiring.attach_review_presenter(controller, app)
             assert not await asyncio.to_thread(
                 controller._present_review_report,
                 session.id,
@@ -737,11 +737,11 @@ def test_console_resume_presents_pending_review_originals(monkeypatch):
     """ChatScreen's resume handler hands the controller to ``view_resumed``."""
     from types import SimpleNamespace
 
-    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Console_Modules import wiring
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
     resumed, visible = [], []
-    monkeypatch.setattr(review_reports, "view_resumed", resumed.append)
+    monkeypatch.setattr(wiring, "review_view_resumed", resumed.append)
     controller = SimpleNamespace(on_console_view_visibility_changed=visible.append)
     screen = SimpleNamespace(
         call_after_refresh=lambda *args: None,

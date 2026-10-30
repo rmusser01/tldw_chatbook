@@ -219,7 +219,6 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderTurnMetadata,
 )
 from tldw_chatbook.Chat.console_chat_store import require_thinking_persistence_support  # noqa: F401 - lazy request helper compatibility seam
-from tldw_chatbook.Chat.console_continuation_binding import continuation_can_be_durable
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,  # noqa: F401 - lazy request helper compatibility seam
 )
@@ -7648,6 +7647,8 @@ class ConsoleAgentBridge:
                         max_wall_seconds=min(config.budget.max_wall_seconds, wall),
                     ),
                 )
+            from .console_continuation_binding import continuation_can_be_durable
+
             run_id, outcome = service.run_turn(
                 execution_owner=execution_owner,
                 conversation_id=conversation_id,

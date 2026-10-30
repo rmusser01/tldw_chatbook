@@ -212,8 +212,12 @@ project-instruction dispatch confirmation. Settlement hands an off-loop, bounded
 original page to a mounted `ConsoleCodeReviewModal` for the exact active session;
 only successful display acknowledges presentation before an authorized verifier.
 The modal is presentation-layer code, so the Chat-layer controller reaches it only
-through `review_report_presenter`, which `UI/Console_Modules/review_reports.attach_app`
-installs when a Console view attaches (beside `controller.app`). The presenter shows
+through `review_report_presenter`, which `UI/Console_Modules/wiring.attach_review_presenter`
+installs when a Console view attaches (beside `controller.app`). The presentation
+functions live in `wiring.py`, a module already loaded at first paint, so no review
+module (`console_review_delivery`, `console_code_review`, the modal) loads before a
+review exists; the controller registers the review ledger only once its review owner
+has loaded. The presenter shows
 nothing unless the runtime's attached Console view `is_current` (modals stacked over
 the Console, including an open review modal, keep it current) and the owning chat is
 active. The chat route is reused, so a suspended Console stays attached while another
@@ -222,10 +226,10 @@ the app), while Console is suspended, or in a background chat keeps its original
 pending. `ConsoleCodeReviewCoordinator.present_pending` then runs off the loop on:
 a fresh view claim (a new runtime attach generation, or a controller that has not seen
 this claim); a Console resume (`ChatScreen.on_screen_resume` calls
-`review_reports.view_resumed`, which covers the active chat); or a real switch to
+`wiring.review_view_resumed`, which covers the active chat); or a real switch to
 another chat. For the switch, the runtime's store-activation hook calls the
 controller's `review_session_activated` last, after its other activation work. That
-hook is installed by `attach_app`, ignores a re-activation of the already active chat,
+hook is installed by `attach_review_presenter`, ignores a re-activation of the already active chat,
 covers only the newly active chat, and hops onto the owner loop when the activation
 arrives off it (with no running owner loop the switch is left unrecorded for the next
 switch or claim). One pass runs at a time, and a claim, resume or switch made during

@@ -165,7 +165,7 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
 
     from loguru import logger
 
-    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Console_Modules import wiring
 
     calls, release, fail = [], threading.Event(), []
 
@@ -182,14 +182,14 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     )
     controller = SimpleNamespace(_code_review=coordinator)
 
-    review_reports.attach_app(controller, app)
+    wiring.attach_review_presenter(controller, app)
     assert controller.app is app
     assert controller.review_report_presenter is (
-        review_reports.present_code_review_original
+        wiring.present_code_review_original
     )
     first = controller._review_present_task
     runtime._attached_generation = 2  # a fresh claim while the first pass runs
-    review_reports.attach_app(controller, app)
+    wiring.attach_review_presenter(controller, app)
     assert controller._review_present_task is first  # at most one in flight
     release.set()
     await first
@@ -199,7 +199,7 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     assert calls == [None, None]
 
     for _ in range(3):  # refreshes of the same claim schedule nothing
-        review_reports.attach_app(controller, app)
+        wiring.attach_review_presenter(controller, app)
         await asyncio.sleep(0)
     assert calls == [None, None]
 
@@ -208,7 +208,7 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
     logged = []
     sink = logger.add(lambda record: logged.append(str(record)), level="WARNING")
     try:
-        review_reports.attach_app(controller, app)
+        wiring.attach_review_presenter(controller, app)
         task = controller._review_present_task
         await asyncio.wait({task})
         await asyncio.sleep(0)
@@ -220,8 +220,8 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
 
     # No loaded review owner: nothing is built, nothing is scheduled.
     bare = SimpleNamespace(_code_review=None)
-    review_reports.attach_app(bare, app)
-    assert bare.review_report_presenter is review_reports.present_code_review_original
+    wiring.attach_review_presenter(bare, app)
+    assert bare.review_report_presenter is wiring.present_code_review_original
     assert getattr(bare, "_review_present_task", None) is None
 
 
@@ -233,7 +233,7 @@ def test_activation_with_no_owner_loop_is_left_unhandled():
     """
     from types import SimpleNamespace
 
-    from tldw_chatbook.UI.Console_Modules import review_reports
+    from tldw_chatbook.UI.Console_Modules import wiring
 
     calls = []
     controller = SimpleNamespace(
@@ -244,7 +244,7 @@ def test_activation_with_no_owner_loop_is_left_unhandled():
         ),
     )
 
-    review_reports.session_activated(controller)
+    wiring.review_session_activated(controller)
 
     assert getattr(controller, "_review_active_session", None) is None
     assert getattr(controller, "_review_present_task", None) is None
