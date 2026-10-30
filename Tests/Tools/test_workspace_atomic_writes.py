@@ -1,6 +1,7 @@
 """Native write regressions exercise the real isolated workspace worker."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -47,6 +48,20 @@ def test_worker_creates_reads_and_cas_replaces_file(
             )
         assert (tmp_path / "new.txt").read_bytes() == b"second\n"
     assert not list(tmp_path.glob(".chatbook-write-*.tmp"))
+
+
+def test_write_preview_and_cas_read_target_past_one_chunk(tmp_path: Path) -> None:
+    original = b"x" * (1024 * 1024) + b"tail beyond first chunk\n"
+    target = tmp_path / "large.txt"
+    target.write_bytes(original)
+    digest = hashlib.sha256(original).hexdigest()
+    preview = json.loads(
+        write_file("large.txt", "after\n", workspace_root=tmp_path, dry_run=True)
+    )
+    assert preview["current_sha256"] == digest
+    assert target.read_bytes() == original
+    write_file("large.txt", "after\n", workspace_root=tmp_path, expected_sha256=digest)
+    assert target.read_bytes() == b"after\n"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows private file policy")
