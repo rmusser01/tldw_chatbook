@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import unicodedata
 from contextlib import contextmanager
@@ -1519,3 +1520,98 @@ def test_case_variant_of_a_sensitive_name_is_refused(source_case, variant):
         c.capture(
             c.working_tree_target.model_copy(update={"untracked_paths": (variant,)})
         )
+
+
+def test_context_path_respelled_before_the_drift_check_refuses(
+    source_case, monkeypatch
+):
+    """A case-only rename keeps the bytes; only a fresh listing sees it."""
+    from tldw_chatbook.Agents import code_review_source as module
+
+    c = source_case
+    original = module._read_mutable
+    renamed = False
+
+    def respell_after_read(root, exclusions, path):
+        nonlocal renamed
+        data = original(root, exclusions, path)
+        if path == "helpers.py" and not renamed:
+            (c.root / "helpers.py").rename(c.root / "helpers.tmp")
+            (c.root / "helpers.tmp").rename(c.root / "Helpers.py")
+            renamed = True
+        return data
+
+    monkeypatch.setattr(module, "_read_mutable", respell_after_read)
+    context = c.store.create(target_digest="0" * 64)
+    with pytest.raises(ReviewRefused, match="source_drift"):
+        capture_review_source(
+            c.working_tree_target, c.authority, c.store, context.review_id
+        )
+    assert renamed
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root can list any directory"
+)
+def test_unlistable_directory_is_unavailable_not_a_variant_spelling(source_case):
+    c = source_case
+    locked = c.root / "locked"
+    locked.mkdir()
+    (locked / "file.py").write_text("readable through a search-only directory\n")
+    locked.chmod(0o100)
+    try:
+        with pytest.raises(ReviewRefused) as refused:
+            c.capture(
+                c.working_tree_target.model_copy(
+                    update={"untracked_paths": ("locked/file.py",)}
+                )
+            )
+    finally:
+        locked.chmod(0o700)
+    assert refused.value.reason == "source_unavailable"
+
+
+def test_patch_preimage_variant_spelling_is_refused(source_case):
+    c = source_case
+    current = c.file.read_text().strip()
+    patch = (
+        f"--- a/MAIN.PY\n+++ b/MAIN.PY\n@@ -1 +1 @@\n-{current}\n+patched\n"
+    ).encode()
+    authority = replace(c.authority, resolve_patch=lambda ref: patch)
+    context = c.store.create(target_digest="0" * 64)
+    with pytest.raises(ReviewRefused, match="patch_preimage_mismatch"):
+        capture_review_source(
+            PatchTarget(kind="patch", binding_ref="binding", patch_ref="accepted"),
+            authority,
+            c.store,
+            context.review_id,
+        )
+
+
+def test_listings_are_memoized_per_pass_and_fresh_for_drift(source_case, monkeypatch):
+    from collections import Counter
+    from pathlib import Path
+
+    from tldw_chatbook.Agents import code_review_source as module
+
+    c = source_case
+    (c.root / "pkg").mkdir()
+    for name in ("a.py", "b.py"):
+        (c.root / "pkg" / name).write_text(f"{name}\n")
+    calls = Counter()
+    original = module._listed_names
+
+    def counted(directory):
+        calls[Path(directory)] += 1
+        return original(directory)
+
+    monkeypatch.setattr(module, "_listed_names", counted)
+    c.capture(
+        c.working_tree_target.model_copy(
+            update={"untracked_paths": ("pkg/a.py", "pkg/b.py")}
+        )
+    )
+    root = c.root.resolve()
+    # One listing per directory for capture, and a fresh one for drift.
+    assert calls[root] == 2
+    assert calls[root / "pkg"] == 2

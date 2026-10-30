@@ -205,26 +205,33 @@ def _safe(root, exclusions, path, *, directory=False):
 
 
 def _listed_names(directory) -> frozenset[str]:
-    """Names stored in ``directory``, spelled exactly as the filesystem lists them."""
+    """Names stored in ``directory``, spelled exactly as the filesystem lists them.
+
+    A directory that can be entered but not listed cannot prove a spelling:
+    that fails closed as unavailable source, not as a variant spelling.
+    """
     try:
         return frozenset(os.listdir(directory))
-    except OSError:
-        return frozenset()
+    except OSError as exc:
+        raise ReviewRefused("source_unavailable") from exc
 
 
-def _spelled_as_stored(root, path) -> bool:
+def _spelled_as_stored(root, path, listings) -> bool:
     """Whether an existing worktree selection names each component as stored.
 
     Case- or normalization-insensitive filesystems (APFS, NTFS) open
     ``MAIN.PY`` or an NFD ``naïve.py`` as another stored file, which may be
     tracked or excluded; only the stored spelling is listed. A missing path is
-    left to the caller's missing-file handling.
+    left to the caller's missing-file handling. ``listings`` memoizes one
+    pass's directory listings; the drift re-check passes a fresh one.
     """
     if not os.path.lexists(root / path):
         return True
     directory = root
     for part in PurePosixPath(path).parts:
-        if part not in _listed_names(directory):
+        if directory not in listings:
+            listings[directory] = _listed_names(directory)
+        if part not in listings[directory]:
             return False
         directory = directory / part
     return True
@@ -414,6 +421,8 @@ def _capture(target, authority, store, context, root, exclusions):
     layers = None
     changed_paths = set()
     withheld = 0
+    listings = {}  # this pass's directory listings
+    spelled = []  # worktree selections whose stored spelling was required
     if target.kind in ("pr", "commit_range", "working_tree") or getattr(
         target, "preimage_commit", None
     ):
@@ -457,8 +466,11 @@ def _capture(target, authority, store, context, root, exclusions):
             withheld += reader.change_count(None, None, target.scope) - len(unstaged)
         for path in target.untracked_paths:
             _safe(root, exclusions, path)
-            if not _in_scope(path, target.scope) or not _spelled_as_stored(root, path):
+            if not _in_scope(path, target.scope) or not _spelled_as_stored(
+                root, path, listings
+            ):
                 raise ReviewRefused("invalid_untracked_selection")
+            spelled.append(path)
         paths = tuple(dict.fromkeys((*staged, *unstaged)))
         indexed = reader.index_entries((*paths, *target.untracked_paths))
         for path in paths:
@@ -505,6 +517,10 @@ def _capture(target, authority, store, context, root, exclusions):
                 else "mutable"
             )
             if not revisions:
+                # A variant spelling would read another stored file as preimage.
+                if not _spelled_as_stored(root, preimage_path, listings):
+                    raise ReviewRefused("patch_preimage_mismatch")
+                spelled.append(preimage_path)
                 mutable.add(preimage_path)
     if withheld > 0:
         gaps.append(
@@ -530,8 +546,10 @@ def _capture(target, authority, store, context, root, exclusions):
                     selected.setdefault((side, path), reader.entry(revision, path))
             else:
                 key = ("worktree" if target.kind == "working_tree" else "head", path)
-                if key not in selected and not _spelled_as_stored(root, path):
-                    raise ReviewRefused("source_path_unavailable")
+                if key not in selected:
+                    if not _spelled_as_stored(root, path, listings):
+                        raise ReviewRefused("source_path_unavailable")
+                    spelled.append(path)
                 selected.setdefault(key, "mutable")
                 mutable.add(path)
         except (ReviewRefused, LocalToolError):
@@ -647,6 +665,10 @@ def _capture(target, authority, store, context, root, exclusions):
             )
             if _read_mutable(root, exclusions, path) != previous:
                 raise ReviewRefused("source_drift")
+        # A fresh listing: a respelled selection (same bytes) is still drift.
+        fresh = {}
+        if any(not _spelled_as_stored(root, path, fresh) for path in spelled):
+            raise ReviewRefused("source_drift")
         if target.kind == "working_tree":
             now = (
                 reader.changed(head, None, target.scope, staged=True)
@@ -667,7 +689,7 @@ def _capture(target, authority, store, context, root, exclusions):
                 if side == "staged" and staged_now[path] != entry:
                     raise ReviewRefused("source_drift")
             for path in target.untracked_paths:
-                if staged_now[path] is not None or not _spelled_as_stored(root, path):
+                if staged_now[path] is not None:
                     raise ReviewRefused("source_drift")
         if not authority.admitted.guard(False):
             raise ReviewRefused("source_authority_unavailable")
