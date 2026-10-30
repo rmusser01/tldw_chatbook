@@ -469,6 +469,17 @@ def parse_review_team(value: object) -> ReviewTeam:
         raise ReviewRefused("invalid_review_team") from exc
 
 
+def get_code_review_team() -> ReviewTeam:
+    """Return strict saved review defaults, retaining unresolved preset IDs.
+
+    Raises:
+        ReviewRefused: When saved choices are malformed; never substitutes a team.
+    """
+    from tldw_chatbook.config import get_cli_setting
+
+    return parse_review_team(get_cli_setting("agents", "code_review", {}))
+
+
 @dataclass(frozen=True)
 class ReviewBoundaryReceipt:
     """Body-free host identity; only a live issuer can establish validity."""

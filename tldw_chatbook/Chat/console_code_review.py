@@ -17,6 +17,7 @@ from tldw_chatbook.Agents.code_review_models import (
     ReviewRefused,
     ReviewRunChoice,
     canonical_record_bytes,
+    get_code_review_team,
 )
 from tldw_chatbook.Agents.code_review_service import (
     CodeReviewService,
@@ -1298,7 +1299,7 @@ def compose_native_review_provider(
         preset_db=controller._agent_bridge.runs_db,
         app_config=settings,
         routing=routing,
-        team=config.get_code_review_team(),
+        team=get_code_review_team(),
         primary_provider=resolution.execution_key or resolution.provider,
         primary_model=resolution.model,
         capacity=capacity,
