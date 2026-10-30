@@ -716,10 +716,31 @@ async def test_a_trash_reload_reads_the_page_the_view_is_on() -> None:
     assert fake._library_notes_trash.pager.range_copy == "21–40 of 45"
 
 
+class _ControllerShaped(SimpleNamespace):
+    """A fake with the controller's one interlock flag: a flat property over
+    the shared notes state (the generated shim), as every release writes it
+    through the state (final review I-3)."""
+
+    @property
+    def _library_notes_mutation_in_flight(self) -> bool:
+        return bool(self._notes_state.mutation_in_flight)
+
+    @_library_notes_mutation_in_flight.setter
+    def _library_notes_mutation_in_flight(self, value: bool) -> None:
+        self._notes_state.mutation_in_flight = bool(value)
+
+
 def _pager_press_fake(*, fenced: bool):
-    """A controller-shaped receiver on page 1 of 37 tombstones."""
+    """A controller-shaped receiver on page 1 of 37 tombstones.
+
+    ``fenced`` holds the WRITER interlock (a running Restore). Final review
+    I-2: that is the only thing a page read queues behind; an import's fence
+    is a write fence, and the fake's ``_library_notes_mutation_fenced`` says
+    so separately.
+    """
     refreshes: list[dict] = []
-    fake = SimpleNamespace(
+    fake = _ControllerShaped(
+        _notes_state=SimpleNamespace(mutation_in_flight=fenced),
         _library_notes_trash=build_library_notes_trash_state(
             _deleted_records(1, 21), total=37, page=1, now=NOW
         ),
@@ -745,7 +766,7 @@ def test_next_reads_the_next_page_without_taking_the_notes_interlock() -> None:
     assert len(refreshes) == 1
     assert refreshes[0] == {"focus_role": "trash-next"}
     assert fake._trash_focus_role == "trash-next"
-    assert not hasattr(fake, "_library_notes_mutation_in_flight")
+    assert fake._library_notes_mutation_in_flight is False
 
     # Already on the last page: Next asks for nothing.
     fake._library_notes_trash_page = 2
@@ -1496,7 +1517,8 @@ def _purge_worker_fake(outcome, *, receipt_note: str = "n4"):
     notices: list[tuple] = []
     refreshes: list[dict] = []
     runtime = object()
-    fake = SimpleNamespace(
+    fake = _ControllerShaped(
+        _notes_state=SimpleNamespace(mutation_in_flight=True),
         app_instance=SimpleNamespace(
             notes_scope_service=service,
             notes_sync_runtime_owner=runtime,
@@ -1505,7 +1527,6 @@ def _purge_worker_fake(outcome, *, receipt_note: str = "n4"):
         _run_library_service_call=_passthrough_service_call,
         _library_notes_user_id=lambda: "user-1",
         _refresh_library_notes_trash=lambda **kwargs: refreshes.append(kwargs),
-        _library_notes_mutation_in_flight=True,
         _tree_reload_owed=False,
         _trash_reload_owed="",
         _trash_focus_role="trash-restore:3",
