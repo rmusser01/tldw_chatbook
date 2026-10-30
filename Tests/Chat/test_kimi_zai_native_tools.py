@@ -824,8 +824,9 @@ def test_nondurable_native_loop_runs_without_durable_continuation(
 
     A session-only endpoint must never be written down; a dispatch checkpoint
     without a continuation tuple (pre-upgrade, or one the destination could not
-    record) cannot bind one; neither can a dispatch owned by another assistant
-    message (regenerate/retry/edit paths do not consult the recovery gate).
+    record) cannot bind one. A dispatch owned by another assistant message
+    (regenerate/retry/edit do not consult the recovery gate) is irrelevant to
+    this run: its continuation stays durable, as on dev.
     """
     from dataclasses import replace
     from types import SimpleNamespace
@@ -893,8 +894,13 @@ def test_nondurable_native_loop_runs_without_durable_continuation(
     assert outcome.final_text == _FINAL
     assert store.continuation_errors == []
     assert server.validation_errors == []
-    # Nothing session-only was written to durable continuation state.
-    assert owner.provider_continuation is None
+    if cause == "foreign_dispatch":
+        # The run's own target binds it; another owner's dispatch does not.
+        assert owner.provider_continuation is not None
+        assert owner.provider_continuation.state == "complete"
+    else:
+        # Nothing non-durable was written to durable continuation state.
+        assert owner.provider_continuation is None
 
 
 @pytest.mark.allow_network
