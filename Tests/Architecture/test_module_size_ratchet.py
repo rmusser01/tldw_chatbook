@@ -153,7 +153,11 @@ _BUDGETS: dict[str, int] = {
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    # 2026-10-29 (TASK-33620.8, owner decision 2026-10-04: expand limits):
+    # 22338 -> 22351 (+13) -- a citation-sealed reply now settles its own
+    # durable dispatch checkpoint before attaching the trace; without it the
+    # next send in that chat was refused once citation records shipped on.
+    "tldw_chatbook/Chat/console_chat_store.py": 22351,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).

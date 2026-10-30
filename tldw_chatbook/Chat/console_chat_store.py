@@ -16948,7 +16948,20 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self._settle_failed_retry_context(message, provider_visible=True)
             try:
                 already_persisted = message.persisted_message_id is not None
-                if already_persisted:
+                if (  # TASK-33620.8: an unsettled checkpoint refuses the next send
+                    already_persisted
+                    and recovery is not None
+                    and recovery.assistant_message_id == message.id
+                    and recovery.in_flight
+                ):
+                    # The settlement writes the final body (expected at the
+                    # checkpoint's revision), so it runs before the citation
+                    # attaches to the settled row below.
+                    self._settle_owned_dispatch_terminal(message, "complete")
+                    self._settle_provider_trace_settlements(
+                        message.id, message.persisted_message_id
+                    )
+                elif already_persisted:
                     # TASK-22302: the dispatch checkpoint already wrote this row
                     # with EMPTY content, so the final body must be flushed with
                     # an UPDATE -- `create_message`'s existing-row handling lives
