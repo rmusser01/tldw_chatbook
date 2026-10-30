@@ -22,6 +22,8 @@ Seen once, live, while reproducing TASK-33621.8 on origin/dev ed7481a30c (2026-1
 Why it matters: a send that silently never leaves looks identical to a slow provider, and the only recovery found was guessing that the Send button behaves differently from Enter.
 
 Rule out the driver first: backlog/docs/lessons-live-verification.md records that a tmux driver typing straight after Enter gets sends refused, and that a key burst can lose typed text. Evidence (capture outside the repo): the U06 session evidence folder, shot 01-dev-staged-send-stuck.
+
+**Reproduced 2026-10-29 ~22:01 on origin/dev ff815f8559** (same setup, fresh profile). The send was pressed while the first Search Library run was still loading the embedding model (about 17 s on a fresh profile). The app log shows `console_send_stage phase=ui_dispatch status=refused` then `phase=ui_action status=not_dispatched` at 22:01:06; the search finished at 22:01:09. The user row stayed at 'Sending…' with the draft still in the composer, and no refusal reason was logged or shown. A second Enter after the search finished sent normally, and only then did a system row appear above the user row: 'Console send blocked: Library search has no available evidence. Review source authority before sending.' Likely cause to confirm: a send refused because the manual Library search is still in flight leaves the optimistic 'Sending…' row in place instead of explaining the hold or waiting for the search. Evidence: U06 shots 22-23 and 23-dev-app-log-send-refused.txt.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
