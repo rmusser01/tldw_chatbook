@@ -359,16 +359,20 @@ single token reading "Pasted text | N characters | Expand". A text file you
 insert and a large `/prompt` insert become tokens too; a file's token shows
 its name, for example "📄 notes.md · 4 KB | Expand".
 
-Enter sends the draft, every token in full, unless the caret is on a token
-(right before or right after it). A paste that starts or ends with a line
-break keeps that break outside its token, so a caret on the row the break
-opens is not on the token, and Enter sends. With the caret on a token, Enter
-expands that token instead, in two steps: the first Enter asks "Expand
-pasted text (N characters)? Enter: yes · Esc: no" (a file's question names
-the file), and a second Enter puts the full text in place. Esc, or moving
-the caret off the token, answers no and puts the collapsed token back.
-Clicking a token moves the caret onto it and asks the same question. The
-**Send** button always sends, wherever the caret is. Whatever the display
+Enter sends the draft, every token in full, unless the caret is on a token,
+which means right before it. A caret right after a token is not on it, so
+paste then Enter sends, and so does Enter straight after a question and a
+paste, a `/prompt` insert, or an inserted file. To expand a token from the
+keyboard, put the caret right before it (Left from the end of the draft
+reaches a token that ends it) and press Enter. A paste that starts with a
+line break keeps that break outside its token, so the caret can never sit
+right before that token; click it instead. With the caret on a token, Enter
+expands that token in two steps: the first Enter asks "Expand pasted text (N
+characters)? Enter: yes · Esc: no" (a file's question names the file), and a
+second Enter puts the full text in place. Esc, or moving the caret off the
+token, answers no and puts the collapsed token back. Clicking a token asks
+the same question, and the next Enter answers it. The **Send** button always
+sends, wherever the caret is. Whatever the display
 state, **the full pasted text is always what sends** — collapsing is purely
 visual. While the draft contains a paste token, slash-command parsing is
 skipped and the draft sends as plain text. The collapse behavior is set by
@@ -929,7 +933,7 @@ Composer:
 
 | Key | Action |
 |---|---|
-| Enter | Send now, queue after an accepted turn, or advance a focused paste token |
+| Enter | Send now, queue after an accepted turn, or advance the paste token right after the caret (see Large pastes) |
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |
