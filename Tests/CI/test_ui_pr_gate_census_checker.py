@@ -584,7 +584,7 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
     import yaml
 
     jobs = yaml.safe_load(
-        (root / ".github/workflows/derived-artifacts.yml").read_text(encoding="utf-8")
+        (root / ".github/workflows/ci-qualification.yml").read_text(encoding="utf-8")
     )["jobs"]
     total = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
     assert (

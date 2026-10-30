@@ -85,6 +85,11 @@ permissions:
 jobs:
   preflight:
     name: CI preflight
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      queue_front: ${{ steps.admission.outputs.queue_front }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -238,863 +243,107 @@ jobs:
             Tests/CI/test_derived_artifacts_workflow.py::test_every_node_id_target_in_a_pr_lane_step_resolves \
             -q
 
-  pr-fast-lane:
-    needs: [preflight]
-    name: PR Fast Lane
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    # TASK-34916: the admission-sensitive invocation moved to its own job
-    # (pr-fast-lane-admission, below). Over 90 pull-request runs to
-    # 2026-10-14 this job took median 31.5 / max 39.5 min with both steps,
-    # and 4 of the 90 ran into the cap and were cancelled with no report.
-    # Each step is about half: the sandboxed step median 15.2 / max 19.9 min,
-    # the admission-sensitive step median 15.4 / max 18.7. With the sandboxed
-    # step alone (plus the ~0.8 min of setup) the same 90 runs replay at
-    # median 16.1 / max 20.8 min, 14 min under the cap. Add a job (a shard),
-    # not minutes, when either nears its cap again.
-    timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - name: Classify qualification admission
+        id: admission
+        uses: actions/github-script@v7
+        env:
+          MERGE_QUEUE: ${{ vars.MERGE_QUEUE }}
         with:
-          python-version: '3.12'
-          cache: pip
+          script: |
+            // Scheduling only: this output grants no review, approval or merge authority.
+            core.setOutput('queue_front', 'false');
+            if (process.env.MERGE_QUEUE !== 'on' || context.eventName !== 'pull_request') return;
+            const event = context.payload.pull_request;
+            if (!Number.isSafeInteger(event?.number) || event.number < 1 ||
+                !/^[0-9a-f]{40}$/.test(event.head?.sha || '') || !event.head?.ref) return;
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const fields = `number state isDraft baseRefName headRefOid headRefName
+              headRepository { nameWithOwner } author { __typename }
+              autoMergeRequest { enabledAt }`;
+            // Match merge_queue.py line_of: human, same-repository, non-draft, armed;
+            // sort by enabledAt then number. Unknown metadata cannot prove priority.
+            function eligible(pr) {
+              if (pr && (!['OPEN', 'CLOSED', 'MERGED'].includes(pr.state) || typeof pr.isDraft !== 'boolean' ||
+                  typeof pr.baseRefName !== 'string' || !pr.baseRefName ||
+                  (pr.author !== null && (typeof pr.author?.__typename !== 'string' || !pr.author.__typename)) ||
+                  (pr.headRepository !== null && (typeof pr.headRepository?.nameWithOwner !== 'string' || !pr.headRepository.nameWithOwner)) ||
+                  (pr.autoMergeRequest !== null && typeof pr.autoMergeRequest?.enabledAt !== 'string'))) {
+                throw new Error('Incomplete PR eligibility');
+              }
+              if (!pr || pr.state !== 'OPEN' || pr.baseRefName !== 'dev' ||
+                  pr.isDraft !== false || pr.author?.__typename !== 'User' ||
+                  pr.headRepository?.nameWithOwner !== repository || !pr.autoMergeRequest) return false;
+              if (!Number.isSafeInteger(pr.number) || pr.number < 1 ||
+                  !/^[0-9a-f]{40}$/.test(pr.headRefOid || '') ||
+                  typeof pr.headRefName !== 'string' || !pr.headRefName ||
+                  typeof pr.autoMergeRequest.enabledAt !== 'string' ||
+                  !Number.isFinite(Date.parse(pr.autoMergeRequest.enabledAt))) {
+                throw new Error('Incomplete eligible PR metadata');
+              }
+              // Date.parse normalizes impossible dates and accepts non-ISO strings.
+              // Require GitHub's UTC seconds/milliseconds form and an exact round trip.
+              const armedAt = pr.autoMergeRequest.enabledAt;
+              if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(armedAt) ||
+                  new Date(armedAt).toISOString().replace(/\.000Z$/, 'Z') !== armedAt.replace(/\.000Z$/, 'Z')) {
+                throw new Error('Invalid arming timestamp');
+              }
+              return true;
+            }
+            try {
+              const candidates = [], cursors = new Set(), numbers = new Set();
+              let after = null, complete = false;
+              for (let page = 0; page < 10; page++) {
+                const result = await github.graphql(`query($owner:String!, $repo:String!, $after:String) {
+                  repository(owner:$owner, name:$repo) {
+                    pullRequests(first:100, after:$after, states:OPEN, baseRefName:"dev") {
+                      nodes { ${fields} } pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }`, {...context.repo, after});
+                const connection = result?.repository?.pullRequests;
+                if (!Array.isArray(connection?.nodes) ||
+                    typeof connection.pageInfo?.hasNextPage !== 'boolean') throw new Error('Incomplete page');
+                for (const pr of connection.nodes) {
+                  if (!pr || !Number.isSafeInteger(pr.number) || numbers.has(pr.number)) throw new Error('Incomplete PR list');
+                  numbers.add(pr.number);
+                  if (eligible(pr)) candidates.push(pr);
+                }
+                if (!connection.pageInfo.hasNextPage) { complete = true; break; }
+                after = connection.pageInfo.endCursor;
+                if (typeof after !== 'string' || !after || cursors.has(after)) throw new Error('Incomplete pagination');
+                cursors.add(after);
+              }
+              if (!complete) throw new Error('Queue exceeds bounded snapshot');
+              candidates.sort((a, b) => Date.parse(a.autoMergeRequest.enabledAt) -
+                Date.parse(b.autoMergeRequest.enabledAt) || a.number - b.number);
+              const front = candidates[0];
+              if (!front || front.number !== event.number || front.headRefOid !== event.head.sha ||
+                  front.headRefName !== event.head.ref) return;
+              const result = await github.graphql(`query($owner:String!, $repo:String!, $number:Int!) {
+                repository(owner:$owner, name:$repo) { pullRequest(number:$number) { ${fields} } }
+              }`, {...context.repo, number: front.number});
+              const live = result?.repository?.pullRequest;
+              if (eligible(live) && live.number === front.number && live.headRefOid === front.headRefOid &&
+                  live.headRefName === front.headRefName &&
+                  live.autoMergeRequest.enabledAt === front.autoMergeRequest.enabledAt) {
+                core.setOutput('queue_front', 'true');
+              }
+            } catch (error) {
+              core.warning('Queue-front classification unavailable; using background admission.');
+            }
 
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      # Every target after Tests/CI and Tests/test_smoke.py is a rider: a pin
-      # that ran in no other PR lane, appended by the task that needed it
-      # (Tests/CI's FAST_LANE_TARGETS names each rider and its task). Phase
-      # 9's reviews added the 17 model-config riders (13 from the whole-PR
-      # review's round 1, 4 from the Stop-claim fix and its reviews; about
-      # 1 min serial in this job's install set); later tasks appended theirs.
-      - name: Run fast PR contract
-        run: |
-          pytest \
-            Tests/CI \
-            Tests/test_smoke.py \
-            Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection \
-            Tests/MCP/test_approval_timeout_policy.py \
-            Tests/MCP/test_control_plane_bridge.py \
-            Tests/MCP/test_live_server_request_wiring.py \
-            Tests/MCP/test_mcp_import_shapes.py \
-            Tests/Agents/test_execution_capacity.py \
-            Tests/Agents/test_fleet_messages.py \
-            Tests/Agents/test_session_todo_store.py \
-            Tests/DB/test_agent_orchestration_dev_migration.py \
-            Tests/DB/test_agent_run_budget_accounting.py \
-            Tests/DB/test_automatic_work_budget.py \
-            Tests/DB/test_automatic_runtime_owner.py \
-            Tests/DB/test_automatic_wake_attempts.py \
-            Tests/Model_Artifacts/test_operation_leases.py \
-            Tests/Model_Artifacts/test_operation_leases_process.py \
-            Tests/UI/test_mcp_workbench.py \
-            Tests/UI/test_mcp_tools_mode.py \
-            Tests/Widgets/test_detach_safe_text_area.py \
-            Tests/Web_Server/test_served_tab_isolation.py \
-            Tests/STT/test_parakeet_diagnostics.py \
-            Tests/Library/test_stt_failure_diagnostics.py \
-            Tests/App/test_submit_library_ingest_job.py::TestSubmitLibraryIngestJob::test_retry_can_persist_transcript_with_or_without_prior_stt_attempt \
-            Tests/Architecture/test_console_controllers_define_their_self_attributes.py \
-            Tests/Architecture/test_flush_screens_have_quit_hooks.py \
-            Tests/Architecture/test_quit_flow_prompt_choke_point.py \
-            Tests/Library/test_library_note_autosave_max_wait.py \
-            Tests/Library/test_library_file_export.py \
-            Tests/Architecture/test_notes_sync_snapshot_construction.py \
-            Tests/Workspaces/test_link_on_use.py \
-            Tests/Workspaces/test_workspace_eligibility.py \
-            Tests/UI/Library_Modules/test_library_pending_work_veto_notice.py \
-            Tests/Notes/test_notes_sync_root_display_name.py \
-            Tests/Library/test_library_rag_answer_provider_resolution.py \
-            Tests/Library/test_library_note_field_tidy.py \
-            Tests/Chatbooks/test_chatbook_keywords_round_trip.py \
-            Tests/Utils/test_notes_filter_match.py \
-            Tests/Notes/test_note_links_typed_titles.py \
-            Tests/Notes/test_note_link_policy.py \
-            Tests/Library/test_library_media_source_link.py \
-            Tests/Library/test_library_notes_canvas_pending_lookup.py \
-            Tests/App/test_detached_focus_guard.py \
-            Tests/Architecture/test_notes_sync_binding_profile_commits.py \
-            Tests/Architecture/test_notes_sync_version_proxy_sites.py \
-            Tests/Notes/test_sync_containment.py \
-            Tests/Agents/test_mcp_unavailable_builtin_tools.py \
-            Tests/Chat/test_console_arrival_vocabulary.py \
-            Tests/Chat/test_console_trace_missing_revision_diagnostic.py \
-            Tests/Chat/test_first_reply_failure_copy.py \
-            Tests/Chat/test_first_token_window.py \
-            Tests/Architecture/test_surface_swap_guard.py \
-            Tests/Library/test_ingest_analysis_load_settings.py \
-            Tests/test_config_load_settings_table_guard.py \
-            Tests/Architecture/test_study_handler_service_keywords.py \
-            Tests/Personal_Context/test_context_service.py::test_device_only_additions_cannot_change_context_selection_or_explanation \
-            Tests/Personal_Context/test_context_service.py::test_quarantine_hint_cannot_change_permitted_packing \
-            Tests/Personal_Context/test_context_service.py::test_explanation_uses_the_snapshot_pass_and_excludes_ineligible_records \
-            Tests/Personal_Context/test_context_service.py::test_explanation_expiry_invalidates_without_manifest_revision_change \
-            Tests/Personal_Context/test_context_service.py::test_explanation_rejects_record_version_reuse_of_snapshot_cache_key \
-            Tests/Personal_Context/test_context_service.py::test_explanation_rejects_replacement_profile_with_reused_revisions \
-            Tests/Agents/test_profile_tool_provider.py::test_device_only_reads_hide_content_and_preserve_manual_owner_access \
-            Tests/Personal_Context/test_native_profile_barrier.py::test_v2_manifest_blocks_readable_v1_before_content_authentication \
-            Tests/Personal_Context/test_native_profile_barrier.py::test_compiled_inventory_covers_every_protected_native_call_site \
-            Tests/Personal_Context/test_native_profile_barrier.py::test_reused_operation_rechecks_manifest_after_external_commit \
-            Tests/Personal_Context/test_native_profile_barrier_routes.py::test_real_v1_write_routes_then_current_v2_deny_without_side_effects[record] \
-            Tests/Personal_Context/test_native_profile_barrier_routes.py::test_real_v1_write_routes_then_current_v2_deny_without_side_effects[proposal] \
-            Tests/Personal_Context/test_native_profile_barrier_routes.py::test_exports_deny_before_destination_write \
-            packages/tldw_profile_core/tests/test_v2_aggregates.py::test_duplicate_aware_and_compiled_json_paths \
-            packages/tldw_profile_core/tests/test_v2_aggregates.py::test_every_serializer_revalidates_unsafe_root_state \
-            packages/tldw_profile_core/tests/test_v2_meaning.py::test_fixed_projection_and_json_round_trip \
-            packages/tldw_profile_core/tests/test_v2_meaning.py::test_fixed_digest_and_scope_cannot_transplant_meaning \
-            packages/tldw_profile_core/tests/test_evidence_binding.py::test_complete_identity_changes_when_one_bound_value_changes \
-            packages/tldw_profile_core/tests/test_evidence_binding.py::test_digest_and_instance_admission_revalidate_unsafe_copies \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[goal-canvas] \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[native-tight] \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[fenced-tight] \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[unreadable] \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[canvas-denied] \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview \
-            Tests/Chat/test_console_canvas_profile_preview.py::test_preview_runtime_roster_retires_only_its_worker_connection \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/app.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app_startup.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/app_startup.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app_served.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/app_served.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/providers_models_card.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/DB/ChaChaNotes_DB.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/DB/ChaChaNotes_DB.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/config.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/config.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_agent_bridge.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_agent_bridge.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Notes/file_notes_git_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Notes/file_notes_git_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Agents/agent_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Agents/agent_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Library/library_file_notes_workspace.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Widgets/Library/library_file_notes_workspace.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/DB/Client_Media_DB_v2.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/DB/Client_Media_DB_v2.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Console_Modules/workspace.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/Console_Modules/workspace.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_provider_gateway.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_provider_gateway.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Console/console_composer_bar.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Widgets/Console/console_composer_bar.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Console_Modules/session.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/Console_Modules/session.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/DB/Subscriptions_DB.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/DB/Subscriptions_DB.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Media/local_media_reading_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Media/local_media_reading_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_runtime.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_runtime.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_trace_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_trace_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Notes/notes_sync_executor.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Notes/notes_sync_executor.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/MCP/unified_control_plane_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/MCP/unified_control_plane_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Agents/local_tool_provider.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Agents/local_tool_provider.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Tools/remote_worker_bundle.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Tools/remote_worker_bundle.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/LLM_Calls/LLM_API_Calls.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/LLM_Calls/LLM_API_Calls.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Notes/notes_sync_runtime.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Notes/notes_sync_runtime.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Personal_Context/repository.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Personal_Context/repository.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Model_Artifacts/service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Model_Artifacts/service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Character_Chat/Character_Chat_Lib.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Character_Chat/Character_Chat_Lib.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/DB/Prompts_DB.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/DB/Prompts_DB.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/citation_trace_repository.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/citation_trace_repository.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Library/library_notes_canvas.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Widgets/Library/library_notes_canvas.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Web_Scraping/WebSearch_APIs.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Web_Scraping/WebSearch_APIs.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/RAG_Search/simplified/rag_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/RAG_Search/simplified/rag_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Local_Ingestion/transcription_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Local_Ingestion/transcription_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/chat_persistence_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/chat_persistence_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/evals_screen.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/Screens/evals_screen.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Workspaces/registry_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Workspaces/registry_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_inspector.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/MCP_Modules/mcp_inspector.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Dreams/track_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Dreams/track_service.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/DB/private_sqlite.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/DB/private_sqlite.py]' \
-            'Tests/Architecture/test_module_size_ratchet.py::test_every_module_of_the_guard_size_has_a_row' \
-            Tests/Chat/test_console_value_layers_skipped_model_defaults.py \
-            Tests/Widgets/test_model_search_picker_list_keys.py \
-            Tests/Chat/test_console_settings_defaults.py \
-            Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own \
-            Tests/Widgets/test_model_search_picker.py::test_a_saved_model_the_endpoint_serves_is_listed_as_served_now \
-            Tests/Widgets/test_model_search_picker.py::test_saved_only_list_says_catalog_refresh_is_off_when_it_is \
-            Tests/Widgets/test_model_search_picker.py::test_an_unreadable_catalog_setting_is_logged_by_type \
-            Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_settings_check_knows_every_key_settings_save_state_writes \
-            Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_speech_pipeline_voice_draft_is_compared \
-            Tests/Backup_Recovery/test_unsaved_editors.py::test_save_state_key_pin_reads_or_refuses_every_way_a_key_is_written \
-            Tests/State/test_conversation_settings_navigation.py \
-            Tests/State/test_pending_handoff_store.py \
-            Tests/Chat/test_console_status_chips_cost.py \
-            Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_cleared_key_is_a_keyless_check_that_lifts_the_key_mark \
-            Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_provider_notice_and_line_both_offer_to_continue \
-            Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_subscription_table_spelled_otherwise_reads_as_readiness_reads_it \
-            Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_provider_tells_a_listing_that_cannot_list_as_model_does \
-            Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_a_test_that_could_not_list_reads_as_the_listing_reads_it \
-            Tests/Wizards/test_first_run_setup_state.py::TestProviderTrustChain::test_the_model_step_hints_at_a_key_only_after_a_keyless_403 \
-            Tests/Provider/test_provider_model_resolution.py \
-            Tests/Chat/test_console_session_settings.py::test_ctrl_t_on_a_control_provider_without_a_model_never_borrows_another \
-            Tests/Chat/test_console_session_settings.py::test_new_chats_resolve_the_chat_defaults_pair \
-            Tests/Chat/test_readiness_words.py \
-            Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows \
-            Tests/Chat/test_provider_evidence_hardening.py \
-            Tests/Chat/test_first_run_connection_evidence.py \
-            Tests/ProductionApp/test_provider_selection_ownership.py \
-            Tests/Backup_Recovery/test_skills_recovery_controls.py \
-            Tests/LLM_Calls/test_summarization_credential_source.py \
-            Tests/Chat/test_legacy_api_key_credential_source.py \
-            Tests/LLM_Calls/test_dispatch_local_argument_routing.py \
-            Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_silent_stream_without_reporting_a_stall \
-            Tests/Chat/test_stream_stall_watchdog.py::test_stop_predicate_never_drops_or_reorders_items \
-            Tests/Chat/test_stream_stall_watchdog.py::test_stall_still_trips_between_stop_polls \
-            Tests/Chat/test_stream_stall_watchdog.py::test_cancel_with_a_stop_predicate_still_propagates_and_closes \
-            Tests/Chat/test_stream_stall_watchdog.py::test_stop_landing_as_the_window_expires_is_a_stop_and_raises_nothing_in_the_loop \
-            Tests/Chat/test_stream_stall_watchdog.py::test_stop_ends_a_stream_that_went_silent_after_content \
-            Tests/Chat/test_stream_stall_watchdog.py::test_the_stop_poll_leaves_nothing_for_the_cyclic_collector \
-            Tests/Backup_Recovery/test_raw_operation_task_discovery.py \
-            Tests/Utils/test_user_theme_loader.py \
-            Tests/Performance/test_boot_css_byte_budget.py \
-            Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
-            Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section \
-            Tests/Chat/test_provider_setup_persistence.py::test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api \
-            Tests/Chat/test_console_fleet_wake.py::test_claim_drain_waits_for_the_conversations_physical_work \
-            Tests/Chat/test_console_fleet_wake.py::test_wake_keeps_its_claim_until_the_conversations_worker_exits \
-            Tests/Chat/test_console_fleet_wake.py::test_a_draining_wake_lets_its_conversations_close_fence_release \
-            Tests/Chat/test_console_fleet_wake.py::test_a_draining_wakes_claim_keeps_a_second_wake_turn_out_of_its_session \
-            Tests/Chat/test_console_session_workspace_roots.py \
-            Tests/Backup_Recovery/test_prompt_history_path_memo.py \
-            Tests/MCP/test_server_manifest_parse_reuse.py \
-            --timeout=180 \
-            --tb=short
-
-  pr-fast-lane-admission:
+  qualification:
+    name: Qualification
     needs: [preflight]
-    # TASK-34916: the PR Fast Lane's second pytest invocation, moved here
-    # unchanged (same targets, same order, same --timeout) so the two halves
-    # run side by side instead of one after the other. It was always its own
-    # pytest process; each process makes its own throwaway bootstrap profile
-    # (mkdtemp in Tests/conftest.py), so nothing passed from the first
-    # invocation to this one and a fresh runner changes nothing it relies on.
-    #
-    # timeout-minutes: the 35 the owner set for exactly these suites
-    # (TASK-33910.2). TASK-35575 (owner decision, 2026-10-19): this job keeps
-    # dev's 41 targets and Phase 9's 54 run beside it in
-    # pr-fast-lane-admission-2, below. With all 93 here, PR #3169's two runs
-    # took 29.8 and 27.4 min of the 35 (the pytest step 1737 s and 1590 s), so
-    # one hung test at --timeout=300 (about 5.3 min with the private-profile
-    # wrapper's report) would have passed the cap. Dev's 41 alone, over 20 PR
-    # runs (2026-10-18/19): median 17.5 / max 20.0 min with setup (the step
-    # median 996 s / max 1147 s), so a hung test's report still ends about
-    # 10 min under the cap.
-    #
-    # One more runner per PR (ADR-103 note, 2026-10-14).
-    name: PR Fast Lane (admission-sensitive)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      # TASK-32873: the admission-sensitive suites enroll the process
-      # against the collection-time profile (keep_bootstrap_profile in
-      # Tests/conftest.py); running them in the SAME pytest invocation as
-      # sandboxed suites lets the enrollment poison their config access
-      # (RecoveryRequired: raw_source_selection_changed). Their own
-      # invocation keeps both green.
-      # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites (both
-      # styled tiers, hostile names, the journeys) are bootstrap_profile files too.
-      - name: Run admission-sensitive suites
-        run: |
-          pytest \
-            Tests/Chat/test_console_run_log_connection_ownership.py \
-            Tests/Chat/test_console_chat_create_connection_ownership.py \
-            Tests/DB/test_chachanotes_connection_quiescence.py \
-            Tests/DB/test_operation_owned_connection_retirement.py \
-            Tests/UI/test_console_runtime_ownership.py \
-            Tests/UI/test_console_partial_resize.py \
-            Tests/Chat/test_console_viewless_hooks.py \
-            Tests/Agents/test_install_skill_runtime_tool.py \
-            Tests/Chat/test_console_chat_create_integration.py \
-            Tests/Notes/test_notes_sync_tail_edit.py \
-            Tests/Notes/test_notes_sync_delete_restore_signal.py \
-            Tests/Notes/test_notes_sync_crlf_single_line.py \
-            Tests/Notes/test_notes_sync_source_moved_settle.py \
-            Tests/Notes/test_notes_sync_watcher_after_heal.py \
-            Tests/Notes/test_notes_sync_version_only_move.py \
-            Tests/Notes/test_notes_sync_resave_window.py \
-            Tests/Notes/test_notes_sync_attention_fence.py \
-            Tests/Notes/test_notes_sync_refused_files_integrity.py \
-            Tests/Agents/test_first_request_window_honest_plan.py \
-            Tests/Chat/test_console_capacity_refusal_copy.py \
-            Tests/UI/test_roleplay_frame_harness.py \
-            Tests/UI/test_roleplay_header.py \
-            Tests/UI/test_roleplay_hostile_names.py \
-            Tests/UI/test_roleplay_journeys.py \
-            Tests/UI/test_roleplay_item_list_app.py \
-            Tests/UI/test_app_factory_cleanup.py \
-            Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_model_status_is_plain_text_that_space_and_enter_cannot_pick \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_model_render_in_flight_at_quit_mounts_nothing \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_401_to_a_request_that_sent_no_key_asks_for_a_key \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_401_to_a_test_that_sent_no_key_asks_for_a_key \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_401_to_a_test_reads_as_a_key_problem_after_next \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_claude_subscription_is_never_told_to_add_an_api_key \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_check_that_asks_for_a_key_brings_authentication_into_view \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_the_pinned_notice_keeps_clear_of_the_frame \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_refused_key_is_told_as_checked_and_the_section_not_optional \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_listing_that_refused_a_sent_key_makes_the_key_required \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_403_to_a_listing_of_a_sent_key_does_not_reject_it \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_a_keyless_403_reads_as_unavailable_with_a_key_hint_on_both_steps \
-            Tests/UI/test_console_setup_card_fit.py::test_a_long_provider_name_never_wraps_the_readiness_word \
-            Tests/UI/test_console_setup_card_fit.py::test_the_name_budget_constant_matches_the_card_rule \
-            Tests/UI/test_console_toast_placement.py::test_a_dialog_over_the_console_draws_each_notice_once \
-            --timeout=300 \
-            --tb=short
-
-  pr-fast-lane-admission-2:
-    needs: [preflight]
-    # TASK-35575 (owner decision, 2026-10-19): the admission-sensitive suites
-    # run in two jobs side by side. pr-fast-lane-admission keeps dev's 41
-    # targets; this job holds Phase 9's 54 model-config targets: the 52 in the
-    # order they had there, then the Stop-claim fix's two (TASK-33666).
-    # Together in one job, PR #3169's two runs took 29.8 and 27.4 min of its
-    # 35 (the pytest step 1737 s and 1590 s), so one hung test at
-    # --timeout=300 (about 5.3 min with the private-profile wrapper's report)
-    # would have passed the cap. Serial in this job's install set the 52 alone
-    # took 266.9 s (959 passed, 2026-10-19, load 7-9; the two added after take
-    # about 1-3 s each, the pair 3.3-5.3 s serial), where all 93 took 1744.6 s
-    # and then 1737 s and 1590 s on CI, so expect about 5 min of pytest and
-    # 6-7 min with setup: a hung test's report ends well over 20 min under the
-    # cap. TASK-33620.15.1.3 appends one mounted Console file (two tests,
-    # ~8 s serial). TASK-33620.15.4 appends the durable commit window file
-    # (three cases on a real file-backed commit, ~7 s serial).
-    # TASK-33620.15.1.6 and .5 append two mounted Console files: the
-    # Environment panel's consent reads stay off the UI loop (three tests)
-    # and one helper answers every reader of a session's admitted roots (two
-    # tests), about 10-15 s each serial.
-    # TASK-33620.15.1.4 appends the rail edge focus restyle file (two mounted
-    # Console tests, ~18 s serial).
-    #
-    # Same runner, install line, cap and --timeout=300 as
-    # pr-fast-lane-admission, and its own pytest process and bootstrap
-    # profile, as there. One more runner per PR (ADR-103 note, 2026-10-19).
-    name: PR Fast Lane (admission-sensitive 2)
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      # bootstrap_profile suites, kept out of a sandboxed invocation for the
-      # reason pr-fast-lane-admission's note gives (TASK-32873). Phase 9's
-      # model-config evidence that ran in no PR lane, bootstrap_profile by
-      # marker or by Tests/conftest.py's file list (Tests/CI's
-      # ADMISSION_2_TARGETS names each rider). The three many-case pure rule
-      # tests come first: Tests/conftest.py collects garbage after every
-      # Tests/UI test, and that pass slows as the mounted targets grow the
-      # heap. The 623-case chrome rule test took 710 s of a 956 s run behind
-      # them, 74-80 s first, and 42 s alone. In its own pytest step the three
-      # would save about 45 s, not worth a second step.
-      - name: Run admission-sensitive suites 2
-        run: |
-          pytest \
-            Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast \
-            Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast \
-            Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast \
-            Tests/UI/test_console_workbench_contract.py::test_console_disabled_reason_copy_maps_setup_blockers \
-            Tests/UI/test_settings_image_gen_panel.py::test_backend_rows_paint_each_name_whole_before_one_status_column \
-            Tests/UI/test_settings_image_gen_panel.py::test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row \
-            Tests/UI/test_settings_image_gen_panel.py::test_the_backend_editor_is_whole_and_save_reachable \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_in_pick_mode_only_for_the_endpoint_that_listed_it \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_not_offered_once_its_pick_restores_another_endpoint \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_is_offered_only_while_its_pick_keeps_the_listed_endpoint \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_created_entry_listed_under_the_close_guard_says_how_to_pick_it \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_the_configured_servers \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_listing_at_this_chats_endpoint_replaces_a_loaded_catalog \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_pick_on_the_chats_own_provider_keeps_its_session_endpoint \
-            Tests/UI/test_console_endpoint_discovery.py::test_an_unseen_pick_keeps_the_chats_url_except_on_a_registry_entry \
-            Tests/UI/test_console_endpoint_discovery.py::test_a_pick_keeps_the_endpoint_its_provider_had_last \
-            Tests/UI/test_schedules_disabled_state.py::test_a_dispatched_weekly_row_paints_its_relative_next_run \
-            Tests/UI/test_console_settings_geometry.py::test_view_tabs_paint_their_whole_labels_after_each_view_switch \
-            Tests/UI/test_console_settings_geometry.py::test_a_selected_view_tab_paints_its_mark_while_it_holds_focus \
-            Tests/UI/test_console_settings_geometry.py::test_context_view_leaves_the_nav_bar_visible \
-            Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen \
-            Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart \
-            Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport \
-            Tests/UI/test_console_session_settings.py::test_console_settings_mount_builds_default_readiness_once \
-            Tests/UI/test_console_session_settings.py::test_console_settings_subscription_change_builds_default_readiness_once \
-            Tests/UI/test_console_session_settings.py::test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint \
-            Tests/UI/test_console_session_settings.py::test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason \
-            Tests/Chat/test_console_stop_silent_provider.py \
-            Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles \
-            Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_two_overlapping_opens_of_a_chat_make_one_session \
-            Tests/Chat/test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice \
-            Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status \
-            Tests/UI/test_schedules_disabled_state.py::test_rearmed_one_time_reminder_shows_its_new_run \
-            Tests/UI/test_schedules_disabled_state.py::test_reminder_that_will_not_run_keeps_its_dash_form \
-            Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_with_no_next_run_reads_the_plain_dash \
-            Tests/UI/test_schedules_disabled_state.py::test_real_recurring_dispatch_keeps_the_next_run_visible \
-            Tests/UI/test_schedules_disabled_state.py::test_disabled_row_and_badge_read_disabled_and_survive_refresh \
-            Tests/UI/test_schedules_next_run_relative.py::test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail \
-            Tests/UI/test_schedules_next_run_relative.py::test_queue_cell_and_detail_pane_agree_on_the_relative_form \
-            Tests/UI/test_schedules_workbench.py::test_definition_row_subtitle_carries_a_timezone_label \
-            Tests/UI/test_theme_contrast.py::test_workflow_panes_paint_readable_edges_and_text \
-            Tests/UI/test_theme_contrast.py::test_user_theme_with_auto_on_a_surface_stays_measurable \
-            Tests/UI/test_theme_contrast.py::test_app_chrome_lines_paint_at_non_text_contrast \
-            Tests/UI/test_console_modal_dismissal.py::test_console_modal_launch_declarations_match_runtime_construction \
-            Tests/UI/test_console_modal_dismissal.py::test_console_modal_inventory_matches_runtime_ast_and_transitive_launches \
-            Tests/UI/test_console_modal_dismissal.py::test_task2_modal_contract_table_is_complete_and_adopted \
-            Tests/UI/test_console_modal_dismissal.py::test_task3_modal_contract_table_is_complete_and_adopted \
-            Tests/UI/test_console_modal_dismissal.py::test_task4_transitive_modal_contract_table_is_complete_and_adopted \
-            Tests/UI/test_console_modal_dismissal.py::test_settings_redirected_select_click_uses_real_mro_dispatch \
-            Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result \
-            Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result \
-            Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result \
-            Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits \
-            Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits \
-            Tests/Library/test_transcription_readiness.py \
-            Tests/Library/test_ingest_stt_warnings.py \
-            Tests/UI/test_library_ingest_readiness.py \
-            Tests/UI/test_library_ingest_canvas.py::test_external_preparation_status_and_cancel_are_stable_and_path_free \
-            Tests/UI/test_library_ingest_canvas.py::test_physical_external_cancel_releases_scope_and_preserves_form \
-            Tests/UI/test_console_environment_refresh_off_loop.py \
-            Tests/test_config_persistence_owner.py \
-            Tests/ProductionApp/test_config_profile_isolation.py::test_real_app_quit_persists_only_the_effective_config \
-            Tests/Wizards/test_first_run_setup_wizard.py::test_model_step_says_a_listed_pick_is_not_added_to_the_saved_model_list \
-            Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone \
-            Tests/Chat/test_console_durable_commit_window.py \
-            Tests/UI/test_console_environment_root_reads.py \
-            Tests/UI/test_console_session_admitted_roots.py \
-            Tests/UI/test_console_edge_focus_restyle_scope.py \
-            --timeout=300 \
-            --tb=short
-
-  ui-fast-lane:
-    needs: [preflight]
-    # TASK-32908. Until now `Tests/UI` -- 25,917 collected tests, the biggest
-    # directory in the tree -- gated NOTHING on a pull request.
-    #
-    # It looks covered twice over and is covered neither time:
-    #   * test.yml has a 12-shard `ui-tests` job, but that workflow is
-    #     `on: push: branches: ["main"]` + workflow_dispatch. It does not accept
-    #     pull_request events, so nothing in it is a PR gate.
-    #   * nightly-deep.yml runs `pytest ./Tests/` on a schedule -- with no
-    #     --continue-on-collection-errors, so one bad import aborts the session.
-    #     It has been doing exactly that: run 35706024071 (2026-09-22) reported
-    #     `collected 101851 items / 1 error` then `Interrupted`, ZERO tests
-    #     executed, six consecutive nights.
-    #
-    # The whole directory cannot come into the gate: measured 25,917 tests /
-    # ~5.5 CPU-hours. What comes in is a verified-green subset, listed in
-    # scripts/ui_pr_gate_census.txt.
-    #
-    # Deliberately SERIAL and on the same minimal dependency set as
-    # pr-fast-lane. No xdist, no pytest-randomly in requirements-test.txt, and
-    # a pinned file ORDER -- so the run CI performs is the same run the census
-    # was verified against. A gate whose green was only ever observed under a
-    # different plugin set and a different test order is a gate that lands red,
-    # and a red gate trains people to ignore it.
-    #
-    # Its own job rather than another step on pr-fast-lane: that lane measured
-    # ~20 min against a 30-min cap, and spending its last headroom here would
-    # make the required check fail on a timeout the first time either half grew.
-    #
-    # TASK-34353: the serial census itself then reached 14-19 min against this
-    # job's 20-min cap, and PRs adding census files timed out with zero failing
-    # tests (#2992 three times). So the census runs as round-robin shards
-    # (`check_ui_pr_gate_census.py --shard`): each shard is a subsequence of
-    # the census, in census order, on the same minimal dependency set. What
-    # changes is only which files run before a given file -- a file that needed
-    # a particular predecessor was relying on leaked state, which is a bug the
-    # split surfaces, not hides. When a shard nears the cap, do not raise the
-    # minutes: replay the shard logs (scripts/ui_lane_shard_replay.py) and
-    # re-order the census first. A different shard count re-deals every entry
-    # and is not always lighter (on #3057 eight replayed heavier than seven).
-    #
-    # TASK-34917: four shards measured median 13.8 / 9.7 / 16.5 / 15.3 min and
-    # shard 3 max 19.7 over 91 PR runs (to 2026-10-14). Shard 3 holds the
-    # Console test that hangs now and then, and a hung private-profile test
-    # costs ~3m10s-3m18s before the wrapper reports it -- past the cap in
-    # 33-36 of those 91 runs, losing exactly that report. Six, because a
-    # replay said so: each census entry's time was read from 26 green runs'
-    # shard logs (progress-line timestamps; the replay reproduces the
-    # measured 4-shard times to within 0.1 min median, 0.6 max) and
-    # re-dealt. Heaviest shard over the 26 runs: 4 -> 19.7, 5 -> 17.4
-    # (round-robin is not monotonic: the fifth shard collects the
-    # CSS-comments, rename and hostile-text files), 6 -> 14.1 (shard 3, the
-    # hanging test's), which leaves ~2.6 min for one hung test. No census
-    # reorder, so census order still holds inside a shard.
-    #
-    # TASK-33007 (PR #3057) runs ten shards: Phase 7 adds 92 census entries
-    # (at the tail, ordered by scripts/ui_lane_shard_replay.py for the
-    # count), 66-72 of the lane's 109-119 pytest minutes in #3057's three
-    # CI runs. Replayed over eight runs' shard logs (those three and five
-    # six-shard runs after TASK-34917), each file at its slowest, the
-    # heaviest shard carries 15.2 pytest min at nine, 13.7 at ten and 12.4 at
-    # eleven, plus ~1.1-1.7 min of setup: ten is the fewest that still leaves
-    # one hung test's report room under the cap (~15.4 + 3.3 of 20).
-    # TASK-35834 (2026-10-20) introduced thirteen shards: its measured replay
-    # plus 110s setup and 15% variance projected <=1000s below the 1020s target.
-    # Current UI lane: 28 shards (TASK-37236 all-phase/checkout qualification).
-    # At most 17 UI jobs run at once; smaller serial slices preserve the
-    # setup/variance target without increasing peak runners or any timeout.
-    # Complete duration rows let replay charge function selectors by node.
-    name: UI Fast Lane
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      # Report every shard, so one red shard does not hide another.
-      fail-fast: false
-      max-parallel: 17
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      # Same line as pr-fast-lane, on purpose: the census is verified against
-      # this dependency set. Adding a package here can only be done by
-      # re-verifying the census under it.
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      - name: Run the gated Tests/UI slice
-        run: |
-          # Census order is the run order; see the checker for why it may not
-          # silently shrink. Written to a file first so a failing checker fails
-          # the step (bash -e) instead of yielding an empty list.
-          python scripts/check_ui_pr_gate_census.py --shard \
-            "${{ strategy.job-index }}" "${{ strategy.job-total }}" \
-            > "$RUNNER_TEMP/ui-shard.txt"
-          mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"
-          # An empty shard would make bare `pytest` collect the whole tree.
-          test "${#SHARD[@]}" -gt 0
-          echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI entries."
-          pytest "${SHARD[@]}" \
-            --timeout=180 \
-            --durations=0 --durations-min=0 \
-            --tb=short
-
-  console-p0-gate:
-    needs: [preflight]
-    # TASK-33621.27. The 2026-09-29 Console review's P0 fixes shipped with
-    # regression tests no pull-request lane ran; two of them drifted red on
-    # dev within days and nobody saw. This job is where they run.
-    #
-    # Its own job, not more steps on pr-fast-lane: PR #3062 first put them
-    # there and that job took 33m41s against its 35-min cap (run
-    # 38064483856: main step 13m08s, admission-sensitive step 19m30s, of
-    # which this block was 3m01s). Like ui-fast-lane, it is a separate
-    # runner, so it costs one more concurrent runner per PR (6 test runners
-    # then; ADR-103's dated notes keep the current count), and no wall-clock
-    # on the PR Fast Lane.
-    #
-    # Same minimal dependency set, same serial pytest, same profile split as
-    # pr-fast-lane (TASK-32873): plain unit, private-profile and in-process
-    # tests in one invocation; bootstrap_profile ones (a file with even one
-    # such node, e.g. test_console_compaction_failure.py: 1 of 28) in a
-    # second, after it. A fast file is gated whole; a slow file by the node
-    # ids that pin the P0. The UI-census node ids stay in ui-fast-lane.
-    # Tests/CI/test_console_p0_regression_gate.py pins where each one runs.
-    #
-    # timeout-minutes: setup ~1 min (checkout 20 s, python 3 s, install 19 s
-    # in run 38064483856) + sandboxed step ~3 min (6 private-profile app
-    # boots at ~15-20 s each in CI plus ~1 min of unit/DB tests) + admission
-    # step ~5 min (the 3m01s measured block + the 20-action row sweep at ~6 s
-    # an action + one unit node) = ~9 min. 20 gives 2x for runner slowness
-    # (the dev-equivalent admission step varied 11m33s-19m30s).
-    #
-    # TASK-34986: PR2921's two Dreams/Guardian steps took this job to max
-    # 18.7 min of 20; they run in dreams-boundary now, and the two Console
-    # P0 steps replay at median 11.6 / max 13.9 min over the 76 runs that
-    # finished. In the two runs cancelled at the cap they alone took ~17.5
-    # (a failing run) and ~16.1 min with setup: about 4 min of headroom at
-    # worst, not 6.
-    name: Console P0 regression gate
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      - name: Run the sandboxed Console P0 regression tests
-        run: |
-          pytest \
-            Tests/Console/test_console_markdown_export.py \
-            Tests/Chat/test_console_trace_row_sources.py \
-            Tests/Architecture/test_wizard_lifecycle_guards.py \
-            Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \
-            Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup \
-            Tests/UI/test_console_composer_run_controls.py::test_queue_state_labels_match_the_prompt_queue_presentation \
-            Tests/UI/test_console_composer_run_controls.py::test_palette_lists_stop_and_the_composer_menu_actions_class_safe \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_exit \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_recovery_that_raises_is_logged_before_the_loud_exit \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_it \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_pump_loop_ended_matches_what_textual_does_to_the_pump \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_retired_screen_is_torn_down_however_its_loop_ended \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_dead_screen_whose_unmount_raises_is_still_dropped \
-            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_screen_handler_error_leaves_only_live_screens_on_the_stack \
-            "Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]" \
-            Tests/UI/test_console_conversation_action_menu.py::test_unwritable_save_path_shows_an_error_and_keeps_the_app_running \
-            "Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[cancel]" \
-            Tests/Chat/test_response_rules_preparation_custody.py \
-            "Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]" \
-            Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics \
-            Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant \
-            Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \
-            Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation \
-            Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated \
-            --timeout=180 \
-            --tb=short
-
-      # bootstrap_profile suites: their own invocation, after the sandboxed
-      # one, exactly as pr-fast-lane's admission-sensitive step (TASK-32873).
-      - name: Run the admission-sensitive Console P0 regression tests
-        if: ${{ !cancelled() }}
-        run: |
-          pytest \
-            Tests/Agents/test_provider_tool_schema_conformance.py \
-            Tests/Chat/test_console_tool_definition_rejection.py \
-            Tests/Agents/test_local_tool_provider.py::test_todo_update_delete_rule_is_enforced_by_the_handler_not_the_schema \
-            Tests/Chat/test_console_capture_send_triggers.py \
-            "Tests/UI/test_console_blocked_send_recovery.py::test_each_trigger_chat_sends_and_renders_the_reply[system-prompt-before-first-send]" \
-            "Tests/UI/test_console_blocked_send_recovery.py::test_provenance_failure_recovery_actions_work[retry]" \
-            Tests/Chat/test_console_compaction_failure.py \
-            Tests/Chat/test_console_compaction_live_session.py::test_live_automatic_compaction_commits_memory_and_the_send_replies \
-            Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_succeeds_after_real_durable_sends \
-            Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend \
-            Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_says_nothing_changed \
-            Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes \
-            Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant \
-            Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app \
-            Tests/Wizards/test_first_run_provider_catalog.py::test_wizard_provider_list_is_the_settings_picker_set \
-            Tests/Wizards/test_first_run_provider_catalog.py::test_arrowing_through_every_listed_row_keeps_the_step_live \
-            Tests/Wizards/test_first_run_provider_catalog.py::test_a_raising_step_handler_keeps_the_step_and_the_keyboard \
-            Tests/Wizards/test_first_run_provider_catalog.py::test_next_after_a_step_error_never_exits_the_app \
-            Tests/UI/test_console_hook_review_send_freeze.py::test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open \
-            Tests/UI/test_console_hook_review_send_freeze.py::test_a_declined_send_review_settles_and_keeps_the_draft \
-            Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once \
-            Tests/Chat/test_response_rules_trace_admission.py \
-            Tests/Chat/test_response_rules_goal_intersection.py \
-            Tests/Chat/test_response_rules_runtime.py::test_first_send_checks_stored_global_rule_without_prior_manager_use \
-            Tests/Chat/test_response_rules_runtime.py::test_cancelled_rule_db_call_keeps_real_handle_until_own_cleanup \
-            Tests/Chat/test_response_rules_runtime.py::test_real_completed_tool_work_is_retained_during_native_repair \
-            Tests/Chat/test_response_rules_external_hook.py \
-            Tests/Chat/test_response_rules_write_contention.py \
-            Tests/UI/test_response_rules_modal.py::test_saved_edit_stays_selected_and_pinned_for_next_manager_action \
-            Tests/Chat/test_deepseek_explicit_mode.py \
-            Tests/UI/test_response_rules_modal.py::test_manager_detached_subtree_callbacks_do_not_read_widgets \
-            Tests/UI/test_response_rules_modal.py::test_manager_superseded_reload_cannot_replace_current_scope_rows \
-            Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending \
-            Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
-            "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change" \
-            "Tests/Chat/test_console_trace_admission_gc.py::test_collection_between_admission_and_reservation_preserves_exact_revision" \
-            "Tests/Chat/test_console_trace_admission_gc.py::test_canonical_ancestry_cannot_retain_payload_through_another_owners_policy" \
-            "Tests/Chat/test_console_retry_json_wire.py::test_json_schema_retry_fence_precedes_actual_http[unchanged-groq]" \
-            "Tests/Chat/test_console_retry_json_wire.py::test_json_schema_retry_fence_precedes_actual_http[changed-type-groq]" \
-            "Tests/Chat/test_console_retry_json_identity.py::test_failed_retry_rejects_python_equal_json_changes[true-to-one-response_format-deepseek]" \
-            "Tests/Chat/test_console_retry_json_identity.py::test_failed_retry_rejects_python_equal_json_changes[unchanged-response_format-deepseek]" \
-            "Tests/Chat/test_console_native_commit.py::test_owned_native_commit_drains_original_callback_and_connection_after_global_cancel" \
-            "Tests/Chat/test_console_shared_tool_cache.py::test_stock_cold_adopts_once_and_warm_reuses_without_payload_decode" \
-            "Tests/Chat/test_console_context_presentation_current.py::test_context_display_retains_exact_native_handle_through_cancel[True]" \
-            "Tests/UI/test_console_hook_refresh_lifetime.py::test_cancelled_visit_drains_actual_native_custody[True]" \
-            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_receives_intent_before_original_configuration_read" \
-            "Tests/UI/test_console_browser_current_native_lifetime.py::test_current_host_shutdown_drains_original_browser_callback[all_created-False]" \
-            "Tests/UI/test_console_preparing_current_sources.py::test_preparing_changed_source_after_original_tab_await_replays_full" \
-            "Tests/UI/test_console_final_poll_completion.py::test_idle_final_poll_waits_for_original_full_refresh" \
-            "Tests/Performance/test_collections_extraction_shutdown.py::test_collections_shutdown_retains_real_interrupted_settlement[all_created]" \
-            --timeout=300 \
-            --tb=short
-
-  dreams-boundary:
-    needs: [preflight]
-    # TASK-34986: PR2921's Dreams and Guardian boundary steps, moved here
-    # verbatim from console-p0-gate (same targets, order, --timeout and `if`).
-    # With them that job measured median 16.1 / p90 17.4 / max 18.7 min over
-    # 76 PR runs (2026-10-13 to 2026-10-14) against its 20-min cap, and two
-    # runs were cancelled at the cap. Per step: Console P0 sandboxed median
-    # 2.9 / max 3.5, admission-sensitive 7.8 / 9.7 (the row-menu action sweep
-    # ~2 min of it), Dreams boundary 1.8 / 2.1, Dreams admission-sensitive
-    # 2.6 / 3.9 (test_watchlists_bulk_source_authoring ~2 min). Replaying
-    # the same 76 runs with each job's own setup: console-p0-gate median 11.6
-    # / max 13.9 min, this job median 5.2 / max 6.7. The two runs cancelled
-    # at the cap are not in that replay; there the Console P0 steps alone took
-    # ~17.5 (a failing run) and ~16.1 min with setup. Not into dreams-tracking:
-    # that job already varies 6.2-12.7 min (250 tests since #3108), and these
-    # steps would take it to ~18.6. Each step is still its own pytest process,
-    # the admission-sensitive one after the sandboxed one (TASK-32873).
-    #
-    # timeout-minutes: the 20 these steps had in console-p0-gate. One more
-    # runner per PR (ADR-103 note, 2026-10-14).
-    name: Dreams and Guardian boundary contracts
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      # PR2921: bounded privacy, native recovery and actual dispatch contracts.
-      - name: Run Dreams and Guardian boundary contracts
-        if: ${{ !cancelled() }}
-        run: |
-          pytest \
-            Tests/Dreams/test_dispatch_currentness.py \
-            Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets \
-            Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search \
-            Tests/Dreams/test_cycle_service.py::test_cycle_and_check_cannot_both_spend_the_last_search \
-            Tests/Guardian/test_live_discovery_consent.py \
-            Tests/Guardian/test_captured_dispatch_ownership.py \
-            Tests/Guardian/test_daily_native_lifecycle.py \
-            Tests/Guardian/test_crisis_provenance.py \
-            Tests/Guardian/test_crisis_resources.py \
-            Tests/Backup_Recovery/test_guardian_owner.py \
-            Tests/Backup_Recovery/test_dreams_owner.py \
-            Tests/Backup_Recovery/test_guardian_activation.py \
-            Tests/Backup_Recovery/test_dreams_activation.py \
-            Tests/Backup_Recovery/test_restored_source_first_fetch.py \
-            Tests/Backup_Recovery/test_collections_provenance_owner.py \
-            Tests/Library/test_library_artifacts_dreams.py \
-            Tests/Watchlists/test_runtime_name_literals.py \
-            Tests/Notifications/test_notification_toast_markup.py \
-            --timeout=180 \
-            --tb=short
-
-      # PR2921: bounded privacy, native recovery and actual dispatch contracts.
-      - name: Run Dreams admission-sensitive contracts
-        if: ${{ !cancelled() }}
-        run: |
-          pytest \
-            Tests/Dreams/test_boot_dispatch_admission.py \
-            Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop \
-            Tests/Subscriptions/test_local_watchlists_service.py \
-            Tests/Watchlists/test_watchlists_bulk_source_authoring.py \
-            Tests/UI/test_settings_dreams_guardian_native_lifecycle.py \
-            --timeout=300 \
-            --tb=short
-
-  dreams-tracking:
-    needs: [preflight]
-    # TASK-34929: Tests/Dreams/test_track_service.py (219 tests of the Dreams
-    # tracking and switch logic) ran in no pull-request lane; seven of its
-    # tests went red with the #2921 merge and stayed red unnoticed.
-    #
-    # Its own job, on every PR, not a step on an existing lane, so no
-    # existing job moves toward its cap: its first run (38588725796, PR
-    # #3106) took 6m50s, 5m48s of it the tests (5m42s-6m35s locally; the
-    # 1.3-1.7x CI factor estimated from four Dreams files in console-p0-gate
-    # did not hold for this file), against the PR Fast Lane halves' ~21 min
-    # of 35 and console-p0-gate's 18.7 of 20. Not path-filtered: the file imports
-    # Notifications, Scheduling and Utils/egress as well as Dreams and
-    # Subscriptions, and a skipped job fails the aggregate's
-    # `!= 'success'` verdict anyway.
-    #
-    # Sandboxed only (no bootstrap_profile node), so one invocation; same
-    # minimal dependency set and serial pytest as the other lanes.
-    # timeout-minutes: the first run's 6m50s leaves ~13 min, and one hung
-    # test at --timeout=180 still ends ~10 min under the cap.
-    name: Dreams tracking tests
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
-      - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
-
-      - name: Run the Dreams tracking tests
-        run: |
-          pytest \
-            Tests/Dreams/test_track_service.py \
-            --timeout=180 \
-            --tb=short
+    uses: ./.github/workflows/ci-qualification.yml
+    with:
+      queue_front: ${{ needs.preflight.outputs.queue_front == 'true' }}
+      pr: ${{ inputs.pr || '' }}
+    concurrency:
+      group: ci-qualification-${{ needs.preflight.outputs.queue_front == 'true' && 'front' || 'background' }}
+      queue: max
+      cancel-in-progress: false
 
   derived-artifacts:
     permissions:
@@ -1103,7 +352,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [preflight, pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking]
+    needs: [preflight, qualification]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1116,14 +365,22 @@ jobs:
           echo "::error::The required CI preflight did not succeed."
           exit 1
 
+      - name: Require successful qualification
+        # Even cancellation/overflow must not skip the wrapper's failure verdict.
+        if: ${{ always() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.result != 'success' }}
+        run: |
+          echo "Qualification result: ${{ needs.qualification.result }}"
+          echo "::error::The full qualification did not succeed."
+          exit 1
+
       # TASK-33621.27 review round 4: each verdict starts `!cancelled() &&`,
       # which drops GitHub's implicit `success()`; without it the first red
       # lane's verdict skipped the others (run 38072845848), so a second red
       # lane went unreported until the next push.
       - name: Require successful PR fast lane
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.pr-fast-lane != 'success' }}
         run: |
-          echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
+          echo "PR Fast Lane result: ${{ needs.qualification.outputs.pr-fast-lane }}"
           echo "::error::The required PR fast lane did not succeed."
           exit 1
 
@@ -1131,17 +388,17 @@ jobs:
       # own job. Without this step a red half would leave the required check
       # green.
       - name: Require successful PR fast lane (admission-sensitive)
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-admission.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.pr-fast-lane-admission != 'success' }}
         run: |
-          echo "PR Fast Lane (admission-sensitive) result: ${{ needs.pr-fast-lane-admission.result }}"
+          echo "PR Fast Lane (admission-sensitive) result: ${{ needs.qualification.outputs.pr-fast-lane-admission }}"
           echo "::error::The required PR fast lane (admission-sensitive) did not succeed."
           exit 1
 
       # TASK-35575: same shape, for the second admission-sensitive job.
       - name: Require successful PR fast lane (admission-sensitive 2)
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-admission-2.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.pr-fast-lane-admission-2 != 'success' }}
         run: |
-          echo "PR Fast Lane (admission-sensitive 2) result: ${{ needs.pr-fast-lane-admission-2.result }}"
+          echo "PR Fast Lane (admission-sensitive 2) result: ${{ needs.qualification.outputs.pr-fast-lane-admission-2 }}"
           echo "::error::The required PR fast lane (admission-sensitive 2) did not succeed."
           exit 1
 
@@ -1150,34 +407,34 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.ui-fast-lane != 'success' }}
         run: |
-          echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
+          echo "UI Fast Lane result: ${{ needs.qualification.outputs.ui-fast-lane }}"
           echo "::error::The required UI fast lane did not succeed."
           exit 1
 
       # TASK-33621.27: same shape again, for the Console P0 regression gate.
       - name: Require successful Console P0 regression gate
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.console-p0-gate.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.console-p0-gate != 'success' }}
         run: |
-          echo "Console P0 regression gate result: ${{ needs.console-p0-gate.result }}"
+          echo "Console P0 regression gate result: ${{ needs.qualification.outputs.console-p0-gate }}"
           echo "::error::The required Console P0 regression gate did not succeed."
           exit 1
 
       # TASK-34986: same shape, for the Dreams/Guardian steps moved out of
       # the Console P0 regression gate.
       - name: Require successful Dreams and Guardian boundary contracts
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.dreams-boundary.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.dreams-boundary != 'success' }}
         run: |
-          echo "Dreams and Guardian boundary contracts result: ${{ needs.dreams-boundary.result }}"
+          echo "Dreams and Guardian boundary contracts result: ${{ needs.qualification.outputs.dreams-boundary }}"
           echo "::error::The required Dreams and Guardian boundary contracts did not succeed."
           exit 1
 
       # TASK-34929: same shape again, for the Dreams tracking tests.
       - name: Require successful Dreams tracking tests
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.dreams-tracking.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.qualification.outputs.dreams-tracking != 'success' }}
         run: |
-          echo "Dreams tracking tests result: ${{ needs.dreams-tracking.result }}"
+          echo "Dreams tracking tests result: ${{ needs.qualification.outputs.dreams-tracking }}"
           echo "::error::The required Dreams tracking tests did not succeed."
           exit 1
 

@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## Workflow outputs can masquerade as job headers (TASK-38101, 2026-10-30)
+
+**Incident.** Moving CI lanes into a reusable workflow added output keys named
+for those jobs. The Python-runtime-floor check searched for the substring
+`  pr-fast-lane:` and matched a more deeply indented output key first, then
+reported that setup-python was absent. The real application job was unchanged.
+
+**What to do.** Read workflow structure as YAML when possible. A text-only job
+extractor must anchor the complete header at the job indentation, not search
+for an indented substring. Selection guards should follow the actual called
+workflow, without synthesizing old dependencies or result expressions.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its

@@ -4,7 +4,8 @@ import shlex
 from pathlib import Path
 
 import pytest
-import yaml
+
+from Tests.CI.workflow_helpers import derived_workflow
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/derived-artifacts.yml"
@@ -156,7 +157,11 @@ def validate(document):
             == "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))"
         )
         assert not job.get("continue-on-error", False)
-        assert job_name in jobs["derived-artifacts"]["needs"]
+        assert jobs["derived-artifacts"]["needs"] == ["preflight", "qualification"]
+        child = document["qualification_workflow"]
+        outputs = child.get("on", child.get(True))["workflow_call"]["outputs"]
+        assert job_name in outputs
+        assert outputs[job_name]["value"] == "${{ jobs." + job_name + ".result }}"
         for s in job["steps"]:
             if s.get("run", "").lstrip().startswith("pytest"):
                 assert STEP_JOBS.get(s["name"]) == job_name, s["name"]
@@ -190,7 +195,7 @@ def validate(document):
 
 
 def test_rule_critical_targets_execute_without_altering_inherited_processes():
-    validate(yaml.safe_load(WORKFLOW.read_text()))
+    validate(derived_workflow(ROOT))
 
 
 @pytest.mark.parametrize(
@@ -199,7 +204,7 @@ def test_rule_critical_targets_execute_without_altering_inherited_processes():
 )
 @pytest.mark.parametrize("damage", ["remove", "comment"])
 def test_missing_or_comment_only_rule_target_is_rejected(label, target, damage):
-    document = yaml.safe_load(WORKFLOW.read_text())
+    document = derived_workflow(ROOT)
     step = next(
         s
         for s in document["jobs"]["console-p0-gate"]["steps"]
@@ -228,7 +233,7 @@ def test_missing_or_comment_only_rule_target_is_rejected(label, target, damage):
     ],
 )
 def test_suppressed_or_weakened_critical_process_is_rejected(damage):
-    document = yaml.safe_load(WORKFLOW.read_text())
+    document = derived_workflow(ROOT)
     job = document["jobs"]["console-p0-gate"]
     step = next(
         s
@@ -249,7 +254,9 @@ def test_suppressed_or_weakened_critical_process_is_rejected(damage):
     elif damage == "cap":
         job["timeout-minutes"] = 25
     else:
-        document["jobs"]["derived-artifacts"]["needs"].remove("console-p0-gate")
+        document["qualification_workflow"][True]["workflow_call"]["outputs"].pop(
+            "console-p0-gate"
+        )
     with pytest.raises(AssertionError):
         validate(document)
 
@@ -265,7 +272,9 @@ def _validate_ui_phase_membership(census_path):
 
     entries = read_census(census_path)
     # The UI lane's own shard count (TASK-34917 took it from four to six).
-    total = len(yaml.safe_load(WORKFLOW.read_text())["jobs"]["ui-fast-lane"]["strategy"]["matrix"]["shard"])
+    total = len(
+        derived_workflow(ROOT)["jobs"]["ui-fast-lane"]["strategy"]["matrix"]["shard"]
+    )
     shards = [shard(entries, index, total) for index in range(total)]
     for target in UI_PHASE_SELECTION:
         assert sum(part.count(target) for part in shards) == 1

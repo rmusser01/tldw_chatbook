@@ -7,6 +7,33 @@ Supersedes: N/A
 
 ## Decision
 
+### Amendment 2026-10-30: bounded full qualifications (TASK-38101)
+
+The owner chose to preserve automatic full feedback. Keep preflight independent;
+run all seven application lanes inside a local reusable workflow whose caller
+holds one repository-wide front or background concurrency slot for its lifetime.
+Use native `queue: max` (up to 100 pending calls per group), never cancel useful
+running evidence, and keep overflow visibly unsuccessful. There is no custom
+lease service or runner occupied just waiting for admission.
+
+Retain 28 UI shards and all selectors, dependencies and test timeouts. The front
+uses at most 17 simultaneous UI jobs, background 8; their six other jobs each
+make a combined application ceiling of 37. Background qualifications request 14 application runners. Preflight, control jobs, other
+workflows/accounts and PRs still on older workflow versions are outside this
+bound. Full feedback still runs for drafts and manual full-gate requests.
+
+Keep the required name and each explicit lane verdict in the parent; each uses
+the called workflow's result output and rejects anything except success. Also
+reject an unsuccessful wrapper. The queue tick and cost report stay outside the
+slots. Tests read actual caller and callee documents and pin this graph.
+
+Native FIFO starts when calls wait, not when PRs were opened, and cannot preempt
+a former front. Hosted scheduler, output and failed-job retry behavior must be
+qualified separately from local graph tests. Rebase adoption is gradual.
+
+Spec: `Docs/superpowers/specs/2026-10-29-ci-admission-options.md`.
+Plan: `Docs/superpowers/plans/2026-10-30-ci-bounded-qualifications.md`.
+
 ### Amendment 2026-10-29: observe qualification cost (TASK-38100)
 
 The owner requested the remaining CI audit improvements. Add one checkout-free
@@ -152,7 +179,7 @@ cron entry on `dev`.
   Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
   tracking tests and the Dreams and Guardian boundary contracts are jobs of
   their own (TASK-34916, TASK-34929, TASK-34986), so an ordinary unlabeled,
-  non-GGUF PR now requests 23 test runners in parallel, 24 with perf-guard
+  non-GGUF queue-front PR now requests 23 test runners in parallel, 24 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying

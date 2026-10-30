@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.CI.workflow_helpers import derived_workflow
+
 yaml = pytest.importorskip("yaml")
 
 
@@ -668,6 +670,8 @@ STANDALONE_WORKFLOWS = (
 
 
 def _workflow(name: str) -> dict:
+    if name == "derived-artifacts.yml":
+        return derived_workflow(PROJECT_ROOT)
     return yaml.safe_load((WORKFLOW_ROOT / name).read_text(encoding="utf-8"))
 
 
@@ -692,7 +696,7 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 def _assert_ui_capacity(workflow: dict) -> None:
     strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
     assert strategy["matrix"] == {"shard": list(range(1, 29))}
-    assert strategy.get("max-parallel") == 17
+    assert strategy.get("max-parallel") == "${{ inputs.queue_front && 17 || 8 }}"
 
 
 def test_ui_capacity_preserves_peak_runner_budget() -> None:
@@ -715,7 +719,7 @@ def test_ui_capacity_rejects_unbounded_or_incomplete_matrix(mutation: str) -> No
     if mutation == "missing-parallel":
         del strategy["max-parallel"]
     elif mutation == "raised-parallel":
-        strategy["max-parallel"] += 1
+        strategy["max-parallel"] = "${{ inputs.queue_front && 18 || 8 }}"
     elif mutation == "missing-shard":
         strategy["matrix"]["shard"].pop()
     else:
@@ -739,34 +743,45 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-34929: the Dreams tracking tests are the fifth lane.
     # TASK-34986: PR2921's Dreams/Guardian steps left console-p0-gate.
     # TASK-35575: the admission-sensitive suites run in two jobs.
-    assert required.get("needs") == [
-        "preflight",
-        "pr-fast-lane",
-        "pr-fast-lane-admission",
-        "pr-fast-lane-admission-2",
-        "ui-fast-lane",
-        "console-p0-gate",
-        "dreams-boundary",
-        "dreams-tracking",
-    ]
+    assert required.get("needs") == ["preflight", "qualification"]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
-    reports = [step for step in required["steps"] if step.get("name") == "Report qualification cost"]
+    reports = [
+        step
+        for step in required["steps"]
+        if step.get("name") == "Report qualification cost"
+    ]
     assert len(reports) == 1 and reports[0]["continue-on-error"] is True
     assert all(
         not step.get("continue-on-error", False)
-        for step in required["steps"] if step is not reports[0]
+        for step in required["steps"]
+        if step is not reports[0]
     )
     preflight = workflow["jobs"]["preflight"]
     assert not preflight.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in preflight["steps"])
     assert "if" not in preflight and "needs" not in preflight
     preflight_verdict = _named_step(required, "Require successful preflight")
-    assert preflight_verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
+    assert (
+        preflight_verdict["if"]
+        == "${{ !cancelled() && needs.preflight.result != 'success' }}"
+    )
     assert "exit 1" in preflight_verdict["run"]
-    for lane in required["needs"]:
-        if lane != "preflight":
-            assert workflow["jobs"][lane]["needs"] == ["preflight"]
+    caller = workflow["jobs"]["qualification"]
+    assert caller.get("needs") == ["preflight"] and caller["if"] == LANES
+    assert not caller.get("continue-on-error", False)
+    wrapper = _named_step(required, "Require successful qualification")
+    assert (
+        wrapper["if"]
+        == f"${{{{ always() && ({LANES}) && needs.qualification.result != 'success' }}}}"
+    )
+    assert "exit 1" in wrapper["run"]
+    child = workflow["qualification_workflow"]
+    outputs = _triggers(child)["workflow_call"]["outputs"]
+    assert set(outputs) == set(child["jobs"])
+    for lane in child["jobs"]:
+        assert "needs" not in child["jobs"][lane]
+        assert outputs[lane]["value"] == "${{ jobs." + lane + ".result }}"
 
     # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
     # `success()`, so a red lane does not skip the next lane's verdict and
@@ -774,17 +789,26 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # and P0 verdicts skipped behind the PR lane's).
     for lane, step_name in (
         ("pr-fast-lane", "Require successful PR fast lane"),
-        ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
-        ("pr-fast-lane-admission-2", "Require successful PR fast lane (admission-sensitive 2)"),
-        ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
+        (
+            "pr-fast-lane-admission",
+            "Require successful PR fast lane (admission-sensitive)",
+        ),
+        (
+            "pr-fast-lane-admission-2",
+            "Require successful PR fast lane (admission-sensitive 2)",
+        ),
+        (
+            "dreams-boundary",
+            "Require successful Dreams and Guardian boundary contracts",
+        ),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
         assert verdict["if"] == (
-            f"${{{{ !cancelled() && ({LANES}) && needs.{lane}.result != 'success' }}}}"
+            f"${{{{ !cancelled() && ({LANES}) && needs.qualification.outputs.{lane} != 'success' }}}}"
         )
-        assert f"needs.{lane}.result" in verdict["run"]
+        assert f"needs.qualification.outputs.{lane}" in verdict["run"]
         assert "exit 1" in verdict["run"]
     for job_name in (
         "pr-fast-lane-admission",
@@ -799,9 +823,9 @@ def _assert_required_aggregation(workflow: dict) -> None:
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
     assert ui_verdict["if"] == (
-        f"${{{{ !cancelled() && ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
+        f"${{{{ !cancelled() && ({LANES}) && needs.qualification.outputs.ui-fast-lane != 'success' }}}}"
     )
-    assert "needs.ui-fast-lane.result" in ui_verdict["run"]
+    assert "needs.qualification.outputs.ui-fast-lane" in ui_verdict["run"]
     assert "exit 1" in ui_verdict["run"]
 
     # The UI lane is bounded the same way the fast lane is: serial jobs,
@@ -812,9 +836,9 @@ def _assert_required_aggregation(workflow: dict) -> None:
     p0_verdict = _named_step(required, "Require successful Console P0 regression gate")
     assert not p0_verdict.get("continue-on-error", False)
     assert p0_verdict["if"] == (
-        f"${{{{ !cancelled() && ({LANES}) && needs.console-p0-gate.result != 'success' }}}}"
+        f"${{{{ !cancelled() && ({LANES}) && needs.qualification.outputs.console-p0-gate != 'success' }}}}"
     )
-    assert "needs.console-p0-gate.result" in p0_verdict["run"]
+    assert "needs.qualification.outputs.console-p0-gate" in p0_verdict["run"]
     assert "exit 1" in p0_verdict["run"]
     p0 = workflow["jobs"]["console-p0-gate"]
     assert not p0.get("continue-on-error", False)
@@ -1095,7 +1119,9 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(job, "Install fast-lane dependencies")["run"]
     assert shlex.split(install) == shlex.split(
-        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")[
+            "run"
+        ]
     )
     step = _named_step(job, "Run the Dreams tracking tests")
     assert "if" not in step
@@ -1204,8 +1230,7 @@ def test_required_context_fails_closed_and_checks_artifacts_before_the_lanes() -
 
     required = workflow["jobs"]["derived-artifacts"]
     checker_steps = [
-        step for step in workflow["jobs"]["preflight"]["steps"]
-        if "run" in step
+        step for step in workflow["jobs"]["preflight"]["steps"] if "run" in step
     ]
     assert checker_steps
     assert all(step.get("if") == "${{ !cancelled() }}" for step in checker_steps)
@@ -1216,9 +1241,11 @@ def test_required_context_fails_closed_and_checks_artifacts_before_the_lanes() -
 def test_preflight_contract_rejects_bypass_or_partial_failure_handling(mutation):
     workflow = copy.deepcopy(_workflow("derived-artifacts.yml"))
     if mutation == "bypass":
-        workflow["jobs"]["ui-fast-lane"].pop("needs")
+        workflow["jobs"]["qualification"].pop("needs")
     elif mutation == "only-failure":
-        verdict = _named_step(workflow["jobs"]["derived-artifacts"], "Require successful preflight")
+        verdict = _named_step(
+            workflow["jobs"]["derived-artifacts"], "Require successful preflight"
+        )
         verdict["if"] = verdict["if"].replace("!= 'success'", "== 'failure'")
     else:
         workflow["jobs"]["preflight"]["if"] = LANES
@@ -1248,7 +1275,9 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
 
 
 @pytest.mark.parametrize("lane", ["pr-fast-lane-admission", "pr-fast-lane-admission-2"])
-def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: str) -> None:
+def test_required_aggregation_contract_rejects_a_dropped_admission_lane(
+    lane: str,
+) -> None:
     """TASK-35575: the required check waits on each admission-sensitive job;
     dropping one from its ``needs`` fails the contract.
 
@@ -1256,7 +1285,7 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         lane: The admission-sensitive job dropped from the aggregate's needs.
     """
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
-    mutated["jobs"]["derived-artifacts"]["needs"].remove(lane)
+    _triggers(mutated["qualification_workflow"])["workflow_call"]["outputs"].pop(lane)
 
     with pytest.raises(AssertionError):
         _assert_required_aggregation(mutated)
@@ -1271,7 +1300,10 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive)"),
         ("pr-fast-lane-admission-2", None),
         ("pr-fast-lane-admission-2", "Run admission-sensitive suites 2"),
-        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 2)"),
+        (
+            "derived-artifacts",
+            "Require successful PR fast lane (admission-sensitive 2)",
+        ),
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests"),
         ("derived-artifacts", "Require successful Dreams tracking tests"),
@@ -1279,7 +1311,10 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("dreams-boundary", None),
         ("dreams-boundary", "Run Dreams admission-sensitive contracts"),
-        ("derived-artifacts", "Require successful Dreams and Guardian boundary contracts"),
+        (
+            "derived-artifacts",
+            "Require successful Dreams and Guardian boundary contracts",
+        ),
         ("derived-artifacts", None),
         ("derived-artifacts", "Require successful PR fast lane"),
         ("derived-artifacts", "Require successful Console P0 regression gate"),
@@ -1317,7 +1352,9 @@ def test_required_aggregation_contract_rejects_continue_on_error(
     ],
 )
 @pytest.mark.parametrize("which", list(EXACT_STEPS))
-def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str, which: str) -> None:
+def test_fast_lane_contract_rejects_selection_suppressing_flags(
+    flag: str, which: str
+) -> None:
     """Reject pytest flags that can turn the exact lane into a subset.
 
     Args:
@@ -1343,7 +1380,9 @@ def test_fast_lane_contract_rejects_a_shorter_test_limit(which: str) -> None:
     job, name, _, limit = EXACT_STEPS[which]
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
     run_step = _named_step(mutated["jobs"][job], name)
-    run_step["run"] = run_step["run"].replace(f"--timeout={limit}", f"--timeout={limit // 10}")
+    run_step["run"] = run_step["run"].replace(
+        f"--timeout={limit}", f"--timeout={limit // 10}"
+    )
 
     with pytest.raises(AssertionError):
         _assert_exact_step(mutated, which)
@@ -1387,24 +1426,28 @@ def test_bundle_and_backlog_checks_run_on_push_events() -> None:
         matching = [step for step in steps if script in str(step.get("run", ""))]
         assert matching, f"{script} is not run by the required job"
         for step in matching:
-            assert "pull_request" not in str(step.get("if", "")), (
-                f"{script} must not be pull-request-only"
-            )
+            assert "pull_request" not in str(
+                step.get("if", "")
+            ), f"{script} must not be pull-request-only"
     assert not (PROJECT_ROOT / ".github/workflows/css-bundle-guard.yml").exists()
     assert not (PROJECT_ROOT / ".github/workflows/backlog-guard.yml").exists()
 
 
 @pytest.mark.parametrize("which", list(EXACT_STEPS))
 @pytest.mark.parametrize("comment_only", [False, True])
-def test_exact_targets_and_invocation_reject_missing_executable_target(comment_only, which):
+def test_exact_targets_and_invocation_reject_missing_executable_target(
+    comment_only, which
+):
     job, name, targets, _ = EXACT_STEPS[which]
     workflow = copy.deepcopy(_workflow("derived-artifacts.yml"))
     step = _named_step(workflow["jobs"][job], name)
     # The last target, and (review of #3106, W1) one from the middle.
     for target in (targets[-1], targets[len(targets) // 2]):
         # A node id with brackets is single-quoted in the workflow.
-        step["run"] = step["run"].replace(target + " \\\n", "").replace(
-            "'" + target + "' \\\n", ""
+        step["run"] = (
+            step["run"]
+            .replace(target + " \\\n", "")
+            .replace("'" + target + "' \\\n", "")
         )
         assert target not in step["run"]
         if comment_only:
@@ -1452,12 +1495,20 @@ def _assert_dreams_required_steps(workflow: dict) -> None:
         step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
     )
     assert setup["with"]["python-version"] == "3.12"
-    assert shlex.split(_named_step(job, "Install fast-lane dependencies")["run"]) == shlex.split(
-        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    assert shlex.split(
+        _named_step(job, "Install fast-lane dependencies")["run"]
+    ) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")[
+            "run"
+        ]
     )
     for name in names:
-        owners = [key for key, candidate in workflow["jobs"].items()
-                  for step in candidate.get("steps", ()) if step.get("name") == name]
+        owners = [
+            key
+            for key, candidate in workflow["jobs"].items()
+            for step in candidate.get("steps", ())
+            if step.get("name") == name
+        ]
         assert owners == ["dreams-boundary"]
     assert not job.get("continue-on-error", False)
     for name, targets, limit in (
@@ -1479,10 +1530,13 @@ def test_dreams_critical_boundaries_are_executable_required_lane_members() -> No
     _assert_dreams_required_steps(_workflow("derived-artifacts.yml"))
 
 
-@pytest.mark.parametrize("name,targets", [
-    ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS),
-    ("Run Dreams admission-sensitive contracts", DREAMS_ADMISSION_TARGETS),
-])
+@pytest.mark.parametrize(
+    "name,targets",
+    [
+        ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS),
+        ("Run Dreams admission-sensitive contracts", DREAMS_ADMISSION_TARGETS),
+    ],
+)
 def test_dreams_membership_cannot_be_satisfied_by_comments(name, targets) -> None:
     workflow = _workflow("derived-artifacts.yml")
     step = _named_step(workflow["jobs"]["dreams-boundary"], name)
@@ -1492,14 +1546,28 @@ def test_dreams_membership_cannot_be_satisfied_by_comments(name, targets) -> Non
         _assert_dreams_required_steps(workflow)
 
 
-@pytest.mark.parametrize("name", [
-    "Run Dreams and Guardian boundary contracts",
-    "Run Dreams admission-sensitive contracts",
-])
-@pytest.mark.parametrize("mutation", [
-    "missing", "order", "duplicate", "wrong-job", "moved-back", "suppression",
-    "conditional", "continue-on-error", "job-budget", "test-budget",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Run Dreams and Guardian boundary contracts",
+        "Run Dreams admission-sensitive contracts",
+    ],
+)
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "order",
+        "duplicate",
+        "wrong-job",
+        "moved-back",
+        "suppression",
+        "conditional",
+        "continue-on-error",
+        "job-budget",
+        "test-budget",
+    ],
+)
 def test_dreams_required_placement_rejects_drift(name, mutation):
     workflow = _workflow("derived-artifacts.yml")
     job = workflow["jobs"]["dreams-boundary"]
