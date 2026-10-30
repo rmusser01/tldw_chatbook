@@ -339,7 +339,13 @@ async def test_filter_follows_a_class_added_to_an_ancestor_at_runtime(
 #: id. Measured 269 -> 267 on the slice head (dev 38c9d2edcf measures 269:
 #: dev's own count fell 270 -> 269 after 38623632e9, not B2b's); pinned at
 #: the measurement, as the spec asks.
-MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 267
+#: Re-measured 2026-10-29 after moving B2b onto dev ff815f8559: dev's own
+#: count rose 269 -> 270 (b212a59b24, TASK-33626.2, added
+#: `AutoSpeakConsentModal #console-auto-speak-consent-modal Static`; not
+#: B2b's), so the slice head measures 270 -> 268, the same two rules fewer;
+#: pinned at the measurement (B2b Task 14, owner decision: expand limits,
+#: never contort code, TASK-33910.4).
+MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES = 268
 
 #: Anti-vacuity floor: the census walking a hollow stylesheet (bundle
 #: missing, parse failure swallowed) must fail loudly, not pass at zero.
