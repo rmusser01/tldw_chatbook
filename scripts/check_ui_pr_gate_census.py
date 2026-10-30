@@ -633,11 +633,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 MINIMUM_FILES = 1163
 # 2026-10-26, Roleplay frame B2b (TASK-33910.4), owner decision (expand
 # limits, never contort code): appends Tests/UI/test_roleplay_import_sniff.py
-# at the tail (the last assignment is the one that takes effect). History:
-# 1,145 -> 1,146 on dev 38623632e9; rebased 2026-10-29 onto dev ff815f8559
-# (1,156 entries, its floor read 1,149): 1,157; rebased 2026-10-30 onto dev
-# 7536ac3b87 (1,163 entries, floor 1,163): the floor is the measured count, 1,164.
-MINIMUM_FILES = 1164
+# (Task 3) and Tests/UI/test_tag_filter_picker.py (Task 11) at the tail, one
+# commit each (the last assignment is the one that takes effect). History:
+# 1,145 -> 1,146 -> 1,147 on dev 38623632e9; rebased 2026-10-29 onto dev
+# ff815f8559 (1,156 entries, its floor read 1,149): 1,157 / 1,158; rebased
+# 2026-10-30 onto dev 7536ac3b87 (1,163 entries, floor 1,163): the floor is
+# the measured count, 1,165.
+MINIMUM_FILES = 1165
 
 
 def read_census(path: Path) -> list[str]:
