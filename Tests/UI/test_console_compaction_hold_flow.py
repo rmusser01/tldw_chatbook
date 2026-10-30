@@ -327,7 +327,7 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
     """TASK-33621.4 AC#3 through the real ChatScreen, controller and store.
 
     Held: the header badge and Inspect's Run line say the send is blocked on
-    the compaction choice (dev said "Ready"). Cancelled: the chat is still
+    the compaction ask (dev said "Ready"). Cancelled: the chat is still
     over its Ask trigger, so the header, Inspect and the Context chip say
     the next send will pause for compaction approval.
     """
@@ -364,7 +364,7 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
                         return
 
             await settle(lambda: badge() == "Blocked")
-            assert run_line() == "Blocked — compaction choice"
+            assert run_line() == "Blocked — compaction ask"
             assert badge() == "Blocked"
 
             card = console.query_one(TraceCallRecoveryCallout)
@@ -376,7 +376,7 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
             assert console._console_composer_or_none().draft_text() == held_draft
 
             await settle(lambda: badge() == COMPACTION_PAUSE_FORECAST_COPY)
-            assert run_line() == "Next send pauses for compaction approval"
+            assert run_line() == "Pauses for compaction"
             assert badge() == COMPACTION_PAUSE_FORECAST_COPY
             chip = console._context_spend._build_console_cost_state()
             assert chip.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)

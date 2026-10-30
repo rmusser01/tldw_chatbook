@@ -166,8 +166,9 @@ def project_console_send_authority(
         # contacted is not "Ready"; the transcript callout holds its actions.
         run = f"Blocked — {state.run_blocked_reason}"
     elif state.compaction_pause_expected:
-        # TASK-33621.4: about the NEXT send, so above a past failure.
-        run = "Next send pauses for compaction approval"
+        # TASK-33621.4: about the NEXT send, so above a past failure; whole
+        # in the 29-column block (the card and the chip tooltip say more).
+        run = "Pauses for compaction"
     elif state.run_failed:
         # TASK-24602. Ordered BELOW everything above it deliberately: a run in
         # flight, a pending approval and a blocked provider all describe what

@@ -54,10 +54,11 @@ def _controller(*, hold: ContextCompactionHold | None) -> SimpleNamespace:
 def test_a_send_held_for_compaction_is_a_stuck_turn_with_a_short_reason() -> None:
     reason = blocked_turn_reason(_controller(hold=_HOLD))
 
-    assert reason == "compaction choice"
+    assert reason == "compaction ask"
     # The run chip shows "Run: Blocked — <reason>" inside a 30-cell cap.
     assert len(f"Blocked — {reason}") <= 30
 
 
 def test_a_compaction_pause_without_a_hold_has_no_card_and_no_reason() -> None:
     assert blocked_turn_reason(_controller(hold=None)) == ""
+
