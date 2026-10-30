@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
+from tldw_chatbook.Chat.console_prepared_request import tagged_memory_message
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleInspectorState,
@@ -136,11 +137,11 @@ def test_a_summary_replaces_the_turns_up_to_its_boundary() -> None:
 
     rows, units = compaction_forecast_rows(_exchanges(), effective)
 
-    assert [row["content"] for row in rows] == [
-        "Earlier: the user asked two questions.",
-        "text of u2",
-        "text of a2",
-    ]
+    # Wrapped exactly as the send carries it (live 2026-10-29: counting the
+    # bare summary forecast "Ready" for a send the preflight held at 1,220
+    # of a 1,200-token trigger).
+    assert rows[0] == dict(tagged_memory_message(_memory("p-a1").summary_text))
+    assert [row["content"] for row in rows[1:]] == ["text of u2", "text of a2"]
     assert units == 1
 
 
