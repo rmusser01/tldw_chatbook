@@ -475,3 +475,70 @@ async def test_compact_action_compacts_and_the_next_send_no_longer_pauses(
         if console is not None:
             await console._console_runtime().dispose()
         database.close()
+
+
+@private_profile_test
+async def test_rewind_summarize_works_while_a_send_is_held(
+    request, monkeypatch, tmp_path
+):
+    """TASK-33621.4 AC#4 through the real ChatScreen, controller and store.
+
+    Live on dev the /rewind menu listed the held (unsent) message as a prompt
+    and disabled both Summarize actions with "Finish the current exchange
+    before summarizing.", the held send's echo standing in for an unfinished
+    exchange. The held message is not history: it is not a rewind target, it
+    does not disable Summarize, and summarizing with it held leaves it held.
+    """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, held_draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+            held = controller.store.preparation_for_session(session.id)
+            rows = console._console_rewind_prompt_rows(session.id)
+            assert rows, "earlier prompts are rewind targets"
+            assert held.transient_user_message_id not in {
+                row.message_id for row in rows
+            }
+            assert ChatScreen._console_rewind_summary_disabled_reason(
+                controller, session.id
+            ) == ""
+
+            users = [
+                message
+                for message in controller.store.messages_for_session(session.id)
+                if message.role is ConsoleMessageRole.USER
+                and message.id != held.transient_user_message_id
+            ]
+            target = users[-1].id
+            preview = await controller.preview_summarize(target, from_here=False)
+            assert not isinstance(preview, ConsoleSubmitResult), preview
+            summaries = len(
+                [c for c in adapter_calls if "Summarize" in str(c.get("system_message"))]
+            )
+            result = await controller.summarize_up_to(target)
+            assert result.accepted, result.visible_copy
+            assert (
+                len(
+                    [
+                        c
+                        for c in adapter_calls
+                        if "Summarize" in str(c.get("system_message"))
+                    ]
+                )
+                == summaries + 1
+            )
+            # The held send is still the user's to decide.
+            assert controller.context_compaction_hold(held.preparation_id) is not None
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+

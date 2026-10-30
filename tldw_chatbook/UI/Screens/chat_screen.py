@@ -19085,10 +19085,12 @@ class ChatScreen(BaseAppScreen):
             content.
         """
         store = self._ensure_console_chat_store()
+        # TASK-33621.4: a send held for compaction is not history yet.
+        held = self._ensure_console_chat_controller()._held_send_echo_id(session_id)
         user_messages = [
             message
             for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.USER
+            if message.role is ConsoleMessageRole.USER and message.id != held
         ]
         from ...Widgets.Console.console_rewind_modal import RewindPromptRow
 
@@ -19219,8 +19221,10 @@ class ChatScreen(BaseAppScreen):
         """Return only synchronously known run/tip refusal guidance."""
         if not controller.run_state_for(session_id).is_send_allowed:
             return "A run is already running in this tab."
+        held = controller._held_send_echo_id(session_id)  # TASK-33621.4
         try:
             path = controller.store.active_path_message_ids(session_id)
+            path = [message_id for message_id in path if message_id != held]
             messages = {
                 message.id: message
                 for message in controller.store.messages_for_session(session_id)
