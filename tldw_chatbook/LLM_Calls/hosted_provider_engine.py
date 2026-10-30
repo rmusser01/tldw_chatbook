@@ -2211,6 +2211,9 @@ def _send_hosted_chat_request(
                 auth_scheme=record.auth_scheme,
                 extra_headers=resolution.extra_headers,
                 display_name=record.display_name,
+                retry_without_stream_options=(
+                    record.tolerant_response_extras or record.stream_usage_optional
+                ),
             ),
             route="chat/completions",
             payload=payload,

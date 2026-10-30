@@ -147,6 +147,10 @@ class HostedHTTPTransportConfig:
     # failed"); ``provider`` stays the error's identity key. Unset keeps the
     # key in the copy, as legacy adapters always had (TASK-33002.14).
     display_name: str | None = field(default=None, compare=False)
+    # Retry once without ``stream_options`` when the server rejects it. Only
+    # for records whose stream may end without usage: a strict record would
+    # bill a whole generation and then fail for missing usage.
+    retry_without_stream_options: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -887,31 +891,33 @@ def owned_json_post(
                     unavailable = model_unavailable_error(config.provider, status, error_payload)
                     if unavailable is not None:
                         raise unavailable
-                if status == 400 and "stream_options" in payload:
-                    from tldw_chatbook.Chat.provider_error_reason import (
-                        bounded_response_body,
+                # Mirror chat_with_openai: a strict OpenAI-compatible (or
+                # FastAPI 422) server may reject the usage option; drop it
+                # once. ``content`` caches the small error body, so a refusal
+                # below can still read its provider reason.
+                if (
+                    status in {400, 422}
+                    and config.retry_without_stream_options
+                    and "stream_options" in payload
+                    and b"stream_options" in response.content[:8192]
+                ):
+                    logger.warning(
+                        "{}: endpoint rejected stream_options; retrying "
+                        "without usage reporting.",
+                        label,
                     )
-
-                    if "stream_options" in bounded_response_body(response):
-                        # Mirror chat_with_openai: a strict OpenAI-compatible
-                        # server may reject the usage option; drop it once.
-                        logger.warning(
-                            "{}: endpoint rejected stream_options; retrying "
-                            "without usage reporting.",
-                            label,
-                        )
-                        _best_effort_close(response)
-                        response = None
-                        return owned_json_post(
-                            config=config,
-                            route=route,
-                            payload={
-                                key: value
-                                for key, value in payload.items()
-                                if key != "stream_options"
-                            },
-                            streaming=streaming,
-                        )
+                    _best_effort_close(response)
+                    response = None
+                    return owned_json_post(
+                        config=config,
+                        route=route,
+                        payload={
+                            key: value
+                            for key, value in payload.items()
+                            if key != "stream_options"
+                        },
+                        streaming=streaming,
+                    )
                 _raise_http_error(
                     config.provider,
                     status,
