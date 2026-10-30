@@ -90,6 +90,7 @@ from tldw_chatbook.UI.Console_Modules.review_selection import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
+    CITATION_SOURCES_UNAVAILABLE_COPY,
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
     build_console_citation_source_rows,
@@ -1616,15 +1617,19 @@ async def test_citation_unsupported_source_renders_no_open_source_action() -> No
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "hydration",
+    ("hydration", "cause"),
     [
-        _hydration_result(state=CitationHydrationState.PROFILE_DENIED),
-        _hydration_result(omitted_snapshot_ordinals=frozenset({1})),
+        (
+            _hydration_result(state=CitationHydrationState.PROFILE_DENIED),
+            "sources_removed",
+        ),
+        (_hydration_result(omitted_snapshot_ordinals=frozenset({1})), "load_failed"),
     ],
 )
 async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
-    hydration: CitationHydrationResult,
+    hydration: CitationHydrationResult, cause: str
 ) -> None:
+    """TASK-33620.8 (AC#5): the one unavailable state names a cause."""
     app, _screen, _repository, _message = _citation_harness(hydration=hydration)
 
     async with app.run_test() as pilot:
@@ -1637,9 +1642,11 @@ async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
         states = [
             widget
             for widget in modal.query(".console-citation-sources-state")
-            if isinstance(widget, Static) and widget.renderable == "Sources unavailable"
+            if isinstance(widget, Static)
+            and widget.renderable == CITATION_SOURCES_UNAVAILABLE_COPY[cause]
         ]
         assert len(states) == 1
+        assert modal.unavailable_cause == cause
         assert (
             len(modal.query_one("#console-citation-source-list", ListView).children)
             == 0
@@ -1658,7 +1665,7 @@ async def test_hydration_exception_shows_content_free_unavailable_state() -> Non
         modal = app.screen
         assert isinstance(modal, ConsoleCitationSourcesModal)
         state = modal.query_one("#console-citation-sources-state", Static)
-        assert state.renderable == "Sources unavailable"
+        assert state.renderable == CITATION_SOURCES_UNAVAILABLE_COPY["load_failed"]
         assert "private" not in str(state.renderable).lower()
 
 
