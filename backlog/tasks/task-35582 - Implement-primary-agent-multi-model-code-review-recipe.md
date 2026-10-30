@@ -1,7 +1,7 @@
 ---
 id: TASK-35582
 title: Implement primary-agent multi-model code review recipe
-status: In Progress
+status: Done
 created_date: 2026-10-18 19:51
 labels:
 - agents
@@ -15,7 +15,7 @@ documentation:
 - Docs/superpowers/specs/2026-10-18-multi-model-code-review-design.md
 - backlog/decisions/281-primary-agent-multi-model-code-review.md
 - Docs/superpowers/plans/2026-10-18-multi-model-code-review-implementation.md
-updated_date: 2026-10-30 03:55
+updated_date: 2026-10-30 12:16
 ---
 
 ## Description
@@ -78,8 +78,8 @@ macOS CI crash follow-up (2026-10-29): inspect the failed restore subprocess and
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 After moving this task to In Progress, add an implementation plan with ADR required: yes; ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md; Reason: review entry point, source/report ownership, role boundaries, and cross-run verification contracts. Do this before implementation code changes.
-- [ ] #2 Keep acceptance criteria unchecked until supported by recorded evidence; add Implementation Notes, updated docs, targeted verification and self-review before marking Done.
+- [x] #1 After moving this task to In Progress, add an implementation plan with ADR required: yes; ADR path: backlog/decisions/281-primary-agent-multi-model-code-review.md; Reason: review entry point, source/report ownership, role boundaries, and cross-run verification contracts. Do this before implementation code changes.
+- [x] #2 Keep acceptance criteria unchecked until supported by recorded evidence; add Implementation Notes, updated docs, targeted verification and self-review before marking Done.
 <!-- DOD:END -->
 
 
@@ -143,4 +143,5 @@ Offline V1 source-range/completion repair (2026-10-29): reproduced the exact thr
 Narrow macOS CI diagnostic repair: hosted retained-eval restore child exited SIGSEGV during the timed C traceback dump; the exact original test and two bounded stress comparisons passed locally, so native causality remains unproved. Reused the existing bounded Python thread observer with exception-preserving cleanup, preserved all 51 restore-body statements and the 45-second parent deadline, and retained exact owned diagnostic files on failure across all OS lanes. Two new RED controls; ten focused GREEN tests, workflow locator/artifact self-check, Ruff lint/format and whitespace pass. Scoped review finding on artifact retention resolved; no remaining actionable findings. Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/macos-diagnostics/report.md. Test diagnostics only, existing ADR281/recovery contracts unchanged. No production change, broad test run, CI rerun or live request/child: cumulative457/31. AC24 remains open, PR3286 draft; the existing single60/3 grant remains untouched pending fresh successful normal CI.
 Single qualification after macOS CI passed on ac4816ac0350fe98f9b45e775854893cbb313750: all normal workflows completed, 54 success/3 skips. The one approved live run FAILED live_report_incomplete_V1 after 27/60 requests and 2/3 children (13 Qwen,7 Luna,7 DeepSeek,0 Haiku;5 metadata GETs), cumulative484requests/33children. Both originals sealed/presented; primary report reads included generic review_refused errors and a later success. The first individually timestamped read failure is02:52:54UTC, with an earlier failed pair retained in the continuation. The600-second deadline and final continuation-persistence error occurred together; internal refusal/persistence causes remain unproved. V1 never launched, so five originals lack verifier mapping and unified output. No automatic-work reservations/wake or usage_unknown pause in this invocation; historical uncertain usage is not resolved. Source/team/config preserved; native teardown zero owners/no uncertainty. Independent outcome review agrees. Raw evidence and SQLite backups archived separately with hashes and credential scan; standalone SQLite integrity check unavailable without app UDF, not claimed passed. AC24/DoD remain unchecked, InProgress, PR3286 draft. Single invocation consumed; unused33requests/one child retired (131 retired unused requests total). Follow-up deleted; no retry, additional budget, production repair, broad tests or merge. Existing ADR281; no new architecture. Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/macos-final60/report.md.
 Scope change 2026-10-30 (owner decision): the live Console/provider qualification (former AC24) moved to a separate follow-up task that references TASK-35582, so this PR merges on its offline, scripted and CI evidence. Live state at hand-off: the reviewer stage sealed and presented reports in recent runs; the verifier stage has not completed live (latest failure: Docs/superpowers/qa/2026-10-18-multi-model-code-review/macos-final60/report.md). Rebased onto dev; only the two lessons docs conflicted and both sides were kept.
+Local review gate, 2026-10-30. This replaces Qodo, which is out of credits. Three reviewers each took one slice of the production diff after the rebase onto dev ff815f8559: review modules, agent runtime, and the Console/provider path. Every finding, Minor included, was fixed with RED->GREEN tests, and each fix round went back to the reviewer who raised it until that reviewer had no findings left: 6 rounds for review modules, 3 for agent runtime, 4 for Console/provider. Main fixes: ordinary 'review ...' messages no longer trigger review; request-table eviction; source capture went from 313 s to 8 s on 273 files; unreadable or sensitive changes become unnamed coverage gaps; worktree selections must match the stored spelling (case, NFD); spawn-slot and settle containment; send degradation when a continuation destination is unavailable; the stream_options degrade is bounded to tolerant records; explicit review requests explain a failure; foreign dispatch owners keep runs durable. God modules were extracted back under their ratchets. Follow-ups filed: TASK-37653 (live qualification, formerly AC24), TASK-37654 (dev flake in the composer restyle test), TASK-37655 (NFD bypass in the shared exclusion matcher, which predates this PR). Head-vs-dev comparisons of Tests/Chat and Tests/LLM_Calls showed no head-only regressions; preflight passes.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
