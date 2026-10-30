@@ -50,6 +50,6 @@ Won't Do, overtaken (2026-10-30).
 - **The work.** PR #3242 built the change: first 16 shards (owner ruling 2026-10-24, after 15 failed the 13-run worst-case gate at 17.38 min against 17.0), then a rebase to keep 17. That rebase was needed because #3228 had moved dev's lane to 17 shards meanwhile; the owner ruled to keep 17 and re-deal with the tool.
 - **Why it was dropped.** Before the rebase finished, dev moved the UI Fast Lane to 28 shards (1,149 entries) through other PRs, which gives far more headroom than this task asked for. #3242 was closed.
 - **What survives.**
-  - The test leak its review found, where the response-rules fixture leaves a llama.cpp endpoint in the shared bootstrap config, is fixed by TASK-37763.
+  - The test leak its review found, where the response-rules fixture leaves a llama.cpp endpoint in the shared bootstrap config, was already fixed on dev by TASK-36478 (#3254, 2026-10-26). That change restores the shared bootstrap config after every bootstrap-profile test, and a negative control with that restore disabled reproduced the egress error.
   - The committed whole-census re-deal mode it built is filed as TASK-37764.
 <!-- SECTION:NOTES:END -->
