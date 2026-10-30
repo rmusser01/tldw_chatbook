@@ -12,7 +12,8 @@ cleared it.
 
 Now the Trash's reads wait behind the WRITER interlock alone
 (``_library_notes_writer_held``): under an import a page press reads at
-once, ``x`` still paints ``PURGE_BUSY_NOTICE``, and the import ending
+once, ``x`` -- and Restore (re-review NB-1) -- paint ``PURGE_BUSY_NOTICE``
+on the pressed row's behalf, and the import ending
 releases through the ONE release body (``_release_library_notes_mutation``),
 which clears the reason and runs any read queued under a Restore exactly
 once. Leaving the Trash drops a queued read (m-3).
@@ -37,6 +38,7 @@ from Tests.UI.library_quit_guard_support import _NotesProfile
 from Tests.UI.test_library_notes_import_escape_keeps_running import (
     _Gate,
     _batch_of_one,
+    _footer,
     _open_import_once_on_the_folder,
     _press,
     _review_the_folder,
@@ -270,6 +272,139 @@ async def test_next_in_the_trash_during_an_import_reads_the_page_and_x_says_why(
             assert screen._notes_controller._library_notes_trash_page == 2
             assert seed.deleted() == before
             assert seed.profile.db.count_notes() == 2 + NOTES
+    finally:
+        write.release.set()
+        seed.profile.interop.close_all_user_connections()
+        seed.profile.db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-review NB-1 (residual R-2): under a held import ``r`` on a Trash row
+    paints the same busy reason ``x`` paints, restores nothing, and keeps
+    focus owed to its row; the import ending clears the reason through the
+    one release, and ``r`` then restores the note.
+
+    The owed row is proven as the ``x`` pin proves it: focus is parked on the
+    grip (a programmatic move, as Textual's reset is) before the release.
+
+    RED at 5d0b731bd1: the ``r`` binding is gated on the import's fence, so
+    the key does nothing and the Trash's line stays empty (a Restore press
+    returned silently), while the footer offers ``r restore note``.
+    """
+    seed = _Seed(tmp_path, monkeypatch)
+    write = _Gate()
+    monkeypatch.setattr(
+        LocalNoteImportTarget,
+        "create_note",
+        write.wrap(LocalNoteImportTarget.create_note),
+    )
+    host = seed.host()
+
+    def deleted_flag(note_id: str) -> int:
+        with sqlite3.connect(seed.path) as connection:
+            return int(
+                connection.execute(
+                    "SELECT deleted FROM notes WHERE id = ?", (note_id,)
+                ).fetchone()[0]
+            )
+
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            controller = screen._library_note_import_controller
+            _batch_of_one(controller)
+            await _open_import_once_on_the_folder(host, screen, pilot, seed.folder)
+            await _review_the_folder(host, screen, pilot)
+            await _press(host, screen, pilot, "#note-import-import")
+            await _until(pilot, write.entered.is_set, "the first note write to start")
+            await pilot.press("escape")
+            await _until(
+                pilot,
+                lambda: screen._notes_state.view == "list",
+                "Escape to the Notes list",
+            )
+            await pilot.click("#library-notes-trash-open")
+            await _until(
+                pilot,
+                lambda: _focused_id(screen) == "library-notes-trash-restore-0"
+                and _pager(screen) == f"1–20 of {DELETED} · Page 1 of 2",
+                lambda: f"the Trash's first row (focus: {_focused_id(screen)!r})",
+            )
+            for _ in range(2):
+                await _until(
+                    pilot,
+                    lambda: not screen._notes_state.trash.loading
+                    and _focused_id(screen) == "library-notes-trash-restore-0",
+                    lambda: f"the Trash to settle (focus: {_focused_id(screen)!r})",
+                )
+                await pilot.pause(0.2)
+            # A row other than the first, reached by real keys (one Tab stop
+            # per row), so the Trash's own first-row fallback cannot pass for
+            # the owed row.
+            for index in (1, 2):
+                await pilot.press("tab")
+                await _until(
+                    pilot,
+                    lambda: _focused_id(screen) == f"library-notes-trash-restore-{index}",
+                    lambda: f"Tab to row {index} (focus: {_focused_id(screen)!r})",
+                )
+            note_id = str(screen.focused.note_id)
+            before = seed.deleted()
+            assert controller.snapshot.phase is NoteImportPhase.IMPORTING
+            assert "restore note" in _footer(host, screen), _footer(host, screen)
+
+            await pilot.press("r")
+            await _until(
+                pilot,
+                lambda: _painted_in(host, "#library-notes-trash-notice")
+                == PURGE_BUSY_NOTICE,
+                lambda: "the busy reason on the Trash's own line, painted "
+                f"{_painted_in(host, '#library-notes-trash-notice')!r}",
+            )
+            assert seed.deleted() == before
+            assert deleted_flag(note_id) == 1, "the note was restored under the fence"
+            assert _focused_id(screen) == "library-notes-trash-restore-2"
+            assert note_id in {row.note_id for row in screen._notes_state.trash.rows}
+
+            # Textual's reset landing, not yet replayed, as the release's
+            # syncs capture it.
+            grip = screen.query_one("#library-browse-items-grip")
+            screen.set_focus(grip)
+            await _until(pilot, lambda: screen.focused is grip, "focus on the grip")
+
+            write.release.set()
+            await _until(
+                pilot,
+                lambda: controller.snapshot.phase is NoteImportPhase.RECEIPT,
+                lambda: f"the import to settle, phase={controller.snapshot.phase}",
+            )
+            for _ in range(2):
+                await _until(
+                    pilot,
+                    lambda: not screen.query("#library-notes-trash-notice")
+                    and _focused_id(screen) == "library-notes-trash-restore-2"
+                    and not screen._notes_state.trash.loading,
+                    lambda: (
+                        "the reason cleared with focus still on the row: "
+                        f"focus={_focused_id(screen)!r} "
+                        f"notice={_painted_in(host, '#library-notes-trash-notice')!r}"
+                    ),
+                )
+                await pilot.pause(0.3)
+            assert deleted_flag(note_id) == 1
+
+            # The fence is down: the same key restores the same note.
+            await pilot.press("r")
+            await _until(
+                pilot,
+                lambda: deleted_flag(note_id) == 0 and seed.deleted() == before - 1,
+                lambda: f"r to restore the note (deleted now {seed.deleted()})",
+            )
+            assert not screen.query("#library-notes-trash-notice")
     finally:
         write.release.set()
         seed.profile.interop.close_all_user_connections()

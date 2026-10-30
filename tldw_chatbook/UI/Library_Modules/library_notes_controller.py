@@ -7982,6 +7982,12 @@ class LibraryNotesController:
         """
         event.stop()
         if self._library_notes_mutation_fenced():
+            # Re-review NB-1: under an import the Trash is open (I-2), so say
+            # why, on its row, as ``x`` does. A Restore behind another Notes
+            # change stays as it was (TASK-34000.98).
+            if not LibraryNotesController._library_notes_writer_held(self):
+                button = getattr(event, "button", None)
+                LibraryNotesController._say_library_notes_trash_busy(self, button)
             return
         button = event.button
         note_id = getattr(button, "note_id", "")
@@ -8025,16 +8031,8 @@ class LibraryNotesController:
         event.stop()
         if self._library_notes_mutation_fenced():
             # Review R0, m-5: say why on the Trash's own line, not silence.
-            # Polish-1b finishing pass (live, 2 of 10 runs): painting that line
-            # and clearing it at the release are syncs; one capturing while
-            # focus is parked on a pane grip fell back to the first row. Owe
-            # the row ``x`` was pressed on, as Cancel does.
-            prefix = "library-notes-trash-delete-"
-            button_id = str(getattr(getattr(event, "button", None), "id", "") or "")
-            if button_id.startswith(prefix):
-                self._trash_focus_role = f"trash-restore:{button_id.removeprefix(prefix)}"
-                self._trash_landing_settling = ""
-            LibraryNotesController._say_library_notes_trash_busy(self)
+            button = getattr(event, "button", None)
+            LibraryNotesController._say_library_notes_trash_busy(self, button)
             return
         if LibraryNotesController._library_notes_purge_confirm_open(self):
             return
@@ -8094,13 +8092,27 @@ class LibraryNotesController:
         self._trash_purge_confirm_open = False
         return False
 
-    def _say_library_notes_trash_busy(self) -> None:
-        """Paint why Delete forever did nothing (review R0, m-5).
+    def _say_library_notes_trash_busy(self, button: object = None) -> None:
+        """Paint why a fenced Trash write did nothing, and owe its row.
 
-        Another Notes change holds the single-writer interlock. The reason
-        stays under the Trash's purpose line until the interlock is released
-        (``_clear_library_notes_trash_busy``) or the page is read again.
+        Review R0, m-5 (Delete forever); re-review NB-1 (Restore under an
+        import). Another Notes change holds the single-writer interlock. The
+        reason stays under the Trash's purpose line until the interlock is
+        released (``_clear_library_notes_trash_busy``) or the page is read
+        again. Polish-1b finishing pass (live, 2 of 10 runs): painting that
+        line and clearing it at the release are syncs; one capturing while
+        focus is parked on a pane grip fell back to the first row. So the
+        row pressed (``button``, its Restore or Delete forever) is owed, as
+        Cancel does.
+
+        Args:
+            button: The pressed row button, or ``None``.
         """
+        button_id = str(getattr(button, "id", "") or "")
+        for prefix in ("library-notes-trash-restore-", "library-notes-trash-delete-"):
+            if button_id.startswith(prefix):
+                self._trash_focus_role = f"trash-restore:{button_id.removeprefix(prefix)}"
+                self._trash_landing_settling = ""
         trash = getattr(self, "_library_notes_trash", None)
         if trash is None or trash.notice == PURGE_BUSY_NOTICE:
             return

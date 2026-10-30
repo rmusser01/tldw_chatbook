@@ -27352,15 +27352,15 @@ class LibraryScreen(BaseAppScreen):
             )
         if action == "library_notes_trash_restore":
             # Exactly when a Restore button is on screen to stand for -- the
-            # Notes canvas showing its Trash view, with rows and no mutation
-            # already in flight.
+            # Notes Trash view with rows and no Notes writer in flight; under an
+            # import's fence r reaches the handler, which says why (NB-1).
             trash = self._notes_state.trash
             return bool(
                 self._library_notes_workflow_active()
                 and self._notes_state.view == "trash"
                 and trash is not None
                 and trash.rows
-                and not self._library_notes_mutation_fenced()
+                and not self._notes_controller._library_notes_writer_held()
             )
         if action == "library_notes_trash_delete":
             # TASK-34000.29 (8b; T8b-d, review R0 I-2/m-5): the focused Trash

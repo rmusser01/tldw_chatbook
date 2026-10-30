@@ -724,7 +724,11 @@ _BUDGETS: dict[str, int] = {
     # the release cleared the busy reason (a sync captured the pane grip);
     # the fenced ``x`` owes its row, as the confirm's Cancel does:
     # 8896 -> 8905 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8905,
+    # 2026-10-30, polish-1b re-review NB-1, residual R-2 (same owner decision):
+    # a Restore under an import paints the busy reason ``x`` paints and owes
+    # its row, through the one busy helper both now share (it takes the
+    # pressed button): 8905 -> 8917 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8917,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
