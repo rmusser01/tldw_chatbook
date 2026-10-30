@@ -1063,6 +1063,41 @@ def test_save_this_chat_appears_only_in_a_temporary_chat():
     assert "not saved" in entry.description.lower()
 
 
+@pytest.mark.unit
+def test_save_chat_row_promises_capture_only_when_saving_turns_it_on():
+    """TASK-37811 (owner decision 2026-10-29): say what saving will do.
+
+    Saving a Temporary chat hands Capture back to the chat's own choice,
+    else the global setting. The row read 'Save chat (enables capture)' in
+    every case, so with a stored conversation Capture Off or the global
+    Capture Off it promised traces that never came.
+    """
+    from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT
+    from tldw_chatbook.Chat.console_exchange_capture import saved_chat_capture
+
+    # (stored conversation Capture, global capture) -> Capture once saved.
+    assert saved_chat_capture(None, global_enabled=True) is True
+    assert saved_chat_capture(False, global_enabled=True) is False
+    assert saved_chat_capture(None, global_enabled=False) is False
+    assert saved_chat_capture(True, global_enabled=False) is True
+
+    def save_row(**kwargs):
+        entry = build_composer_menu_entries(ephemeral=True, **kwargs)[0]
+        assert entry.action_id == ACTION_SAVE_CHAT
+        return entry.label, entry.description
+
+    assert save_row(save_enables_capture=True) == (
+        "Save chat (enables capture)",
+        "Not saved locally; records no traces until saved",
+    )
+    assert save_row(save_enables_capture=False) == (
+        "Save chat",
+        "Not saved locally; traces stay off once saved",
+    )
+    # A caller that does not know never gets the promise.
+    assert save_row() == save_row(save_enables_capture=False)
+
+
 def _bare_promote_screen(store):
     """Build a ``ChatScreen`` stand-in wired to a fake Console store.
 

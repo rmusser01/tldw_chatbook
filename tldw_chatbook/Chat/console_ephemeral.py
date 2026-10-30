@@ -58,10 +58,13 @@ from __future__ import annotations
 #: Composer-menu action id for promoting a temporary chat.
 ACTION_SAVE_CHAT = "save-chat"
 
-#: The promote action's label (composer menu). TASK-33621.17 (owner decision
-#: 2026-10-27): a temporary chat records no traces, so saving it is also what
-#: turns Capture back on (it then follows the normal setting).
-SAVE_CHAT_LABEL = "Save chat (enables capture)"
+#: The promote action's labels (composer menu). TASK-33621.17 (owner decision
+#: 2026-10-27): a temporary chat records no traces; once saved it follows its
+#: own Capture choice, else the global setting. TASK-37811 (owner decision
+#: 2026-10-29): the row says "(enables capture)" only when that turns capture
+#: on (``console_exchange_capture.saved_chat_capture``), else just "Save chat".
+SAVE_CHAT_LABEL = "Save chat"
+SAVE_CHAT_ENABLES_CAPTURE_LABEL = "Save chat (enables capture)"
 
 #: Chip label shown in the Console status strip while a chat is temporary.
 #: TASK-33621.17: "traces off" because a temporary chat resolves Capture Off
@@ -72,7 +75,7 @@ TEMPORARY_LABEL = "Temporary · traces off"
 #: Chip tooltip. Says what survives and what does not, without implying more.
 TEMPORARY_TOOLTIP = (
     "This chat is not saved locally and records no traces. It is lost when "
-    "the tab closes or the app restarts. Activate to save it (enables capture)."
+    "the tab closes or the app restarts. Activate to save it."
 )
 
 #: Action id -> why it is unavailable while the chat is temporary. Keyed by

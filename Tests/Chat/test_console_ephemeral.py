@@ -60,6 +60,15 @@ def test_user_facing_copy_never_overstates_the_guarantee():
         assert word not in copy, f"copy overstates the guarantee: {word!r}"
 
 
+@pytest.mark.unit
+def test_fixed_temporary_copy_never_says_saving_enables_capture():
+    """TASK-37811: saving turns capture on only when the saved chat resolves
+    Capture On, which a fixed string cannot know. Only the composer Menu's
+    Save chat row, which reads that resolution, may say so."""
+    for copy in (TEMPORARY_LABEL, TEMPORARY_TOOLTIP):
+        assert "enables capture" not in copy.lower(), copy
+
+
 # -- agent tool-dispatch policy (tool_blocked_reason) --
 
 

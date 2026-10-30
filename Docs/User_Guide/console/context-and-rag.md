@@ -731,9 +731,11 @@ whole transcript on every send. Provider-only instructions, RAG, tools, and
 responses are filtered and stored once as reusable artifacts. Capture is on by
 default; Capture Off stops future trace writes without erasing prior history.
 Durable captures stay local to the device's conversation database and are never
-synced. A temporary chat records no traces until you save it (**Save chat
-(enables capture)** in the composer **Menu**, or the **Temporary · traces off**
-segment of the status strip).
+synced. A temporary chat records no traces. Saving it (**Save chat** in the
+composer **Menu**, or the **Temporary · traces off** segment of the status
+strip) hands its later sends to its own Capture choice, else the global
+default; the Menu row reads **Save chat (enables capture)** only when that is
+Capture On.
 
 If you turn Capture On in a chat that is still temporary, a Capture On call
 needs **Save & Send** first, or you send that message once with Capture Off.

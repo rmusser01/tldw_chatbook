@@ -19,6 +19,7 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_ephemeral import (
     ACTION_SAVE_CHAT,
+    SAVE_CHAT_ENABLES_CAPTURE_LABEL,
     SAVE_CHAT_LABEL,
     blocked_reason,
 )
@@ -69,6 +70,7 @@ def build_composer_menu_entries(
     can_save_chatbook: bool = False,
     draft_available: bool = False,
     improvement_undo_available: bool = False,
+    save_enables_capture: bool = False,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
@@ -92,6 +94,10 @@ def build_composer_menu_entries(
         ephemeral: Whether the active session is temporary.
         can_save_chatbook: Whether a Chatbook artifact is available to save.
         draft_available: Whether a nonblank unsent message can be improved or saved.
+        improvement_undo_available: Whether a Prompt change can be undone.
+        save_enables_capture: Whether saving the temporary chat turns capture
+            on (``console_exchange_capture.saved_chat_capture``). Only then
+            does the Save chat row say so (TASK-37811); False never promises.
 
     Returns:
         The menu entries in display order.
@@ -198,8 +204,14 @@ def build_composer_menu_entries(
     return (
         ComposerMenuEntry(
             ACTION_SAVE_CHAT,
-            SAVE_CHAT_LABEL,
-            "Not saved locally; records no traces until saved",
+            *(
+                (
+                    SAVE_CHAT_ENABLES_CAPTURE_LABEL,
+                    "Not saved locally; records no traces until saved",
+                )
+                if save_enables_capture
+                else (SAVE_CHAT_LABEL, "Not saved locally; traces stay off once saved")
+            ),
         ),
         *entries,
     )
@@ -256,6 +268,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
         can_save_chatbook: bool = False,
         draft_available: bool = False,
         improvement_undo_available: bool = False,
+        save_enables_capture: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the menu.
@@ -269,6 +282,9 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             can_save_chatbook: Whether a Chatbook artifact is available,
                 which decides whether the Save as Chatbook row is actionable.
             draft_available: Whether the active composer has a nonblank draft.
+            improvement_undo_available: Whether a Prompt change can be undone.
+            save_enables_capture: Whether saving the temporary chat turns
+                capture on, which decides the Save chat row's wording.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -278,6 +294,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             can_save_chatbook=can_save_chatbook,
             draft_available=draft_available,
             improvement_undo_available=improvement_undo_available,
+            save_enables_capture=save_enables_capture,
         )
 
     def compose(self) -> ComposeResult:
