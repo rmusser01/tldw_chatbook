@@ -458,14 +458,31 @@ def list_state(node) -> RoleplayListState:
 
 
 def no_match_lines(node) -> tuple[str, ...]:
-    """The no-match message's painted lines (spec 1.5.4), or () while it is hidden."""
+    """The no-match message's two lines (spec 1.5.4), or () while it is hidden."""
     blocks = node.query("#personas-library-nomatch")
     if not blocks or not blocks.first().display:
         return ()
     return tuple(
-        str(line.render())
-        for line in blocks.first().query(".personas-library-status-copy")
+        str(node.query_one(f"#personas-library-nomatch-{part}").render())
+        for part in ("line", "hint")
     )
+
+
+def also_in_targets(node) -> tuple[str, ...]:
+    """The ``Also in:`` targets shown under the no-match message, in order:
+    each target's label, then ``Not found in other kinds either.`` if shown."""
+    if not no_match_lines(node):
+        return ()
+    block = node.query_one("#personas-library-nomatch")
+    shown = [
+        str(button.label)
+        for button in block.query(".personas-library-also-in-target")
+        if button.display
+    ]
+    none = block.query("#personas-library-also-in-none")
+    if none and none.first().display:
+        shown.append(str(none.first().render()))
+    return tuple(shown)
 
 
 def painted_option_rows(item_list: RoleplayItemList) -> dict[int, list[int]]:

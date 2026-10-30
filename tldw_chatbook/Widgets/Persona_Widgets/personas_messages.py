@@ -231,6 +231,18 @@ class PersonaSearchSubmitted(Message):
     """Enter in the library search box (frame slice B2a, spec 1.6's 4-key find)."""
 
 
+class AlsoInRequested(Message):
+    """Enter or a click on an ``Also in:`` target (frame slice B2b, spec 1.5.4).
+
+    The screen switches to ``kind``'s list with the search applied, through
+    the unsaved guard.
+    """
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+
+
 class PersonaSortCycleRequested(Message):
     """The user asked to advance the library sort (screen decides the next key)."""
 
@@ -253,6 +265,7 @@ class PersonaMarksChanged(Message):
 
 __all__ = [
     "ActorPackExportActorKind",
+    "AlsoInRequested",
     "ActorPackExportRequested",
     "PersonaAction",
     "PersonaActionRequested",
