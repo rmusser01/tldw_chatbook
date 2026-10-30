@@ -990,9 +990,17 @@ your message:
   recovery card described below.
 
 The line is read from a small record saved with your message, so it is still
-there after you reopen the chat, switch branches or restart the app. Turns
-sent before this record existed, turns sent while a chat was temporary, and
-turns sent with Auto set to **Never** have no line.
+there after you reopen the chat, switch branches or restart the app.
+
+A turn has no line when no automatic search ran for it, or when nothing
+recorded one:
+
+- Auto was set to **Never**.
+- Evidence was already staged (a manual **Search Library** run or a Library
+  **Use in Console** handoff), so the send used that instead of searching.
+- The message was an **Edit & resend**, or started with `/` or `@`.
+- The chat was temporary when you sent it, or the turn was sent before this
+  record existed.
 
 A timeout, a failed search, or **Stop** pauses the prepared send before
 provider dispatch. The model provider is not contacted. A recovery card in
