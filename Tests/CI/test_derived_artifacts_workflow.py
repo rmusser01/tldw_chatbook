@@ -77,7 +77,7 @@ def _job() -> dict:
 
 
 def _steps() -> list[dict]:
-    return _job()["steps"]
+    return _workflow()["jobs"]["preflight"]["steps"]
 
 
 def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
@@ -93,6 +93,7 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     is never a required context.
     """
     assert list(_workflow()["jobs"]) == [
+        "preflight",
         "pr-fast-lane",
         # TASK-34916: the PR Fast Lane's admission-sensitive pytest invocation,
         # moved out when the two steps together reached the 35-min cap.
@@ -122,7 +123,7 @@ def test_required_aggregator_fails_when_either_lane_fails():
     "guard nobody is gated on" shape this whole workflow exists to replace.
     """
     job = _workflow()["jobs"]["derived-artifacts"]
-    assert job.get("needs") == list(VERDICTS)
+    assert job.get("needs") == ["preflight", *VERDICTS]
     for lane, step_name in VERDICTS.items():
         verdict = next(step for step in job["steps"] if step.get("name") == step_name)
         # Round 4: `!cancelled()` so one red lane cannot skip the next verdict.
@@ -300,7 +301,10 @@ def test_checker_steps_survive_an_earlier_failure():
     a burn-down needs one push per checker. `!cancelled()` reports all of the
     drift in a single run while still failing the job.
     """
-    checker_steps = [step for step in _steps() if "python " in step.get("run", "")]
+    checker_steps = [
+        step for step in _steps()
+        if any(checker in step.get("run", "") for checker in CHECKERS)
+    ]
     assert len(checker_steps) == len(CHECKERS)
     for step in checker_steps:
         assert "cancelled()" in str(
@@ -318,6 +322,34 @@ def test_job_installs_nothing():
         assert not uses.startswith("actions/setup-python") or "cache" not in (
             step.get("with") or {}
         ), "no pip cache is needed when nothing is installed"
+
+
+def test_preflight_must_pass_before_every_application_lane():
+    jobs = _workflow()["jobs"]
+    preflight = jobs["preflight"]
+    assert "needs" not in preflight and "if" not in preflight
+    assert preflight["timeout-minutes"] == 10
+    assert not preflight.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in preflight["steps"])
+    for lane in VERDICTS:
+        assert jobs[lane]["needs"] == ["preflight"]
+        assert jobs[lane]["if"] == LANES
+    verdict = next(step for step in _job()["steps"] if step.get("name") == "Require successful preflight")
+    assert verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
+    assert "exit 1" in verdict["run"]
+    assert _job()["if"] == "${{ always() }}"
+
+
+def test_preflight_checks_selectors_without_installing_or_loading_the_application():
+    steps = _steps()
+    install = next(step for step in steps if step.get("name") == "Install preflight test tools")
+    assert install["run"] == "python -m pip install pytest PyYAML"
+    selector = next(step for step in steps if step.get("name") == "PR lane test targets resolve without overlaps")
+    assert selector["if"] == "${{ !cancelled() }}"
+    assert "--noconftest" in selector["run"]
+    assert "test_every_pr_lane_pytest_step_has_disjoint_targets" in selector["run"]
+    assert "test_every_node_id_target_in_a_pr_lane_step_resolves" in selector["run"]
+    assert "uses" not in _job()["steps"][0], "aggregate must not repeat checkout or setup"
 
 
 def test_derived_artifact_checkers_use_mermaid_builder_python_pin():

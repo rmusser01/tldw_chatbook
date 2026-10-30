@@ -7,6 +7,27 @@ Supersedes: N/A
 
 ## Decision
 
+### Amendment 2026-10-29: preflight before test fan-out (TASK-37800)
+
+The owner approved early rejection after the backlog audit measured a median
+209-minute gate and 397 runner-minutes per successful first attempt. Move all
+13 artifact guards to a preflight job before the application lanes; retain
+their ordering and report-all behavior. Preflight also runs the existing static
+selector-overlap and node-resolution tests with pytest/PyYAML only and without
+application conftests. This narrowly replaces the historical install-free
+checker-job constraint; application dependencies and selected tests do not change.
+
+Every application lane needs successful preflight. The stable required context
+is a verdict-only aggregate with `always()`, explicitly rejecting unsuccessful
+preflight on every event and unsuccessful selected test lanes. Artifact guards
+still run on pushes and queue kicks, and full manual dispatch semantics remain.
+Moving checks earlier is preferable to duplicating them, broad path filtering,
+larger timeouts or shrinking the test census. It adds a small serial preflight
+to passing runs while preventing invalid runs from launching 34 application jobs.
+
+Spec: `Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md`.
+Plan: `Docs/superpowers/plans/2026-10-29-ci-preflight-and-superseded-runs.md`.
+
 Pull requests into `dev` use one serial, minimal-dependency fast-test job whose
 result is aggregated by the existing required `Derived artifacts reproduce from
 their sources` context; comprehensive test coverage runs on `main`, manual
