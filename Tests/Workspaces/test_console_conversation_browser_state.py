@@ -213,6 +213,25 @@ def test_query_matches_only_flat_scope_and_reports_service_total() -> None:
     assert state.status_copy == "7 matches. Showing 1 of 7"
 
 
+def test_query_keeps_the_users_raw_text_and_matches_case_insensitively() -> None:
+    """TASK-33622.6 AC#2: the state carries what the user typed, not a lowercase copy.
+
+    A tray that is rebuilt from this state seeds its filter input from
+    ``query``. Storing the stripped, lowercased form made 'OK' read back as
+    'ok' (and dropped a trailing space the user was about to type past).
+    Matching still ignores case and surrounding whitespace.
+    """
+    state = build_console_conversation_browser_state(
+        rows=(_row("ok", "OK 9 rollout"), _row("other", "Unrelated")),
+        active_workspace_id=None,
+        query="OK ",
+    )
+
+    assert state.query == "OK "
+    assert [row.conversation_id for row in _chats(state).rows] == ["ok"]
+    assert state.status_copy == "1 match"
+
+
 def test_literal_title_and_selected_run_marker_are_preserved() -> None:
     title = "[bold]你好[/bold] 🧭"
     state = build_console_conversation_browser_state(

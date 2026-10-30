@@ -533,7 +533,10 @@ class ConsoleConversationBrowserState:
     """Immutable grouped Console conversation browser display state.
 
     Attributes:
-        query: Normalized active search query.
+        query: The active search text exactly as the user typed it (case
+            and spacing kept; TASK-33622.6). A rebuilt filter input is
+            seeded from it, so it is never normalized here; matching
+            normalizes its own copy.
         sections: Ordered browser sections.
         selected_summary: Human-readable summary of the active row.
         status_copy: Search/result status copy.
@@ -644,7 +647,9 @@ def build_console_conversation_browser_state(
     )
 
     return ConsoleConversationBrowserState(
-        query=normalized_query,
+        # TASK-33622.6: the raw text, not `normalized_query` -- a rebuilt
+        # filter input shows this value, and 'OK' must not come back as 'ok'.
+        query=str(query or ""),
         sections=sections,
         selected_summary=_selected_summary(prepared_rows),
         status_copy=status_copy,
