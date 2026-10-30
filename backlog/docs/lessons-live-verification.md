@@ -1,5 +1,24 @@
 # Lessons: verifying against the real thing
 
+## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
+
+**Incident.** The Library outcome line passed two review rounds: every test read
+the compositor's `strip.text`, and the live `.txt` captures showed the line
+correctly placed under its turn. The third review read the `.ansi` capture and
+the PNG instead. The cell left of each line's text was `ESC[2m ESC[49m`, the
+terminal's default background, which showed as a white block in the PNG. The
+line was inset with `margin-left: 1`. `#console-transcript-surface` layers a
+transparent `#console-transcript-background-effect` under the transcript, and a
+margin cell is not painted by the row, so it shows that layer. Switching the
+inset to padding (same text column) removed the notch.
+
+**What to do.** Inset a Console transcript row with padding, not margin. To test
+paint, read each cell's background from the compositor strip
+(`strip.crop(x, x + 1)`, then `segment.style.bgcolor`; `None` is the terminal
+default), not `strip.text`. Live, read the `.ansi` or look at the `.png`. The
+annotations and citation-chip rows also use a left margin; they were not checked
+here.
+
 ## A `.txt` capture shows the composer's history ghost text as if it were typed (TASK-33621.51, 2026-10-29)
 
 **Incident.** On the live re-check of the Library outcome line, the second prompt
