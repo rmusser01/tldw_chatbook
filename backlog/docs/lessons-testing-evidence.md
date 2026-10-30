@@ -184,6 +184,17 @@ and the current painted click target, retaining the real mouse click and all
 link/browser assertions. The exact hosted interleaving was not captured; this
 evidence supports readiness hardening, not a claim of a proven production race.
 
+## A shared-method spy can count unrelated background work (TASK-38061, 2026-10-30)
+
+PR3308's acceptance-projection test expected one deferred action-row sync but
+counted two. A local stack trace reproduced one queued projection callback and
+one background session-draft refresh calling the same spied method. Restore the
+method before yielding: Textual's `call_later` already captured the projection's
+recorder, while later background lookups use the original method. The five-test
+file then passed; removing, inlining or duplicating the projection callback each
+still failed its own assertion. These are local stacks and mutation controls;
+the hosted runner's extra invocation was not stack-traced.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen

@@ -322,10 +322,14 @@ async def test_the_acceptance_projection_clears_now_and_restyles_send_after(
 
         assert composer.draft_text() == ""
         assert not composer.has_class("console-composer-has-draft")
-        assert not any(node is send for node in applied), (
-            "Send was restyled inside the acceptance projection"
-        )
+        assert not any(
+            node is send for node in applied
+        ), "Send was restyled inside the acceptance projection"
         assert own_syncs == [], "The action row synced inside the projection"
+        # call_later captured record_own_sync during the projection. Restore
+        # the method before yielding so a background session-draft refresh
+        # cannot be counted as another execution of that deferred callback.
+        monkeypatch.setattr(composer, "_sync_current_action_state", sync_current)
         await pilot.pause()
         assert own_syncs == [""], (
             "The projection should sync the action row exactly once, after "
