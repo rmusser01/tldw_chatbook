@@ -1638,3 +1638,21 @@ Tests/UI/test_console_library_outcome_lines.py
 # prefix root where Switch model probes, and a contract-refused endpoint names
 # its reason (one private-profile journey, about 23 s locally).
 Tests/UI/test_settings_default_model_picker.py::test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes
+# TASK-36382: five files no lane ran had gone red on dev unseen (deleted
+# sheets and classes, stale tokens, a stale fake, a race-prone wait). The
+# focus contracts, the Evals skill-eval screen, the llama.cpp refresh gate and
+# the CSS staleness manifest run whole. test_modal_wide_tier.py runs by node:
+# its whole file is over the per-file rule, so its static contracts are listed
+# (anchor rules, the reverse modal sweep, orphan rules, the wide-tier block,
+# and the check that every anchor still names real code, which reads files and
+# runs in ~1 s as one test); its mounted spot-geometry cases and the toggle
+# MRO check stay out.
+Tests/UI/test_modal_wide_tier.py::test_every_anchor_targets_real_code
+Tests/UI/test_modal_wide_tier.py::test_wide_tier_block_exists_in_source_module
+Tests/UI/test_evals_skill_eval_screen.py
+Tests/UI/test_non_obscuring_focus_contract.py
+Tests/UI/test_css_staleness_manifest.py
+Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered
+Tests/UI/test_modal_wide_tier.py::test_every_registered_anchor_has_a_wide_tier_rule
+Tests/UI/test_llamacpp_setup_refresh_gate.py
+Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped

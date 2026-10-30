@@ -115,6 +115,10 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "FileNotesHistoryDialog": "File Notes history (base width 90) -- follow-up wave",
     "WorkflowRunConfirmation": "workflow run confirm (base 90% / 100) -- follow-up wave",
     "WorkflowRunSetup": "workflow run setup (base 90% / 100) -- follow-up wave",
+    # -- added on dev after that triage, found by the sweep at the 2026-10-30
+    # re-sync (TASK-36382) --
+    "PortraitCompositionReview": "portrait composition review (base width 120) -- follow-up wave",
+    "PortraitRegionEditor": "portrait region editor (base width 120) -- follow-up wave",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:

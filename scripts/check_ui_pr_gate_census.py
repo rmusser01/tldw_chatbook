@@ -635,7 +635,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # An increment of 1 for that entry. The floor now equals the entry count,
 # which also absorbs any lag in dev's floor (tail entries a merge added
 # without raising it).
-MINIMUM_FILES = 1164
+# TASK-36382 appends 9 entries at the tail: four Tests/UI files no lane ran
+# (focus contracts, Evals skill eval, the llama.cpp refresh gate, the CSS
+# staleness manifest) and five static contracts of test_modal_wide_tier.py
+# by node id, whose whole file is over the per-file rule; the anchor check
+# among them is one test, ~1 s. The floor now equals the entry count, which
+# also absorbs any lag in dev's floor (tail entries a merge added without
+# raising it).
+MINIMUM_FILES = 1173
 
 
 def read_census(path: Path) -> list[str]:
