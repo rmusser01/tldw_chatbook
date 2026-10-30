@@ -115,7 +115,7 @@ from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.answer_citations import (
     CONSOLE_CITATION_INSTRUCTIONS,
-    format_console_evidence_for_cited_answer,
+    format_console_evidence_without_labels,
 )
 from tldw_chatbook.Chat.console_chat_store import (
     CapturePurgeStaleError,
@@ -10687,8 +10687,16 @@ class ConsoleChatController:
                 preparation_outcome is not None
                 and preparation_outcome.evidence_bundle is not None
             ):
-                citation_context = format_console_evidence_for_cited_answer(
-                    preparation_outcome.evidence_bundle
+                # TASK-33620.8: Automatic evidence gets the staged capture.
+                from .console_library_search import capture_automatic_evidence
+
+                (
+                    citation_context,
+                    citation_trace_builder,
+                    prompt_evidence_set_id,
+                    citation_repair_contract,
+                ) = await capture_automatic_evidence(
+                    self, clean_draft, preparation_outcome.evidence_bundle, session
                 )
             elif origin not in (
                 ConsoleSubmissionOrigin.AGENT_WAKE,
@@ -13206,7 +13214,7 @@ class ConsoleChatController:
                 )
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
-                    format_console_evidence_for_cited_answer(bundle),
+                    format_console_evidence_without_labels(bundle),  # no record
                 )
         return _DispatchRetryContext(
             resolution=resolution,
