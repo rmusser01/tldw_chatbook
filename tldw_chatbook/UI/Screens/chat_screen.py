@@ -16884,6 +16884,7 @@ class ChatScreen(BaseAppScreen):
             self._read_console_citation_counts,
             queried,
         )
+        shown = {item for item in self._console_citation_counts.items() if item[1]}
         if not self._apply_console_citation_counts(
             signature,
             generation,
@@ -16892,7 +16893,8 @@ class ChatScreen(BaseAppScreen):
             repository_token,
         ):
             return
-        self._console_transcript_sync_token = None  # counts: outside TASK-34958's gate
+        if shown != {item for item in self._console_citation_counts.items() if item[1]}:
+            self._console_transcript_sync_token = None  # past TASK-34958's gate
         await self._sync_native_console_chat_ui()
 
     def _native_console_transcript_fingerprint(

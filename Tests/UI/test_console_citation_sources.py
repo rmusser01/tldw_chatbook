@@ -743,6 +743,50 @@ async def test_discovery_requires_active_summary_and_repository_verification(
     assert screen._console_citation_counts == {"assistant": 0}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seeded", "found", "reopens_gate"),
+    [
+        ({}, "cited", True),  # a new row: the only change the gate can't see
+        ({}, "uncited", False),  # zero-only: no row to paint
+        ({"assistant": 2}, "cited", False),  # the same row again
+    ],
+)
+async def test_count_discovery_reopens_the_transcript_gate_only_for_a_new_row(
+    seeded: dict[str, int], found: str, reopens_gate: bool
+) -> None:
+    """TASK-33620.8: counts bypass TASK-34958's sync gate only when one shows.
+
+    A count found after a run has settled changes nothing the gate keys on,
+    so discovery clears the gate's token to paint the row. A result that
+    changes no visible count leaves the gate shut.
+    """
+    result = (
+        _active_result(_trace())
+        if found == "cited"
+        else SimpleNamespace(state=ActiveCitationTraceState.NOT_FOUND, summary=None)
+    )
+    repository = _FakeRepository(result)
+    messages = [_message("assistant", persisted_message_id="persisted")]
+    screen = _bare_screen(messages, repository)
+    screen._console_citation_counts = dict(seeded)
+    signature = screen._console_citation_signature(messages)
+    screen._console_citation_input_signature = signature
+    screen._console_citation_request_generation = 1
+    settled_gate = ("settled-run",)
+    screen._console_transcript_sync_token = settled_gate
+    tokens_at_sync: list[object] = []
+
+    async def record_sync() -> None:
+        tokens_at_sync.append(screen._console_transcript_sync_token)
+
+    screen._sync_native_console_chat_ui = record_sync
+
+    await screen._discover_console_citation_counts(repository, signature, 1)
+
+    assert tokens_at_sync == [None if reopens_gate else settled_gate]
+
+
 def test_stable_repository_and_identical_signature_dispatch_only_one_worker() -> None:
     repository = _FakeRepository(_active_result(_trace()))
     messages = [_message("assistant", persisted_message_id="persisted")]
@@ -1081,6 +1125,10 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     screen._console_image_preparing = set()
     screen._native_console_transcript_fingerprint = lambda _messages: ("stable",)
     screen._sync_console_transcript_guidance = lambda: None
+    # The transcript sync reads the session's conversation id (task-16815's
+    # screen delegation); this detached session has none.
+    screen._session._current_console_conversation_id = lambda: None
+    screen._sync_console_rate_chip = lambda _messages: None  # not this test's
     # `_sync_native_console_transcript` publishes Library-activity footer
     # counts through the controller (task-19900.5). This test is about the
     # CITATION count cache, and the `_FakeStore` above has no activity
