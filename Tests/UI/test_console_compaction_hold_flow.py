@@ -19,7 +19,7 @@ from dataclasses import replace
 from xml.etree import ElementTree
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_native_chat_flow import _persist_console_provider_config
@@ -115,6 +115,58 @@ async def _send(console, host, runtime_tasks, draft: str) -> None:
     await console._sync_native_console_chat_ui()
 
 
+async def _drive_to_hold(host, pilot, monkeypatch, adapter, adapter_calls):
+    """Send until the custom budget's Ask trigger holds a send; return the hold.
+
+    Returns:
+        ``(console, controller, session, runtime, held_draft)``.
+    """
+    console = host.screen_stack[-1]
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+    controller = console._ensure_console_chat_controller()
+    gateway = controller.provider_gateway
+    monkeypatch.setattr(gateway, "_chat_api_call_fn", adapter)
+    original_resolve = gateway.resolve_for_send
+
+    async def resolve(selection):
+        return replace(await original_resolve(selection), streaming=False)
+
+    monkeypatch.setattr(gateway, "resolve_for_send", resolve)
+    session = controller.store.ensure_session()
+    controller.store.set_session_context_policy_overrides(session.id, _ASK)
+    runtime = console._console_runtime()
+    runtime_tasks: list[asyncio.Task] = []
+    accept_turn = runtime.accept_turn
+
+    def capture_turn(request, **kwargs):
+        turn_id = accept_turn(request, **kwargs)
+        runtime_tasks.append(runtime._turn_custody[turn_id].task)
+        return turn_id
+
+    monkeypatch.setattr(runtime, "accept_turn", capture_turn)
+
+    held_draft = None
+    for index in range(12):
+        draft = f"question-{index}: explain step {index} in detail."
+        calls = len(adapter_calls)
+        try:
+            await _send(console, host, runtime_tasks, draft)
+        except RuntimeError:
+            pass
+        await pilot.pause()
+        if len(adapter_calls) == calls:
+            held_draft = draft
+            break
+    assert held_draft is not None, "the custom budget was never crossed"
+    held = controller.store.preparation_for_session(session.id)
+    assert held is not None and held.pause_kind is (
+        ConsolePreparationPauseKind.CONTEXT_COMPACTION
+    ), (held, controller.run_state_for(session.id))
+    await console._sync_native_console_chat_ui()
+    await pilot.pause()
+    return console, controller, session, runtime, held_draft
+
+
 @pytest.mark.parametrize(
     "action", ["compact_and_send", "send_without_compacting", "cancel"]
 )
@@ -130,49 +182,9 @@ async def test_an_ask_hold_shows_the_card_and_each_action_completes(
     console = None
     try:
         async with host.run_test(size=(100, 32)) as pilot:
-            console = host.screen_stack[-1]
-            await _wait_for_selector(console, pilot, "#console-native-composer")
-            controller = console._ensure_console_chat_controller()
-            gateway = controller.provider_gateway
-            monkeypatch.setattr(gateway, "_chat_api_call_fn", adapter)
-            original_resolve = gateway.resolve_for_send
-
-            async def resolve(selection):
-                return replace(await original_resolve(selection), streaming=False)
-
-            monkeypatch.setattr(gateway, "resolve_for_send", resolve)
-            session = controller.store.ensure_session()
-            controller.store.set_session_context_policy_overrides(session.id, _ASK)
-            runtime = console._console_runtime()
-            runtime_tasks: list[asyncio.Task] = []
-            accept_turn = runtime.accept_turn
-
-            def capture_turn(request, **kwargs):
-                turn_id = accept_turn(request, **kwargs)
-                runtime_tasks.append(runtime._turn_custody[turn_id].task)
-                return turn_id
-
-            monkeypatch.setattr(runtime, "accept_turn", capture_turn)
-
-            held_draft = None
-            for index in range(12):
-                draft = f"question-{index}: explain step {index} in detail."
-                calls = len(adapter_calls)
-                try:
-                    await _send(console, host, runtime_tasks, draft)
-                except RuntimeError:
-                    pass
-                await pilot.pause()
-                if len(adapter_calls) == calls:
-                    held_draft = draft
-                    break
-            assert held_draft is not None, "the custom budget was never crossed"
-            held = controller.store.preparation_for_session(session.id)
-            assert held is not None and held.pause_kind is (
-                ConsolePreparationPauseKind.CONTEXT_COMPACTION
-            ), (held, controller.run_state_for(session.id))
-            await console._sync_native_console_chat_ui()
-            await pilot.pause()
+            console, controller, session, runtime, held_draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
 
             card = console.query_one(TraceCallRecoveryCallout)
             assert card.display
@@ -230,3 +242,79 @@ async def test_an_ask_hold_shows_the_card_and_each_action_completes(
         database.close()
 
 
+
+
+@private_profile_test
+async def test_the_hold_card_names_its_trigger_and_policy_with_no_dispatch_panel(
+    request, monkeypatch, tmp_path
+):
+    """TASK-33621.4 AC#1, #2 and #6 through the real ChatScreen and controller.
+
+    The card gives tokens used, budget AND trigger, points to /rewind's own
+    summarize preview (owner decision 2026-10-27), and Change policy opens
+    Chat settings at Context and memory while the send stays held. The
+    dispatch-recovery panel ("Response accepted; waiting for dispatch.",
+    Retry response / Discard) is never shown.
+    """
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        ProviderContinuationRecoveryCallout,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(100, 32)) as pilot:
+            console, controller, session, runtime, _draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+            held = controller.store.preparation_for_session(session.id)
+            hold = controller.context_compaction_hold(held.preparation_id)
+            card = console.query_one(TraceCallRecoveryCallout)
+            assert card.display
+            frame = _frame(host)
+            assert "Context limit reached" in frame
+            assert f"{hold.used_tokens:,} of {hold.budget_tokens:,} tokens" in frame
+            assert f"{hold.trigger_tokens:,} tokens" in frame
+            # The card scrolls inside its bound; read its rows, not the frame.
+            card_text = " ".join(str(row.render()) for row in card.query(Static))
+            assert "/rewind" in card_text
+            assert "waiting for dispatch" not in frame
+            assert "Failed" not in frame
+            assert not console.query_one(ProviderContinuationRecoveryCallout).display
+            # Laid out on screen (a hidden ancestor leaves an empty region).
+            shown = {str(b.label) for b in console.query(Button) if b.region.area}
+            assert not shown & {"Retry response", "Discard"}
+            assert runtime.recoveries_for_session(session.id) == ()
+            calls_at_hold = len(adapter_calls)
+
+            card.query_one("#console-trace-change-policy", Button).press()
+            for _ in range(300):
+                await pilot.pause(0.1)
+                modal = host.screen
+                # Pushed is not yet mounted: wait for its last-composed row.
+                if isinstance(modal, ConsoleSettingsModal) and modal.query(
+                    "#console-settings-close-guard"
+                ):
+                    break
+            assert isinstance(host.screen, ConsoleSettingsModal), host.screen_stack
+            await pilot.pause()
+            assert host.screen._active_view == "context"
+            assert host.screen.query_one("#console-context-compaction-mode").display
+            # Opening the policy answers nothing: the send is still held.
+            assert controller.context_compaction_hold(held.preparation_id) is not None
+            assert len(adapter_calls) == calls_at_hold
+            await pilot.press("escape")
+            for _ in range(50):
+                await pilot.pause(0.1)
+                if not isinstance(host.screen, ConsoleSettingsModal):
+                    break
+            assert controller.context_compaction_hold(held.preparation_id) is not None
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
