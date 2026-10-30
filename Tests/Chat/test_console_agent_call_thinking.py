@@ -2,6 +2,8 @@
 
 from dataclasses import replace
 
+import pytest
+
 from Tests.Chat.test_console_agent_bridge import (
     _bridge_with_gateway,
     _ChunkGateway,
@@ -13,36 +15,43 @@ from tldw_chatbook.Chat.console_provider_gateway import ProviderThinkingDelta
 from tldw_chatbook.Chat.console_thinking_capture import ThinkingCapture
 
 
-def _delta(text):
+def _delta(text, provider="llama_cpp"):
     return ProviderThinkingDelta(
         text=text,
-        provider="llama_cpp",
+        provider=provider,
         model="reasoner",
         protocol="chat_completions",
         source_format="reasoning_content",
     )
 
 
-def test_aggregate_tool_thinking_cannot_become_final_answer_thinking():
+@pytest.mark.parametrize("provider", ["llama_cpp", "strata", "polystrata"])
+def test_aggregate_tool_thinking_cannot_become_final_answer_thinking(provider):
     capture = ThinkingCapture(assistant_owner_id="answer")
-    capture.observe(_delta("tool thought"))
+    capture.observe(_delta("tool thought", provider))
     capture.observe_tool()
     capture.observe_answer("final answer without thinking")
     envelope = capture.settle("complete").envelope
     assert envelope.blocks[0].source_format == "reasoning_content:tool_call"
 
 
-def test_live_native_loop_passes_exact_call_envelope_before_preparation(tmp_path):
+@pytest.mark.parametrize("provider", ["llama_cpp", "strata", "polystrata"])
+@pytest.mark.bootstrap_profile
+def test_live_native_loop_passes_exact_call_envelope_before_preparation(
+    tmp_path, provider
+):
+    from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+
     class Gateway(_ChunkGateway):
         def __init__(self):
             super().__init__(
                 [
                     [
-                        _delta("first tool"),
+                        _delta("first tool", provider),
                         _native_calls("calculator", {"expression": "1+1"}),
                     ],
                     [
-                        _delta("second tool"),
+                        _delta("second tool", provider),
                         _native_calls("calculator", {"expression": "2+2"}, "c2"),
                     ],
                     ["The answer is 4."],
@@ -56,7 +65,15 @@ def test_live_native_loop_passes_exact_call_envelope_before_preparation(tmp_path
 
     gateway = Gateway()
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
-    outcome = _run(bridge, store, session, aid, resolution=_native_resolution())
+    resolution = replace(
+        _native_resolution(),
+        provider=provider,
+        execution_key=provider,
+        reasoning_replay=ReasoningReplayPolicy(
+            "server_default", "default", native_tools=True
+        ),
+    )
+    outcome = _run(bridge, store, session, aid, resolution=resolution)
     assert outcome.final_text == "The answer is 4."
     assert len(gateway.prepared) == 2
     rows, sidecars = gateway.prepared[-1]
@@ -161,9 +178,6 @@ def test_agent_budget_counts_exact_model_projected_reasoning():
         tokenizer_model="exact-model",
     )
     assert included > excluded + 100
-
-
-import pytest
 
 
 @pytest.mark.parametrize(

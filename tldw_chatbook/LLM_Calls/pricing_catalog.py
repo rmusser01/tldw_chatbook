@@ -73,6 +73,8 @@ LOCAL_PROVIDERS = frozenset(
         "local_vllm",
         "ollama",
         "oobabooga",
+        "strata",
+        "polystrata",
         "tabbyapi",
         "vllm",
     }

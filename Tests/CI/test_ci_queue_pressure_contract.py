@@ -358,6 +358,7 @@ FAST_LANE_TARGETS = (
     # TASK-33641.6: a guarded config read on the UI loop sees only its own
     # task's raw scope (whole file, pure asyncio).
     "Tests/Backup_Recovery/test_raw_operation_task_discovery.py",
+    "Tests/Backup_Recovery/test_admission_initialization_wait.py",
     # TASK-33003.16: the theme loader drops 'auto NN%' on a background name and
     # a value of the wrong kind, and the loaded theme applies (whole file).
     "Tests/Utils/test_user_theme_loader.py",
@@ -501,6 +502,13 @@ ADMISSION_2_TARGETS = (
     "Tests/UI/test_theme_contrast.py::test_app_chrome_lines_clear_non_text_contrast",
     "Tests/UI/test_theme_contrast.py::test_library_pane_frames_clear_non_text_contrast",
     "Tests/UI/test_theme_contrast.py::test_workflow_pane_edges_clear_non_text_contrast",
+    # TASK-37270: local provider identities and native SSE/Stop contracts.
+    "Tests/Chat/test_strata_providers.py",
+    "Tests/LLM_Calls/test_local_chat_streaming.py",
+    "Tests/Chat/test_local_reasoning_gateway.py",
+    "Tests/Chat/test_streaming_stop_closes_transport.py",
+    "Tests/Chat/test_console_agent_call_thinking.py::test_aggregate_tool_thinking_cannot_become_final_answer_thinking",
+    "Tests/Chat/test_console_agent_call_thinking.py::test_live_native_loop_passes_exact_call_envelope_before_preparation",
     # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
     # setup-blocker reason strings (the capture phase's F2 copy and round 1's
     # endpoint reason). A pure function test, but its file's module pytestmark
@@ -958,7 +966,9 @@ def test_fast_lane_is_one_serial_minimal_python_312_job(
     # admission-sensitive suites in their own pytest invocation (their
     # keep_bootstrap_profile enrollment poisons sandboxed suites sharing a
     # process); TASK-34916 moved that invocation to its own job.
-    assert len(fast["steps"]) == 4
+    # TASK-37270 adds bounded UAT, report validation, negative control, and artifacts to
+    # the existing second job; the original serial invocation stays in place.
+    assert len(fast["steps"]) == (8 if job_name == "pr-fast-lane-admission-2" else 4)
     assert fast["steps"][-1]["name"] == test_step
     assert "if" not in fast["steps"][-1]
 

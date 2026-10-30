@@ -63,6 +63,44 @@ click outcome, especially on one-row controls. Reuse the design language's
 non-obscuring focus contract; a successful event alone does not prove a person
 can identify its target.
 
+## An after-content Stop test must receive real content first (TASK-37270, 2026-10-28)
+
+**Incident.** The heartbeat regression used the real llama.cpp native-tools dispatch
+and found SSE comments/event fields rendered as prose. The surrounding hosted
+Stop tests also needed their actual guarded configuration profile. Once that setup
+was correct, migrated byte-stream adapters exposed old `iter_lines`-only fixtures.
+The Anthropic case had previously passed its close assertion after receiving a
+synthetic provider error because its fixture used an OpenAI payload and ignored
+`decode_unicode`.
+
+**What to do.** For after-content Stop tests, feed each real adapter its own
+byte-level wire shape and assert actual assistant content before closing the
+stream. Then require exactly one response close; closing alone cannot show that
+content delivery worked. Keep a separate before-content cancellation test for
+keep-alive-only streams: Stop must still finish with no assistant content and
+exactly one transport close. The final six-case local streaming matrix passed;
+the original three control-frame regressions failed with the old local SSE guard
+restored in memory.
+
+
+## A real-app UAT must honor consent and trace privacy (TASK-37270, 2026-10-28)
+
+**Incident.** The first project-chat UAT reached Send but made no model request.
+Linux run 40801165548 captured the real agent worker waiting for first-use
+AGENTS.md disclosure and the visible Proceed dialog. After the pilot accepted
+that dialog, run 40802492563 read the README and painted/saved the answer but
+failed an oracle that expected file arguments and bodies in AgentRunsDB. The
+runtime intentionally strips those fields from durable metadata.
+
+**What to do.** Drive required consent through the actual UI and prove no provider
+request preceded it. Correlate saved call IDs, outcomes and message ownership with
+the actual provider exchange when validating private tool payloads; do not weaken
+production trace privacy to satisfy a test. Preserve active coroutine/thread stacks
+and the whole current viewport so an omitted user action is distinguishable from
+a provider stall. Keep positive controls using real metadata omissions alongside
+negative provenance tests.
+
+
 ## A successful wrong-family tool call is not project evidence (TASK-37234, 2026-10-28)
 
 **Incident.** The Fedora follow-up to PR #3284 recorded successful directory listings,
@@ -22342,3 +22380,37 @@ boundaries before testing successful post-refusal execution on a supported host.
 The corrected native Windows selection passed 72 cases with 20 explicit POSIX
 skips and no failure or teardown error. Run the actual command controls on Linux;
 Windows refusal evidence cannot qualify them.
+
+## A click does not prove the new chat owns the composer (PR #3288, 2026-10-28)
+
+The Windows project-chat pilot captured the active session immediately after
+`pilot.click` on New chat. Two actual variants and the missing-evidence control
+later reached the project-instruction dialog with a different session ID: the
+async handler had created the chat after the pilot captured the old one. Wait
+for a previously unseen active session in the requested workspace and its
+composer binding before typing; keep the later exact disclosure ownership check.
+Click delivery and handler completion are separate observations.
+
+## Inventory drift calls for statement review, not an automatic rewrite (PR #3288)
+
+On 2026-10-28, every source test lane passed, but the required diagnostic-inventory
+check found one added Strata debug statement. The statement comparison showed it
+interpolated the raw unsupported reasoning-effort setting. Two synthetic-value
+regressions reproduced that output. Removing the unnecessary diagnostic made all
+48 Strata tests pass and restored the original inventory without changing its pin.
+Review the added statement before regenerating a census; a passing behavior test
+does not establish that its diagnostics are appropriate to persist.
+
+
+## Direct session edits can outrun a pending display read (PR #3288)
+
+The documentation-only head fc6bb555c9 failed UI lane 25 before the credential
+round-trip test opened its first modal. Windows reproduced both parameter cases.
+A temporary trace showed the session at revision 2 while readiness still awaited
+its mount-time revision 0, with no published current value; the exact owner key
+stayed unchanged during the attempted open. The existing modal guard correctly
+rejected that stale preparation. Reuse `_sync_console_control_bar_now` after a
+test directly replaces settings and before acting on them. Its existing held-read
+regression verifies old revision 1 is discarded and revision 2 renders; its bounded
+wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
+assertions, rather than retrying the action or weakening its ownership checks.

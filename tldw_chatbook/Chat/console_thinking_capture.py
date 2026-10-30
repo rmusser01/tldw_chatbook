@@ -250,6 +250,8 @@ class ThinkingCapture:
                 "local_vllm",
                 "ollama",
                 "local_ollama",
+                "strata",
+                "polystrata",
             }
             and current.source_format
             in {"start_anchored_think", "reasoning_content", "reasoning"}

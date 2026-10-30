@@ -4045,30 +4045,6 @@ API_MODELS_BY_PROVIDER = {
         "google/gemini-2.5-flash-preview-05-20",
     ],
 }
-LOCAL_PROVIDERS = {
-    "llama_cpp": ["None"],
-    "Oobabooga": ["None"],
-    "koboldcpp": ["None"],
-    "Ollama": [
-        "gemma3:12b",
-        "gemma3:4b",
-        "gemma3:27b",
-        "qwen3:4b",
-        "qwen3:8b",
-        "qwen3:14b",
-        "qwen3:30b",
-        "qwen3:32b",
-        "qwen3:235b",
-        "devstral:24b",
-        "deepseek-r1:671b",
-    ],
-    # TASK-35010: these fill through Discover models (the template below too).
-    "vLLM": [],
-    "TabbyAPI": [],
-    "Aphrodite": [],
-    "Custom": [],
-    "Custom-2": [],
-}
 
 #######################################################################################################################
 # --- CLI User Configuration Section ---
@@ -4713,6 +4689,8 @@ OpenCodeZen = ["qwen3.8-max", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepsee
 CommandCode = ["gpt-5.5", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash", "Qwen/Qwen3.7-Max", "Qwen/Qwen3.6-Plus", "moonshotai/Kimi-K3", "moonshotai/Kimi-K2.6", "zai-org/GLM-5.3", "zai-org/GLM-5.1", "MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7", "stepfun/Step-3.5-Flash", "xiaomi/mimo-v2.5-pro", "google/gemini-3.5-flash"]
 # Local Providers
 Llama_cpp = ["None"]
+Strata = []
+PolyStrata = []
 koboldcpp = ["None"]
 Oobabooga = ["None"]
 Ollama = ["gemma3:12b", "gemma3:4b", "gemma3:27b", "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b", "qwen3:32b", "qwen3:235b", "devstral:24b", "deepseek-r1:671b"]
@@ -5226,6 +5204,21 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     # --- Local Providers ---
     # Local providers default to streaming = true so slow generations render
     # incrementally instead of timing out on one long blocking completion.
+    # External Strata/PolyStrata servers; discover model IDs from the server.
+    [api_settings.strata]
+    api_key_env_var = "STRATA_API_KEY"
+    api_url = "http://127.0.0.1:8080/v1"
+    model = ""
+    max_tokens = 4096
+    streaming = true
+
+    [api_settings.polystrata]
+    api_key_env_var = "STRATA_API_KEY" # PolyStrata uses this server variable too
+    api_url = "http://127.0.0.1:8080/v1"
+    model = ""
+    max_tokens = 4096
+    streaming = true
+
     [api_settings.llama_cpp] # Matches key in [providers]
     api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
     # api_key = ""

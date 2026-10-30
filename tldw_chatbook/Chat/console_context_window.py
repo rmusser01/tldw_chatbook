@@ -39,6 +39,8 @@ METADATA_FAILURE_TTL = METADATA_SUCCESS_TTL
 #: (TASK-33007, review of #3057, R3 #4).
 SERVER_REPORTED_WINDOW_FAMILIES = frozenset(
     {
+        "strata",
+        "polystrata",
         "llama_cpp",
         "local_llamacpp",
         "llamafile",

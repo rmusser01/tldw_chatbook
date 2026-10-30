@@ -31,6 +31,8 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "custom_2",
         "koboldcpp",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llamacpp",
         "local_llamafile",
         "local_ollama",

@@ -64,6 +64,8 @@ _BASE_URL_INFERABLE_PROVIDER_KEYS = frozenset(
         "custom_openai_api",
         "custom_openai_api_2",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llamacpp",
         "local_llamafile",
         "local_llm",

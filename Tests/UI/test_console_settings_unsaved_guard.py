@@ -32,6 +32,7 @@ from Tests.UI.test_console_provider_apply_defaults_flow import (
     _persisted_console_app,
     _reset_default_intent_state,  # noqa: F401 - shared autouse fixture
 )
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
@@ -776,6 +777,9 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         store.replace_session_settings(session.id, committed)
+        # Directly replacing settings can leave a mount read on the old revision.
+        # Publish this revision before opening the owner-checked settings modal.
+        await _sync_console_control_bar_now(console)
         assert await console._open_console_settings() is True
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):
@@ -983,6 +987,9 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
             session.id,
             ConsoleSessionSettings(provider="openai", model="gpt-5"),
         )
+        # Directly replacing settings can leave a mount read on the old revision.
+        # Publish this revision before opening the owner-checked settings modal.
+        await _sync_console_control_bar_now(console)
         assert await console._open_console_settings() is True
         for _ in range(80):
             if isinstance(app.screen, ConsoleSettingsModal):

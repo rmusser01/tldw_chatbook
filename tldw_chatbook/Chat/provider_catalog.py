@@ -42,6 +42,8 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "kilo": "Kilo Gateway",
     "koboldcpp": "KoboldCpp",
     "llama_cpp": "llama.cpp",
+    "strata": "Strata",
+    "polystrata": "PolyStrata",
     "local_llamacpp": "llama.cpp (legacy alias)",
     "local_llamafile": "Llamafile",
     "local_llm": "Local LLM (legacy generic)",
