@@ -563,8 +563,9 @@ _BUDGETS: dict[str, int] = {
     # `[chat_defaults] streaming = true` with its comment, and the one merge
     # helper every published config view now uses so that key cannot shadow
     # a file's legacy `enable_streaming`.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 12251 -> 12291.
     "tldw_chatbook/config.py": 12251,
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     "tldw_chatbook/Agents/agent_service.py": 9620,
@@ -592,8 +593,9 @@ _BUDGETS: dict[str, int] = {
     # (+22) -- the retry's usage replaces the replaced call's instead of
     # key-merging into it, and the retry runs after the refusal handler so
     # its own failure is not chained to the internal signal.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8179 -> 8350.
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
