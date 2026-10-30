@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 21:08
+updated_date: 2026-10-30 04:59
 labels:
 - follow-up
 - tests
@@ -84,15 +84,33 @@ Test-infrastructure fixes, plus one production change from review round 1: Tools
   - "Affected config" (completed in review round 2): the Tools & MCP pane writes `[tools]` gate keys and the Local group's master gate `[console] local_tools_enabled` (`all_tool_gates()` in `builtin_tool_gate.py`; `mcp_servers_mode.py` routes both), `[mcp]` enabled/expose_* (`MCPWorkbench._save_builtin_flag`), the permission-store Tool policy (`TOOLS_HUB_OWNERSHIP_RECORD`), and server definitions. A local server form saves a stdio profile into `local_mcp_store.json` (`save_local_profile` -> `LocalMCPStore.save_profile`); in server source the form creates or updates the external server on the connected server (`server_unified_service.create_external_server`). The pane never writes `mcp_server_targets.json`: it only calls `target_store.list_targets()`. So the row says "saved MCP server definitions", not "saved server targets". A temporary assertion in `test_settings_registers_tools_category_and_mounts_pane` confirmed all three rows render in the mounted Tools inspector, `[tools]` literally, and the fallback copy is gone; the assertion was then removed.
   - "Recovery": re-opening the category builds a fresh workbench that reloads (cached snapshots only when the catalog fingerprint is unchanged, `_collect_snapshots_stale_gated`), and `r` calls `refresh_now()` -> `workbench.reload(force=True)` from inside the pane and from the rail.
   - "Boundary": the category banner's own line, plus the record's Tool Profiles boundary.
-  - The base run's failure of that guard is its red; it is green now. The `settings_screen.py` row in `Tests/Architecture/test_module_size_ratchet.py` goes 35,663 -> 35,677 (+14), measured, under the 2026-10-04 owner ruling. `Docs/User_Guide/settings.md` lists no per-category inspector rows, so it needs no edit.
+  - The base run's failure of that guard is its red; it is green now. The `settings_screen.py` row in `Tests/Architecture/test_module_size_ratchet.py` grows by the entry's 14 lines and is set to the measured size, under the 2026-10-04 owner ruling. `Docs/User_Guide/settings.md` lists no per-category inspector rows, so it needs no edit.
 - `test_state_banner_is_pinned_outside_detail_scroll` left `run_test` while Library/RAG's off-thread `_rag_index_status_worker` was still running, so teardown refused config retirement. It now calls `_settle_settings_mount_storm(pilot)` after opening the category. Result: 5 of 5 serial passes, and it passed in the loaded full run.
 - `_seed_active_config(request, text)` asserts `is_private_profile_child(request)` before writing. Negative control: with the decorator temporarily removed from one caller, the test failed on "needs @private_profile_test" before any write.
 - Review round 2 left `TOOLS_HUB_OWNERSHIP_RECORD.owns_config_sections` alone, so the inspector's "Owns" row still lists only the two MCP sections. That tuple has two consumers: the "Owns" row and the category search's owned-keys tier (`_category_search_rank`, rank 5). Adding "[console] tool gates" would list Tools & MCP for every "console" search and claim a `[console]` section that Console Behavior owns, apart from one key. That widens the record's meaning. No test pins the record.
 - `app_factory.py`'s docstring limits `bootstrap_profile` to tests that neither save config nor assign into `app.app_config`, and its Returns line names the selected profile's config file.
 - `Tests/Architecture/test_module_size_ratchet.py` has 8 other rows red on dev 52b3207ff1 (`mcp_workbench.py`, `change_review_screen.py`, `llm_screen.py`, `console_transcript.py`, `app_command_providers.py`, `app_ingest_queue.py`, `app_lifecycle.py`, `tldw_api/client.py`). None of those files differ from base, and their base line counts equal the reported counts.
 
-**AC#2.** Census tail (+8, `MINIMUM_FILES` 616 -> 624): the endpoint probe file whole (10-20 s alone); one discovery node, `test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]` (a private-profile child, 13-22 s); six hub nodes, the guards that went stale unseen (the ownership-record one is a private-profile child, about 8 s; the rest 1-2 s). The eight together took 40 s serially here, and round-robin puts each in a different shard. The rest of the discovery file (25 nodes, 2.5 min at `-n 4`) and the whole hub file (458 nodes, 18-26 min at `-n 4` here) stay out for shard time; the hub already had 12 census nodes. TASK-35572's two hub nodes (`test_settings_provider_switch_resets_staged_model_for_each_provider_transition`, `test_settings_provider_switch_updates_inspector_readiness`) now pass under `@private_profile_test` but are not added here, because that task owns their placement. `Tests/Chat/test_local_server_discovery.py` cannot join the UI census (Tests/UI only), and its lane would be a target in `.github/workflows/derived-artifacts.yml`, which this burn-down may not edit (draft PR #3036 changes it), so it runs on no PR lane yet.
+**AC#2.** Census tail (+8 entries, floor raised to the entry count): the endpoint probe file whole (10-20 s alone); one discovery node, `test_late_discovery_cannot_publish_into_a_changed_form[False-endpoint_roundtrip]` (a private-profile child, 13-22 s); six hub nodes, the guards that went stale unseen (the ownership-record one is a private-profile child, about 8 s; the rest 1-2 s). The eight together took 40 s serially here, and round-robin puts each in a different shard. The rest of the discovery file (25 nodes, 2.5 min at `-n 4`) and the whole hub file (458 nodes, 18-26 min at `-n 4` here) stay out for shard time; the hub already had 12 census nodes. TASK-35572's two hub nodes (`test_settings_provider_switch_resets_staged_model_for_each_provider_transition`, `test_settings_provider_switch_updates_inspector_readiness`) now pass under `@private_profile_test` but are not added here, because that task owns their placement. `Tests/Chat/test_local_server_discovery.py` cannot join the UI census (Tests/UI only), and its lane would be a target in `.github/workflows/derived-artifacts.yml`, which this burn-down may not edit (draft PR #3036 changes it), so it runs on no PR lane yet.
 
 **Red/green.** The base inventory above is the red for every rewritten node; each is green in the runs listed. The 28-node DNS negative control is recorded above. The two lessons added to `backlog/docs/lessons-testing-evidence.md` give the swallowed-RecoveryRequired and global `json.loads` incidents.
+
+**Re-sync (2026-10-29).** Rebased onto dev ff815f8559, a clean rebase apart from four conflicts:
+- `lessons-testing-evidence.md`: both sides kept, with dev's new entries first.
+- Census: dev's census kept exactly; this task's 8 entries appended after dev's last tail entry with no blank line, as dev's tail convention requires. Dev already lists TASK-35648/35649's two nodes, so the copies from the old base were dropped. Floor set to the entry count.
+- Checker floor comment: states only the increment.
+- Module ratchet row: dev's comments kept, this task's +14 comment added, row set to the measured size.
+
+Dev's #3226 Tools & MCP copy changes leave every TOOLS guidance claim true, and dev added no TOOLS entry of its own. All 211 `@private_profile_test` conversions still apply; no app-building test is left unmarked.
+
+Re-verified:
+- endpoint probe 101, local server discovery 59, discovery journeys 26 passed;
+- the guidance test plus `test_settings_tools_hub.py`: 21 passed;
+- census checker OK, and the collected census (3980 nodes, `--keep-duplicates`) has 0 duplicates;
+- Tests/CI: 1060 passed, 1 skipped;
+- preflight passed;
+- module ratchet: the settings_screen row passes, and the same 8 untouched rows are red on dev too.
+
+The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8 failed. All 8 were already private-profile tests whose bodies this task does not change. The same 8 run at dev ff815f8559 under the same load failed 6 and passed 2, so this is the load-sensitivity recorded under AC#1.
 
 **Files.** `tldw_chatbook/UI/Screens/settings_screen.py` (TOOLS guidance), `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_settings_model_discovery_journeys.py`, `Tests/UI/test_settings_endpoint_probe.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/app_factory.py` (docstring), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
