@@ -12,6 +12,9 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchPaneState,
     WorkbenchState,
 )
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    COMPACTION_PAUSE_FORECAST_COPY,
+)
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 
@@ -28,6 +31,7 @@ def build_console_workbench_state(
     hook_attention: int = 0,
     readiness_word: str = "",
     blocked_turn: str = "",
+    compaction_pause_expected: bool = False,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -50,6 +54,8 @@ def build_console_workbench_state(
         blocked_turn: Why an accepted turn is stuck unsent, or "". A
             stuck turn badges the header "Blocked", not the readiness word
             (TASK-33621.2).
+        compaction_pause_expected: The chat is over its Ask trigger, so the
+            badge says the next send pauses to compact (TASK-33621.4).
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -163,7 +169,12 @@ def build_console_workbench_state(
             # the strip below keeps its width for the context/cost chip.
             status_label=""
             if run_active
-            else ("Blocked" if blocked_turn else readiness_word),
+            else "Blocked"
+            if blocked_turn
+            # Only where the readiness word fits (single-pane widths drop it).
+            else COMPACTION_PAUSE_FORECAST_COPY
+            if compaction_pause_expected and readiness_word and not blocker
+            else readiness_word,
         ),
         modes=modes,
         actions=actions,

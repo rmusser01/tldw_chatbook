@@ -13085,6 +13085,7 @@ class ChatScreen(BaseAppScreen):
                 str(getattr(run_state, "visible_copy", "") or "") if run_failed else ""
             ),
             run_blocked_reason=blocked_turn_reason(run_controller),
+            compaction_pause_expected=self._context_spend.compaction_pause_expected(),
             provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
@@ -13763,6 +13764,7 @@ class ChatScreen(BaseAppScreen):
             if self.size.width < CONSOLE_SINGLE_PANE_COLUMNS
             else build_console_readiness_presentation(readiness[1]).primary_label,
             blocked_turn=blocked_turn_reason(controller),
+            compaction_pause_expected=self._context_spend.compaction_pause_expected(),
         )
 
     def _console_provider_blocker_copy(
