@@ -1,6 +1,7 @@
 """Native user provenance, separate from model-selected review parameters."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -659,7 +660,7 @@ class _ComposeController:
         return self._code_review
 
 
-def _compose(controller, message, session_id, *, skills=()):
+def _compose(controller, message, session_id, *, skills=(), wake=None):
     from tldw_chatbook.Chat.console_code_review import compose_native_review_provider
 
     return compose_native_review_provider(
@@ -670,7 +671,7 @@ def _compose(controller, message, session_id, *, skills=()):
         resolution=None,
         destination_check=None,
         conversation_id=None,
-        wake_authorization=None,
+        wake_authorization=wake,
         tool_configuration={},
         trusted_skill_bindings=skills,
     )
@@ -779,3 +780,18 @@ def test_accepted_offer_is_consumed_by_its_first_yes(native_dispatch):
     assert c.coordinator._requests[replies[0].id].stages == frozenset({"verify"})
     assert replies[1].id not in c.coordinator._requests
     assert "chat" not in c.coordinator._offers
+
+
+@pytest.mark.parametrize(
+    "wake", [None, SimpleNamespace(review_boundary=None, accepted=True)]
+)
+def test_agent_turn_without_user_message_builds_no_review_owner(native_review, wake):
+    """Ordinary agent and fleet-wake turns never construct the review owner.
+
+    Only an accepted review-boundary wake (which an existing owner sealed)
+    reads ``controller.code_review`` before the message check.
+    """
+    c = native_review
+    controller = _ComposeController()
+    assert _compose(controller, None, c.session.id, wake=wake) is None
+    assert controller._code_review is None
