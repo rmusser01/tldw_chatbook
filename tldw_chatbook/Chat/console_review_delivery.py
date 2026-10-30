@@ -300,18 +300,48 @@ async def compose_turn_review_provider(
         )
     except ReviewRefused as exc:
         controller.code_review.diagnostic = exc.reason
-        controller.store.append_message(
-            session_id,
-            role=ConsoleMessageRole.ASSISTANT,
-            content=f"Review needs attention: {exc.reason}. No review stage was admitted.",
-        )
+        _review_needs_attention(controller, session_id, exc.reason)
     except Exception as exc:  # noqa: BLE001 - review tools are optional
         logger.warning(
             "Console review tools unavailable; continuing the agent turn "
             "without them | exception_type={}",
             type(exc).__name__,
         )
+        # Ordinary turns stay silent; an explicit request learns why it got
+        # no review (a safe reason, never the exception text).
+        if _requests_review(
+            controller, session_id, message, skill_bindings, wake_authorization
+        ):
+            _review_needs_attention(controller, session_id, "review_tools_unavailable")
     return None
+
+
+def _review_needs_attention(controller: Any, session_id, reason: str) -> None:
+    controller.store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content=f"Review needs attention: {reason}. No review stage was admitted.",
+    )
+
+
+def _requests_review(
+    controller: Any, session_id, message, skill_bindings, wake_authorization
+) -> bool:
+    """Whether this turn explicitly asks for review (wording, offer, or wake)."""
+    from .console_code_review import _OFFER_ACCEPT, _explicit_stages
+
+    if getattr(wake_authorization, "review_boundary", None) is not None:
+        return True
+    if message is None:
+        return False
+    if _explicit_stages(message.content, skill_bindings):
+        return True
+    existing = getattr(controller, "_code_review", None)
+    if existing is None:
+        return False
+    with existing._lock:
+        offered = session_id in existing._offers
+    return offered and message.content.strip().lower() in _OFFER_ACCEPT
 
 
 def attach_review_ledger(controller: Any, bridge: Any) -> None:
