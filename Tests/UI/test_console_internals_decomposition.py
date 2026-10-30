@@ -1622,11 +1622,18 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
 
         composer.insert_pasted_text(pasted_text)
         composer.focus()
+        # TASK-37800: right after the token Enter sends; Left puts the caret
+        # on the token (its left edge), where Enter answers like a click.
+        await pilot.press("left")
         await pilot.press("enter")
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        _assert_visible(visible_draft.renderable.plain, _paste_confirm(pasted_text))
+        # The caret's one cell (glyph, or a space while it blinks off) now
+        # leads the row, ahead of the confirm.
+        plain = visible_draft.renderable.plain
+        assert plain[0] in {ConsoleComposerBar.CURSOR_GLYPH, " "}
+        _assert_visible(plain[1:], _paste_confirm(pasted_text))
         assert composer.draft_text() == pasted_text
 
         await pilot.press("enter")
