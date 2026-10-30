@@ -9,12 +9,14 @@ failure releases its unaccepted claim, and a half-applied attach is retired.
 from __future__ import annotations
 
 import contextlib
+import json
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.Agents import test_code_review_dispatch
 from Tests.Agents.test_post_tool_dispatch_hook import _Provider
+from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     RunBudget,
@@ -182,3 +184,73 @@ def test_settle_review_capture_contains_a_missing_run_row(dispatch_case):
     child = next(a.run_id for a, _ in c.calls if a.kind == "subagent")
     c.runtime.db = SimpleNamespace(get_run=lambda run_id: None)
     c.runtime._settle_review_capture(c.primary, child)
+
+
+# -- launch claims ---------------------------------------------------------------
+
+
+def test_unexpected_launch_failure_releases_the_unaccepted_claim(
+    dispatch_case, monkeypatch
+):
+    c = dispatch_case
+    original_loop = agent_service.run_agent_loop
+    raised = []
+
+    def fail_once(c):
+        original = c.primary.launch_task
+
+        def launch(claim):
+            if not raised:
+                raised.append(claim)
+                raise RuntimeError("scripted launch failure")
+            return original(claim)
+
+        monkeypatch.setattr(c.primary, "launch_task", launch)
+
+    def loop(config, messages, schemas, deps):
+        if config.review_binding is None and not raised:
+            with pytest.raises(RuntimeError, match="scripted launch failure"):
+                deps.spawn(review_id=c.prepared.review_id, review_slot_id="R1")
+            with c.store.lease(c.prepared.review_id) as context:
+                assert "R1" not in context.launch_claims
+        return original_loop(config, messages, schemas, deps)
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", loop)
+    c.run(prepare_hook=fail_once)
+    assert raised
+    assert [a for a, _ in c.calls if a.kind == "subagent"]
+    assert c.outcome.subagents_spawned == 1
+
+
+def test_fleet_check_actor_refusal_retires_the_half_applied_attach(
+    dispatch_case, monkeypatch
+):
+    c = dispatch_case
+    refused = []
+
+    def refuse_once(c):
+        original = c.primary.store.bind_check_actor
+
+        def bind(primary_run_id, review_id, attempt_id):
+            if not refused:
+                with c.store.lease(review_id) as context:
+                    refused.append(context.launch_claims["V1"].run_id)
+                raise ReviewRefused("verification_attempt_closed")
+            return original(primary_run_id, review_id, attempt_id)
+
+        monkeypatch.setattr(c.primary.store, "bind_check_actor", bind)
+
+    def parent_script(c):
+        spawn = c.reply(
+            "spawn_subagent",
+            {"review_id": c.prepared.review_id, "review_slot_id": "V1"},
+        )
+        return [spawn, spawn]
+
+    c.run(verify=True, prepare_hook=refuse_once, parent_script=parent_script)
+    assert refused and refused[0]
+    assert c.db.get_run(refused[0])["status"] == "error"
+    assert refused[0] not in c.store._tab.runs
+    children = [a for a, _ in c.calls if a.kind == "subagent"]
+    assert children and refused[0] not in {a.run_id for a in children}
+    assert "verification_attempt_closed" in json.dumps(c.calls[1][1])

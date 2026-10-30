@@ -5385,6 +5385,14 @@ class AgentService:
                         self._set_terminal_status(
                             child_run_id, RUN_ERROR, result=exc.reason
                         )
+                        launch = child_kwargs["review_launch"]
+                        if launch.run_id == child_run_id:
+                            # A verifier's bind_check_actor refused after the
+                            # attempt was bound: retire it like a refused start.
+                            with contextlib.suppress(ReviewRefused):
+                                child_kwargs["review_service"].retire_unstarted_launch(
+                                    launch, child_run_id
+                                )
                         return None, SpawnAdmissionRefusal(ok=False, error=exc.reason)
                 owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     child_run_id,
@@ -6589,26 +6597,31 @@ class AgentService:
                 )
             ):
                 return SpawnAdmissionRefusal(ok=False, error="invalid_review_spawn")
-            result = _spawn(*args, **kwargs)
-            if (
-                not result.ok
-                and result.error != "review_launch_pending"
-                and kwargs.get("review_id")
-                and kwargs.get("review_slot_id")
-            ):
-                owner = self.registry.resolve_owner_for_name("code_review_prepare")
-                if owner is not None:
-                    from .code_review_models import ReviewRefused
+            result = None
+            try:
+                result = _spawn(*args, **kwargs)
+                return result
+            finally:
+                # An exception (result None) releases too: the service keeps any
+                # claim already bound to a run, so only an unaccepted one goes.
+                if (
+                    (result is None or not result.ok)
+                    and getattr(result, "error", "") != "review_launch_pending"
+                    and kwargs.get("review_id")
+                    and kwargs.get("review_slot_id")
+                ):
+                    owner = self.registry.resolve_owner_for_name("code_review_prepare")
+                    if owner is not None:
+                        from .code_review_models import ReviewRefused
 
-                    try:
-                        owner[1].service.release_unaccepted_claim(
-                            kwargs["review_id"], kwargs["review_slot_id"]
-                        )
-                    except ReviewRefused:
-                        # A missing or revoked scope has nothing safe to release;
-                        # preserve the original admission refusal.
-                        pass
-            return result
+                        try:
+                            owner[1].service.release_unaccepted_claim(
+                                kwargs["review_id"], kwargs["review_slot_id"]
+                            )
+                        except ReviewRefused:
+                            # A missing or revoked scope has nothing safe to
+                            # release; preserve the original admission refusal.
+                            pass
 
         def wait_agents(ids: list[str] | None = None) -> ToolResult:
             """Block until the named (or all) children finish; collect them.
