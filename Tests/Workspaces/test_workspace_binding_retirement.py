@@ -281,3 +281,32 @@ async def test_cancelled_binding_waiter_preserves_live_producer_and_other_reader
             release.set()
             assert await asyncio.to_thread(settled.wait, 5)
         assert not errors
+
+
+def test_binding_read_inside_an_outer_operation_defers_to_its_owner(binding_registry):
+    """A nested finite read leaves retirement to the enclosing operation owner.
+
+    The project-index provider owns one registry handle across its whole
+    operation; an inner binding read must not retire it before the owner's
+    own pins are taken and released.
+    """
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+
+    registry, binding_id = binding_registry
+    db = registry.db
+    seen = []
+
+    def worker():
+        try:
+            with operation_owned_connection(db):
+                assert registry.get_runtime_binding(binding_id) is not None
+                held = db._thread_local.conn
+                assert held is not None
+                assert held.execute("SELECT 1").fetchone()[0] == 1
+                seen.append(held)
+            _assert_retired(db, seen)
+        finally:
+            db.close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(worker).result(timeout=10)
