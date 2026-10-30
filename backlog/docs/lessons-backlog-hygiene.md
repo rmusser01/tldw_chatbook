@@ -1043,6 +1043,15 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
 15-minute Fast Lane + Derived cycle — and one of those moves was my own docs-only PR
 #2401 landing first.
 
+**Queue-on recurrence (PR #3306 / TASK-37600, 2026-10-29).** Two reviewed heads
+passed every hosted check, but later dev merges introduced shared lesson/census
+conflicts. Repeated manual rebases during status checks required fresh CI and
+reset the PR's queue position when auto-merge was re-enabled. The queue sorts by
+`autoMergeRequest.enabledAt`, then PR number (`scripts/merge_queue.py`), not by
+the age of the PR or its first green run. Read the queue position before changing
+an armed PR; let the queue manage ordinary updates, and repair a conflict when
+it evicts the PR. A status check alone is not a reason to disarm and restart it.
+
 **What to do.**
 - Superseded when the merge queue is on (`gh variable get MERGE_QUEUE` = on): arm and let the queue sync; see CLAUDE.md 'Merging into dev'.
 - A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`

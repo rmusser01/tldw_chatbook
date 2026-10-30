@@ -616,6 +616,8 @@ jobs:
             Tests/UI/test_console_environment_root_reads.py \
             Tests/UI/test_console_session_admitted_roots.py \
             Tests/UI/test_console_edge_focus_restyle_scope.py \
+            Tests/UI/test_console_session_controller.py::test_character_launch_uses_worked_chat_pair_over_stale_controls \
+            Tests/UI/test_console_session_controller.py::test_character_launch_aligns_workspace_before_modal_resume \
             --timeout=300 \
             --tb=short
 

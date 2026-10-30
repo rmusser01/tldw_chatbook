@@ -4646,6 +4646,21 @@ class ConsoleSessionController:
         )
         return settings
 
+    def _character_console_session_defaults(self) -> ConsoleSessionSettings:
+        """Resolve character defaults from the worked chat's current model pair."""
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            settings = store.session_settings(store.active_session_id)
+            if settings is not None and not store.is_pristine_session(
+                store.active_session_id, expected_settings=settings
+            ):
+                return default_console_session_settings(
+                    self._provider_readiness_app_config(),
+                    settings.provider,
+                    settings.model,
+                )
+        return self._default_console_session_settings()
+
     def _blank_console_session_settings(self) -> ConsoleSessionSettings:
         """Build config-owned defaults for an eligible blank Console chat."""
         app_config = getattr(self.app_instance, "app_config", {})
@@ -5261,7 +5276,7 @@ class ConsoleSessionController:
         )
 
         store = self._ensure_console_chat_store()
-        canonical_defaults = self._default_console_session_settings()
+        canonical_defaults = self._character_console_session_defaults()
         settings = replace(
             canonical_defaults,
             system_prompt=seed.system_prompt,
@@ -5269,14 +5284,7 @@ class ConsoleSessionController:
         )
         if runtime_backend == "server" and not exact_server_context_is_current():
             return False
-        active = next(
-            (
-                candidate
-                for candidate in store.sessions()
-                if candidate.id == store.active_session_id
-            ),
-            None,
-        )
+        active = self._active_native_console_session()
         if (
             active is not None
             and active.settings is not None
@@ -5466,14 +5474,7 @@ class ConsoleSessionController:
         )
         if context_is_current is not None and not context_is_current():
             return False
-        active = next(
-            (
-                candidate
-                for candidate in store.sessions()
-                if candidate.id == store.active_session_id
-            ),
-            None,
-        )
+        active = self._active_native_console_session()
         if (
             active is not None
             and active.settings is not None
@@ -5930,11 +5931,9 @@ class ConsoleSessionController:
     def _active_native_console_session(self) -> Any | None:
         """Return the active native Console session without creating the store."""
         console_store = self._console_chat_store
-        active_session_id = (
-            console_store.active_session_id if console_store is not None else None
-        )
-        if console_store is None or active_session_id is None:
+        if console_store is None or console_store.active_session_id is None:
             return None
+        active_session_id = console_store.active_session_id
         for console_session in console_store.sessions():
             if console_session.id == active_session_id:
                 return console_session

@@ -1617,3 +1617,10 @@ Tests/UI/test_console_modal_theme_frames.py::test_console_modals_paint_theme_fra
 # consent first, and leaving it during model preparation ends in idle.
 Tests/UI/test_console_speech_header_state.py::test_enter_on_hands_free_asks_consent_and_declining_starts_nothing
 Tests/UI/test_console_speech_header_state.py::test_exit_during_model_preparation_cancels_and_a_late_start_never_records[escape]
+# TASK-37600: app-backed character prompt seeds use isolated private profiles;
+# individual nodes stay within the UI gate's per-entry time budget (~20 s each).
+Tests/UI/test_character_session_prompt_seed.py::test_personas_start_chat_seeds_template_provenance_with_global_name
+Tests/UI/test_character_session_prompt_seed.py::test_character_picker_new_chat_seeds_template_provenance
+Tests/UI/test_character_session_prompt_seed.py::test_character_picker_keeps_raw_identity_but_sanitizes_notification
+Tests/UI/test_character_session_prompt_seed.py::test_character_picker_swap_uses_override_and_only_greets_empty_chat
+Tests/UI/test_character_session_prompt_seed.py::test_character_swap_surfaces_refused_durable_projection
