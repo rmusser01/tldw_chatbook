@@ -155,8 +155,12 @@ only code-review wording or a stage control for a review the session holds.
 Capture verifies each commit once, lists each pinned directory once per
 `ReviewGitReader`, refuses a change set beyond the file quota before reading
 entries, and holds the review-store lock only for its precondition checks (the
-source guard may wait on the UI thread). Changed binary/symlink files become
-path-named coverage gaps and withheld sensitive changes one unnamed counted gap. A configured verifier
+source guard may wait on the UI thread). Changed binary/symlink/submodule/over-size
+files become path-named coverage gaps and withheld sensitive changes one unnamed
+counted gap. `PreparedReview.coverage_gaps` carries the first eight (clipped,
+`coverage_gaps_omitted` counts the rest) and a reviewer's first listing of the
+review scope repeats them as page gaps within half its budget; the persisted launch
+task carries only the gap count. A configured verifier
 is frozen without authorizing verification: only a separately issued matching
 verification grant adds it to preparation's finite schedule accounting.
 
