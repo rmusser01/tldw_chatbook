@@ -691,6 +691,7 @@ async def test_accepted_review_capacity_rechecks_after_held_metadata(
         controller = SimpleNamespace(
             store=c.chat_store,
             code_review=c.coordinator,
+            _code_review=c.coordinator,
             provider_gateway=gateway,
             _disposed=False,
             _shutdown_requested=threading.Event(),

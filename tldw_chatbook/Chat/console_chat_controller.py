@@ -14352,7 +14352,8 @@ class ConsoleChatController:
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
         # parent cannot reserve a child in the cancellation-to-drain window.
-        self.code_review.fence_session(session_id)
+        if self._code_review is not None:
+            self._code_review.fence_session(session_id)
         fence_wake = getattr(self._fleet_wake, "fence_conversation", None)
         if callable(fence_wake):
             for conversation_id in fleet_conversation_ids:
@@ -14735,7 +14736,8 @@ class ConsoleChatController:
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
         """
-        self.code_review.fence_session(session_id)
+        if self._code_review is not None:
+            self._code_review.fence_session(session_id)
         self._interrupt_host.cancel_hook_reviews(session_id)
         received = self.store.received_turn_for_session(session_id)
         if received is not None:
@@ -17984,7 +17986,8 @@ class ConsoleChatController:
         ``leave_console`` supplies the reversible per-visit cancellation
         boundary for the same app-owned controller.
         """
-        self.code_review.close()
+        if self._code_review is not None:
+            self._code_review.close()
         if self._review_ledger is not None:
             self._review_ledger.unregister_review_boundary_authority(
                 self._fleet_wake.runtime_owner_id
@@ -27081,6 +27084,13 @@ class ConsoleChatController:
                     session_id,
                     role=ConsoleMessageRole.ASSISTANT,
                     content=f"Review needs attention: {exc.reason}. No review stage was admitted.",
+                )
+            except Exception as exc:  # noqa: BLE001 - review tools are optional
+                logger.warning(
+                    "Console review tools unavailable; continuing the agent turn "
+                    "without them | session_id={} exception_type={}",
+                    session_id,
+                    type(exc).__name__,
                 )
             profile_provider = None
             if personal_context_service is not None and session is not None:
