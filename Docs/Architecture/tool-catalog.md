@@ -155,7 +155,7 @@ only code-review wording or a stage control for a review the session holds.
 Capture verifies each commit once, lists each pinned directory once per
 `ReviewGitReader`, refuses a change set beyond the file quota before reading
 entries, and holds the review-store lock only for its precondition checks (the
-source guard may wait on the UI thread). Changed binary/symlink/submodule/over-size
+source guard may wait on the UI thread). Changed binary/symlink/submodule/non-UTF-8/over-size
 files become path-named coverage gaps and withheld sensitive changes one unnamed
 counted gap. `PreparedReview.coverage_gaps` carries the first eight (clipped,
 `coverage_gaps_omitted` counts the rest) and a reviewer's first listing of the
@@ -249,7 +249,10 @@ stream. Neither primary actions nor native receipts advance verifier revisions.
 The actual fleet `wait_agents` predicate returns a bounded `check_requested` notice
 without collecting the live verifier. Its proposal-specific `verification_batch`
 read retains its admitted operation charge and finite verifier deadline/cancel
-context. Capacity failures signal unstarted work before fleet draining. Inline
+context. Capacity failures signal unstarted work before fleet draining; an
+approval denial ends unstarted checks only when the denied call is the claimed
+check's own argv-exact `shell_exec` (`CodeReviewService.is_claimed_check_call`),
+so an unrelated denied `shell_exec` leaves the claim pending. Inline
 launch atomically acknowledges an unavailable receipt and never waits for a parent.
 The launch branch, rather than the preparation settings, fixes this mode.
 
