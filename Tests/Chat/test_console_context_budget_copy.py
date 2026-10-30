@@ -103,7 +103,7 @@ def test_compaction_prompt_flags_an_estimated_budget() -> None:
 
 
 def test_hold_detail_gives_the_numbers_and_what_each_choice_does() -> None:
-    usage, choices = compaction_hold_detail(
+    usage, choices, _preview = compaction_hold_detail(
         used_tokens=1_650, budget_tokens=1_800, estimated=False
     )
 
@@ -114,8 +114,25 @@ def test_hold_detail_gives_the_numbers_and_what_each_choice_does() -> None:
     assert "back in the composer" in choices
 
 
+def test_hold_detail_names_the_trigger_and_the_policy_and_preview_routes() -> None:
+    """TASK-33621.4 AC#1: tokens used, budget AND trigger; change the policy;
+    and (owner decision 2026-10-27) a pointer to /rewind's own preview."""
+    usage, choices, preview = compaction_hold_detail(
+        used_tokens=1_656, budget_tokens=1_500, estimated=False, trigger_tokens=1_200
+    )
+
+    assert "1,656 of 1,500 tokens" in usage
+    assert "1,200 tokens" in usage
+    assert "80%" in usage
+    assert "Change policy" in choices
+    assert "Context and memory" in choices
+    assert "/rewind" in preview
+    assert "Summarize" in preview
+    assert "preview" in preview
+
+
 def test_hold_detail_flags_an_estimated_window() -> None:
-    usage, _choices = compaction_hold_detail(
+    usage, _choices, _preview = compaction_hold_detail(
         used_tokens=30_000, budget_tokens=32_000, estimated=True
     )
 
