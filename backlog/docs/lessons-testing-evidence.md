@@ -1,5 +1,30 @@
 # Lessons: what counts as evidence a change works
 
+## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
+
+**Incident.** To stop the Console rail's filter input being replaced under
+the user's fingers, the Conversations tray's rebuild kept its mounted filter
+row and mounted the new children around it. Every typing test went green,
+but filtering live showed "1 match" over an empty list. The tray's height
+fit waits for layout only when every child's height reads 0 (TASK-2154.3).
+The kept row still had its geometry, so a fit that ran mid-rebuild saw a
+bottom of 8 (y=5 plus the row's 3) and pinned the tray to it. The bounded
+section measured that short tray and nothing asked it to measure again; the
+counted row sat under the next section's header. The first fix asked the
+"owning section" to re-measure by matching ancestor ids starting with
+`console-bounded-section-`. The section's own scroll viewport carries that
+prefix too, so the request went nowhere. The hit-test test still passed 5 of
+5 by timing. An instrumented run showed the request followed by no reconcile,
+and the test then went red 2 of 3.
+
+**What to do.** When a rebuild keeps any child, audit every guard that
+infers "not laid out yet" from child geometry: a kept child makes those
+guards lie. Make the follow-up wait for an explicit layout signal instead.
+Assert what the user sees: hit-test each counted row with
+`get_widget_at`, because a DOM query finds rows that are clipped. Match an
+owner by type, not by id prefix. Before trusting a green, instrument the
+callback you added once and check that it actually runs.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
