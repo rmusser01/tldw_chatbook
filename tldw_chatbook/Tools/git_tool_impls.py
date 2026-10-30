@@ -1717,30 +1717,6 @@ class ReviewGitReader:
             )
         return entries
 
-    def tracked_case_variants(self, paths) -> frozenset[str]:
-        """Requested paths the index tracks under any letter case, or below.
-
-        On a case-insensitive filesystem ``MAIN.PY`` opens tracked
-        ``main.py``. Detection only: the ``icase`` pathspec here can only
-        refuse a selection, never widen what a caller reads (see
-        ``_literal_pathspec``), and record names are compared, never returned.
-        """
-        paths = tuple(dict.fromkeys(paths))
-        folded: dict[str, list[str]] = {}
-        for path in paths:
-            self.safe_path(path)
-            folded.setdefault(path.casefold(), []).append(path)
-        tracked: set[str] = set()
-        for chunk in _argv_chunks(paths):
-            raw = self._read(
-                ["ls-files", "-z", "--", *(f":(icase,literal){p}" for p in chunk)]
-            )
-            for name in raw.split(b"\0"):
-                parts = PurePosixPath(name.decode("utf-8").casefold()).parts
-                for depth in range(1, len(parts) + 1):
-                    tracked.update(folded.get("/".join(parts[:depth]), ()))
-        return frozenset(tracked)
-
     def blob(
         self, entry: ReviewGitEntry, *, max_bytes: int = GIT_MAX_OUTPUT_BYTES
     ) -> bytes:

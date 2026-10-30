@@ -204,6 +204,32 @@ def _safe(root, exclusions, path, *, directory=False):
     return root / path
 
 
+def _listed_names(directory) -> frozenset[str]:
+    """Names stored in ``directory``, spelled exactly as the filesystem lists them."""
+    try:
+        return frozenset(os.listdir(directory))
+    except OSError:
+        return frozenset()
+
+
+def _spelled_as_stored(root, path) -> bool:
+    """Whether an existing worktree selection names each component as stored.
+
+    Case- or normalization-insensitive filesystems (APFS, NTFS) open
+    ``MAIN.PY`` or an NFD ``naïve.py`` as another stored file, which may be
+    tracked or excluded; only the stored spelling is listed. A missing path is
+    left to the caller's missing-file handling.
+    """
+    if not os.path.lexists(root / path):
+        return True
+    directory = root
+    for part in PurePosixPath(path).parts:
+        if part not in _listed_names(directory):
+            return False
+        directory = directory / part
+    return True
+
+
 def _in_scope(path, scope):
     return scope == "." or path == scope or path.startswith(scope.rstrip("/") + "/")
 
@@ -431,13 +457,10 @@ def _capture(target, authority, store, context, root, exclusions):
             withheld += reader.change_count(None, None, target.scope) - len(unstaged)
         for path in target.untracked_paths:
             _safe(root, exclusions, path)
-            if not _in_scope(path, target.scope):
+            if not _in_scope(path, target.scope) or not _spelled_as_stored(root, path):
                 raise ReviewRefused("invalid_untracked_selection")
         paths = tuple(dict.fromkeys((*staged, *unstaged)))
-        indexed = reader.index_entries(paths)
-        # Exact or case-variant (or directory) tracked paths are not untracked.
-        if reader.tracked_case_variants(target.untracked_paths):
-            raise ReviewRefused("invalid_untracked_selection")
+        indexed = reader.index_entries((*paths, *target.untracked_paths))
         for path in paths:
             selected["base", path] = reader.entry(head, path)
             selected["staged", path] = indexed[path]
@@ -445,6 +468,8 @@ def _capture(target, authority, store, context, root, exclusions):
                 selected["worktree", path] = "mutable"
                 mutable.add(path)
         for path in target.untracked_paths:
+            if indexed[path] is not None:
+                raise ReviewRefused("invalid_untracked_selection")
             selected["worktree", path] = "mutable"
             mutable.add(path)
     else:
@@ -504,10 +529,10 @@ def _capture(target, authority, store, context, root, exclusions):
                 for side, revision in revisions.items():
                     selected.setdefault((side, path), reader.entry(revision, path))
             else:
-                selected.setdefault(
-                    ("worktree" if target.kind == "working_tree" else "head", path),
-                    "mutable",
-                )
+                key = ("worktree" if target.kind == "working_tree" else "head", path)
+                if key not in selected and not _spelled_as_stored(root, path):
+                    raise ReviewRefused("source_path_unavailable")
+                selected.setdefault(key, "mutable")
                 mutable.add(path)
         except (ReviewRefused, LocalToolError):
             gaps.append(CoverageGap(reason="optional_context_unavailable"))
@@ -633,13 +658,17 @@ def _capture(target, authority, store, context, root, exclusions):
                 raise ReviewRefused("source_drift")
             # A fresh index read: drift between the passes is still seen.
             staged_now = reader.index_entries(
-                path for side, path in selected if side == "staged"
+                (
+                    *(path for side, path in selected if side == "staged"),
+                    *target.untracked_paths,
+                )
             )
             for (side, path), entry in selected.items():
                 if side == "staged" and staged_now[path] != entry:
                     raise ReviewRefused("source_drift")
-            if reader.tracked_case_variants(target.untracked_paths):
-                raise ReviewRefused("source_drift")
+            for path in target.untracked_paths:
+                if staged_now[path] is not None or not _spelled_as_stored(root, path):
+                    raise ReviewRefused("source_drift")
         if not authority.admitted.guard(False):
             raise ReviewRefused("source_authority_unavailable")
         identity = {
