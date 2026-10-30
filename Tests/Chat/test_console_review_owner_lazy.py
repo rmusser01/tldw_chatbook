@@ -35,17 +35,26 @@ async def test_wake_pause_and_shutdown_leave_review_owner_unbuilt():
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    ("draft", "explicit"),
-    [("hello", False), ("Review my changes", True)],
-    ids=["ordinary", "explicit-review"],
+    ("draft", "gate_on", "explicit"),
+    [
+        ("hello", True, False),
+        ("Review my changes", True, True),
+        # Composition's own admission: no bound root needs code wording, and
+        # a verify without a held review is ordinary chat.
+        ("Review my resume", True, False),
+        ("verify", True, False),
+        ("Review my changes", False, False),
+    ],
+    ids=["ordinary", "explicit-review", "resume", "bare-verify", "gate-off"],
 )
 async def test_unexpected_review_composition_failure_keeps_agent_turn(
-    tmp_path, monkeypatch, draft, explicit
+    tmp_path, monkeypatch, draft, gate_on, explicit
 ):
     """Review tools are optional; their composition never fails an agent turn.
 
-    An explicit review request is told why it got no review (a safe reason,
-    never the exception text); an ordinary turn stays silent.
+    A turn composition would admit as a review request is told why it got no
+    review (a safe reason, never the exception text); every other turn stays
+    silent.
     """
     from Tests.console_provider_doubles import provider_resolution
     from tldw_chatbook.Chat import console_code_review
@@ -74,6 +83,7 @@ async def test_unexpected_review_composition_failure_keeps_agent_turn(
         raise RuntimeError("unexpected composition failure")
 
     monkeypatch.setattr(console_code_review, "compose_native_review_provider", broken)
+    monkeypatch.setattr(console_code_review, "_review_tools_enabled", lambda: gate_on)
     gateway = Gateway()
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
