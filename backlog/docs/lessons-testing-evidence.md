@@ -87,6 +87,12 @@ executor finally block re-signaling the abort Event after cleanup too.
 A bounded fault-injection guard caught that call without another hang;
 skip dead-worker signaling rather than lengthening timeouts.
 
+A proposed Watchlists service import deferral passed the ready census but
+shifted two modules into screen preimport (560/558), so it was rejected.
+Check adjacent import budgets when paying down boot residency; a passing
+first-paint count alone can hide a transfer. The replacement uses the
+Console package's existing lazy export for the first-use Rename dialog.
+
 ## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
 
 The real Windows workspace worker could preview a write but failed creation at

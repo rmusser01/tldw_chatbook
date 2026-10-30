@@ -81,10 +81,28 @@ the full raw-provider/integration selection passed88. Existing ADR-254 applies.
 
 ## CI ferry follow-up (TASK-37630)
 
-Python3.14 CI timed out while the cancellation test inspected a worker
-Event after termination. The test now observes real parent-side signaling.
-A local retry exposed the same hazard in executor finalization; a bounded
-post-cleanup signal guard failed before the fix. Finalization now skips
-abort signaling after worker death. All46 native process controls passed,
-with7 explicit POSIX skips. The boot-census investigation remains separate;
-ADR-097 limits must stay unchanged. No new ADR is needed for this repair.
+Python 3.14 CI timed out while the cancellation test inspected a worker Event
+after termination. The test now observes real parent-side signaling. A local
+retry exposed the same hazard in executor finalization; a bounded post-cleanup
+signal guard failed before the fix. Finalization skips abort signaling after
+worker death. All 46 native process controls passed, with 7 explicit POSIX skips.
+Independent review accepted the repair and ran 10 additional focused controls.
+
+Base/head runtime-source probes reproduced identical native module sets; a
+background character read can race the Linux readiness flag. The final paydown
+uses the existing Console lazy-export facade for ConsoleRenameSessionModal and
+moves the session controller's remaining import into its Rename handler. Its
+public export, original class identity and session source size remain intact.
+The new cold package/session import regression runs in Perf Guard. Existing
+ADR-097 applies; no limits, permissions or execution budgets increased.
+
+Final verification: 7 budget/export/switcher/source-size checks passed, including
+census 1031/1031, preimport 558/558 and first-send 93/94. Two current real SQLite
+Rename success/changed-profile-refusal controls passed; 5 workflow-safety checks
+passed. Independent review found no remaining findings in the final repair.
+
+Deviation: the controller WatchlistsToolService import candidate passed boot but
+transferred two modules into preimport (560/558), so it was reverted. The legacy
+rename-persistence fixture was also left unchanged after its profile admission
+and obsolete fake-owner route failed; current real SQLite controls provide the
+Rename behavior evidence. No full suite was run and no new ADR was needed.
