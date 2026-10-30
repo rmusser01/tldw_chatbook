@@ -241,7 +241,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Esc exit focuses the open Terminal and the rail footer hint names it
     #: (one branch in action_focus_console_composer_home, one line in the
     #: footer); 24389/737 measured on dev b5150753eb plus this branch.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24391, 737),
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24391/737 -> 24389/737.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24389, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
