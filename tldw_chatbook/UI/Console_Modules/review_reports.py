@@ -12,11 +12,16 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-_REPRESENTING: set[asyncio.Task] = set()
+from loguru import logger
+
+_UNCLAIMED = object()
 
 
 def attach_app(controller: Any, app: Any) -> None:
     """Give the controller the app, the report presenter, and pending originals.
+
+    Every Console ensure lands here, so pending originals are re-presented
+    only on a fresh view claim, with at most one pass in flight.
 
     Args:
         controller: The Console chat controller a view is attaching to.
@@ -24,17 +29,34 @@ def attach_app(controller: Any, app: Any) -> None:
     """
     controller.app = app
     controller.review_report_presenter = present_code_review_original
+    runtime = getattr(app, "console_runtime", None)
+    claim = getattr(runtime, "_attached_generation", None)
+    if getattr(controller, "_review_presenter_claim", _UNCLAIMED) == claim:
+        return
+    controller._review_presenter_claim = claim
     coordinator = getattr(controller, "_code_review", None)
     if coordinator is None or not coordinator._reviews:
         return  # never build the review owner just to find nothing pending
+    in_flight = getattr(controller, "_review_present_task", None)
+    if in_flight is not None and not in_flight.done():
+        return  # the running pass presents onto whichever view is attached
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
     # Presenting hops back onto this loop, so it must run off it.
     task = loop.create_task(asyncio.to_thread(coordinator.present_pending))
-    _REPRESENTING.add(task)
-    task.add_done_callback(_REPRESENTING.discard)
+    controller._review_present_task = task
+    task.add_done_callback(_log_present_failure)
+
+
+def _log_present_failure(task: asyncio.Task) -> None:
+    """Retrieve a failed re-presentation pass; log its type, never its text."""
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        logger.warning(
+            "Console review re-presentation failed | exception_type={}",
+            type(exc).__name__,
+        )
 
 
 def present_code_review_original(
@@ -46,8 +68,12 @@ def present_code_review_original(
 
     def available():
         cancel = controller._active_cancel_events.get(session_id)
+        # A detached view must not push the modal over other screens; the
+        # original stays pending until the next fresh attach presents it.
+        runtime = getattr(controller.app, "console_runtime", None)
         return (
-            not controller._disposed
+            (runtime is None or runtime.view is not None)
+            and not controller._disposed
             and session_id not in controller._session_close_generations
             and controller.store.active_session_id == session_id
             and not (cancel is not None and cancel.is_set())
