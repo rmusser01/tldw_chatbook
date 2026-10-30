@@ -1097,6 +1097,8 @@ jobs:
             --tb=short
 
   derived-artifacts:
+    permissions:
+      actions: read
     # This job's name is the string the owner enters under branch protection ->
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
@@ -1178,6 +1180,84 @@ jobs:
           echo "Dreams tracking tests result: ${{ needs.dreams-tracking.result }}"
           echo "::error::The required Dreams tracking tests did not succeed."
           exit 1
+
+      # TASK-38100: diagnostics only; every verdict above remains fail-closed.
+      - name: Report qualification cost
+        if: ${{ always() }}
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+              if (!Number.isSafeInteger(attempt) || attempt < 1) {
+                throw new Error('Invalid run attempt');
+              }
+              const args = {...context.repo, run_id: context.runId, per_page: 100};
+              const current = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt,
+                {...args, attempt_number: attempt});
+              const all = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+                {...args, filter: 'all'});
+              const controls = new Set([
+                'Derived artifacts reproduce from their sources', 'Merge queue tick'
+              ]);
+              const stamp = value => typeof value === 'string' ? Date.parse(value) : NaN;
+              const measure = jobs => {
+                const seen = new Set(), waits = [];
+                let minutes = 0, measured = 0, missingExecution = 0, missingWait = 0;
+                for (const job of jobs) {
+                  if (controls.has(job.name) || job.conclusion === 'skipped') continue;
+                  if (!Number.isSafeInteger(job.id) || job.id <= 0 || job.run_id !== context.runId) {
+                    missingExecution++; missingWait++; continue;
+                  }
+                  if (seen.has(job.id)) continue;
+                  seen.add(job.id);
+                  const start = stamp(job.started_at), end = stamp(job.completed_at);
+                  const created = stamp(job.created_at);
+                  if (job.status !== 'completed' || !Number.isFinite(start) ||
+                      !Number.isFinite(end) || end < start) {
+                    missingExecution++;
+                  } else {
+                    minutes += (end - start) / 60000; measured++;
+                  }
+                  if (job.status !== 'completed' || !Number.isFinite(created) ||
+                      !Number.isFinite(start) || start < created) {
+                    missingWait++;
+                  } else {
+                    waits.push((start - created) / 60000);
+                  }
+                }
+                waits.sort((a, b) => a - b);
+                const middle = Math.floor(waits.length / 2);
+                const median = waits.length ? (waits[(waits.length - 1) >> 1] + waits[middle]) / 2 : null;
+                return {minutes, measured, missingExecution, missingWait, median,
+                  maximum: waits.length ? waits[waits.length - 1] : null};
+              };
+              const latest = measure(current), cumulative = measure(all);
+              const display = value => value === null ? 'Unavailable' : value.toFixed(1);
+              const row = (label, data) => [label,
+                display(data.measured ? data.minutes : null), String(data.measured),
+                display(data.median), display(data.maximum),
+                String(data.missingExecution), String(data.missingWait)];
+              core.summary.addHeading('CI qualification cost');
+              core.summary.addRaw('Observed completed-job minutes, not billed minutes. ' +
+                'Excludes the aggregate and queue tick in every attempt. Job wait is created-to-start, ' +
+                'including dependency/concurrency waits. Retries may execute only failed jobs.\n\n');
+              core.summary.addTable([
+                ['Scope', 'Runner minutes', 'Measured jobs', 'Median wait (min)', 'Max wait (min)',
+                 'Incomplete execution rows', 'Incomplete wait rows'],
+                row(`Attempt ${attempt}`, latest), row('All recorded attempts', cumulative)
+              ]);
+              core.summary.addRaw('\nWarning budget: 500 cumulative observed runner-minutes; ' +
+                'audit median first attempt: 397. Missing data is not zero cost.\n');
+              if (cumulative.minutes > 500) {
+                core.warning(`CI runner-minute budget exceeded: ${cumulative.minutes.toFixed(1)} > 500.`);
+              }
+              await core.summary.write();
+            } catch {
+              core.warning('CI cost report unavailable: API data or summary could not be read or written.');
+            }
 
   queue-tick:
     # Wakes the merge queue after CI finishes, for any same-repo PR run (including the held runs
