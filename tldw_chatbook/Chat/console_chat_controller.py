@@ -336,10 +336,6 @@ from tldw_chatbook.Chat.console_configuration_capture import (
     capture_prompt_transform_inputs as capture_prompt_transform_inputs,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
     capture_skill_context_maximum as capture_skill_context_maximum,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
 )
-from tldw_chatbook.Chat.console_compaction_gate import (
-    refuse_at_ask_trigger,
-    refuse_without_card,
-)
 from tldw_chatbook.Chat.console_turn_context import (
     commit_fence_configuration,
     read_session_change_review_admission,
@@ -18230,6 +18226,8 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
         if refusal := await refuse_at_ask_trigger(
             self, session_id, resolution, provider_messages, "retried"
         ):
@@ -18417,6 +18415,8 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
         if refusal := await refuse_at_ask_trigger(
             self, session_id, resolution, provider_messages, "continued"
         ):
@@ -18566,6 +18566,8 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
         if refusal := await refuse_at_ask_trigger(
             self, session_id, resolution, provider_messages, "regenerated"
         ):
@@ -23907,6 +23909,8 @@ class ConsoleChatController:
             ),
         )
         if not card:
+            from tldw_chatbook.Chat.console_compaction_gate import refuse_without_card
+
             return refuse_without_card(
                 self,
                 preparation,

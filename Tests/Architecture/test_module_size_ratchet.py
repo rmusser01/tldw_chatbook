@@ -161,6 +161,10 @@ _BUDGETS: dict[str, int] = {
     # admission check also refuses a queued or Buddy send at the Ask trigger
     # before commit (the refusal itself lives in console_compaction_gate);
     # live, a queued follow-up was marked Failed under the dispatch panel.
+    # 2026-10-29 (TASK-33621.4, same owner rule): +4, the console_compaction_gate
+    # import moves from module scope into its four call sites (four imports
+    # and the formatter's blank line after each, less the four-line module
+    # import) so the UI-ready module census (ADR-097) stays at dev's count.
     "tldw_chatbook/Chat/console_chat_controller.py": 29038,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,

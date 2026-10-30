@@ -9,6 +9,10 @@ with the numbers and the way forward. A queued follow-up and a Persona Buddy
 reply cannot show it either; they are refused before commit by
 ``refuse_without_card``: the queued entry returns to the head of the queue,
 and Buddy keeps its text.
+
+The controller imports this module at each call site, not at module scope:
+it is needed only once a turn is sent, and the UI-ready module census
+(ADR-097) does not budget for it or for its copy module.
 """
 
 from __future__ import annotations
