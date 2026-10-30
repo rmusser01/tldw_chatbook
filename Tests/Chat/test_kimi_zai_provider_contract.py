@@ -714,9 +714,14 @@ def test_streaming_adapter_carries_terminal_candidate_into_model_turn(tmp_path) 
             yield gateway_module.ProviderToolCalls(calls, metadata=metadata)
 
     class Resolution:
+        # The adapter binds terminal checkpoints to the host-captured
+        # resolution, so the double carries the fields production pins.
         provider = "moonshot"
+        selected_provider = ""
         execution_key = "moonshot"
         model = "kimi-k3"
+        base_url = checkpoint.api_base_url
+        continuation_protocol = "chat_completions"
 
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -751,7 +756,21 @@ def test_streaming_adapter_carries_terminal_candidate_into_model_turn(tmp_path) 
     finally:
         lifeline.shutdown()
 
-    assert turn.provider_continuation == checkpoint
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationRestoreTarget,
+        bind_continuation_to_target,
+    )
+
+    assert turn.provider_continuation == bind_continuation_to_target(
+        checkpoint,
+        ContinuationRestoreTarget(
+            provider="moonshot",
+            model="kimi-k3",
+            protocol="chat_completions",
+            api_base_url=checkpoint.api_base_url,
+            selected_provider="moonshot",
+        ),
+    )
     assert turn.tokens == 3
     assert turn.assistant_message is not None
     assert "PRIVATE-REASONING-CANARY" not in repr(turn.assistant_message)
