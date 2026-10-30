@@ -1580,8 +1580,9 @@ only its link to them goes. While another change to your notes is still
 running, Delete forever deletes nothing and the view says "Delete forever
 waits: another change to your notes is still running." until that change
 finishes. While a notes import is still running, **Restore** (r) restores
-nothing either: the view shows the same line, focus stays on the row, and the
-line clears when the import ends.
+nothing and the view says "Restore waits: another change to your notes is
+still running." Focus stays on the row, and the line clears when the import
+ends.
 
 ## Keyboard & commands
 

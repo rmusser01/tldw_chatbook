@@ -593,6 +593,7 @@ from ...Widgets.Library.library_notes_canvas import (
     PURGE_BUSY_NOTICE,
     PURGE_CONFIRM_LABEL,
     PURGE_CONFIRM_TITLE,
+    RESTORE_BUSY_NOTICE,
     LibraryNotePresentationState,
     NoteEditorTextArea,
     note_title_tiebreak_suffix,
@@ -6265,8 +6266,8 @@ class LibraryNotesController:
         Final review I-2: an import ending is a release like any other --
         the one release body runs after the reload (which settles any owed
         tree reload itself), so a Trash page read queued under a Restore
-        runs once and the Trash's busy reason ("Delete forever waits…")
-        clears without the user pressing anything.
+        runs once and the Trash's busy reason ("Restore waits…" or "Delete
+        forever waits…") clears without the user pressing anything.
         """
         self._refresh_local_source_snapshot()
         self._request_library_notes_tree_initial_load()
@@ -8103,20 +8104,25 @@ class LibraryNotesController:
         line and clearing it at the release are syncs; one capturing while
         focus is parked on a pane grip fell back to the first row. So the
         row pressed (``button``, its Restore or Delete forever) is owed, as
-        Cancel does.
+        Cancel does. Residual R-3: the line names the action pressed last
+        (a Restore says Restore waits; anything else, Delete forever).
 
         Args:
             button: The pressed row button, or ``None``.
         """
         button_id = str(getattr(button, "id", "") or "")
-        for prefix in ("library-notes-trash-restore-", "library-notes-trash-delete-"):
+        restore = "library-notes-trash-restore-"
+        notice = (
+            RESTORE_BUSY_NOTICE if button_id.startswith(restore) else PURGE_BUSY_NOTICE
+        )
+        for prefix in (restore, "library-notes-trash-delete-"):
             if button_id.startswith(prefix):
                 self._trash_focus_role = f"trash-restore:{button_id.removeprefix(prefix)}"
                 self._trash_landing_settling = ""
         trash = getattr(self, "_library_notes_trash", None)
-        if trash is None or trash.notice == PURGE_BUSY_NOTICE:
+        if trash is None or trash.notice == notice:
             return
-        self._library_notes_trash = dataclasses.replace(trash, notice=PURGE_BUSY_NOTICE)
+        self._library_notes_trash = dataclasses.replace(trash, notice=notice)
         if getattr(self, "is_mounted", False) and self._library_notes_view == "trash":
             _sync_library_canvas(self, "notes")
 

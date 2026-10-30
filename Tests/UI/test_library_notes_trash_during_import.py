@@ -12,8 +12,8 @@ cleared it.
 
 Now the Trash's reads wait behind the WRITER interlock alone
 (``_library_notes_writer_held``): under an import a page press reads at
-once, ``x`` -- and Restore (re-review NB-1) -- paint ``PURGE_BUSY_NOTICE``
-on the pressed row's behalf, and the import ending
+once, ``x`` paints ``PURGE_BUSY_NOTICE`` and Restore (re-review NB-1, R-3)
+``RESTORE_BUSY_NOTICE`` on the pressed row's behalf, and the import ending
 releases through the ONE release body (``_release_library_notes_mutation``),
 which clears the reason and runs any read queued under a Restore exactly
 once. Leaving the Trash drops a queued read (m-3).
@@ -78,6 +78,9 @@ SIZE = (120, 36)
 DELETED = 25
 #: Files in the folder the held import works through.
 NOTES = 5
+#: The words a fenced Restore paints (``RESTORE_BUSY_NOTICE``), spelled out
+#: as the User Guide quotes them, so the pin reads what the user reads.
+RESTORE_WAITS = "Restore waits: another change to your notes is still running."
 
 
 class _Seed:
@@ -282,17 +285,19 @@ async def test_next_in_the_trash_during_an_import_reads_the_page_and_x_says_why(
 async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Re-review NB-1 (residual R-2): under a held import ``r`` on a Trash row
-    paints the same busy reason ``x`` paints, restores nothing, and keeps
-    focus owed to its row; the import ending clears the reason through the
-    one release, and ``r`` then restores the note.
+    """Re-review NB-1 (residuals R-2, R-3): under a held import ``r`` on a
+    Trash row paints why Restore waits, restores nothing, and keeps focus
+    owed to its row; ``x`` on the same row then paints its own reason; the
+    import ending clears the line through the one release, and ``r`` then
+    restores the note.
 
     The owed row is proven as the ``x`` pin proves it: focus is parked on the
     grip (a programmatic move, as Textual's reset is) before the release.
 
     RED at 5d0b731bd1: the ``r`` binding is gated on the import's fence, so
     the key does nothing and the Trash's line stays empty (a Restore press
-    returned silently), while the footer offers ``r restore note``.
+    returned silently), while the footer offers ``r restore note``. RED at
+    ff2efa993b: the line after ``r`` names Delete forever.
     """
     seed = _Seed(tmp_path, monkeypatch)
     write = _Gate()
@@ -361,14 +366,29 @@ async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
             await _until(
                 pilot,
                 lambda: _painted_in(host, "#library-notes-trash-notice")
-                == PURGE_BUSY_NOTICE,
-                lambda: "the busy reason on the Trash's own line, painted "
+                == RESTORE_WAITS,
+                lambda: "Restore's busy reason on the Trash's own line, painted "
                 f"{_painted_in(host, '#library-notes-trash-notice')!r}",
             )
             assert seed.deleted() == before
             assert deleted_flag(note_id) == 1, "the note was restored under the fence"
             assert _focused_id(screen) == "library-notes-trash-restore-2"
             assert note_id in {row.note_id for row in screen._notes_state.trash.rows}
+
+            # Residual R-3: x on the same row, still fenced, names its own
+            # action -- the line follows the last key pressed -- and opens
+            # no confirm under the fence.
+            await pilot.press("x")
+            await _until(
+                pilot,
+                lambda: _painted_in(host, "#library-notes-trash-notice")
+                == PURGE_BUSY_NOTICE,
+                lambda: "x's busy reason replacing Restore's, painted "
+                f"{_painted_in(host, '#library-notes-trash-notice')!r}",
+            )
+            assert host.screen is screen, "a confirm opened under the fence"
+            assert seed.deleted() == before
+            assert _focused_id(screen) == "library-notes-trash-restore-2"
 
             # Textual's reset landing, not yet replayed, as the release's
             # syncs capture it.

@@ -728,7 +728,10 @@ _BUDGETS: dict[str, int] = {
     # a Restore under an import paints the busy reason ``x`` paints and owes
     # its row, through the one busy helper both now share (it takes the
     # pressed button): 8905 -> 8917 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8917,
+    # 2026-10-30, residual R-3 (same owner decision): that helper names the
+    # action pressed last -- "Restore waits…" for a Restore, "Delete forever
+    # waits…" otherwise: 8917 -> 8923 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 8923,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
