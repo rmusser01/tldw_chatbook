@@ -145,11 +145,14 @@ def validate_durable_continuation_binding(
             )
             if current.managed_resume is not None and not has_finalizer:
                 raise RuntimeError("Managed continuation finalizer is unavailable.")
-        if dispatch_recovery is not None and dispatch_recovery.checkpoint is not None:
-            if (
-                dispatch_recovery.assistant_message_id != message.id
-                or checkpoint.schema_version != 3
-            ):
+        # A dispatch constrains only the assistant message it owns; another
+        # message's dispatch is irrelevant once this run's target validated.
+        if (
+            dispatch_recovery is not None
+            and dispatch_recovery.checkpoint is not None
+            and dispatch_recovery.assistant_message_id == message.id
+        ):
+            if checkpoint.schema_version != 3:
                 raise RuntimeError("Durable continuation destination is unavailable.")
             destination = dispatch_recovery.checkpoint.resolved_destination
             validate_continuation_restore(
@@ -246,8 +249,8 @@ def continuation_can_be_durable(
 
     A temporary session or a session-only endpoint never is. Neither is a
     dispatch whose checkpoint recorded no continuation tuple (pre-upgrade, or
-    a destination it could not record), or one owned by another assistant
-    message: the tool loop still runs, but its continuation is not resumable.
+    a destination it could not record): the tool loop still runs, but its
+    continuation is not resumable. Another message's dispatch does not count.
     """
     if (
         store.session_is_ephemeral(session_id)
@@ -258,16 +261,13 @@ def continuation_can_be_durable(
     lookup = getattr(store, "dispatch_recovery_for_session", None)
     recovery = lookup(session_id) if callable(lookup) else None
     checkpoint = getattr(recovery, "checkpoint", None)
-    # Mirrors validate_durable_continuation_binding: a dispatch owned by
-    # another assistant message (regenerate/retry/edit do not consult the
-    # recovery gate) cannot bind this run's continuation either.
+    # Mirrors validate_durable_continuation_binding: only this message's own
+    # dispatch constrains it; another owner's dispatch is irrelevant.
     return (
         checkpoint is None
+        or recovery.assistant_message_id != assistant_message_id
         or not getattr(resolution, "continuation_protocol", None)
-        or (
-            recovery.assistant_message_id == assistant_message_id
-            and checkpoint.resolved_destination.continuation_provider is not None
-        )
+        or checkpoint.resolved_destination.continuation_provider is not None
     )
 
 

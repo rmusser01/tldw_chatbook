@@ -2518,3 +2518,47 @@ async def test_completed_replay_known_credential_manual_rounds(
         detail,
         known_credential="syntheticOpaqueCredentialValue42",
     )
+
+
+@pytest.mark.parametrize("owner", ["same", "foreign"])
+def test_dispatch_destination_cross_check_binds_only_its_own_owner(owner):
+    """A dispatch checkpoint constrains only the assistant message it owns.
+
+    The same owner with a mismatched destination still refuses; another
+    message's dispatch is irrelevant to this run, whose own host-captured
+    target has already been validated.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_continuation_binding import (
+        validate_durable_continuation_binding,
+    )
+
+    message = SimpleNamespace(id="assistant-b", provider_continuation=None)
+    mismatched = SimpleNamespace(
+        assistant_message_id="assistant-b" if owner == "same" else "assistant-a",
+        checkpoint=SimpleNamespace(
+            resolved_destination=SimpleNamespace(
+                provider="deepseek",
+                model="deepseek-v4-flash",
+                continuation_provider="deepseek",
+                continuation_protocol="responses",
+                continuation_base_url="https://api.deepseek.com/v2",
+            )
+        ),
+    )
+
+    def bind():
+        validate_durable_continuation_binding(
+            message,
+            _continuation(),
+            _DEEPSEEK_RUN_TARGET,
+            mismatched,
+            has_finalizer=False,
+        )
+
+    if owner == "same":
+        with pytest.raises(RuntimeError, match="destination mismatch"):
+            bind()
+    else:
+        bind()
