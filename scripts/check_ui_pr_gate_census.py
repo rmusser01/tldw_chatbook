@@ -1289,10 +1289,14 @@ MINIMUM_FILES = 2520
 #   import and the one interlock release: one production-CSS Library boot at
 #   120x36 over a real ChaChaNotes database and the real import executor,
 #   ~9 s alone at load ~7, w1b plugin): 932 -> 933.
+# - polish-1b final fix wave (2026-10-29, parked T7 pin): Tests/UI/
+#   test_library_notes_entry_focus_read_through.py (the entry reconcile's
+#   detach window reads through to the captured control: one production-CSS
+#   Library boot, ~8 s alone at load ~13, w1b plugin): 933 -> 934.
 # Rebased 2026-11-22 onto dev ddd3c02052 (2457 entries, floor 2457): the
 # polish-1b entries above stay appended at the tail, so no existing slot
-# moves; the floor is the measured entry count: 2457 + 17 = 2474.
-MINIMUM_FILES = 2474
+# moves; the floor is the measured entry count: 2457 + 18 = 2475.
+MINIMUM_FILES = 2475
 
 
 MINIMUM_FILES = 2038

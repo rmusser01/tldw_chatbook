@@ -187,6 +187,34 @@ def test_the_folder_files_key_reports_every_outcome():
     ]
 
 
+def test_the_folder_files_refusal_is_a_marker_never_the_raw_state():
+    """Final review m-2: ``_library_editor_save_refusal("file_notes")`` is
+    read for truth only, so it answers a constant -- never the workspace's
+    raw ``"conflict"``/``"error"`` state string, which is not a sentence
+    (``report_key_save`` owns the words). A clean or dirty draft refuses
+    nothing. RED at 29d2272b95: the raw state came back."""
+
+    def refusal(save_state):
+        workspace = None if save_state is None else SimpleNamespace(save_state=save_state)
+        fake = SimpleNamespace(
+            _notes_state=SimpleNamespace(file_notes_workspace=workspace)
+        )
+        return LibraryScreen._library_editor_save_refusal(fake, "file_notes")
+
+    for state in ("conflict", "error"):
+        answer = refusal(state)
+        assert answer, state
+        assert answer != state, answer
+    from tldw_chatbook.Library.library_shell_state import (
+        LIBRARY_FILE_NOTES_SAVE_REFUSED,
+    )
+
+    assert refusal("conflict") == refusal("error") == LIBRARY_FILE_NOTES_SAVE_REFUSED
+    assert refusal("dirty") == ""
+    assert refusal("saved") == ""
+    assert refusal(None) == ""
+
+
 def test_the_media_forms_refuse_out_loud_and_drop_the_chip():
     """Review M-4 / I-3: the metadata form during another Media change, and
     the analysis form during its own save, say so on the form and are not
