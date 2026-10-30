@@ -347,6 +347,21 @@ def capture_review_source(
 _UNREADABLE_CHANGE = frozenset(
     {"binary_source", "unsupported_source_type", "source_truncated"}
 )
+#: Capture gaps shown to the primary (prepare) and on a reviewer's first scope
+#: listing are bounded; withheld sensitive changes never carry names.
+GAP_PREVIEW_LIMIT = 8
+_GAP_REASON_CHARS = 160
+
+
+def capture_gap_preview(gaps) -> tuple[tuple[str, ...], int]:
+    """First capture gap reasons, each clipped, and how many were left out."""
+    reasons = tuple(
+        reason
+        if len(reason) <= _GAP_REASON_CHARS
+        else reason[: _GAP_REASON_CHARS - 1] + "…"
+        for reason in (gap.reason for gap in gaps[:GAP_PREVIEW_LIMIT])
+    )
+    return reasons, max(0, len(gaps) - GAP_PREVIEW_LIMIT)
 
 
 def _within_file_quota(store, files):
@@ -1002,6 +1017,22 @@ def _candidates(state, reader, query, position):
             continue
 
 
+def _capture_gap_notes(state, context, binding, max_result_chars, max_tokens, estimate):
+    """Capture gaps for a first scope listing, within half the page budget."""
+    total = len(state.manifest.gaps)
+    if not total:
+        return []
+    shown, omitted = capture_gap_preview(state.manifest.gaps)
+    notes = [CoverageGap(reason=reason) for reason in shown]
+    if omitted:
+        notes.append(CoverageGap(reason=f"capture_gaps_omitted: {omitted} more"))
+    for candidate in (notes, [CoverageGap(reason=f"capture_gaps: {total} recorded")]):
+        page = _base_page(state, context, binding, gaps=tuple(candidate))
+        if _fits(page, max_result_chars // 2, max_tokens // 2, estimate):
+            return candidate
+    return []
+
+
 def query_review_source(
     review_id: str,
     query: SourceQuery,
@@ -1116,7 +1147,15 @@ def _query(
     final_position = position
     more = False
     read_bytes = 0
-    gaps = []
+    gaps = (
+        _capture_gap_notes(
+            state, context, binding, max_result_chars, max_tokens, estimate
+        )
+        if query.op == "list"
+        and cursor is None
+        and query.relative_dir == state.manifest.scope
+        else []
+    )
 
     def gap_page(gap, next_position, has_more):
         nonlocal page, gaps, final_position, more

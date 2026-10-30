@@ -59,6 +59,7 @@ from .code_review_source import (
     _persist_page,
     _replay,
     _safe,
+    capture_gap_preview,
     capture_review_source,
     original_source_path,
     query_review_source,
@@ -275,6 +276,9 @@ class PreparedReview(ReviewWireModel):
     revision: int
     slots: tuple[str, ...]
     summary: str
+    # Bounded capture limits the primary states before launching reviewers.
+    coverage_gaps: tuple[str, ...] = ()
+    coverage_gaps_omitted: int = 0
 
 
 @dataclass
@@ -632,6 +636,14 @@ class CodeReviewService:
                 + "\n"
                 + f"Review {claim.review_id}; slot {claim.slot.slot_id}; target {claim.binding.target_digest}; "
                 f"target_kind={context.preparation.target.kind}.\n"
+                # Launch tasks are persisted: a count only, never gap paths.
+                + (
+                    f"Capture recorded {len(gaps)} coverage gap(s); your first listing "
+                    "of the review scope reports them. Record them in coverage; they "
+                    "are not absent code.\n"
+                    if (gaps := context.source_state.manifest.gaps)
+                    else ""
+                )
                 + "Use only code_review_read captured source and code_review_submit role-owned records. "
                 "Source queries are list(relative_dir,side), search(text,relative_dir,side), "
                 "resolve(relative_path,side); first read document_ref without source_range and follow its cursor. "
@@ -825,12 +837,14 @@ class CodeReviewService:
             warnings.append("verifier_missing")
         summary = ",".join(warnings) or "prepared"
 
-        def ack(review_id):
+        def ack(review_id, gaps=((), 0)):
             return PreparedReview(
                 review_id=review_id,
                 revision=0,
                 slots=tuple(s.slot_id for s in slots),
                 summary=summary,
+                coverage_gaps=gaps[0],
+                coverage_gaps_omitted=gaps[1],
             )
 
         if self.source_permission is not None:
@@ -871,6 +885,7 @@ class CodeReviewService:
             manifest = capture_review_source(
                 target, self.source_authority, self.store, context.review_id
             )
+            gaps = capture_gap_preview(manifest.gaps)
             self._actor(primary=True)
             snapshot = canonical_record_bytes(
                 {
@@ -901,7 +916,7 @@ class CodeReviewService:
                     files=1,
                 ) as reservation,
             ):
-                self.encode(ack(context.review_id))
+                self.encode(ack(context.review_id, gaps))
                 reservation.write(snapshot, category="report")
                 reservation.commit(0, len(snapshot), 1)
                 context.preparation = ReviewPreparation(
@@ -926,7 +941,7 @@ class CodeReviewService:
             )
             if self.native_coordinator is not None:
                 self.native_coordinator.track_prepared(self, context.review_id)
-            return ack(context.review_id)
+            return ack(context.review_id, gaps)
         except Exception:
             self.store.release(context.review_id, expected_revision=context.revision)
             raise

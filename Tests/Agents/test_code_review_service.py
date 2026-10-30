@@ -519,3 +519,33 @@ def test_prepare_refuses_unresolved_inheritance_preserving_explicit_routes(
                 expected_model,
             )
     assert c.db.get_agent_definition(identity) == before
+
+
+def test_prepare_and_launch_brief_surface_capture_gaps(review_case):
+    from Tests.Agents.test_code_review_source import _binary_changes
+    from tldw_chatbook.Agents.code_review_models import ReviewRunBinding
+    from tldw_chatbook.Agents.code_review_service import ReviewLaunchClaim
+
+    c = review_case
+    _binary_changes(c, 10)
+    prepared = c.prepare()
+    assert prepared.coverage_gaps == tuple(
+        f"binary_source: blob{index:02}.bin" for index in range(8)
+    )
+    assert prepared.coverage_gaps_omitted == 2
+    with c.store.lease(prepared.review_id) as context:
+        slot = context.preparation.slots[0]
+        binding = ReviewRunBinding(
+            review_id=prepared.review_id,
+            slot_id=slot.slot_id,
+            attempt_id="attempt",
+            role="reviewer",
+            target_digest=context.target_digest,
+            source_epoch=0,
+        )
+    task = c.primary.launch_task(
+        ReviewLaunchClaim(prepared.review_id, slot, binding, c.primary.grant)
+    )
+    # Count only: launch tasks are persisted, so they never carry paths.
+    assert "Capture recorded 10 coverage gap(s)" in task
+    assert "blob00.bin" not in task
