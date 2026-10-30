@@ -190,6 +190,38 @@ async def test_a_grounded_send_says_how_many_sources_it_sent():
 
 
 @pytest.mark.asyncio
+async def test_the_line_paints_every_cell_from_the_transcript_edge_to_its_text():
+    """No notch: the line's left inset is painted, not left to the layer below.
+
+    Review of TASK-33621.51 saw the live line drawn with one cell in the
+    terminal's default background left of its text: a ``margin`` exposes the
+    transcript's background-effect layer, unlike the turn rows around it.
+    """
+    host, gateway = _build()
+    host.app_instance.library_rag_search_service = _Library(2)
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, _controller, composer = await _automatic_console(host, pilot)
+            await _send_first(host, pilot, composer, gateway)
+            await until(
+                lambda: _line_sits_under_the_user_turn(host, "Library: 2 sources sent")
+            )
+            await pilot.pause()
+
+            line = console.query_one(".console-transcript-library-outcome")
+            strip = host.screen._compositor.render_strips()[line.region.y]
+            left = line.parent.content_region.x
+            text_start = strip.text.index("Library:")
+            backgrounds = [
+                {segment.style.bgcolor for segment in strip.crop(x, x + 1)}
+                for x in range(left, text_start)
+            ]
+            assert backgrounds, "the line must be inset from the transcript edge"
+            assert all(None not in cell for cell in backgrounds), backgrounds
+            assert len(set().union(*backgrounds)) == 1, backgrounds
+
+
+@pytest.mark.asyncio
 async def test_a_send_once_without_library_says_why_the_search_paused():
     host, gateway = _build()
     library = _StalledLibrary()

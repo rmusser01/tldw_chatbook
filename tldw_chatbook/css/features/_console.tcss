@@ -1668,12 +1668,13 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
 }
 
 /* TASK-33621.51: what an Automatic Library send's search did, one quiet
-   non-interactive line under the USER turn that ran it. */
+   non-interactive line under the USER turn that ran it. The inset is
+   padding, not margin: a margin cell shows the transcript's background-effect
+   layer (the terminal default), a notch left of the text. */
 .console-transcript-library-outcome {
     width: $ds-width-fill;
     height: auto;
-    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
-    padding: $ds-space-0 $ds-space-1;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-2;
     color: $ds-text-muted;
 }
 
