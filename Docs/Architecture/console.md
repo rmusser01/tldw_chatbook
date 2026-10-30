@@ -215,8 +215,8 @@ The modal is presentation-layer code, so the Chat-layer controller reaches it on
 through `review_report_presenter`, which `UI/Console_Modules/wiring.attach_review_presenter`
 installs when a Console view attaches (beside `controller.app`). The presentation
 functions live in `wiring.py`, a module already loaded at first paint, so no review
-module (`console_review_delivery`, `console_code_review`, the modal) loads before a
-review exists; the controller registers the review ledger only once its review owner
+module (`console_review_delivery`, `console_code_review`, the modal) loads at Console
+first paint; the controller registers the review ledger only once its review owner
 has loaded. The presenter shows
 nothing unless the runtime's attached Console view `is_current` (modals stacked over
 the Console, including an open review modal, keep it current) and the owning chat is

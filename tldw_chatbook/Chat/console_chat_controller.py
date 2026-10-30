@@ -24786,11 +24786,12 @@ class ConsoleChatController:
             bridge: The Console agent bridge to register on, or ``None``.
         """
         self._fleet_wake.capture_loop_if_running()
-        # Both stay None until the review owner loads, which re-registers.
-        if self._code_review is not None or self._review_ledger is not None:
-            from .console_review_delivery import attach_review_ledger
+        with self._code_review_lock:
+            # A no-op until the review owner loads (which re-registers).
+            if self._code_review is not None or self._review_ledger is not None:
+                from .console_review_delivery import attach_review_ledger
 
-            attach_review_ledger(self, bridge)
+                attach_review_ledger(self, bridge)
         if bridge is None:
             return
         progress_register = getattr(bridge, "on_progress_enqueued", None)

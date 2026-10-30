@@ -41,7 +41,6 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.console_received_dispatch",
     "Chat.console_send_diagnostics",
     "Chat.console_hook_preparation",
-    "Chat.console_continuation_binding",
     "Agents.automatic_work_runtime",
     "Chat.console_references",
     "Agents.hooks_v2.lifecycle",
@@ -59,6 +58,9 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.console_visual_transcript",
     "Chat.console_predispatch_block",
     "Chat.console_native_commit",
+    # Added after that record (TASK-35582): begin_generation_attempt's lazy
+    # continuation-binding import, deferred off first paint.
+    "Chat.console_continuation_binding",
     "Chat.console_trace_row_sources",
     "Chat.response_rules.generation",
     "Chat.response_rules.builder",

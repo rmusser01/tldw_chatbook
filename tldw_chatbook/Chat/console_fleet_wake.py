@@ -254,6 +254,15 @@ class _WakeDelivery:
     authorization: AgentWakeAuthorization | None = None
 
 
+def owner_loop_state(wake: Any) -> tuple[Any, bool]:
+    """Return the wake's owner loop and whether the caller is running on it."""
+    loop = wake._loop
+    try:
+        return loop, asyncio.get_running_loop() is loop
+    except RuntimeError:
+        return loop, False
+
+
 class ConsoleFleetWakeCoordinator:
     """Bounded conversation scheduling with durable, non-replayable attempts."""
 

@@ -3018,7 +3018,7 @@ class AgentService:
         first_request_fits: bool = True,
         run_id: str | None = None,
     ):
-        from tldw_chatbook.Agents.agent_request_execution import make_call_model
+        from .agent_request_execution import make_call_model
 
         return make_call_model(
             self,
@@ -3271,7 +3271,7 @@ class AgentService:
         validate_prepared_call: Callable | None = None,
         install_post_checkpoint: Callable | None = None,
     ):
-        from tldw_chatbook.Agents.agent_request_execution import make_invoke_tool
+        from .agent_request_execution import make_invoke_tool
 
         return make_invoke_tool(
             self,
@@ -4395,11 +4395,20 @@ class AgentService:
         if review_capture is not None:
             self._settle_review_capture(review_capture, run_id, terminal_event_id or "")
 
-    def _settle_review_capture(self, *args, **kwargs) -> None:
+    def _settle_review_capture(
+        self,
+        service,
+        run_id: str,
+        receipt_id: str | None = None,
+        *,
+        close_capture: bool = True,
+    ) -> None:
         """Close only an actually associated attempt; never raises (see helper)."""
         from .agent_request_execution import settle_review_capture
 
-        settle_review_capture(self, *args, **kwargs)
+        settle_review_capture(
+            self, service, run_id, receipt_id, close_capture=close_capture
+        )
 
     def _fork_review_child(
         self, service, *, actor, max_tool_result_chars: int, grant=None
