@@ -855,6 +855,7 @@ def gate_effect_scopes() -> dict[tuple[str, str], str]:
         One ``(section, key) -> scope`` entry per gate, covering exactly
         ``_gate_key_pairs()``.
     """
+    from .code_review_models import CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_GATE_KEY,
         CHARACTER_TOOLS_GATE_KEY,
@@ -875,6 +876,8 @@ def gate_effect_scopes() -> dict[tuple[str, str], str]:
     scopes.update(
         {
             ("console", LOCAL_TOOLS_MASTER_KEY): EFFECT_SCOPE_NEXT_CHAT,
+            # Read when each Console turn composes the review provider.
+            ("tools", CODE_REVIEW_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
             ("tools", WEB_DEEP_SEARCH_GATE_KEY): EFFECT_SCOPE_RESTART,
             ("tools", ASK_USER_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
             ("tools", CHARACTER_TOOLS_GATE_KEY): EFFECT_SCOPE_NEXT_CHAT,
@@ -920,6 +923,15 @@ _WEB_DEEP_SEARCH_DESCRIPTION = (
     "Multi-query web research; costs real money on paid providers. "
     "Applies to the next Console agent run; its publication to external "
     "MCP clients applies on their next client launch."
+)
+
+#: Hand-written like web_deep_search's -- native review is a tool provider,
+#: not a Tool ABC subclass, so it has no _GATEABLE_BUILTINS row. Default ON
+#: (CODE_REVIEW_DEFAULT_ENABLED): the guide alone starts no paid work.
+_CODE_REVIEW_DESCRIPTION = (
+    "Lets the Console assistant run a multi-model review of the bound "
+    "workspace's changes with your saved reviewer team. On by default; "
+    "reviewer runs still follow routing, consent and permission checks."
 )
 
 #: PRD Feature A (A12): hand-written like web_deep_search's -- ask_user is a
@@ -990,6 +1002,7 @@ def all_tool_gates() -> list[ToolGate]:
         rows, then the local group's two).
     """
     from ..config import coerce_bool_setting
+    from .code_review_models import CODE_REVIEW_DEFAULT_ENABLED, CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
@@ -1019,6 +1032,21 @@ def all_tool_gates() -> list[ToolGate]:
                 effect_scope=scopes[("tools", entry.gate_key)],
             )
         )
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=CODE_REVIEW_GATE_KEY,
+            tool_name="code_review_guide",
+            title="Multi-model code review (code_review_*)",
+            description=_CODE_REVIEW_DESCRIPTION,
+            enabled=coerce_bool_setting(
+                tools_cfg.get(CODE_REVIEW_GATE_KEY, CODE_REVIEW_DEFAULT_ENABLED),
+                CODE_REVIEW_DEFAULT_ENABLED,
+            ),
+            group="builtin",
+            effect_scope=scopes[("tools", CODE_REVIEW_GATE_KEY)],
+        )
+    )
 
     gates.append(
         ToolGate(
@@ -1028,9 +1056,7 @@ def all_tool_gates() -> list[ToolGate]:
             title=LOCAL_TOOLS_MASTER_TITLE,
             description=_LOCAL_TOOLS_MASTER_DESCRIPTION,
             enabled=coerce_bool_setting(
-                console_cfg.get(
-                    LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED
-                ),
+                console_cfg.get(LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED),
                 LOCAL_TOOLS_DEFAULT_ENABLED,
             ),
             group="local",
@@ -1082,7 +1108,9 @@ def all_tool_gates() -> list[ToolGate]:
             title="Character cards (character_*)",
             description=_CHARACTER_TOOLS_DESCRIPTION,
             enabled=coerce_bool_setting(
-                tools_cfg.get(CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED),
+                tools_cfg.get(
+                    CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED
+                ),
                 CHARACTER_TOOLS_DEFAULT_ENABLED,
             ),
             group="local",
@@ -1096,6 +1124,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     """Every gate's (section, key), in enumeration order, WITHOUT
     constructing any Tool — the cheap skeleton `all_tool_gates()` and the
     count path share so the key set can never drift between them."""
+    from .code_review_models import CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_GATE_KEY,
         CHARACTER_TOOLS_GATE_KEY,
@@ -1106,6 +1135,7 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     pairs: list[tuple[str, str]] = [
         ("tools", entry.gate_key) for entry in _GATEABLE_BUILTINS
     ]
+    pairs.append(("tools", CODE_REVIEW_GATE_KEY))
     pairs.append(("console", LOCAL_TOOLS_MASTER_KEY))
     pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
     pairs.append(("tools", ASK_USER_GATE_KEY))
@@ -1121,6 +1151,7 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         gate is disabled.
     """
     from ..config import coerce_bool_setting
+    from .code_review_models import CODE_REVIEW_DEFAULT_ENABLED, CODE_REVIEW_GATE_KEY
     from .local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
@@ -1140,6 +1171,8 @@ def _off_tool_gate_status() -> tuple[int, bool]:
         elif section == "tools" and key == CHARACTER_TOOLS_GATE_KEY:
             # TASK-32954: also defaults ON.
             default = CHARACTER_TOOLS_DEFAULT_ENABLED
+        elif section == "tools" and key == CODE_REVIEW_GATE_KEY:
+            default = CODE_REVIEW_DEFAULT_ENABLED
         else:
             default = False
         section_cfg = console_cfg if section == "console" else tools_cfg
