@@ -211,6 +211,12 @@ Local source reads reuse the composed permission owner; selected destinations re
 project-instruction dispatch confirmation. Settlement hands an off-loop, bounded
 original page to a mounted `ConsoleCodeReviewModal` for the exact active session;
 only successful display acknowledges presentation before an authorized verifier.
+The modal is presentation-layer code, so the Chat-layer controller reaches it only
+through `review_report_presenter`, which `UI/Console_Modules/review_reports.attach_app`
+installs when a Console view attaches (beside `controller.app`). A review that
+settles with no view (the launch wake attaches only the app) keeps its originals
+pending; the attach runs `ConsoleCodeReviewCoordinator.present_pending` off the
+loop, which presents them and then raises the verification offer.
 The transcript carries a body-free session reference. Reusing the reader for R2
 updates both selector and body and fences older reads with a generation counter.
 `ConsoleFleetWakeCoordinator.on_review_boundary` preserves ordinary-spawn counts,

@@ -71,54 +71,16 @@ def present_review_offer(controller: Any, session_id, review_id) -> bool:
 
 
 def present_review_report(controller: Any, session_id, review_id, report) -> bool:
-    """Acknowledge mounted native originals before an authorized verifier starts."""
-    from ..Widgets.Console.console_code_review_modal import ConsoleCodeReviewModal
+    """Present one settled original through the Console view's presenter.
 
-    def available():
-        cancel = controller._active_cancel_events.get(session_id)
-        return (
-            not controller._disposed
-            and session_id not in controller._session_close_generations
-            and controller.store.active_session_id == session_id
-            and not (cancel is not None and cancel.is_set())
-        )
-
-    async def present():
-        if not available():
-            return False
-        try:
-            _, service = controller.code_review.report_service(session_id, review_id)
-            page = await asyncio.to_thread(
-                ConsoleCodeReviewModal.literal_page, report["original_page"]
-            )
-            modal = controller.app.screen
-            if (
-                not isinstance(modal, ConsoleCodeReviewModal)
-                or modal._review_id != review_id
-            ):
-                modal = ConsoleCodeReviewModal(service=service, review_id=review_id)
-                await controller.app.push_screen(modal)
-            if not available():
-                await modal.request_safe_cancel(source="review_closed")
-                return False
-            if not modal.present_original(report["slot_id"], page):
-                return False
-            controller.store.append_message(
-                session_id,
-                role=ConsoleMessageRole.ASSISTANT,
-                content=f"Original report {report['slot_id']} for review {review_id} is open in Review reports (u). Full originals and raw output are retained for this session; export to keep them. Saved chat references cannot restore an expired report bundle.",
-            )
-            return True
-        except Exception:  # noqa: BLE001 - closed UI never acknowledges
-            # A closed/unavailable screen does not acknowledge presentation.
-            return False
-
-    loop, on_loop = _on_owner_loop(controller)
-    if not on_loop and loop is not None and loop.is_running():
-        call_from_thread = getattr(controller.app, "call_from_thread", None)
-        if callable(call_from_thread):
-            return bool(call_from_thread(present))
-    return False
+    The presenter (``UI.Console_Modules.review_reports``) is installed when a
+    Console view attaches. Until then an original stays pending, and the
+    attach presents it (``ConsoleCodeReviewCoordinator.present_pending``).
+    """
+    presenter = getattr(controller, "review_report_presenter", None)
+    return bool(
+        callable(presenter) and presenter(controller, session_id, review_id, report)
+    )
 
 
 async def resolve_accepted_review_capacity(

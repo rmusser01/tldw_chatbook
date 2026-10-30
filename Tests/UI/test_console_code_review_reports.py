@@ -99,6 +99,7 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
 
     from Tests.Chat.test_console_agent_swap import _controller
     from Tests.UI.consolidated_css import ConsolidatedCSSApp
+    from tldw_chatbook.UI.Console_Modules import review_reports
     from tldw_chatbook.Widgets.Console.console_code_review_modal import (
         ConsoleCodeReviewModal,
     )
@@ -125,9 +126,20 @@ async def test_mounted_controller_handoff_acknowledges_exact_original_and_closed
         "original_page": c.primary.native_report_page(prepared.review_id, "R1"),
     }
     app = ConsolidatedCSSApp()
+    # Headless (the launch wake): the app is attached but no Console view, so
+    # nothing presents and the original stays pending.
     controller.app = app
     try:
         async with app.run_test(size=(48, 18)):
+            assert not await asyncio.to_thread(
+                controller._present_review_report,
+                session.id,
+                prepared.review_id,
+                report,
+            )
+            assert not isinstance(app.screen, ConsoleCodeReviewModal)
+            # A view attach installs the presentation-layer presenter.
+            review_reports.attach_app(controller, app)
             accepted = await asyncio.to_thread(
                 controller._present_review_report,
                 session.id,

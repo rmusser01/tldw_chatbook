@@ -149,3 +149,33 @@ def test_review_offer_on_its_owner_loop_presents_without_deadlock():
     assert "Verification is available for review review-1" in (
         store.messages_for_session(session.id)[-1].content
     )
+
+
+@pytest.mark.asyncio
+async def test_view_attach_installs_presenter_and_presents_pending_originals():
+    """A Console view attach is what lets settled originals reach the screen."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import review_reports
+
+    calls = []
+    coordinator = SimpleNamespace(
+        _reviews={"review-1": object()},
+        present_pending=lambda: calls.append("pending"),
+    )
+    controller = SimpleNamespace(_code_review=coordinator)
+    review_reports.attach_app(controller, "app")
+
+    assert controller.app == "app"
+    assert controller.review_report_presenter is (
+        review_reports.present_code_review_original
+    )
+    await asyncio.gather(*list(review_reports._REPRESENTING))
+    assert calls == ["pending"]
+
+    # No loaded review owner: nothing is built, nothing is scheduled.
+    bare = SimpleNamespace(_code_review=None)
+    review_reports.attach_app(bare, "app")
+    assert bare.review_report_presenter is review_reports.present_code_review_original
+    assert not review_reports._REPRESENTING

@@ -9255,10 +9255,10 @@ class ChatScreen(BaseAppScreen):
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
         # on the agent bridge's worker thread and needs a
         # `call_from_thread`-capable App handle. Deliberately NOT a
-        # view-hook slot: this is the APP, which outlives every view, and
-        # clearing it at detach would break the bridge a surviving turn
-        # still needs.
-        self._console_chat_controller.app = self.app_instance
+        # view-hook slot: this is the APP, which outlives every view. The
+        # same call installs the review-report presenter and presents
+        # originals left pending while no view was attached (ADR-281).
+        review_reports.attach_app(self._console_chat_controller, self.app_instance)
         # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
         # seam + marks reads). getattr-guarded because several UI tests
         # swap in hand-built controller doubles before re-running this
