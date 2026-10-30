@@ -47,15 +47,17 @@ def _counts() -> dict[str, int]:
     """The UI lane's shards, the test runners an ordinary PR starts, and
     those runners with perf-guard's.
 
-    Eligible jobs are all shards plus every other lane the required check
-    ``needs``. Peak runners apply the UI matrix's max-parallel ceiling first.
+    Eligible application jobs exclude the serialized preflight. Peak runners
+    apply the UI matrix's max-parallel ceiling after preflight succeeds.
     The PR Fast Lane's three jobs, the Console P0 gate, the Dreams
     tracking tests and the Dreams and Guardian boundary contracts since
     TASK-34916, TASK-35575, TASK-34929 and TASK-34986 each use one runner:
     a second matrix job among them fails here instead of miscounting.
     """
     jobs = _jobs(WORKFLOW)
-    needs = jobs["derived-artifacts"]["needs"]
+    needs = [name for name in jobs["derived-artifacts"]["needs"] if name != "preflight"]
+    if "preflight" in jobs:
+        assert all(jobs[name].get("needs") == ["preflight"] for name in needs)
     assert [job for job in needs if "strategy" in jobs[job]] == ["ui-fast-lane"]
     shards = len(jobs["ui-fast-lane"]["strategy"]["matrix"]["shard"])
     eligible = shards + len(needs) - 1
@@ -83,8 +85,9 @@ def _jobs(workflow: str) -> dict:
         (17, None, 23, 23),
     ],
 )
+@pytest.mark.parametrize("preflight", [False, True])
 def test_counts_distinguish_eligible_jobs_from_parallel_runners(
-    monkeypatch, shards, limit, eligible, parallel
+    monkeypatch, shards, limit, eligible, parallel, preflight
 ):
     needs = ["ui-fast-lane", *[f"lane-{index}" for index in range(6)]]
     jobs = {name: {} for name in needs}
@@ -93,6 +96,11 @@ def test_counts_distinguish_eligible_jobs_from_parallel_runners(
         strategy["max-parallel"] = limit
     jobs["ui-fast-lane"] = {"strategy": strategy}
     jobs["derived-artifacts"] = {"needs": needs}
+    if preflight:
+        for name in needs:
+            jobs[name]["needs"] = ["preflight"]
+        jobs["preflight"] = {}
+        jobs["derived-artifacts"]["needs"] = ["preflight", *needs]
     monkeypatch.setitem(
         globals(), "_jobs", lambda name: jobs if name == WORKFLOW else {"perf": {}}
     )

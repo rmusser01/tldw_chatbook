@@ -740,6 +740,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-34986: PR2921's Dreams/Guardian steps left console-p0-gate.
     # TASK-35575: the admission-sensitive suites run in two jobs.
     assert required.get("needs") == [
+        "preflight",
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
@@ -751,6 +752,16 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in required["steps"])
+    preflight = workflow["jobs"]["preflight"]
+    assert not preflight.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in preflight["steps"])
+    assert "if" not in preflight and "needs" not in preflight
+    preflight_verdict = _named_step(required, "Require successful preflight")
+    assert preflight_verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
+    assert "exit 1" in preflight_verdict["run"]
+    for lane in required["needs"]:
+        if lane != "preflight":
+            assert workflow["jobs"][lane]["needs"] == ["preflight"]
 
     # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
     # `success()`, so a red lane does not skip the next lane's verdict and
@@ -1181,25 +1192,33 @@ def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> Non
     assert not set(targets) & set(FAST_LANE_TARGETS)
 
 
-def test_required_context_fails_closed_and_keeps_artifact_checks_install_free() -> None:
-    """Fail the stable gate closed while preserving install-free diagnostics."""
+def test_required_context_fails_closed_and_checks_artifacts_before_the_lanes() -> None:
+    """Keep every diagnostic before test fan-out and the aggregate verdict-only."""
     workflow = _workflow("derived-artifacts.yml")
     _assert_required_aggregation(workflow)
 
     required = workflow["jobs"]["derived-artifacts"]
-    # Everything after the LAST lane verdict is a derived-artifact checker.
-    # TASK-32908 added a second verdict step (the UI lane); anchoring on the
-    # first one would have classified it as a checker and demanded
-    # `!cancelled()` on a step that must stay conditional on its lane.
-    verdict_index = max(
-        index
-        for index, step in enumerate(required["steps"])
-        if str(step.get("name", "")).startswith("Require successful ")
-    )
-    checker_steps = required["steps"][verdict_index + 1 :]
+    checker_steps = [
+        step for step in workflow["jobs"]["preflight"]["steps"]
+        if "run" in step
+    ]
     assert checker_steps
     assert all(step.get("if") == "${{ !cancelled() }}" for step in checker_steps)
     assert "pip install" not in "\n".join(str(step) for step in required["steps"])
+
+
+@pytest.mark.parametrize("mutation", ["bypass", "only-failure", "skip-on-push"])
+def test_preflight_contract_rejects_bypass_or_partial_failure_handling(mutation):
+    workflow = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    if mutation == "bypass":
+        workflow["jobs"]["ui-fast-lane"].pop("needs")
+    elif mutation == "only-failure":
+        verdict = _named_step(workflow["jobs"]["derived-artifacts"], "Require successful preflight")
+        verdict["if"] = verdict["if"].replace("!= 'success'", "== 'failure'")
+    else:
+        workflow["jobs"]["preflight"]["if"] = LANES
+    with pytest.raises((AssertionError, KeyError)):
+        _assert_required_aggregation(workflow)
 
 
 def test_required_aggregation_contract_rejects_missing_prerequisite() -> None:
@@ -1259,7 +1278,10 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("derived-artifacts", None),
         ("derived-artifacts", "Require successful PR fast lane"),
         ("derived-artifacts", "Require successful Console P0 regression gate"),
-        ("derived-artifacts", "Generated stylesheets reproduce from their sources"),
+        ("preflight", None),
+        ("preflight", "Generated stylesheets reproduce from their sources"),
+        ("preflight", "PR lane test targets resolve without overlaps"),
+        ("derived-artifacts", "Require successful preflight"),
     ],
 )
 def test_required_aggregation_contract_rejects_continue_on_error(
@@ -1352,7 +1374,7 @@ def test_bundle_and_backlog_checks_run_on_push_events() -> None:
     """
     workflow = _workflow("derived-artifacts.yml")
     assert {"dev", "main"} <= set(_triggers(workflow)["push"]["branches"])
-    steps = workflow["jobs"]["derived-artifacts"]["steps"]
+    steps = workflow["jobs"]["preflight"]["steps"]
     for script in (
         "tldw_chatbook/css/check_bundle_sync.py",
         "scripts/check_backlog_task_ids.py",

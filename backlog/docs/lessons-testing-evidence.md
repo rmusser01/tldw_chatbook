@@ -22342,3 +22342,14 @@ boundaries before testing successful post-refusal execution on a supported host.
 The corrected native Windows selection passed 72 cases with 20 explicit POSIX
 skips and no failure or teardown error. Run the actual command controls on Linux;
 Windows refusal evidence cannot qualify them.
+
+## Obsolete CI can still own the queue's replacement approval (TASK-37800, 2026-10-29)
+
+Independent review of superseded-run cleanup found that an old Derived Artifacts
+run can still execute `queue-tick`, rebasing a PR and approving its replacement
+runs. Cancelling that run solely because its head is obsolete can kill the
+approving controller. Six regression cases (required verdict and queue tick in
+queued, running and completed states) failed against the first cleanup script.
+Preserving runs once either job appears made all six pass; a failed job-inventory
+read also stops cleanup. Test control jobs as well as test jobs when pruning
+obsolete CI: a stale commit does not imply the entire run has become disposable.
