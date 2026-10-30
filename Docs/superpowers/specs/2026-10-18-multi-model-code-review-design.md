@@ -945,3 +945,25 @@ masking/reconstruction/rejection controls and the one deferred Minor fixture gap
 AC23 is supported; live AC24 remains unqualified. Pending-dispatch refusal recovery
 keeps its visible shutdown limitation; one equivalent BASE probe narrows historical
 attribution without proving all new predicates or application exit.
+
+
+### PR #3286 review corrections (2026-10-29)
+
+Request recognition: a bare “review …” message still parses as review intent, but
+composition stays silent (no needs-attention reply) when no single local root is
+bound unless the wording names code review (multi-model, code, reviewer, PR, pull
+request, diff, commit, patch, changes) or is a stage control/offer answer for a
+review the session holds. The `[tools] code_review_enabled` gate is checked at
+composition (off: no provider, no reply) and has an MCP-hub Tool gates switch.
+Stage-free messages record no acceptance; an accepted offer is consumed by its
+first answer; the 64-request bound is per session and evicts the oldest request
+that never led to review work rather than refusing for the app's lifetime.
+
+Capture: changed binary/symlink files are recorded as `CoverageGap` entries whose
+reason names the path (`binary_source: <path>`, `unsupported_source_type: <path>`),
+and changed files withheld by exclusions/sensitive rules as one unnamed counted
+gap; explicitly selected untracked files still refuse. Capture holds the review-
+store lock only for precondition checks so the source guard never waits on the UI
+thread under it; the reader memoizes commit verification and per-directory
+listings and refuses an over-quota change set before reading entries. Exclusions
+that resolve outside the root are skipped (escaping links are still refused).
