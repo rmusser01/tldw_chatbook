@@ -31,6 +31,7 @@ from Tests.UI.roleplay_frame_harness import (
     CHOOSER_OPTIONS_ID,
     VOLUME_SIZES,
     StyledRoleplayMockApp,
+    also_in_targets,
     highlighted_item_id,
     item_at,
     list_state,
@@ -3785,8 +3786,12 @@ async def test_enter_with_no_new_query_waits_for_a_sort_reload_in_flight(
 # ---- Empty, no match, loading and failure (frame slice B2b, spec 1.5.4; TASK-33788) ----
 
 
-async def _search_settled(pilot, screen, query: str) -> None:
-    """Type ``query`` into the search box and wait until its rows are in."""
+async def _search_settled(pilot, screen, query: str, *, workers: bool = True) -> None:
+    """Type ``query`` into the search box and wait until its rows are in.
+
+    ``workers=False`` skips ``settle``, which waits for every screen worker
+    (a held ``Also in:`` count would hold it to its timeout).
+    """
     screen.query_one("#personas-library-search", Input).value = query
     await wait_until(
         pilot,
@@ -3797,7 +3802,8 @@ async def _search_settled(pilot, screen, query: str) -> None:
         ),
         what=f"the {query!r} search",
     )
-    await settle(pilot)
+    if workers:
+        await settle(pilot)
 
 
 async def test_a_no_match_search_says_nothing_matches(mock_app_instance, volume_348):
@@ -4216,3 +4222,375 @@ async def test_retry_reloads_a_failed_list_in_every_kind(
         await settle(pilot)
         assert list_state(screen).state == "rows" and not retry.display
         assert not screen.query("#personas-service-error")
+
+
+# ---- Also in: the other kinds' counts (frame slice B2b, spec 1.5.4) ----
+
+
+def _also_in_world(mock_app_instance, db, *, lore: tuple[str, ...] = ()) -> None:
+    """Lore books in ``db`` and empty persona and dictionary services, so
+    every other kind is counted (0 unless a book matches)."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    manager = WorldBookManager(db)
+    for name in lore:
+        manager.create_world_book(name)
+
+    async def list_persona_profiles(**_kwargs):
+        return {"items": []}
+
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_persona_profiles=list_persona_profiles
+    )
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service()
+
+
+async def _targets(pilot, screen, expected: tuple[str, ...]) -> None:
+    await wait_until(
+        pilot,
+        lambda: also_in_targets(screen) == expected,
+        what=f"Also in {expected}",
+    )
+
+
+async def test_also_in_appears_only_when_another_kind_matches(
+    mock_app_instance, volume_348
+):
+    """Spec 1.5.4: ``Also in:`` lists a kind only when it matches (the counts
+    run off the event loop); a query nothing matches says so; Down or Enter
+    on the empty list reaches the first target, and Escape there clears the
+    search (owner decision D4). Dev had no ``Also in:``."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        painted = "\n".join(painted_rows(screen))
+        assert "Also in:" in painted and "Lore books 1 ›" in painted
+        item_list.focus()
+        await pilot.press("down")
+        assert screen.focused.id == "personas-library-also-in-lore"
+        await pilot.press("escape")
+        await wait_until(
+            pilot, lambda: screen.state.search_query == "", what="the search cleared"
+        )
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        item_list.focus()
+        await pilot.press("enter")
+        assert screen.focused.id == "personas-library-also-in-lore"
+        await _search_settled(pilot, screen, "zzqx")
+        await _targets(pilot, screen, ("Not found in other kinds either.",))
+        assert "Also in:" not in "\n".join(painted_rows(screen))
+        await _search_settled(pilot, screen, "Character 00")
+        assert also_in_targets(screen) == () and visible_item_ids(screen)
+
+
+async def test_also_in_counts_personas_and_dictionaries(mock_app_instance, volume_348):
+    """``Also in:`` counts every other kind, not only lore books: a matching
+    persona and a matching chat dictionary are listed with their counts, in
+    rail order. Dev had no ``Also in:``."""
+    _also_in_world(mock_app_instance, volume_348)
+    service, _calls = _persona_service(
+        [
+            {
+                "id": "p-kepler",
+                "name": "Kepler Pilot",
+                "system_prompt": "Fly the route.",
+                "created_at": "2026-10-01T00:00:00",
+            }
+        ]
+    )
+    mock_app_instance.character_persona_scope_service = service
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service(
+        ("Kepler slang", 2)
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Personas 1 ›", "Chat dictionaries 1 ›"))
+
+
+async def test_enter_while_an_also_in_switch_loads_opens_the_first_match_once(
+    mock_app_instance, volume_348
+):
+    """Dev's rule since ed82096930 (it exists on dev; B2b inherits it and
+    does not change it): an Enter on the list while the results are pending
+    is remembered once and opens the first match when its rows arrive. The
+    ``Also in:`` switch owes that landing too, so an Enter pressed while the
+    switched-to kind still loads opens that kind's first match."""
+    records = [
+        {
+            "id": f"p-00{n}",
+            "name": name,
+            "system_prompt": "Fly the route.",
+            "created_at": f"2026-10-01T00:0{n}:00",
+        }
+        for n, name in ((1, "Kepler Guide"), (2, "Kepler Scout"), (3, "Narrator"))
+    ]
+    hold = {"on": False}
+    reached, release = asyncio.Event(), asyncio.Event()
+
+    async def list_persona_profiles(
+        mode="local", active_only=False, include_deleted=False, limit=100, offset=0
+    ):
+        if hold["on"]:
+            reached.set()
+            await release.wait()
+        return {"items": [dict(r) for r in records[offset : offset + limit]]}
+
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_persona_profiles=list_persona_profiles,
+        get_persona_profile=AsyncMock(return_value=dict(records[0])),
+    )
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service()
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        await pilot.press("ctrl+f", *"kepler")
+        await _targets(pilot, screen, ("Personas 2 ›",))
+        await pilot.press("enter")
+        assert screen.focused.id == "personas-library-also-in-persona"
+        hold["on"] = True
+        await pilot.press("enter")  # the switch; the personas read is held
+        await wait_until(pilot, reached.is_set, what="the held personas read")
+        await wait_until(
+            pilot, lambda: screen.focused is item_list, what="focus on the list"
+        )
+        await pilot.press("enter")
+        assert screen.state.selected_entity_id != "p-001"  # nothing opens yet
+        hold["on"] = False
+        release.set()
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_id == "p-001",
+            what="the first match opened",
+        )
+        await settle(pilot)
+        assert screen.state.active_mode == "personas"
+        assert screen.state.search_query == "kepler"
+
+
+@pytest.mark.parametrize("via", ["keys", "click"])
+async def test_enter_on_also_in_switches_kind_with_the_query_and_lands_on_the_first_match(
+    mock_app_instance, volume_348, via
+):
+    """Spec 1.5.4: Enter on ``Also in:`` switches kind with the query applied,
+    the cursor on the first match and focus on the list. By keys: Ctrl+F,
+    type, Enter (the box hands focus to the target), Enter."""
+    _also_in_world(
+        mock_app_instance,
+        volume_348,
+        lore=("Kepler Atlas", "Kepler Bay", "Grand Library"),
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        pane = screen.query_one("#personas-library-pane")
+        item_list = screen.query_one(RoleplayItemList)
+        if via == "keys":
+            await pilot.press("ctrl+f", *"kepler")
+            await _targets(pilot, screen, ("Lore books 2 ›",))
+            await pilot.press("enter")
+            assert screen.focused.id == "personas-library-also-in-lore"
+            await pilot.press("enter")
+        else:
+            await _search_settled(pilot, screen, "kepler")
+            await _targets(pilot, screen, ("Lore books 2 ›",))
+            assert await pilot.click("#personas-library-also-in-lore")
+        await wait_until(
+            pilot,
+            lambda: (
+                screen.state.active_mode == "lore" and bool(visible_item_ids(screen))
+            ),
+            what="the lore list",
+        )
+        await settle(pilot)
+        assert screen.query_one("#personas-library-search", Input).value == "kepler"
+        assert screen.state.search_query == "kepler"
+        assert [item.name for item in list_state(screen).items] == [
+            "Kepler Atlas",
+            "Kepler Bay",
+        ]
+        assert str(pane.border_title) == "Lore books 2 of 3 · 3 on"
+        assert highlighted_item_id(screen) == visible_item_ids(screen)[0]
+        assert screen.focused is item_list
+        assert not screen._window_state.landing_owed()
+
+
+async def test_also_in_goes_through_the_guard_and_stay_owes_nothing(
+    mock_app_instance, volume_348
+):
+    """A switch from ``Also in:`` is a kind switch: with a dirty draft it asks
+    first, and Stay keeps the kind, the search, the draft, and owes no
+    landing (the landing is owed inside the switch)."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await start_new(pilot)
+        await wait_until(
+            pilot, lambda: screen._edit_mode == "create", what="the blank draft"
+        )
+        await settle(pilot)
+        name = screen.query_one("#personas-char-editor-name", Input)
+        name.focus()
+        await pilot.press(*"Draft Hero")
+        await wait_until(
+            pilot, lambda: screen.state.has_unsaved_changes, what="the dirty draft"
+        )
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        assert await pilot.click("#personas-library-also-in-lore")
+        await wait_until(
+            pilot,
+            lambda: (
+                isinstance(pilot.app.screen, UnsavedChangesDialog)
+                and bool(pilot.app.screen.query("#cancel-button"))
+            ),
+            what="the unsaved guard",
+        )
+        await pilot.click("#cancel-button")
+        await settle(pilot)
+        assert screen.state.active_mode == "characters"
+        assert screen.state.search_query == "kepler"
+        assert name.value == "Draft Hero"
+        assert screen._window_state.intent is None
+
+
+async def test_a_late_count_for_an_older_query_is_dropped(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The counts land only on the list they were counted for (spec 1.5.6's
+    fence): a count held past a newer keystroke never shows, and a result
+    for an older fence is dropped even when it does arrive."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    reading, release = threading.Event(), threading.Event()
+    armed = {"on": False}
+    real_list = WorldBookManager.list_world_books
+
+    def held_list(self, include_disabled=False):
+        if armed["on"]:
+            armed["on"] = False
+            reading.set()
+            release.wait(timeout=30)
+        return real_list(self, include_disabled)
+
+    monkeypatch.setattr(WorldBookManager, "list_world_books", held_list)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        armed["on"] = True
+        try:
+            await _search_settled(pilot, screen, "kepler", workers=False)
+            await wait_until(pilot, reading.is_set, what="the held lore count")
+            await _search_settled(pilot, screen, "zzqx", workers=False)
+            await _targets(pilot, screen, ("Not found in other kinds either.",))
+        finally:
+            release.set()
+        await settle(pilot)
+        assert also_in_targets(screen) == ("Not found in other kinds either.",)
+        stale = screen._list_fence()
+        await _search_settled(pilot, screen, "zzqy")
+        await _targets(pilot, screen, ("Not found in other kinds either.",))
+        screen._apply_also_in(stale, {"persona": 0, "lore": 7, "dictionary": 0}, set())
+        await settle(pilot)
+        assert also_in_targets(screen) == ("Not found in other kinds either.",)
+
+
+async def test_counts_run_only_when_the_current_kind_shows_nothing(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """MF-11 (spec 1.5.4): the other kinds are counted only for an empty
+    result; keystrokes that match start no count."""
+    _also_in_world(mock_app_instance, volume_348)
+    started: list[str] = []
+    real = PersonasScreen._also_in_worker
+
+    async def spied(self, fence):
+        started.append(fence.query)
+        await real(self, fence)
+
+    monkeypatch.setattr(PersonasScreen, "_also_in_worker", spied)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        for query in ("C", "Ch", "Character 00"):
+            await _search_settled(pilot, screen, query)
+        assert started == []
+        await _search_settled(pilot, screen, "zzqx")
+        await wait_until(pilot, lambda: started == ["zzqx"], what="one count run")
+
+
+async def test_character_counts_use_the_same_fts_prefix_as_the_list(
+    mock_app_instance, volume_348
+):
+    """Characters are counted with the list's own FTS phrase-prefix search,
+    not a substring: from Lore books, ``isol`` finds ISOLDE, ``sold`` does not."""
+    _also_in_world(mock_app_instance, volume_348)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        await screen._apply_mode("lore")
+        await settle(pilot)
+        await _search_settled(pilot, screen, "isol")
+        await _targets(pilot, screen, ("Characters 1 ›",))
+        await _search_settled(pilot, screen, "sold")
+        await _targets(pilot, screen, ("Not found in other kinds either.",))
+
+
+async def test_enter_in_the_search_box_never_waits_on_the_counts(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """The counts are not rows: Enter in the box with a count still running
+    owes no landing (Enter on the list stays live), focus goes to the list."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    reading, release = threading.Event(), threading.Event()
+    real_list = WorldBookManager.list_world_books
+
+    def held_list(self, include_disabled=False):
+        reading.set()
+        release.wait(timeout=30)
+        return real_list(self, include_disabled)
+
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        monkeypatch.setattr(WorldBookManager, "list_world_books", held_list)
+        try:
+            search = screen.query_one("#personas-library-search", Input)
+            search.value = "kepler"
+            # Waited on the painted state, not on "rows pending": that is
+            # the predicate under test.
+            await wait_until(
+                pilot,
+                lambda: (
+                    reading.is_set()
+                    and no_match_lines(screen)[:1] == ('No characters match "kepler".',)
+                ),
+                what="the no-match line with its lore count held",
+            )
+            search.focus()
+            await pilot.press("enter")
+            assert screen.focused is screen.query_one(RoleplayItemList)
+            assert not screen._window_state.landing_owed()
+        finally:
+            release.set()
+        await _targets(pilot, screen, ("Lore books 1 ›",))

@@ -16,7 +16,7 @@ Only the public ``OptionList`` API is used (``set_options``, ``add_options``,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from loguru import logger
@@ -34,6 +34,7 @@ from textual.widgets.option_list import Option
 
 from ...UI.Persona_Modules import roleplay_frame_state as frame_state
 from .personas_messages import (
+    AlsoInRequested,
     PersonaActionRequested,
     PersonaEntityKind,
     PersonaEntitySelected,
@@ -500,6 +501,8 @@ class RoleplayItemList(OptionList):
         if self._window.defer_first_activation():
             # Open no stale row; matching publication fulfils this Enter once.
             return
+        if self._to_also_in():
+            return
         self._window.user_moved()
         super().action_select()
 
@@ -512,8 +515,15 @@ class RoleplayItemList(OptionList):
         super().action_cursor_up()
 
     def action_cursor_down(self) -> None:
+        if self._to_also_in():
+            return
         self._window.user_moved()
         super().action_cursor_down()
+
+    def _to_also_in(self) -> bool:
+        """An empty list hands Enter and Down to the ``Also in:`` targets (spec 1.5.4)."""
+        pane = self._pane()
+        return not self.option_count and pane is not None and pane.focus_also_in()
 
     def action_page_up(self) -> None:
         self._window.user_moved()
@@ -718,6 +728,9 @@ class PersonasLibraryPane(Vertical):
         # that a stop bumps, so a callback already queued says nothing.
         self._loading_timer: Timer | None = None
         self._loading_serial = 0
+        # What the no-match message shows (query, tag, total), while it shows:
+        # the other kinds' counts are laid over it when they arrive.
+        self._no_match_args: tuple[str, str | None, int | None] | None = None
 
     @property
     def item_list(self) -> RoleplayItemList:
@@ -883,6 +896,28 @@ class PersonasLibraryPane(Vertical):
                     classes="personas-library-status-copy",
                     markup=False,
                 )
+            # "Also in:" (spec 1.5.4): one target per other kind, in rail
+            # order, shown only where that kind matches; Enter switches to it
+            # with the query applied.
+            yield Static(
+                frame_state.ALSO_IN_LABEL,
+                id="personas-library-also-in-label",
+                classes="personas-library-status-copy",
+                markup=False,
+            )
+            for kind in frame_state.ALSO_IN_ORDER:
+                yield Button(
+                    "",
+                    id=f"personas-library-also-in-{kind}",
+                    classes="console-action-secondary personas-library-also-in-target",
+                    compact=True,
+                )
+            yield Static(
+                frame_state.NOT_FOUND_ELSEWHERE,
+                id="personas-library-also-in-none",
+                classes="personas-library-status-copy",
+                markup=False,
+            )
         # "Loading <kind>…", only once a kind's read takes 250 ms (spec 1.5.4).
         loading = Static(
             "",
@@ -954,7 +989,7 @@ class PersonasLibraryPane(Vertical):
         anchor: frame_state.ListAnchor | None = None,
         query: str = "",
         tag: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Replace the visible rows (one ``set_options``) and the border titles.
 
         Marks are kept by id (spec 1.5.5): a row a search, sort or tag hides
@@ -981,7 +1016,8 @@ class PersonasLibraryPane(Vertical):
             tag: The tag these rows answer.
 
         Returns:
-            None.
+            Whether the no-match message shows (the screen then counts the
+            other kinds, spec 1.5.4).
         """
         item_list = self.item_list
         visible_rows = () if recovery_copy else rows
@@ -1009,6 +1045,7 @@ class PersonasLibraryPane(Vertical):
             no_match = frame_state.no_match_view(
                 item_list.kind, query=query, tag=tag, total=total if filtered else None
             )
+            self._no_match_args = (query, tag, total if filtered else None)
         else:
             status = (
                 "personas-library-empty",
@@ -1026,6 +1063,7 @@ class PersonasLibraryPane(Vertical):
                 failed=bool(recovery_copy),
             )
         self.set_title(title)
+        return no_match is not None
 
     async def _sync_status(self, status: tuple[str, str] | None) -> None:
         """Show the empty or recovery copy; mount only when the state changes."""
@@ -1046,11 +1084,66 @@ class PersonasLibraryPane(Vertical):
         self._status_key = status
 
     def _show_no_match(self, view: frame_state.NoMatchView | None) -> None:
-        """Show or hide the no-match message; updated in place, never mounted."""
-        if view is not None:
+        """Show or hide the no-match message; updated in place, never mounted.
+
+        A target that held focus and hides hands it to the list (I1).
+        """
+        block = self.query_one("#personas-library-nomatch", Vertical)
+        focused = self.app.focused if self.is_attached else None
+        held = focused is not None and block in focused.ancestors
+        if view is None:
+            self._no_match_args = None
+        else:
             for part, text in zip(("line", "hint"), view.lines):
                 self.query_one(f"#personas-library-nomatch-{part}", Static).update(text)
-        self.query_one("#personas-library-nomatch", Vertical).display = view is not None
+            targets = {target.kind: target for target in view.targets}
+            self.query_one("#personas-library-also-in-label", Static).display = bool(
+                targets
+            )
+            for kind in frame_state.ALSO_IN_ORDER:
+                button = self.query_one(f"#personas-library-also-in-{kind}", Button)
+                target = targets.get(kind)
+                if target is not None:
+                    button.label = Content(target.label)
+                button.display = target is not None
+            self.query_one("#personas-library-also-in-none", Static).display = (
+                view.none_text is not None
+            )
+        block.display = view is not None
+        if held and not (view is not None and focused.display):
+            self.item_list.focus()
+
+    def show_also_in(self, counts: Mapping[str, int], failed: Collection[str]) -> None:
+        """Lay the other kinds' counts over the no-match message (spec 1.5.4).
+
+        The screen fences them to the list they were counted for; a message
+        that is no longer shown takes nothing.
+        """
+        if self._no_match_args is None:
+            return
+        query, tag, total = self._no_match_args
+        self._show_no_match(
+            frame_state.no_match_view(
+                self.item_list.kind,
+                query=query,
+                tag=tag,
+                total=total,
+                counts=counts,
+                failed=failed,
+            )
+        )
+
+    def focus_also_in(self, *, query: str | None = None) -> bool:
+        """Focus the first ``Also in:`` target, if one shows (for ``query``, when given)."""
+        args = self._no_match_args
+        if args is None or (query is not None and args[0] != query):
+            return False
+        for kind in frame_state.ALSO_IN_ORDER:
+            button = self.query_one(f"#personas-library-also-in-{kind}", Button)
+            if button.display:
+                button.focus()
+                return True
+        return False
 
     def no_match_showing(self) -> bool:
         """Whether the no-match message shows: a search or tag listed nothing."""
@@ -1315,7 +1408,10 @@ class PersonasLibraryPane(Vertical):
         1.6's 4-key find); Enter returns without waiting (TASK-33910.35).
         """
         event.stop()
-        self.item_list.focus()
+        # The searched list is empty and another kind matches: the first
+        # "Also in:" target takes focus, so Enter again switches (spec 1.5.4).
+        if not self.focus_also_in(query=event.value.strip()):
+            self.item_list.focus()
         self.post_message(PersonaSearchSubmitted())
 
     @on(OptionList.OptionSelected, "#personas-library-rows")
@@ -1362,6 +1458,13 @@ class PersonasLibraryPane(Vertical):
     def _import_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(PersonaActionRequested(action="import"))
+
+    @on(Button.Pressed, ".personas-library-also-in-target")
+    def _also_in_pressed(self, event: Button.Pressed) -> None:
+        """Switch to the target's kind with the query applied (spec 1.5.4)."""
+        event.stop()
+        kind = str(event.button.id or "").removeprefix("personas-library-also-in-")
+        self.post_message(AlsoInRequested(kind))
 
     @on(Button.Pressed, "#personas-library-retry")
     def _retry_pressed(self, event: Button.Pressed) -> None:

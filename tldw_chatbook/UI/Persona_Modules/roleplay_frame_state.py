@@ -1172,6 +1172,10 @@ def fit_items_toolbar(mode: str, *, width: int, sort_key: str) -> ToolbarFit:
 LOADING_DELAY_SECONDS = 0.25
 #: The echoed query or tag is cut to this many cells, on one line (R33).
 NO_MATCH_ECHO_MAX_CELLS = 24
+#: ``Also in:`` lists the other kinds in the rail's order (spec 1.4.7 item 5).
+ALSO_IN_ORDER: tuple[str, ...] = ("character", "persona", "lore", "dictionary")
+ALSO_IN_LABEL = "Also in:"
+NOT_FOUND_ELSEWHERE = "Not found in other kinds either."
 
 
 def empty_kind_text(kind: str) -> str:
@@ -1189,6 +1193,21 @@ def loading_text(kind: str) -> str:
 
 
 @dataclass(frozen=True)
+class AlsoInTarget:
+    """One ``Also in:`` target: another kind the search matches (spec 1.5.4).
+
+    Attributes:
+        kind: The entity kind (``ITEM_KINDS`` keys).
+        count: How many of that kind match.
+        label: ``Lore books 1 ›`` (fixed words and a count: nothing untrusted).
+    """
+
+    kind: str
+    count: int
+    label: str
+
+
+@dataclass(frozen=True)
 class NoMatchView:
     """What the list says when a search or tag leaves it empty (spec 1.5.4).
 
@@ -1196,13 +1215,24 @@ class NoMatchView:
         lines: What found nothing (``No characters match "kepler".``) and the
             way out (``28 in total · esc clears the search``). Plain text: the
             pane paints it with markup off (the query and tag are untrusted).
+        targets: The other kinds the query matches, in rail order.
+        none_text: ``Not found in other kinds either.`` once every other
+            kind was counted and none matches; None otherwise.
     """
 
     lines: tuple[str, str]
+    targets: tuple[AlsoInTarget, ...] = ()
+    none_text: str | None = None
 
 
 def no_match_view(
-    kind: str, *, query: str, tag: str | None, total: int | None
+    kind: str,
+    *,
+    query: str,
+    tag: str | None,
+    total: int | None,
+    counts: Mapping[str, int] | None = None,
+    failed: Collection[str] = (),
 ) -> NoMatchView:
     """The no-match message for a search, a tag, or both (spec 1.5.4, RP-022).
 
@@ -1213,9 +1243,13 @@ def no_match_view(
         tag: The active tag, if any (cut the same way).
         total: The kind's unfiltered total; None when it is unknown (a
             server search), which leaves ``N in total`` out.
+        counts: The other kinds' match counts once they are in (None while
+            they are counted, or for a tag alone).
+        failed: Kinds whose count failed: never listed, and they keep
+            ``Not found in other kinds either.`` from being claimed.
 
     Returns:
-        The two lines.
+        The two lines, the ``Also in:`` targets and the not-found line.
     """
     noun = ITEM_KINDS[kind][1]
 
@@ -1234,4 +1268,18 @@ def no_match_view(
     way_out = f"esc clears {cleared}"
     if total is not None:
         way_out = f"{total} in total {resolve_glyph(_SEPARATOR)} {way_out}"
-    return NoMatchView((found, way_out))
+    if counts is None:
+        return NoMatchView((found, way_out))
+    others = [other for other in ALSO_IN_ORDER if other != kind]
+    targets = tuple(
+        AlsoInTarget(
+            other,
+            counts[other],
+            f"{ITEM_KINDS[other][2]} {counts[other]} {resolve_glyph(_GO)}",
+        )
+        for other in others
+        if other not in failed and counts.get(other, 0) > 0
+    )
+    counted = all(other in counts and other not in failed for other in others)
+    none_text = NOT_FOUND_ELSEWHERE if counted and not targets else None
+    return NoMatchView((found, way_out), targets, none_text)

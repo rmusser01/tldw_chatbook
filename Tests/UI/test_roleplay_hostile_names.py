@@ -619,3 +619,52 @@ async def test_the_import_toast_paints_a_hostile_card_name_literally(
             assert screen._edit_mode == "create"
     finally:
         db.close_connection()
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_no_match_line_and_also_in_row_paint_a_hostile_query_literally(
+    name, mock_app_instance, tmp_path
+):
+    """Frame slice B2b (AC#7, spec 1.5.4, R33): a search typed like markup is
+    echoed by the no-match line as typed (on one line, cut to 24 cells) and
+    inert, and the ``Also in:`` row under it (fixed words and a count) paints
+    whole beside it."""
+    from textual.widgets import Input
+
+    db = CharactersRAGDB(tmp_path / "hostile_query.db", "test-client")
+    db.add_character_card({"name": "Abel Host", "description": "seed"})
+    WorldBookManager(db).create_world_book(f"{name} atlas")
+
+    async def list_persona_profiles(**_kwargs):
+        return {"items": []}
+
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_persona_profiles=list_persona_profiles
+    )
+    mock_app_instance.chat_dictionary_scope_service = FakeDictScopeService([])
+    try:
+        async with open_styled_roleplay(
+            "mock",
+            mock_app_instance,
+            size=SIZE,
+            app_class=_RecordingStyledApp,
+            character_db=db,
+        ) as pilot:
+            screen = pilot.app.screen
+            screen.query_one("#personas-library-search", Input).value = name
+            # The echo as the line paints it: one line, cut to 24 cells.
+            echoed = frame_state.ellipsize_cells(
+                " ".join(name.split()), frame_state.NO_MATCH_ECHO_MAX_CELLS
+            )
+            await wait_until(
+                pilot,
+                lambda: (
+                    any(f'"{echoed}".' in row for row in painted_rows(screen))
+                    and any("Lore books 1 ›" in row for row in painted_rows(screen))
+                ),
+                what="the painted no-match line and Also in row",
+            )
+            await settle(pilot)
+            await _assert_literal_and_inert(pilot, f'"{echoed}".', at_least=1)
+    finally:
+        db.close_connection()
