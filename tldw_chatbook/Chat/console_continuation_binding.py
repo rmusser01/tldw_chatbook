@@ -246,8 +246,8 @@ def continuation_can_be_durable(
 
     A temporary session or a session-only endpoint never is. Neither is a
     dispatch whose checkpoint recorded no continuation tuple (pre-upgrade, or
-    a destination it could not record): the tool loop still runs, but its
-    continuation is not resumable.
+    a destination it could not record), or one owned by another assistant
+    message: the tool loop still runs, but its continuation is not resumable.
     """
     if (
         store.session_is_ephemeral(session_id)
@@ -258,11 +258,16 @@ def continuation_can_be_durable(
     lookup = getattr(store, "dispatch_recovery_for_session", None)
     recovery = lookup(session_id) if callable(lookup) else None
     checkpoint = getattr(recovery, "checkpoint", None)
+    # Mirrors validate_durable_continuation_binding: a dispatch owned by
+    # another assistant message (regenerate/retry/edit do not consult the
+    # recovery gate) cannot bind this run's continuation either.
     return (
         checkpoint is None
-        or recovery.assistant_message_id != assistant_message_id
         or not getattr(resolution, "continuation_protocol", None)
-        or checkpoint.resolved_destination.continuation_provider is not None
+        or (
+            recovery.assistant_message_id == assistant_message_id
+            and checkpoint.resolved_destination.continuation_provider is not None
+        )
     )
 
 

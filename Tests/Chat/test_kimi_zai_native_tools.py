@@ -814,7 +814,9 @@ def test_hosted_tool_error_continues_structurally(
 
 
 @pytest.mark.allow_network
-@pytest.mark.parametrize("cause", ["session_only_endpoint", "untupled_dispatch"])
+@pytest.mark.parametrize(
+    "cause", ["session_only_endpoint", "untupled_dispatch", "foreign_dispatch"]
+)
 def test_nondurable_native_loop_runs_without_durable_continuation(
     tmp_path: Any, cause: str
 ) -> None:
@@ -822,7 +824,8 @@ def test_nondurable_native_loop_runs_without_durable_continuation(
 
     A session-only endpoint must never be written down; a dispatch checkpoint
     without a continuation tuple (pre-upgrade, or one the destination could not
-    record) cannot bind one.
+    record) cannot bind one; neither can a dispatch owned by another assistant
+    message (regenerate/retry/edit paths do not consult the recovery gate).
     """
     from dataclasses import replace
     from types import SimpleNamespace
@@ -856,13 +859,19 @@ def test_nondurable_native_loop_runs_without_durable_continuation(
                 endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
             )
         else:
-            untupled = SimpleNamespace(
-                assistant_message_id=assistant.id,
+            recovery = SimpleNamespace(
+                assistant_message_id=(
+                    assistant.id if cause == "untupled_dispatch" else "other-owner"
+                ),
                 checkpoint=SimpleNamespace(
-                    resolved_destination=SimpleNamespace(continuation_provider=None)
+                    resolved_destination=SimpleNamespace(
+                        continuation_provider=(
+                            None if cause == "untupled_dispatch" else provider
+                        )
+                    )
                 ),
             )
-            store.dispatch_recovery_for_session = lambda _session_id: untupled
+            store.dispatch_recovery_for_session = lambda _session_id: recovery
         bridge = ConsoleAgentBridge(
             agent_runs_db=db, store=store, provider_gateway=_CaptureGateway()
         )
