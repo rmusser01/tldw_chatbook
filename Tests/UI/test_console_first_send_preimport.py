@@ -41,6 +41,7 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.console_received_dispatch",
     "Chat.console_send_diagnostics",
     "Chat.console_hook_preparation",
+    "Chat.console_continuation_binding",
     "Agents.automatic_work_runtime",
     "Chat.console_references",
     "Agents.hooks_v2.lifecycle",
