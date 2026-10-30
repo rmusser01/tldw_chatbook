@@ -1130,14 +1130,21 @@ class ConsoleComposerBar(Horizontal):
     ) -> None:
         """Preserve trust only when a mutation began after the typed prefix."""
         if mutation_start is not None:
-            preserve_trusted_prefix = (
-                preserve_trusted_prefix
-                and not replaces_selection
-                and mutation_start >= 2
+            preserve_trusted_prefix = self._keeps_raw_cli_prefix(
+                preserve_trusted_prefix, mutation_start, replaces_selection
             )
         self._raw_cli_prefix_typed = bool(
             preserve_trusted_prefix and self.draft_text().startswith("! ")
         )
+
+    @staticmethod
+    def _keeps_raw_cli_prefix(preserve: bool, start: int, replaces: bool) -> bool:
+        """Whether an edit at ``start`` leaves a trusted ``! `` prefix trusted.
+
+        TASK-37873: such an insert lands in a host command, which is shown
+        in full before it runs, so it is never display-collapsed.
+        """
+        return preserve and not replaces and start >= 2
 
     def _clear_raw_cli_provenance(self) -> None:
         """Fail closed across wholesale or non-physical draft replacement."""
@@ -5126,11 +5133,14 @@ class ConsoleComposerBar(Horizontal):
             self._cursor_index = 0
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
+        insertion_offset = self._cursor_index
         should_collapse = (
             self.collapse_large_pastes_enabled
             and len(text) > self.paste_collapse_threshold
+            and not self._keeps_raw_cli_prefix(
+                preserve_raw_cli_prefix, insertion_offset, replaces_selection
+            )
         )
-        insertion_offset = self._cursor_index
         if should_collapse:
             paste_index = self._insert_segment_at_cursor(
                 _DraftSegment(
@@ -5209,11 +5219,14 @@ class ConsoleComposerBar(Horizontal):
         self._reset_pending_unfurl_state()
         self._clamp_cursor()
         insertion_offset = self._cursor_index
+        in_raw_command = self._keeps_raw_cli_prefix(
+            preserve_raw_cli_prefix, insertion_offset, replaces_selection
+        )
         self._insert_segment_at_cursor(
             _DraftSegment(
                 text,
                 origin="inline_file",
-                collapse_state="collapsed",
+                collapse_state="literal" if in_raw_command else "collapsed",
                 label=label,
             )
         )
