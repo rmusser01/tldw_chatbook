@@ -460,7 +460,8 @@ class ConsoleCitationSourcesModal(
         )
         self._update_detail(None)
         # Nothing to list: the cause and its next step are the whole window.
-        self.query_one("#console-citation-sources-body").display = False
+        # (A query, not query_one: the window may have closed during the await.)
+        self.query("#console-citation-sources-body").set(display=False)
 
     async def _show_rows(
         self,
