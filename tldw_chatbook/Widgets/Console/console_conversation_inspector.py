@@ -146,15 +146,18 @@ _LLAMA_CPP_PROVIDERS = frozenset({"llama_cpp", "local_llamacpp"})
 _LLAMA_CPP_CAPTURE_NOTE = "llama.cpp: this capture is the literal payload sent."
 
 
-def _capture_load_failure(exc: BaseException) -> tuple[str, str]:
+def _capture_load_failure(exc: BaseException, *, shows_usage: bool) -> tuple[str, str]:
     """Classify a capture-load failure for the reader and the log.
 
     Args:
         exc: What the injected capture loader raised.
+        shows_usage: Whether the pane also shows the turn's usage figures
+            (Usage & cost does; Exchange history does not).
 
     Returns:
         ``(reason_code, copy)``. Only a busy store offers a retry: a stored
-        capture that cannot be decoded fails the same way every time.
+        capture that cannot be decoded fails the same way every time. The
+        copy stays in plain words; the exception type goes to the log only.
     """
     if isinstance(exc, sqlite3.OperationalError) and any(
         word in str(exc).casefold() for word in ("locked", "busy")
@@ -165,15 +168,19 @@ def _capture_load_failure(exc: BaseException) -> tuple[str, str]:
             "Select this turn again to retry.",
         )
     if isinstance(exc, (TypeError, ValueError, KeyError)):
+        log_note = (
+            "Usage figures are unaffected; the app log names the error."
+            if shows_usage
+            else "The app log names the error."
+        )
         return (
             "decode_error",
             "Could not load captures: this turn's stored capture could not be "
-            "decoded, so selecting it again will not help. Usage figures are "
-            "unaffected; the app log names the error.",
+            "decoded, so selecting it again will not help. " + log_note,
         )
     return (
         "unexpected",
-        f"Could not load captures ({type(exc).__name__}). The app log names the error.",
+        "Could not load captures because of an unexpected error. The app log names it.",
     )
 
 
@@ -879,7 +886,9 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
                     "#console-inspector-show-exchanges", Button
                 ).disabled = not calls
         except Exception as exc:  # noqa: BLE001 - injected authority/loaders fail closed
-            reason, copy_text = _capture_load_failure(exc)
+            reason, copy_text = _capture_load_failure(
+                exc, shows_usage=usage_item is not None
+            )
             # Type and class only: the exception text can carry stored content.
             logger.warning(
                 "Inspector capture load failed reason={} exception_type={}",

@@ -1279,7 +1279,7 @@ async def test_nested_usage_call_loads_from_the_real_reader_and_exports(
         ),
         (ValueError("private stored body"), "could not be decoded", False),
         (__import__("sqlite3").OperationalError("database is locked"), "busy", True),
-        (RuntimeError("private runtime body"), "(RuntimeError)", False),
+        (RuntimeError("private runtime body"), "an unexpected error", False),
     ],
 )
 async def test_capture_load_failure_names_its_reason_and_logs_the_type(
@@ -1313,9 +1313,44 @@ async def test_capture_load_failure_names_its_reason_and_logs_the_type(
     assert expected in text
     assert ("Select this turn again to retry" in text) is retry_offered
     assert str(error) not in text
+    # Plain words on screen; the class name is for the log only.
+    assert type(error).__name__ not in text
     logged = "".join(records)
     assert f"exception_type={type(error).__name__}" in logged
     assert str(error) not in logged
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tab", "pane_id", "select_key", "mentions_usage"),
+    [
+        (TAB_COSTS, "console-inspector-usage-detail", "usage:0", True),
+        (TAB_EXCHANGE, "console-inspector-exchange-detail", "turn:0", False),
+    ],
+)
+async def test_decode_failure_mentions_usage_only_where_usage_is_shown(
+    tab: str, pane_id: str, select_key: str, mentions_usage: bool
+) -> None:
+    """The Exchange history tab shows no usage figures, so its decode-failure
+    copy must not reassure the reader about them."""
+
+    async def loader(_message_id: str) -> list[tuple[ExchangeCapture, bool]]:
+        raise TypeError("private stored body")
+
+    app = InspectorHarness(**_default_kwargs(exchanges_loader=loader, initial_tab=tab))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one(f"#{pane_id}").select(select_key)
+        await _wait_until(
+            pilot,
+            lambda: "could not be decoded" in _detail_text(modal, pane_id),
+            attempts=60,
+        )
+        text = _detail_text(modal, pane_id)
+
+    assert ("Usage figures are unaffected" in text) is mentions_usage
+    assert "selecting it again will not help" in text
 
 
 @pytest.mark.asyncio
