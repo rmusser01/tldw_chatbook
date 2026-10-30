@@ -23938,3 +23938,21 @@ was still valid and totalled 401.3 runner-minutes. The cause of those inverted
 timestamps was not established. Report unavailable wait rows explicitly instead
 of clamping negative durations to zero. A median over the one remaining valid
 row is a partial sample, not the workflow's overall queue delay.
+
+## Trigger an error for real before writing the recovery advice it shows (TASK-33621.8 review, 2026-10-29)
+
+**Incident.** The Trace export dialog's plain copy told users to "reopen the
+Trace view to rebuild it, then export again" for every validation failure. A
+second review found the advice false: the failures left after the fix (duplicate
+event ids, invalid field states) come from stored data, so a rebuilt snapshot
+fails identically. It was the same false-retry pattern the sibling task had just
+removed from the Inspector, written again in the same branch. The obvious fix
+for the credential backstop, "try a less detailed profile", was false too: a
+probe of identity, label, model and field-name inputs under all three profiles
+found that only a credential-looking field name reaches the check, and it is
+blocked under every profile alike, because field names survive all scrubbing.
+
+**What to do.** Before writing a recovery step into error copy, produce the
+error with real inputs under each option the copy would suggest, and keep only
+advice that turned a failure into a success in that probe. When nothing does,
+say what stopped the operation and where the details are; do not offer a retry.
