@@ -13172,9 +13172,26 @@ class ConsoleChatController:
             )
         destination = self._resolved_destination_for_context(resolution)
         frozen_authority = checkpoint.frozen_authority
+        recorded = checkpoint.resolved_destination
+        recorded_tuple = (
+            recorded.continuation_provider,
+            recorded.continuation_protocol,
+            recorded.continuation_base_url,
+        )
         if (
             not self._dispatch_authority_matches(authority, frozen_authority)
-            or destination != checkpoint.resolved_destination
+            or destination.identity_key != recorded.identity_key
+            # Pre-upgrade checkpoints carry no continuation tuple; their retry
+            # runs without durable continuation (see the bridge's durability).
+            or (
+                recorded_tuple != (None, None, None)
+                and recorded_tuple
+                != (
+                    destination.continuation_provider,
+                    destination.continuation_protocol,
+                    destination.continuation_base_url,
+                )
+            )
         ):
             raise _DispatchRecoveryRefusal(
                 "The provider destination or Library authority changed. Review it "
