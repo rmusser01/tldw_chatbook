@@ -60,6 +60,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     SEMANTIC_SCORE_KIND_KEY,
     SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY,
     format_local_evidence_context,
+    format_unrecorded_console_evidence,
     normalize_local_result,
 )
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
@@ -593,6 +594,34 @@ def test_formatter_truncates_multibyte_snapshot_inside_utf8_and_character_budget
     assert len(snapshot.encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
     assert formatted.entries[0].transformations == ("content_truncated",)
     assert formatted.omitted_candidate_ranks == ()
+
+
+def test_unrecorded_evidence_keeps_the_canonical_per_block_byte_cap():
+    """TASK-33620.8: an unlabelled send carries no more than a labelled one.
+
+    With no citation record (records off, or no key), evidence goes out
+    without [S#] headers. Each block keeps the canonical formatter's UTF-8
+    cap, truncated on a whole codepoint with an ellipsis.
+    """
+    header = "MEDIA — Title\n"
+    at_cap = _multibyte_content_for_snapshot_bytes(header, SNAPSHOT_TEXT_UTF8_BYTES_MAX)
+    exact = normalize_local_result(_result(content=at_cap), candidate_rank=1)
+    oversized = normalize_local_result(
+        _result(result_id="m2", content=at_cap + ("é" * 2048)), candidate_rank=2
+    )
+    small = normalize_local_result(
+        _result(result_id="m3", title="Other", content="short body"), candidate_rank=3
+    )
+
+    text = format_unrecorded_console_evidence([exact, oversized, small])
+
+    blocks = text.split("\n\n", 1)[1].split("\n---\n")
+    assert blocks[0] == header + at_cap  # exactly at the cap: kept whole
+    assert len(blocks[0].encode("utf-8")) == SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert len(blocks[1].encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert blocks[1].startswith(header) and blocks[1].endswith("…")
+    assert blocks[2] == "MEDIA — Other\nshort body"
+    assert not any(block.startswith("[S") for block in blocks)
 
 
 @pytest.mark.parametrize(

@@ -551,6 +551,9 @@ def format_unrecorded_console_evidence(
     the fingerprint key unavailable, the same evidence goes out without
     labels, under guidance to refer to sources by title.
 
+    Each block keeps the canonical formatter's UTF-8 cap, so an unlabelled
+    send carries no more than a labelled one would.
+
     Args:
         normalized_results: Authorized normalized results in retrieval order.
 
@@ -559,13 +562,23 @@ def format_unrecorded_console_evidence(
     """
     from ..Chat.answer_citations import unrecorded_evidence_text
 
-    return unrecorded_evidence_text(
-        [
-            f"{_SOURCE_LABELS[result.source_kind]} — {result.title}\n{result.content}"
-            for result in tuple(normalized_results)[:EVIDENCE_ENTRIES_PER_PROMPT_MAX]
-            if isinstance(result, NormalizedLocalResult)
-        ]
-    )
+    blocks: list[str] = []
+    for result in tuple(normalized_results)[:EVIDENCE_ENTRIES_PER_PROMPT_MAX]:
+        if not isinstance(result, NormalizedLocalResult):
+            continue
+        header = f"{_SOURCE_LABELS[result.source_kind]} — {result.title}\n"
+        block = f"{header}{result.content}"
+        if len(block.encode("utf-8")) > SNAPSHOT_TEXT_UTF8_BYTES_MAX:
+            ellipsis = "…"
+            budget = SNAPSHOT_TEXT_UTF8_BYTES_MAX - len(f"{header}{ellipsis}".encode())
+            content = _content_prefix_within_budgets(
+                result.content,
+                character_budget=len(result.content),
+                utf8_byte_budget=max(budget, 0),
+            )
+            block = f"{header}{content}{ellipsis}"
+        blocks.append(block)
+    return unrecorded_evidence_text(blocks)
 
 
 __all__ = [
