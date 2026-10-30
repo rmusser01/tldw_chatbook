@@ -253,3 +253,29 @@ async def test_deferred_review_team_work_survives_panel_removal(
             assert saved["reviewers"][0]["preset_id"] == pid
             assert saved["verifier_preset_id"] == pid
             assert panel._review_team.verifier_preset_id == pid
+
+
+@pytest.mark.asyncio
+async def test_missing_preset_id_with_markup_renders_literally(
+    runs_db, isolated_config
+):
+    """A raw config id is user text; Select prompts must not parse it as markup."""
+    named = preset(runs_db, "named")
+    isolated_config.write_text(
+        f'''[agents.code_review]
+verifier_preset_id = "[b]verify"
+reviewers = [{{preset_id="[/]bad"}}, {{preset_id="{named}"}}]
+'''
+    )
+    panel = panel_for(runs_db, isolated_config)
+    async with PanelHarness(panel).run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        select = panel.query_one("#agents-review-preset", Select)
+        select.expanded = True
+        await pilot.pause()
+        prompts = {str(prompt) for prompt, _ in select._options}
+        assert {
+            "[/]bad (missing)",
+            "[b]verify (missing)",
+            "named",
+        } <= prompts

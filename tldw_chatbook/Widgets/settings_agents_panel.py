@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
@@ -74,6 +75,7 @@ ENABLED_DEFINITIONS_SOFT_CAP = 20
 
 #: Prompt shown by the routing provider Selects for the empty (inherit) value.
 INHERIT_PARENT_PROMPT = "(inherit parent)"
+
 
 def _parse_requested_tools(raw: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Split ordered tool names into stored and runtime-only selections."""
@@ -446,7 +448,9 @@ class AgentsSettingsPanel(Vertical):
             f"{key} = {value}" for key, value in definition_from_row(row).params
         )
         self.query_one("#agents-fallback-models-area", TextArea).text = "\n".join(
-            f"{provider}/{model}" for provider, model in definition_from_row(row).fallback_models)
+            f"{provider}/{model}"
+            for provider, model in definition_from_row(row).fallback_models
+        )
         wall_seconds = row.get("max_wall_seconds")
         self.query_one("#agents-wall-seconds-input", Input).value = (
             "" if wall_seconds is None else str(wall_seconds)
@@ -509,7 +513,8 @@ class AgentsSettingsPanel(Vertical):
             f"{key} = {value}" for key, value in preset.params
         )
         self.query_one("#agents-fallback-models-area", TextArea).text = "\n".join(
-            f"{provider}/{model}" for provider, model in preset.fallback_models)
+            f"{provider}/{model}" for provider, model in preset.fallback_models
+        )
         self.query_one("#agents-wall-seconds-input", Input).value = ""
         tools_input = self.query_one("#agents-tools-input", Input)
         tools_input.value = ", ".join(preset.tool_allowlist)
@@ -557,8 +562,13 @@ class AgentsSettingsPanel(Vertical):
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
             provider=("" if provider_value is Select.NULL else str(provider_value)),
             params=params_to_tuple(params),
-            fallback_models=tuple(tuple(line.strip().split("/", 1))
-                for line in self.query_one("#agents-fallback-models-area", TextArea).text.splitlines() if line.strip()),
+            fallback_models=tuple(
+                tuple(line.strip().split("/", 1))
+                for line in self.query_one(
+                    "#agents-fallback-models-area", TextArea
+                ).text.splitlines()
+                if line.strip()
+            ),
             max_wall_seconds=max_wall_seconds,
         )
 
@@ -643,7 +653,8 @@ class AgentsSettingsPanel(Vertical):
         if self._review_team.verifier_preset_id:
             referenced.append(self._review_team.verifier_preset_id)
         ids = list(dict.fromkeys([row["id"] for row in self._rows] + referenced))
-        options = [(self._review_preset_label(pid), pid) for pid in ids]
+        # Ids come straight from config; Text keeps Select from parsing markup.
+        options = [(Text(self._review_preset_label(pid)), pid) for pid in ids]
         select = self.query_one("#agents-review-preset", Select)
         current = select.value
         select.set_options(options)
@@ -712,7 +723,10 @@ class AgentsSettingsPanel(Vertical):
         )
 
     async def _edit_review_team(self, action: str) -> None:
-        from tldw_chatbook.Agents.code_review_models import ReviewRefused, parse_review_team
+        from tldw_chatbook.Agents.code_review_models import (
+            ReviewRefused,
+            parse_review_team,
+        )
 
         rows = [choice.model_dump() for choice in self._review_team.reviewers]
         lv = self.query_one("#agents-review-team-list", ListView)
