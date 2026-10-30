@@ -147,14 +147,6 @@ competing lock immediately inside the replacement call, proving the original
 lock remains held, and independently refuses a late target-inode substitution.
 Releasing the lock to make rename succeed would discard the guarantee under test.
 
-## A teardown-state WorkerFailed from `run_test`'s exit means the body left work running; reproduce it by pinning the producer to the teardown step (TASK-36383, 2026-10-23)
-
-**Incident.** Two of three flaky File Notes tests failed at teardown, not at an assertion: `run_test` re-raised `MountError("Can't mount widget(s) before ListView(id='file-notes-git-rows') is mounted")` and `NoMatches('#file-notes-path-label')` from workers. The ListView was mounted. `TldwCli._shutdown` sets `app._exit = True` as a mount fence before it drains app-owned lifecycles. Textual's `is_attached` is False whenever `app._exit` is set, so any mount during that drain raises, while handlers keep running. The tests had ended too early. One stopped on a proxy, the restored file existing on disk, while the Restore handler was still rescanning. The other stopped after one `pilot.pause()` with the init worker still in its thread.
-
-The first negative controls only delayed the producer, and the old forms never failed. An init worker that finishes late is cancelled when its node unmounts. A rescan that returns late lands after the drain, when pruning makes the mount a silent no-op. Two pinned controls reproduced the recorded errors, each failing the old form 5 of 10 times in the final serial batch (4 of 5 in an earlier batch). The new form passed 10 of 10 under each. One control ran the real init and held its result until teardown had removed the label. The other deferred the rescan until `app._exit` was set and slowed one shutdown drain by 0.3 s.
-
-**What to do.** This applies only when the traceback shows teardown state: `app._exit` is set, or the queried node is already removed. `App.run_test` re-raises any worker failure at exit, including one from mid-body while the app was fully alive, and that kind needs ordinary debugging. For a teardown-state failure, wait for the handler's last effect (here the reopened path and the cleared `_replacing_rows`), not its first. To reproduce it, let the real producer run, then pin the moment it delivers to the teardown step the traceback names.
-
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
@@ -464,6 +456,14 @@ setting native_tools alone does not override provider capability policy.
 **Incident.** The focus-edge contrast sweep in `Tests/UI/test_theme_contrast.py` skips two kinds of edge: tokens listed as dev debt, and edges another test measures (the Workflows field). Its guard was meant to fail once a listed token stopped falling under 3:1. Mutation M6 listed `$ds-active-fg`, which the fix made pass everywhere, and the guard stayed green. It had searched every focus edge, so it found the Workflows field: that field paints `$ds-active-fg` too, sits at 2.88:1 on its own focus fill, and is exempt from the sweep for a different reason. Once the guard skipped the edges the sweep skips, the same mutation turned it red.
 
 **What to do.** When a test has more than one exemption list, have each list's guard run on what the sweep actually measures: drop every other exemption first. Then run a mutation that adds a now-passing entry to the list.
+
+## A teardown-state WorkerFailed from `run_test`'s exit means the body left work running; reproduce it by pinning the producer to the teardown step (TASK-36383, 2026-10-23)
+
+**Incident.** Two of three flaky File Notes tests failed at teardown, not at an assertion: `run_test` re-raised `MountError("Can't mount widget(s) before ListView(id='file-notes-git-rows') is mounted")` and `NoMatches('#file-notes-path-label')` from workers. The ListView was mounted. `TldwCli._shutdown` sets `app._exit = True` as a mount fence before it drains app-owned lifecycles. Textual's `is_attached` is False whenever `app._exit` is set, so any mount during that drain raises, while handlers keep running. The tests had ended too early. One stopped on a proxy, the restored file existing on disk, while the Restore handler was still rescanning. The other stopped after one `pilot.pause()` with the init worker still in its thread.
+
+The first negative controls only delayed the producer, and the old forms never failed. An init worker that finishes late is cancelled when its node unmounts. A rescan that returns late lands after the drain, when pruning makes the mount a silent no-op. Two pinned controls reproduced the recorded errors, each failing the old form 5 of 10 times in the final serial batch (4 of 5 in an earlier batch). The new form passed 10 of 10 under each. One control ran the real init and held its result until teardown had removed the label. The other deferred the rescan until `app._exit` was set and slowed one shutdown drain by 0.3 s.
+
+**What to do.** This applies only when the traceback shows teardown state: `app._exit` is set, or the queried node is already removed. `App.run_test` re-raises any worker failure at exit, including one from mid-body while the app was fully alive, and that kind needs ordinary debugging. For a teardown-state failure, wait for the handler's last effect (here the reopened path and the cleared `_replacing_rows`), not its first. To reproduce it, let the real producer run, then pin the moment it delivers to the teardown step the traceback names.
 
 ## A test that was red from birth hides its next failure behind the first (TASK-36390, 2026-10-23)
 
