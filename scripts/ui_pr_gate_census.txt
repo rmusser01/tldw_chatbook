@@ -1638,3 +1638,7 @@ Tests/UI/test_console_library_outcome_lines.py
 # file-level, no mount, ~3 s locally), appended at the tail so no existing
 # entry changes shard.
 Tests/UI/test_roleplay_import_sniff.py
+# Roleplay frame B2b (TASK-33910.4): the tag picker as a combobox (Enter,
+# Down/Up, the first match highlighted) on a real host app, no screen mount
+# (~6 s locally), appended at the tail so no existing entry changes shard.
+Tests/UI/test_tag_filter_picker.py
