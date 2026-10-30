@@ -4702,7 +4702,9 @@ class ChatScreen(BaseAppScreen):
         # cap so the help copy tracks a user override instead of quoting the
         # baked-in default.
         max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
-        shortcut_groups = CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        from ...Chat.console_context_budget_copy import CONTEXT_LIMIT_HELP
+
+        shortcut_groups = (CONTEXT_LIMIT_HELP, *CONSOLE_WORKBENCH_SHORTCUT_GROUPS)
         if self._console_inspector_active():
             shortcut_groups = (
                 *shortcut_groups,

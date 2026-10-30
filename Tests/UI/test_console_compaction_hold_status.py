@@ -62,3 +62,33 @@ def test_a_send_held_for_compaction_is_a_stuck_turn_with_a_short_reason() -> Non
 def test_a_compaction_pause_without_a_hold_has_no_card_and_no_reason() -> None:
     assert blocked_turn_reason(_controller(hold=None)) == ""
 
+
+async def test_f1_help_says_what_happens_at_the_context_limit() -> None:
+    """TASK-33621.4 AC#5: F1 describes the Ask hold, its forecast and /compact."""
+    from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
+
+    host = ConsoleHarness(_build_test_app())
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await console.action_show_workbench_help()
+        await pilot.pause()
+        panel = host.screen_stack[-1]
+        assert isinstance(panel, WorkbenchHelpPanel)
+        text = panel.state.render_text()
+
+    assert "Context limit:" in text
+    for phrase in (
+        "Compact and send",
+        "Send without compacting",
+        "Change policy",
+        "Cancel send",
+        "Next send pauses to compact",
+        "/compact",
+        "/rewind",
+    ):
+        assert phrase in text, phrase
