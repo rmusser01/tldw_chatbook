@@ -15,7 +15,7 @@ def is_empty_search(
         command: The exact executed command text.
         exit_code: The settled process exit code.
         stderr: The executor-provided standard error preview.
-        shell: The resolved shell executable, for cmd quoting rules.
+        shell: The resolved shell executable, for quote and escape rules.
 
     Returns:
         Whether the result is a recognized simple empty search.
@@ -25,16 +25,24 @@ def is_empty_search(
     if any(marker in command for marker in ("\n", "\r", "`", "$(")):
         return False
     operators = ";&|<>()"
-    windows_cmd = shell.replace("\\", "/").rsplit("/", 1)[-1].lower() in {
+    shell_name = shell.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    windows_cmd = shell_name in {
         "cmd",
         "cmd.exe",
     }
     if windows_cmd and "%" in command:
         return False
     lexer = shlex.shlex(command, posix=True, punctuation_chars=operators)
+    if windows_cmd or shell_name in {
+        "powershell",
+        "powershell.exe",
+        "pwsh",
+        "pwsh.exe",
+    }:
+        # PowerShell escapes with backticks (rejected above), not backslashes.
+        lexer.escape = ""
     if windows_cmd:
         lexer.quotes = '"'
-        lexer.escape = ""
     lexer.whitespace_split = True
     lexer.commenters = ""
     try:

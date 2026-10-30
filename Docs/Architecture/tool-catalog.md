@@ -58,6 +58,8 @@ second 4,000-character slice; existing executor and run-context budgets remain.
 `Tools/shell_search_outcomes.py` conservatively recognizes simple grep/rg/findstr
 exit-1/no-stderr results as empty successful searches. Compound expressions and
 genuine errors retain ordinary failure outcomes and the runtime retry guard.
+The recognizer preserves backslashes for PowerShell and cmd; PowerShell
+backtick escapes remain conservatively unclassified.
 Windows `cmd /D /S /C` receives an explicitly constructed command line rather
 than applying CRT argument escaping to the command body (ADR-254).
 

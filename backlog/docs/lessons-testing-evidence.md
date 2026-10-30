@@ -73,6 +73,13 @@ executor's genuine storage limits. GNU grep no-match exits also reproduced the
 stop despite normal process settlement; successful dispatch alone does not
 establish that the outcome classification is suitable for search results.
 
+PR #3314 review found another mismatch: POSIX shlex escaping stripped native
+PowerShell executable-path backslashes and let a backslash before a quote hide
+real semicolon commands. Both a full-path findstr no-match and a compound with
+observable output reproduced natively. Keep shell-specific escape rules and
+positive/negative real-shell controls; pure POSIX tokenization cannot certify
+Windows command outcomes. All eight new cases failed before that fix.
+
 ## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
 
 The real Windows workspace worker could preview a write but failed creation at
