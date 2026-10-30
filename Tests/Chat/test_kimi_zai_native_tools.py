@@ -814,11 +814,18 @@ def test_hosted_tool_error_continues_structurally(
 
 
 @pytest.mark.allow_network
-def test_ephemeral_endpoint_native_loop_runs_without_durable_continuation(
-    tmp_path: Any,
+@pytest.mark.parametrize("cause", ["session_only_endpoint", "untupled_dispatch"])
+def test_nondurable_native_loop_runs_without_durable_continuation(
+    tmp_path: Any, cause: str
 ) -> None:
-    """A session-only endpoint keeps its tool loop; it is just not resumable."""
+    """A loop whose continuation cannot be durable still runs; it is not resumable.
+
+    A session-only endpoint must never be written down; a dispatch checkpoint
+    without a continuation tuple (pre-upgrade, or one the destination could not
+    record) cannot bind one.
+    """
     from dataclasses import replace
+    from types import SimpleNamespace
 
     from tldw_chatbook.Chat.console_endpoint_provenance import (
         ConsoleEndpointProvenance,
@@ -842,16 +849,27 @@ def test_ephemeral_endpoint_native_loop_runs_without_durable_continuation(
         assistant = store.append_message(
             session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
         )
+        resolution = _resolution(server, provider)
+        if cause == "session_only_endpoint":
+            resolution = replace(
+                resolution,
+                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
+            )
+        else:
+            untupled = SimpleNamespace(
+                assistant_message_id=assistant.id,
+                checkpoint=SimpleNamespace(
+                    resolved_destination=SimpleNamespace(continuation_provider=None)
+                ),
+            )
+            store.dispatch_recovery_for_session = lambda _session_id: untupled
         bridge = ConsoleAgentBridge(
             agent_runs_db=db, store=store, provider_gateway=_CaptureGateway()
         )
         _run_id, outcome = bridge.run_reply(
             conversation_id="ephemeral-endpoint-conversation",
             session_id=session.id,
-            resolution=replace(
-                _resolution(server, provider),
-                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
-            ),
+            resolution=resolution,
             assistant_message_id=assistant.id,
             model="glm-5.2",
             session_system_prompt="",

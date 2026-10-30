@@ -264,6 +264,33 @@ from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 
+def _continuation_can_be_durable(
+    store: Any, session_id: str, assistant_message_id: str, resolution: Any
+) -> bool:
+    """Whether this run may write durable provider continuation state.
+
+    A temporary session or a session-only endpoint never is. Neither is a
+    dispatch whose checkpoint recorded no continuation tuple (pre-upgrade, or
+    a destination it could not record): the tool loop still runs, but its
+    continuation is not resumable.
+    """
+    if (
+        store.session_is_ephemeral(session_id)
+        or getattr(resolution, "endpoint_provenance", None)
+        == ConsoleEndpointProvenance.EPHEMERAL_SESSION
+    ):
+        return False
+    lookup = getattr(store, "dispatch_recovery_for_session", None)
+    recovery = lookup(session_id) if callable(lookup) else None
+    checkpoint = getattr(recovery, "checkpoint", None)
+    return (
+        checkpoint is None
+        or recovery.assistant_message_id != assistant_message_id
+        or not getattr(resolution, "continuation_protocol", None)
+        or checkpoint.resolved_destination.continuation_provider is not None
+    )
+
+
 def _retire_generation_attempt_after_reply(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -7681,14 +7708,12 @@ class ConsoleAgentBridge:
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
                 continuation_owner_message_id=assistant_message_id,
-                # A session-only endpoint keeps its in-turn tool loop but is
-                # never written to durable continuation state.
                 continuation_durability=(
-                    "ephemeral"
-                    if self._store.session_is_ephemeral(session_id)
-                    or getattr(resolution, "endpoint_provenance", None)
-                    == ConsoleEndpointProvenance.EPHEMERAL_SESSION
-                    else "persistent"
+                    "persistent"
+                    if _continuation_can_be_durable(
+                        self._store, session_id, assistant_message_id, resolution
+                    )
+                    else "ephemeral"
                 ),
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,
