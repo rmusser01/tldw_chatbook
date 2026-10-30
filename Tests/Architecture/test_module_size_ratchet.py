@@ -564,7 +564,8 @@ _BUDGETS: dict[str, int] = {
     # helper every published config view now uses so that key cannot shadow
     # a file's legacy `enable_streaming`.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 12251 -> 12291.
-    "tldw_chatbook/config.py": 12251,
+    # 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 12251 -> 12291.
+    "tldw_chatbook/config.py": 12291,
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
@@ -594,7 +595,8 @@ _BUDGETS: dict[str, int] = {
     # key-merging into it, and the retry runs after the refusal handler so
     # its own failure is not chained to the internal signal.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8179 -> 8350.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
+    # 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 8179 -> 8350.
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8350,
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
