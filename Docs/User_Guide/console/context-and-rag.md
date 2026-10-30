@@ -152,8 +152,9 @@ context now** from the command palette (Ctrl+P). Both run the same summary as
 report the result in the chat.
 
 **Continue**, **Regenerate** and **Retry** cannot show the card. Over the
-trigger they stop before anything is saved, and a note gives the numbers and
-the way on: run `/compact`, then try again, or change **When limit nears**.
+trigger they stop before a reply is started, so nothing is marked Failed, and
+a note gives the numbers and the way on: run `/compact`, then try again, or
+change **When limit nears**.
 Queued prompts and Buddy replies cannot show it either. A queued prompt that
 reaches the trigger is not sent: it goes back to the front of the queue, the
 queue pauses on **Start refused**, and the note starts "Not sent from the

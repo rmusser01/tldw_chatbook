@@ -198,8 +198,9 @@ class ConsoleContextControlState:
     def compaction_pause_forecast(self) -> CompactionPauseForecast | None:
         """The numbers when the next send will pause for compaction (Ask).
 
-        The same ``decide_compaction`` the send preflight runs, so this
-        cannot disagree with the hold about whether a send pauses.
+        The same ``decide_compaction`` the send preflight runs, but on a
+        display estimate (``compaction_forecast_rows``); the hold counts the
+        prepared request. Near the trigger the two can differ by that error.
         """
         budget = self.conversation_budget_tokens
         trigger = self.compaction_trigger_tokens
