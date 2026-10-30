@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29 17:13'
-updated_date: '2026-10-30 00:54'
+updated_date: '2026-10-30 05:15'
 labels:
   - console
   - composer
@@ -55,4 +55,6 @@ TASK-33622.1 implemented the owner decision of 2026-10-27 (Enter expands a token
 **Docs.** User Guide `console/chat-basics.md` 'Large pastes' states the ruled caret rule and the key table's Enter row follows; `console/context-and-rag.md`'s /prompt sentence says Enter sends and Left then Enter expands. TASK-33622.1 ACs #1-#3 re-worded to cite this ruling.
 
 **Known limit.** A paste that starts with a line break can only be expanded by a click: the caret can never sit right before its chip. The User Guide says so.
+
+**Merge evidence (2026-10-29, rebased onto dev ff815f8559).** Review of 6e6447f19a: ship, no blocking findings. Follow-ups applied: both TASK-37800 tests joined the UI PR gate census (floor 1152 + 2 = 1154); a new real-ChatScreen case pins that a pending expand question still answers Enter at its token's right edge (live: Home, Enter, End left the question up and the next Enter expanded it), and the User Guide now says so; the composer's size row was lowered to its measured 7142 before TASK-37873 raised it. The raw-CLI hidden-paste finding is fixed here as TASK-37873; owner questions filed as TASK-37870, TASK-37871 and TASK-37872. Under the plain command test_console_composer_token_enter.py 18 passed, and all 18 fail on origin/dev (a bare 'Expand?', no send, or a chip without '| Expand'). Composer test files compared by test id with a detached origin/dev worktree: no new failures. ./scripts/preflight.sh passes.
 <!-- SECTION:NOTES:END -->
