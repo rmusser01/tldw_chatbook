@@ -668,9 +668,13 @@ class ReviewStore:
                 or stream.raw_chunks
             ):
                 raise ReviewRefused("review_attempt_has_publications")
-            self._tab.retired_attempts.add(
-                (binding.review_id, binding.slot_id, binding.attempt_id)
-            )
+            # A scheduled attempt (boundary wake / stage acceptance) stays
+            # launchable: no thread ran, and its identity is what the retry
+            # must bind. Only an ad hoc attempt id is burned.
+            if context.scheduled_attempts.get(binding.slot_id) != binding.attempt_id:
+                self._tab.retired_attempts.add(
+                    (binding.review_id, binding.slot_id, binding.attempt_id)
+                )
             del self._tab.runs[run_id]
             del context.active_attempts[binding.slot_id]
             del context.streams[(binding.slot_id, binding.attempt_id)]

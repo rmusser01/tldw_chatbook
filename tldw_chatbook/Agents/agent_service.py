@@ -6462,6 +6462,7 @@ class AgentService:
                         else contextlib.nullcontext()
                     )
                     with scope:
+                        child_started = True  # proven refusals below still return
                         _child_id, child_outcome = self._run_owned(
                             execution_owner=child_owner,
                             automatic_child_reservation=child_reservation,
@@ -6493,7 +6494,6 @@ class AgentService:
                     if review_claim is not None and review_claim.run_id is not None:
                         self._set_terminal_status(child_owner.run_id, RUN_ERROR)
                         self._settle_review_capture(scoped_service, child_owner.run_id)
-                    child_started = True  # a run row, and no proof it never ran
                     raise
                 finally:
                     try:
@@ -6523,6 +6523,7 @@ class AgentService:
                 if len(text) > cap:
                     text = text[:cap] + TRUNCATION_NOTICE
                 if review_claim is not None:
+                    self._settle_review_capture(scoped_service, _child_id)  # 2nd try
                     receipt_text = (
                         f"sub-agent {child_outcome.status}; run {_child_id}; "
                         f"review {review_id}; slot {review_slot_id}; read originals with code_review_read"
@@ -6594,10 +6595,9 @@ class AgentService:
                 result = _spawn(*args, **kwargs)
                 return result
             finally:
-                # An exception (result None) returns the slot only when no child
-                # may have run: the ceiling counts every started child. Restore,
-                # not decrement (some paths already gave it back). It also
-                # releases an unaccepted claim (a bound one is kept).
+                # An exception (result None) returns the slot only if no child may
+                # have run (the ceiling counts started children); restore, as some
+                # paths gave it back. It also releases an unaccepted claim.
                 if result is None and not child_started:
                     sub_agent_spawns = spawns_before
                 if (
