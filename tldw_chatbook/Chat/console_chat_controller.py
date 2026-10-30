@@ -26606,6 +26606,11 @@ class ConsoleChatController:
                         )
                     )
 
+                # Consent is checked against the state captured here; only
+                # this run's own commits may advance it (review destinations
+                # confirm again within the same run).
+                expected_project_state = state
+
                 def confirm_project_dispatch(snapshot, target_resolution=None):
                     active_resolution = target_resolution or resolution
                     active_notice_key = project_instruction_notice_key(
@@ -26613,20 +26618,31 @@ class ConsoleChatController:
                         active_resolution.execution_key or active_resolution.provider,
                         getattr(active_resolution, "base_url", None),
                     )
-                    active_state = next(
-                        item for item in self.store.sessions() if item.id == session_id
-                    ).project_instruction_state
 
                     def commit_and_record(decision):
+                        nonlocal expected_project_state
                         committed = commit_project_instruction_dispatch_decision(
                             store=self.store,
                             session_id=session_id,
                             registry=registry,
-                            expected_state=active_state,
+                            expected_state=expected_project_state,
                             expected_selection=project_selection,
                             notice_key=active_notice_key,
                             decision=decision,
                         )
+                        if committed in {"proceed", "disable"}:
+                            current = next(
+                                (
+                                    item
+                                    for item in self.store.sessions()
+                                    if item.id == session_id
+                                ),
+                                None,
+                            )
+                            if current is not None:
+                                expected_project_state = (
+                                    current.project_instruction_state
+                                )
                         if committed != "prompt":
                             if committed == "proceed":
                                 self._remember_project_instruction_delivery(
