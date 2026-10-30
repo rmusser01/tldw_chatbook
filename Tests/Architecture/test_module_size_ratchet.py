@@ -678,7 +678,8 @@ _BUDGETS: dict[str, int] = {
     #: d36affec9b measures 7043; with the fix, 7058, the exact measurement.
     # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7058.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7154,
+    # PR3310, 2026-11-01: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7191,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     "tldw_chatbook/UI/Console_Modules/session.py": 6982,
