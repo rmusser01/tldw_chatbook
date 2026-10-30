@@ -225,7 +225,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: and its target row (+1). The compaction forecast's two keywords (Inspect
     #: and the header, +2) used dev's slack. Dev ed7481a30c measures 24329/737;
     #: with the task, 24338/738, the exact measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24338, 738),
+    #: Raised 24338 -> 24342 (methods unchanged) 2026-10-29 by TASK-33621.4,
+    #: same owner rule: /rewind skips a send held for compaction, which is
+    #: not history yet -- not a rewind target (+2) and not the unfinished
+    #: exchange that disabled Summarize while it was held (+2).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24342, 738),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
