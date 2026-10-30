@@ -272,6 +272,9 @@ _IDENTITY_DOMAINS = {
     "replacement_event_id": "event",
 }
 _MISSING_STATES = frozenset({"not_available", "capture_failed"})
+_REFERENCE_FIELDS = ("parent_event_id", "source_event_id", "replacement_event_id")
+#: TASK-33621.8: provenance reason for a reference to an unrecorded event.
+_REFERENCE_NOT_RECORDED = "reference_not_recorded"
 _NON_OBSERVED_STATES = frozenset(
     {"redacted", "truncated", "omitted", "not_available", "capture_failed"}
 )
@@ -796,6 +799,47 @@ def _upsert_field_decision(
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 
 
+def _clear_unrecorded_references(
+    records: Sequence[TrajectoryRecord],
+) -> tuple[tuple[TrajectoryRecord, ...], frozenset[tuple[str, str]]]:
+    """Clear references to events the snapshot never recorded.
+
+    A stored trace can name an event that was never written: until
+    TASK-33621.8, staged-Library turns pointed their retrieved-context events
+    at a retrieval event only the live search route records. One such link
+    made the whole conversation unexportable. The link is cleared and its
+    field marked ``not_available``, which lands it in ``missing_metadata``.
+
+    Args:
+        records: Snapshot records in ledger order.
+
+    Returns:
+        The records with unrecorded references cleared, and the
+        ``(source event_id, field)`` pairs that were cleared.
+    """
+    known = {str(record.event_id) for record in records}
+    cleared: set[tuple[str, str]] = set()
+    result: list[TrajectoryRecord] = []
+    for record in records:
+        fields = [
+            field
+            for field in _REFERENCE_FIELDS
+            if getattr(record, field) and str(getattr(record, field)) not in known
+        ]
+        if fields:
+            record = dataclasses.replace(
+                record,
+                **{field: None for field in fields},
+                field_states={
+                    **record.field_states,
+                    **{field: "not_available" for field in fields},
+                },
+            )
+            cleared.update((str(record.event_id), field) for field in fields)
+        result.append(record)
+    return tuple(result), frozenset(cleared)
+
+
 def preflight_trace_export(
     snapshot: TrajectorySnapshot,
     *,
@@ -817,7 +861,9 @@ def preflight_trace_export(
         ValueError: If ``profile`` is not a supported privacy profile.
     """
     selected = _profile(profile)
-    records = tuple(record for turn in snapshot.turns for record in turn.records)
+    records, unrecorded = _clear_unrecorded_references(
+        tuple(record for turn in snapshot.turns for record in turn.records)
+    )
     aliases = _identity_aliases(records)
     prepared_events: list[dict[str, Any]] = []
     decisions: list[TraceFieldDecision] = []
@@ -875,7 +921,11 @@ def preflight_trace_export(
                 raise TrajectoryExportError(
                     f"Invalid Trace field state {state!r} for {field!r}"
                 )
-            reason = f"source_{state}"
+            reason = (
+                _REFERENCE_NOT_RECORDED
+                if (str(record.event_id), str(field)) in unrecorded
+                else f"source_{state}"
+            )
             field_provenance[field] = {
                 "state": state,
                 "reason": reason,
@@ -1002,7 +1052,7 @@ def _trace_digest(payload: Mapping[str, Any]) -> str:
 def _lineage(events: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
     edges: list[dict[str, str]] = []
     for event in events:
-        for field in ("parent_event_id", "source_event_id", "replacement_event_id"):
+        for field in _REFERENCE_FIELDS:
             target = event.get(field)
             if target:
                 edges.append(
@@ -1024,7 +1074,7 @@ def _validate_event_references(events: Sequence[Mapping[str, Any]]) -> None:
         )
     known = set(ids)
     for index, event in enumerate(events):
-        for field in ("parent_event_id", "source_event_id", "replacement_event_id"):
+        for field in _REFERENCE_FIELDS:
             target = event.get(field)
             if target and target not in known:
                 raise TrajectoryExportError(

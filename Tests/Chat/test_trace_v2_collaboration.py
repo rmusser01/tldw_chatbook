@@ -965,3 +965,60 @@ def test_v2_import_module_has_no_database_or_textual_imports() -> None:
     assert not any(name.startswith("textual") for name in imported_names)
     assert "ChaChaNotes_DB" not in source
     assert "sqlite3" not in imported_names
+
+
+# TASK-33621.8: the exact orphan a stored staged-Library turn carries.
+_UNRECORDED_RETRIEVAL = (
+    "console-trace:3c8cc2a1-d7a3-4ca3-b775-f178ffe438bb:retrieval:retrieval_completed"
+)
+
+
+@pytest.mark.parametrize("profile", list(trajectory_export.TraceExportProfile))
+def test_stored_unrecorded_references_are_cleared_disclosed_and_reimportable(
+    profile: trajectory_export.TraceExportProfile,
+) -> None:
+    attached_id = "console-trace:3c8cc2a1:retrieval:context_attached"
+    attached = _record(
+        event_id=attached_id,
+        kind="context_attached",
+        parent_event_id=_UNRECORDED_RETRIEVAL,
+        source_event_id=_UNRECORDED_RETRIEVAL,
+    )
+    injected = _record(
+        event_id="console-trace:3c8cc2a1:retrieval:context_injected",
+        seq=2,
+        kind="context_injected",
+        parent_event_id=attached_id,
+        source_event_id=attached_id,
+    )
+
+    payload = _build(
+        _snapshot(attached, injected),
+        profile,
+        confirm_full=profile is trajectory_export.TraceExportProfile.FULL_TRACE,
+    )
+
+    first, second = payload["events"][:2]
+    assert first["parent_event_id"] is None
+    assert first["source_event_id"] is None
+    # The recorded link is kept; only the unrecorded one is cleared.
+    assert second["parent_event_id"] == first["event_id"]
+    assert second["source_event_id"] == first["event_id"]
+    for field in ("parent_event_id", "source_event_id"):
+        assert first["field_states"][field] == "not_available"
+        assert {
+            "event_id": first["event_id"],
+            "field": field,
+            "state": "not_available",
+        } in payload["manifest"]["missing_metadata"]
+        assert {
+            "event_id": first["event_id"],
+            "field": field,
+            "state": "not_available",
+            "reason": "reference_not_recorded",
+        } in payload["manifest"]["redaction_provenance"]
+    assert _UNRECORDED_RETRIEVAL not in json.dumps(payload)
+    imported = trajectory_import.load_imported_trace(payload)
+    assert imported.manifest["missing_metadata"] == payload["manifest"][
+        "missing_metadata"
+    ]
