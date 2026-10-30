@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-24 01:22
+updated_date: 2026-10-30 04:13
 labels:
 - follow-up
 - console
@@ -145,4 +145,13 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - With the old in-memory setup put back temporarily, it fails on the new precondition assertion.
   - The whole file: 44 passed at head.
 - Lesson: a follow-up paragraph on the TASK-22988 entry in `lessons-testing-evidence.md`.
+- **Re-sync 2026-10-30 onto dev ff815f8559:**
+  - Conflicts: the lessons file (both kept, this task's entry just below dev's newer ones) and the ChatScreen ratchet row (dev's comments kept, this task's +19 and +3 lines appended). The row is now 24353/737, dev's 24331/737 plus 22, and the ratchet confirms it is exact.
+  - The comment-only ratchet commit dropped out as empty: its wording is in the resolution.
+  - No code changed.
+  - Runs at the new head (`-n 4`):
+    - Rail-state and guard set: 3 failed, 187 passed. The 3 are compact_access display checks that fail the same way at dev.
+    - The credential round trip, both cases: 3 of 3 runs passed, at load average 95 to 143.
+    - Screen ratchet: 4 passed.
+    - Preflight passed.
 <!-- SECTION:NOTES:END -->
