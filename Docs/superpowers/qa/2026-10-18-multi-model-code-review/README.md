@@ -1,28 +1,24 @@
 # TASK-35582 delivery evidence
 
-**Latest qualification failed; AC24 remains open and PR3286 draft.**
-The [final handoff run after green CI](final-handoff60/report.md) used44/60
-generation requests and3/3children onffe3cfdf5a, with native[2,1]. Both reviewer
-reports sealed and were presented. Haiku accepted four dispositions, then became
-stuck after three consecutive out-of-range source reads; V1 never sealed. The
-later deadline interrupted the primary stream, leaving one usage reservation
-uncertain. Final mapping/unified reads were unavailable. Current cumulative usage
-is457requests/31children; the unused16requests retire with this consumed invocation.
-No retry, new repair cycle or merge followed, and the follow-up was deleted.
-[Independent outcome review](final-handoff60/outcome-review.md),
-[spending](final-handoff60/spending.json), [retention](final-handoff60/retention.json).
+**Latest qualification failed; AC24 remains open and PR #3286 draft.**
+The [single run after macOS CI passed](macos-final60/report.md) consumed 27/60
+requests and 2/3 children on ac4816ac03. Both originals sealed and were presented;
+the primary made refused report reads, then reached the 600-second deadline
+with a continuation-persistence error. Exact internal causes remain unproved.
+V1 never launched; no mapping or unified output exists. Current cumulative use
+is **484 requests / 33 children**. The unused 33 requests and one child slot retire.
+[Independent review](macos-final60/outcome-review.md),
+[spending](macos-final60/spending.json), [retention](macos-final60/retention.json).
 
-The subsequently authorized [V1 offline recovery fix](v1-source-recovery-offline/report.md)
-adds actionable bounded source-range feedback and directs accepted dispositions
-through the live completion checkpoint. Strict refusal, failure limits, accepted
-decisions, accounting and sealing remain intact. These scripted controls do not
-replace the failed live result or close AC24; no new qualification was run.
+All normal workflows on that source passed (54 successful checks, 3 skips),
+including the repaired macOS lane. The [macOS diagnostic repair](macos-diagnostics/report.md)
+and [V1 offline recovery fix](v1-source-recovery-offline/report.md) retain their
+scoped validation. This live run never reached V1 and does not qualify that fix.
+The follow-up was deleted; no retry, additional budget request or repair followed.
 
-The [macOS CI diagnostic repair](macos-diagnostics/report.md) replaces the
-retained-eval test's timed C stack dumper with its existing bounded observer and
-preserves failure diagnostics across OS lanes. Ten targeted tests pass; the
-native crash was not reproduced locally, so fresh hosted CI is still required.
-The approved single60-request/3-child qualification remains unused.
+The [earlier final handoff run](final-handoff60/report.md) consumed 44 requests
+and 3 children on ffe3cfdf5a. Its failed verifier and uncertain usage remain
+historical limitations; this invocation does not resolve them.
 
 The [previous run after green CI](v1-final60/report.md) used26/60generation requests
 and2/3children onb35bb489ea. R1 received an accepted but contradictory completion
