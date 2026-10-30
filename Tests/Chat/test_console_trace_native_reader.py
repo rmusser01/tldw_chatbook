@@ -365,3 +365,188 @@ def test_native_continuation_uses_durable_policy_binding_without_regex_registry(
 
     assert projected["rounds"][0]["reasoning_blocks"] == ["[PII omitted]"]
     assert "customer-ABCDWXYZ" not in repr(projected)
+
+
+# TASK-33621.9: settled usage is the provider's merged payload, nested for
+# both hosted families. The Anthropic row is byte-for-byte what a live
+# claude-haiku-4-5 send stored on 2026-10-29; the OpenAI one is the
+# Chat Completions shape with its two ``*_tokens_details`` objects.
+_ANTHROPIC_USAGE = {
+    "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 14058,
+    },
+    "cache_creation_input_tokens": 14058,
+    "cache_read_input_tokens": 0,
+    "inference_geo": "not_available",
+    "input_tokens": 3,
+    "output_tokens": 26,
+    "service_tier": "standard",
+    "speed": "standard",
+}
+_OPENAI_USAGE = {
+    "completion_tokens": 12,
+    "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0,
+    },
+    "prompt_tokens": 1234,
+    "prompt_tokens_details": {"audio_tokens": 0, "cached_tokens": 1024},
+    "total_tokens": 1246,
+}
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "usage", "buckets"),
+    [
+        (
+            "anthropic",
+            "claude-haiku-4-5",
+            _ANTHROPIC_USAGE,
+            {"uncached_input": 3, "cache_read": 0, "cache_write": 14058, "output": 26},
+        ),
+        (
+            "openai",
+            "gpt-4.1-mini",
+            _OPENAI_USAGE,
+            {"uncached_input": 210, "cache_read": 1024, "cache_write": 0, "output": 12},
+        ),
+        # Rows imported from legacy captures already hold ProviderUsage.
+        (
+            "openai",
+            "gpt-4.1-mini",
+            {"provider": "openai", "model": "gpt-4.1-mini", "output": 7},
+            {"uncached_input": 0, "cache_read": 0, "cache_write": 0, "output": 7},
+        ),
+    ],
+)
+def test_native_reader_loads_calls_whose_usage_is_nested(
+    database: CharactersRAGDB,
+    provider: str,
+    model: str,
+    usage: dict[str, object],
+    buckets: dict[str, int],
+) -> None:
+    from tldw_chatbook.Chat.console_trace_projection import ConsoleTraceProjection
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
+    repository = ConsoleTraceRepository()
+    conversation_id = database.add_conversation({"title": "nested usage"})
+    assert conversation_id is not None
+    user_id, user_revision = _message(
+        database, conversation_id, sender="user", content="question"
+    )
+    assistant_id, assistant_revision = _message(
+        database,
+        conversation_id,
+        sender="assistant",
+        content="answer",
+        parent_message_id=user_id,
+    )
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    occurred_at = "2026-10-29T00:00:00Z"
+    with database.transaction(immediate=True) as cursor:
+        repository.ensure_policy(cursor, policy)
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor,
+            conversation_id=conversation_id,
+            root_segment_id=segment.segment_id,
+        )
+        surface = repository.append_surface_node(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            predecessor_node_id=None,
+            component_kind="message",
+            reference=SemanticRevisionRef(user_revision),
+        )
+        header = repository.create_or_reuse_request_header(
+            cursor,
+            provider_name=provider,
+            model_name=model,
+            route_identity="fresh",
+            endpoint_identity=f"https://{provider}.invalid/v1",
+            generation_parameters={"streaming": True},
+            adapter_defaults={},
+            response_format={},
+            reasoning_controls={},
+            components=(),
+        )
+        call = repository.reserve_call(
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            turn_id=user_id,
+            run_id="run-nested-usage",
+            call_sequence=0,
+            idempotency_key=f"nested-usage-{provider}",
+            policy_id=policy.policy_id,
+        )
+        repository.bind_call(
+            cursor,
+            call_id=call.call_id,
+            surface_node_id=surface.node_id,
+            request_header_id=header.header_id,
+            provider_name=provider,
+            model_name=model,
+            route_identity="fresh",
+        )
+        for target in (
+            TraceCallState.DISPATCH_STARTED,
+            TraceCallState.RESPONSE_STARTED,
+        ):
+            repository.advance_call_state(
+                cursor,
+                call_id=call.call_id,
+                target=target,
+                occurred_at=occurred_at,
+                integrity_state="complete",
+            )
+        repository.store_response_link(
+            cursor,
+            call_id=call.call_id,
+            response=SemanticRevisionRef(assistant_revision),
+        )
+        repository.advance_call_state(
+            cursor,
+            call_id=call.call_id,
+            target=TraceCallState.COMPLETE,
+            occurred_at=occurred_at,
+            usage=usage,
+            integrity_state="complete",
+        )
+        repository.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            event_type="call_boundary",
+            call_id=call.call_id,
+        )
+
+    reader = ConsoleTraceNativeReader(database, repository=repository)
+    (loaded,) = reader.read_calls(assistant_id)
+
+    assert loaded.call_id == call.call_id
+    assert loaded.verification_status == "verified"
+    assert loaded.uncertainty_codes == ()
+    # The capture contract carries normalized ProviderUsage, the shape the
+    # legacy gateway capture and every Inspector reader already use.
+    normalized = ProviderUsage.from_json(loaded.capture.usage_json)
+    assert normalized is not None
+    assert {name: getattr(normalized, name) for name in buckets} == buckets
+    assert (normalized.provider, normalized.model) == (provider, model)
+    assert "usage" not in loaded.capture.omitted_keys
+    assert loaded.capture.response == {"role": "assistant", "content": "answer"}
+    # The Inspector reads through the production projection, which keeps a
+    # verified native call ahead of any legacy row for the same identity.
+    projection = ConsoleTraceProjection(
+        legacy_reader=database.get_message_exchanges,
+        normalized_reader=reader.read_calls,
+        normalized_reads_enabled=True,
+    )
+    (projected,) = projection.read_calls(assistant_id)
+    assert projected.provenance == "native"
+    assert projected.capture.usage_json == loaded.capture.usage_json
