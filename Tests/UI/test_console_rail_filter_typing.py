@@ -365,8 +365,15 @@ async def test_every_counted_row_is_painted_after_each_filter(tmp_path):
             typed += chunk
             await pilot.pause(PAST_DEBOUNCE_S)
             assert await _wait_for_search_to_settle(console, pilot, typed)
-            for _ in range(6):
-                await pilot.pause()
+            # Settled, not mid-rebuild: a poll tick can start another tray
+            # rebuild at any moment, and during one the rows are briefly
+            # unmounted on dev too. A row still hidden after this is clipped.
+            for _ in range(30):
+                await pilot.pause(0.1)
+                if console.query(".console-workspace-conversation-row") and not (
+                    _unpainted_rows(console)
+                ):
+                    break
             status, rows = _shown(console)
             assert rows, f"{typed!r}: no rows for {status!r}"
             assert _unpainted_rows(console) == [], f"{typed!r}: {status!r}"

@@ -50,6 +50,7 @@ from tldw_chatbook.Workspaces.conversation_attention import (
     present_conversation_attention,
 )
 from .compose_delta import ComposeReadView, box_ignores_content, same_visual
+from .console_bounded_section import ConsoleBoundedSection
 from .conversation_row_presentation import (
     conversation_action_width,
     conversation_title_cells,
@@ -1695,14 +1696,14 @@ class ConsoleWorkspaceContextTray(
             self.call_after_refresh(self._request_owning_section_reconcile)
 
     def _request_owning_section_reconcile(self) -> None:
-        """Ask the bounded rail section holding this tray to re-measure it."""
+        """Ask the bounded rail section holding this tray to re-measure it.
+
+        Matched by type: the section's own scroll viewport sits between it
+        and the tray and carries a ``console-bounded-section-…`` id too.
+        """
         for ancestor in self.ancestors:
-            if str(getattr(ancestor, "id", "") or "").startswith(
-                "console-bounded-section-"
-            ):
-                request_reconcile = getattr(ancestor, "request_reconcile", None)
-                if callable(request_reconcile):
-                    request_reconcile()
+            if isinstance(ancestor, ConsoleBoundedSection):
+                ancestor.request_reconcile()
                 return
 
     def _is_inside_rail_section_body(self) -> bool:
