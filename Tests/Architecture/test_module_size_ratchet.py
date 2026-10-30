@@ -205,7 +205,11 @@ _BUDGETS: dict[str, int] = {
     # centre's no-match wording): +76 (17,137 -> 17,213).
     # T10, Also in (the counts worker, its fence, the per-kind counts and the
     # switch that carries the query): +142 (17,213 -> 17,355).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17355,
+    # T10 fix round 1, the counts stop with the visit and count again on its
+    # return, and a search change (typed or Escape's clear) stops them and
+    # hides the targets counted for the old query: +40 (17,355 -> 17,395),
+    # applied 2026-10-29.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17395,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -270,7 +274,10 @@ _BUDGETS: dict[str, int] = {
     # recovery row's Retry (spec 1.5.4), same decision: +115 (1,273 -> 1,388).
     # T10, the Also in targets composed once, Enter and Down on an empty list
     # reaching them, same decision: +103 (1,388 -> 1,491).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1491,
+    # T10 fix round 1, the targets hide when the search moves on and the pane
+    # says whether its no-match message still owes its counts, same decision:
+    # +24 (1,491 -> 1,515), applied 2026-10-29.
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1515,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
