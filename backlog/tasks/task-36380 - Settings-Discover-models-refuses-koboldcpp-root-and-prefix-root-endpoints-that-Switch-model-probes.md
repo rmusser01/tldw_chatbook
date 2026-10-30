@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-23 17:44
+updated_date: 2026-10-30 04:14
 labels:
 - follow-up
 - settings
@@ -101,6 +101,7 @@ Runs, all `-n 4` through run.sh:
   - With round 1's hint put back temporarily, it failed on its line ("... Use the server's address, such as http://localhost:5001, ...").
   - The picker file and the discovery unit file together (`-n 4`, load average 36): 230 passed.
   - `preflight.sh` and the markup check pass.
+- Re-sync 2026-10-30 onto dev ff815f8559: no conflicts. Dev's TASK-36512 lists `test_settings_default_model_picker.py` by function, so the new journey got its own node entry at the census tail; `MINIMUM_FILES` now equals the entry count. The split-file census guard failed before that line ("...::test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes is not in the census") and passed after. The probe was re-created after a scratch cleanup, with the five stays-refused shapes added to its URL set. At this base it again changed only koboldcpp rows: 621 of 60,228, 207 per spelling. Every head row where Discover and Switch model disagree is one of those recorded shapes.
 
 Files: `tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py`, `tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py`, `tldw_chatbook/Chat/provider_endpoint_contract.py`, `Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py`, `Tests/UI/test_settings_default_model_picker.py`, `Docs/User_Guide/settings.md`.
 
