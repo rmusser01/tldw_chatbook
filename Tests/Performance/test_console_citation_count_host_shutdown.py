@@ -30,6 +30,9 @@ async def test_original_citation_count_worker_retires_before_host_drain(
     from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
     from tldw_chatbook.DB import base_db
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Console_Modules.citation_counts import (
+        _read_with_first_use_key,
+    )
     from tldw_chatbook.UI.Console_Modules.view_workers import (
         capture_console_view_workers,
         drain_console_view_workers,
@@ -99,8 +102,10 @@ async def test_original_citation_count_worker_retires_before_host_drain(
             assert invocation is not None
             assert invocation.f_globals is base_db.run_owned_db_call.__globals__
             assert invocation.f_locals["database"] is database
-            assert invocation.f_locals["operation"] is query
-            assert invocation.f_locals["args"] == (repository, eligible)
+            # TASK-33620.8: the reader runs inside the first-use key wrapper,
+            # in the same owned worker call.
+            assert invocation.f_locals["operation"] is _read_with_first_use_key
+            assert invocation.f_locals["args"] == (query, repository, eligible)
             assert invocation.f_locals["kwargs"] == {}
             invocation = None
             assert ancestor is not None
