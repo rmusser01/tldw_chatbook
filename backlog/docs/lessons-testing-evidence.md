@@ -61,6 +61,34 @@ with `raw_source_selection_changed`, run it with that probe plugin on both trees
 and compare failing ids. Delete the plugin before committing. This is a local
 measurement aid, not a fix: the suite still fails in a lane that runs it plain.
 
+## One Stop press is not the Stop a user makes: press it again after the first one settles (TASK-33621.22, 2026-10-29)
+
+**Incident.** The first fix settled a Stop pressed in the "Connecting tools…"
+window, and the single-press test went green. Live, with Ctrl+G pressed every
+30 ms, one round still failed the turn: `controller_submit status=failed`
+with `exception_type=CancelledError`, and the next send was refused. The
+log showed why. The first press was settled. A later press landed after the
+reply had returned but before the turn's runtime task ended. That press went
+down `stop_active_run`'s first branch, `runtime.cancel_received_intents`,
+which still cancelled the finished turn's intake custody. The task then died
+in its last await, the send diagnostic's `to_thread(monitor.close)`. A test
+that held that close and pressed Stop there went red on every run.
+
+**What to do.** For any Stop or cancel fix, press the control again at three
+points: before the first press is handled, while it is settling, and after the
+work has returned but before its task ends. Hold the task's last await so that
+the late press is deterministic, not a sampling race. Count the outcome of the
+task itself (returned, cancelled, raised), not only the transcript: here the
+transcript read "Stopped" either way.
+
+Two traps in the durable received-intent harness (`_received_console_case(...,
+durable=True)`) cost time here. A second turn fails trace reservation with
+exchange capture on (`unsupported_surface_change`), even with no Stop before
+it, so set `[console] exchange_capture = false` through the real setting. An
+Enter pressed before the store holds the new draft ends in
+`RecoveryRequired: console_snapshot_owner_changed`, so wait for
+`store.session_draft(...)` to match first.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
