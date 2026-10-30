@@ -653,6 +653,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "10eac2821c9c8360e730",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_review_delivery.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "43f0b2a02f2578ef233b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_roleplay_identity.py",
@@ -1482,6 +1489,13 @@
       "diagnostic_digest": "58f935383e01ea4b1c07",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/groq.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "44afe8399dee88ce04f6",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/LLM_Calls/hosted_chat.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
