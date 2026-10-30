@@ -345,6 +345,28 @@ def temporary_chat_capture(
     return conversation
 
 
+def saved_chat_capture(conversation: bool | None, *, global_enabled: bool) -> bool:
+    """Return the Capture a Temporary chat follows once it is saved.
+
+    TASK-37811 (owner decision 2026-10-29): the Save chat row may say it
+    enables capture only when this is True. A saved chat is no longer
+    temporary, so ``temporary_chat_capture`` lets its stored choice through
+    and the controller resolves that over the global setting; a one-shot
+    next-send choice is not the chat's setting and is left out.
+
+    Args:
+        conversation: The chat's stored Capture choice, or None to inherit.
+        global_enabled: The global capture setting.
+
+    Returns:
+        Whether the saved chat's sends will be captured.
+    """
+
+    return resolve_scoped_boolean(
+        global_default=global_enabled, conversation=conversation
+    )
+
+
 @dataclass(frozen=True)
 class ExchangeCapture:
     """One provider call's captured request/response pair."""

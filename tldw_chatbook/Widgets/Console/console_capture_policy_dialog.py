@@ -285,10 +285,12 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
                     markup=False,
                 )
                 if self.bindings.target_conversation_id is None:
+                    # TASK-37811: true whatever saving resolves to; the
+                    # composer Menu's Save chat row says whether it captures.
                     yield Static(
-                        "Temporary chat: traces are off until you save it. Turn "
-                        "Capture On here and each send pauses until you choose "
-                        "Save & Send or Send without capture.",
+                        "Temporary chat: no traces are recorded while it stays "
+                        "temporary. Turn Capture On here and each send pauses "
+                        "until you choose Save & Send or Send without capture.",
                         id="capture-policy-temporary-guidance",
                         markup=False,
                     )

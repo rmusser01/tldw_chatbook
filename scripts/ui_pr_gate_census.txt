@@ -1850,3 +1850,8 @@ Tests/UI/test_settings_configuration_hub.py::test_inspector_guidance_covers_ever
 # prompt, and its Cancel gives back the text and image (five mounted cases,
 # about 25 s locally), appended at the tail.
 Tests/UI/test_console_temporary_capture_flow.py
+# TASK-37811 (2026-10-29): the Menu's Save chat row says '(enables capture)'
+# only when saving turns capture on (global On, stored conversation Off, global
+# Off, global Off with conversation On; one mounted case, about 7 s locally),
+# appended at the tail.
+Tests/UI/test_console_temporary_save_copy.py

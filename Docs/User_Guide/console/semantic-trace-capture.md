@@ -32,10 +32,14 @@ and does not delete existing trace history.
 
 A temporary chat records no traces. Its sends go to the provider with Capture
 Off and never stop to ask, and the status strip shows **Temporary · traces
-off**. To capture, save the chat: activate that segment, or choose **Save chat
-(enables capture)** in the composer **Menu**. From its next send the saved chat
-follows your normal Capture setting; the sends it made while temporary keep no
-trace.
+off**. To save the chat, activate that segment or choose **Save chat** in the
+composer **Menu**. From its next send the saved chat follows its own Capture
+choice (**This conversation** in Trace Privacy), or the global default when it
+has none; the sends it made while temporary keep no trace. The Menu row says
+which: it reads **Save chat (enables capture)**, with the hint "records no
+traces until saved", only when saving will turn capture on. With the global
+default Off, or Capture Off chosen for this conversation, it reads **Save chat**
+and its hint says traces stay off once saved.
 
 If you turn Capture On for a chat that is still temporary (**This
 conversation** or **Next send** in Trace Privacy), each send pauses before the

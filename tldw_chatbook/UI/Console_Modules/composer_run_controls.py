@@ -758,9 +758,11 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
     """
 
     composer = screen._console_composer_or_none()
+    ephemeral = screen._console_active_session_is_ephemeral()
     return {
         "attachment_kind": screen._console_pending_attachment_kind(),
-        "ephemeral": screen._console_active_session_is_ephemeral(),
+        "ephemeral": ephemeral,
+        "save_enables_capture": ephemeral and _save_chat_enables_capture(screen),
         # Same input the action-row button read before it moved to the menu,
         # so Save Chatbook's available/unavailable copy is unchanged.
         "can_save_chatbook": screen._console_chatbook_action_available(),
@@ -769,6 +771,26 @@ def composer_menu_state(screen: Any) -> dict[str, Any]:
             composer is not None and composer.improvement_undo_available
         ),
     }
+
+
+def _save_chat_enables_capture(screen: Any) -> bool:
+    """Return whether saving the active temporary chat turns capture on.
+
+    TASK-37811 (owner decision 2026-10-29): the Save chat row promises
+    capture only when the saved chat will capture. Read from the same
+    snapshot the Trace Privacy dialog shows; a chat closed meanwhile has no
+    snapshot and gets no promise.
+    """
+    from ...Chat.console_exchange_capture import saved_chat_capture
+
+    controller = screen._ensure_console_chat_controller()
+    try:
+        snapshot = controller.capture_policy_snapshot(controller.store.active_session_id)
+    except KeyError:
+        return False
+    return saved_chat_capture(
+        snapshot.conversation_capture_enabled, global_enabled=snapshot.enabled
+    )
 
 
 async def open_composer_menu(screen: Any) -> None:
