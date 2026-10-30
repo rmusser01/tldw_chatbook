@@ -220,18 +220,16 @@ def test_inspect_says_the_next_send_pauses_but_not_over_live_or_stuck_work() -> 
             ConsoleInspectorState.from_values(**values)
         ).run
 
-    assert run(compaction_pause_expected=True) == (
-        "Next send pauses for compaction approval"
-    )
+    assert run(compaction_pause_expected=True) == "Pauses for compaction"
     assert run() == "Ready"
     assert run(compaction_pause_expected=True, run_active=True) == "Running"
     assert run(
-        compaction_pause_expected=True, run_blocked_reason="compaction choice"
-    ) == "Blocked — compaction choice"
+        compaction_pause_expected=True, run_blocked_reason="compaction ask"
+    ) == "Blocked — compaction ask"
     # It describes the NEXT send, so it outranks the last run's failure.
     assert run(
         compaction_pause_expected=True, run_failed=True, run_failure_reason="x"
-    ) == "Next send pauses for compaction approval"
+    ) == "Pauses for compaction"
 
 
 def _control_state() -> ConsoleControlState:
@@ -256,8 +254,34 @@ def test_the_header_badge_says_the_next_send_pauses() -> None:
     assert badge(compaction_pause_expected=True) == COMPACTION_PAUSE_FORECAST_COPY
     assert badge() == "Ready · not tested"
     assert badge(compaction_pause_expected=True, run_active=True) == ""
-    assert badge(compaction_pause_expected=True, blocked_turn="compaction choice") == (
+    assert badge(compaction_pause_expected=True, blocked_turn="compaction ask") == (
         "Blocked"
     )
     # Single-pane widths drop the readiness word because it overruns the row.
     assert badge(compaction_pause_expected=True, readiness_word="") == ""
+
+
+def test_both_compaction_run_lines_fit_the_inspect_rail_whole() -> None:
+    """Live 2026-10-29 (160x45): Inspect showed "Run: Next send pauses for
+    co…" -- the pinned block gets 29 content columns (its own docstring), so
+    the line it exists to answer was cut. Both compaction lines fit whole."""
+    from rich.cells import cell_len
+
+    def run(**values) -> str:
+        return project_console_send_authority(
+            ConsoleInspectorState.from_values(**values)
+        ).run
+
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        _BLOCKED_TURN_REASONS,
+    )
+    from tldw_chatbook.Chat.console_turn_preparation import (
+        ConsolePreparationPauseKind,
+    )
+
+    held = _BLOCKED_TURN_REASONS[ConsolePreparationPauseKind.CONTEXT_COMPACTION]
+    for line in (
+        run(compaction_pause_expected=True),
+        run(run_blocked_reason=held),
+    ):
+        assert cell_len(f"Run: {line}") <= 29, line

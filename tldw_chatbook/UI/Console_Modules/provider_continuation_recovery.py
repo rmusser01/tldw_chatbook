@@ -145,8 +145,9 @@ _BLOCKED_TURN_REASONS = {
     # TASK-33621.20 review: a send that re-paused after Retry / Send once.
     ConsolePreparationPauseKind.DESTINATION_CHANGED: "check provider",
     ConsolePreparationPauseKind.PERSISTENCE: "send not saved",
-    # TASK-33621.4: held by the Ask policy, waiting on the card's choice.
-    ConsolePreparationPauseKind.CONTEXT_COMPACTION: "compaction choice",
+    # TASK-33621.4: held by the Ask policy, waiting on the card's choice;
+    # "Run: Blocked — compaction ask" fills the 29-column Inspect block.
+    ConsolePreparationPauseKind.CONTEXT_COMPACTION: "compaction ask",
 }
 #: TASK-33621.20 review: the card's Problem line for a send that re-paused.
 _RESEND_PROBLEMS = {
