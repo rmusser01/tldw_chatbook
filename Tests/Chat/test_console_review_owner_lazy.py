@@ -34,10 +34,19 @@ async def test_wake_pause_and_shutdown_leave_review_owner_unbuilt():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("draft", "explicit"),
+    [("hello", False), ("Review my changes", True)],
+    ids=["ordinary", "explicit-review"],
+)
 async def test_unexpected_review_composition_failure_keeps_agent_turn(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, draft, explicit
 ):
-    """Review tools are optional; their composition never fails an agent turn."""
+    """Review tools are optional; their composition never fails an agent turn.
+
+    An explicit review request is told why it got no review (a safe reason,
+    never the exception text); an ordinary turn stays silent.
+    """
     from Tests.console_provider_doubles import provider_resolution
     from tldw_chatbook.Chat import console_code_review
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
@@ -91,11 +100,19 @@ async def test_unexpected_review_composition_failure_keeps_agent_turn(
     )
 
     await controller.submit_draft(
-        "hello", session_id=session.id, configuration=configuration
+        draft, session_id=session.id, configuration=configuration
     )
 
     assert len(gateway.dispatched) == 1
-    assert store.messages_for_session(session.id)[-1].content == "plain answer"
+    contents = [message.content for message in store.messages_for_session(session.id)]
+    assert "plain answer" in contents
+    notice = (
+        "Review needs attention: review_tools_unavailable. "
+        "No review stage was admitted."
+    )
+    attention = [text for text in contents if text.startswith("Review needs")]
+    assert attention == ([notice] if explicit else [])
+    assert not any("unexpected composition failure" in text for text in contents)
 
 
 def test_review_offer_on_its_owner_loop_presents_without_deadlock():
