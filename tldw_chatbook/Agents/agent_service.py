@@ -4399,16 +4399,8 @@ class AgentService:
         if review_capture is not None:
             self._settle_review_capture(review_capture, run_id, terminal_event_id or "")
 
-    def _settle_review_capture(
-        self,
-        service,
-        run_id: str,
-        receipt_id: str | None = None,
-        *,
-        close_capture: bool = True,
-    ) -> None:
-        """Close only an actually associated attempt after native status persistence."""
-        settle_review_capture(self, service, run_id, receipt_id, close_capture)
+    # Close only an actually associated attempt; never raises (see helper).
+    _settle_review_capture = settle_review_capture
 
     def _fork_review_child(
         self, service, *, actor, max_tool_result_chars: int, grant=None
@@ -5182,6 +5174,7 @@ class AgentService:
             disclosed_names.update(names)
 
         sub_agent_spawns = 0
+        child_started = False  # this spawn call left a possibly-run child charged
         review_owner = self.registry.resolve_owner_for_name("code_review_prepare")
         if review_owner is not None and agent_kind != AGENT_KIND_SUBAGENT:
             from .code_review_tool_provider import CodeReviewToolProvider
@@ -5899,7 +5892,7 @@ class AgentService:
             provider: str | None = None,
             model: str | None = None,
         ) -> ToolResult:
-            nonlocal sub_agent_spawns
+            nonlocal sub_agent_spawns, child_started
             # Task-12 review Finding 2: this closure is THE single spawn
             # path -- the loop calls it directly for the native
             # spawn_subagent tool (agent_runtime.py), and invoke_tool's
@@ -6500,6 +6493,7 @@ class AgentService:
                     if review_claim is not None and review_claim.run_id is not None:
                         self._set_terminal_status(child_owner.run_id, RUN_ERROR)
                         self._settle_review_capture(scoped_service, child_owner.run_id)
+                    child_started = True  # a run row, and no proof it never ran
                     raise
                 finally:
                     try:
@@ -6584,7 +6578,7 @@ class AgentService:
             )
 
         def spawn(*args, **kwargs):
-            nonlocal sub_agent_spawns
+            nonlocal sub_agent_spawns, child_started
             scoped = "review_id" in kwargs or "review_slot_id" in kwargs
             if scoped and (
                 args
@@ -6595,15 +6589,16 @@ class AgentService:
                 )
             ):
                 return SpawnAdmissionRefusal(ok=False, error="invalid_review_spawn")
-            spawns_before, result = sub_agent_spawns, None
+            spawns_before, result, child_started = sub_agent_spawns, None, False
             try:
                 result = _spawn(*args, **kwargs)
                 return result
             finally:
-                # An exception (result None) gives its slot back -- restored, as
-                # some paths already returned it -- and releases an unaccepted
-                # claim (the service keeps one already bound to a run).
-                if result is None:
+                # An exception (result None) returns the slot only when no child
+                # may have run: the ceiling counts every started child. Restore,
+                # not decrement (some paths already gave it back). It also
+                # releases an unaccepted claim (a bound one is kept).
+                if result is None and not child_started:
                     sub_agent_spawns = spawns_before
                 if (
                     (result is None or not result.ok)
