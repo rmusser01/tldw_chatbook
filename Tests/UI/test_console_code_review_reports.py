@@ -670,3 +670,28 @@ async def test_deferred_report_read_does_not_publish_during_modal_removal(
             if removal is not None:
                 await removal
             await read
+
+
+def test_review_reports_key_is_advertised_and_inert_under_the_setup_card():
+    """'u' joins the footer vocabulary and, like every workbench key, does
+    nothing while the first-run setup card locks the composer."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.chat_screen import (
+        CONSOLE_WORKBENCH_SHORTCUTS,
+        ChatScreen,
+    )
+
+    assert {b.key: b.action for b in ChatScreen.BINDINGS}.get(
+        "u"
+    ) == "open_code_review_reports"
+    assert ("U", "review reports") in CONSOLE_WORKBENCH_SHORTCUTS
+
+    def unreachable():
+        raise AssertionError("the review owner must not be touched")
+
+    blocked = SimpleNamespace(
+        _console_setup_modal_blocking=lambda: True,
+        _ensure_console_chat_controller=unreachable,
+    )
+    assert ChatScreen.action_open_code_review_reports(blocked) is None

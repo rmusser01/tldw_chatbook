@@ -1163,6 +1163,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Y", "trace"),  # Y/Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C (33004.7)
     ("Enter", "send / queue"),
     ("Shift+F6", "previous pane"),
+    ("U", "review reports"),  # last: the narrow footer drops it first
 )
 
 #: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
@@ -5333,6 +5334,8 @@ class ChatScreen(BaseAppScreen):
 
     def action_open_code_review_reports(self) -> None:
         """Open retained review evidence for the current Console chat."""
+        if self._console_setup_modal_blocking():
+            return
         from ...Agents.code_review_models import ReviewRefused
         from ...Widgets.Console.console_code_review_modal import ConsoleCodeReviewModal
 
