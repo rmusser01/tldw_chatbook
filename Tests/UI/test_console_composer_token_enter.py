@@ -355,6 +355,42 @@ async def test_moving_the_caret_off_a_pending_confirm_answers_no_and_enter_sends
             assert users == [expected]
 
 
+@pytest.mark.asyncio
+async def test_a_pending_confirm_still_owns_enter_at_the_tokens_right_edge():
+    """AC#3/#4: while the question shows, Enter at either edge answers yes.
+
+    Home then Enter asks. End moves the caret to the token's right edge.
+    That edge is not "on" a collapsed token, but the pending question stays,
+    so the next Enter expands in place and nothing sends. Review of
+    6e6447f19a: the User Guide said any move off the token answered no.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            gateway.validation_release.set()
+            host.post_message(Paste(LOG))
+            await until(lambda: composer.draft_text() == LOG)
+            press(host, "home")
+            await until(lambda: composer.cursor_index == 0)
+            press(host, "enter", "\r")
+            await until(composer.has_pending_paste_confirmation)
+
+            press(host, "end")
+            await until(lambda: composer.cursor_index == len(LOG))
+            await pilot.pause()
+            assert composer._display_draft_text() == _paste_confirm(LOG)
+
+            press(host, "enter", "\r")
+            await until(lambda: composer._display_draft_text() == LOG)
+            await pilot.pause(0.3)
+            assert not composer.has_pending_paste_confirmation()
+            assert composer.draft_text() == LOG
+            assert gateway.stream_calls == 0
+
+
 PROMPT_NAME = "Triage"
 PROMPT_BODY = "Triage this incident: list the failing worker, the cause and a fix. " * 2
 QUESTION = "Summarize this log: "

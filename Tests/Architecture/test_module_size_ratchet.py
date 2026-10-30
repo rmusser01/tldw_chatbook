@@ -590,7 +590,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29, TASK-33622.1 review fix (same owner rule): 7136 -> 7143
     # (+7). A paste's edge line break, drawn outside its chip, parts that
     # edge from the chip, so Enter there sends instead of arming the expand.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7143,
+    # 2026-10-29, TASK-37800: 7143 -> 7142 (-1), pinned at the measured size
+    # after only a token's left edge counts as the caret being on it.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7142,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,

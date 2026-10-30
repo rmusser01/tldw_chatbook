@@ -353,9 +353,11 @@ line break keeps that break outside its token, so the caret can never sit
 right before that token; click it instead. With the caret on a token, Enter
 expands that token in two steps: the first Enter asks "Expand pasted text (N
 characters)? Enter: yes · Esc: no" (a file's question names the file), and a
-second Enter puts the full text in place. Esc, or moving the caret off the
-token, answers no and puts the collapsed token back. Clicking a token asks
-the same question, and the next Enter answers it. The **Send** button always
+second Enter puts the full text in place. While the question shows, Enter
+with the caret right before or right after that token answers yes. Esc, or
+moving the caret anywhere else, answers no and puts the collapsed token
+back. Clicking a token asks the same question and leaves the caret right
+after it, so the next Enter answers it. The **Send** button always
 sends, wherever the caret is. Whatever the display
 state, **the full pasted text is always what sends** — collapsing is purely
 visual. While the draft contains a paste token, slash-command parsing is
@@ -844,7 +846,7 @@ Composer:
 
 | Key | Action |
 |---|---|
-| Enter | Send now, queue after an accepted turn, or advance the paste token right after the caret (see Large pastes) |
+| Enter | Send now, queue after an accepted turn, or expand a paste, file or `/prompt` token that the caret is on or that is asking to expand (see Large pastes) |
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |

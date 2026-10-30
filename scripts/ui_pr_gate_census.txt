@@ -1643,3 +1643,11 @@ Tests/UI/test_console_library_outcome_lines.py
 Tests/UI/test_console_composer_token_enter.py::test_one_enter_sends_a_token_and_typed_question_with_the_full_text[paste]
 Tests/UI/test_console_composer_token_enter.py::test_one_enter_sends_a_paste_whose_edge_line_break_parts_caret_and_chip[trailing]
 Tests/UI/test_console_raw_cli_arm_in_place.py
+# TASK-37800 (2026-10-29) appends 2 node ids at the tail: paste then one Enter
+# sends with the caret right after the token, and Left onto a trailing token
+# then Enter still expands it (one mounted case each, about 9 s locally at
+# load 22). Bringing back the right-edge rule turns the first red while the
+# two TASK-33622.1 nodes above stay green; never counting a collapsed token
+# turns the second red. Existing shard slots stay fixed.
+Tests/UI/test_console_composer_token_enter.py::test_one_enter_sends_with_the_caret_right_after_a_token[paste]
+Tests/UI/test_console_composer_token_enter.py::test_left_onto_a_trailing_token_then_enter_still_expands_it

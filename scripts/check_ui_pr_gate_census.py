@@ -636,7 +636,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # changes shard: dev's 1145 + 3 = 1148. It also drops the dead 1145 assignment
 # that stood above dev's effective 1144. Rebased 2026-10-29 onto dev's
 # 1149: 1149 + 3 = 1152.
-MINIMUM_FILES = 1166
+# TASK-37800 (2026-10-29) appends 2 node ids at the tail (paste then one Enter
+# sends with the caret right after the token, and Left onto a trailing token
+# then Enter still expands it; about 9 s each locally), so no existing entry
+# changes shard: 1152 + 2 = 1154.
+MINIMUM_FILES = 1168
 
 
 def read_census(path: Path) -> list[str]:
