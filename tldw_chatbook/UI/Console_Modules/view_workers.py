@@ -22,6 +22,7 @@ _GROUPS = frozenset(
         "console-subagent-count-publication",
         "console-citation-counts",
         "console-library-activity",
+        "console-library-outcome",
         "console-workspace-display-reads",
         "console-context-publication",
         "console-hook-refresh",

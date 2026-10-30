@@ -17070,6 +17070,9 @@ class ChatScreen(BaseAppScreen):
             visible_library_activity_counts = self._library_activity.sync_transcript(
                 transcript
             )
+            library_outcome_lines = self._library_outcome.sync_transcript(
+                transcript, messages
+            )
             transcript.set_original_attempt_previews(
                 self._console_original_attempt_previews.copy()
             )
@@ -17178,6 +17181,7 @@ class ChatScreen(BaseAppScreen):
                 tuple(sorted(self._console_original_attempt_previews.items())),
                 tuple(sorted(visible_citation_counts.items())),
                 tuple(sorted(visible_library_activity_counts.items())),
+                tuple(sorted(library_outcome_lines.items())),  # TASK-33621.51
                 # task-18515: an annotation added, edited, or deleted must
                 # force a refresh on its own. Without this the marker row
                 # only changed when something ELSE in the key did -- phase 4

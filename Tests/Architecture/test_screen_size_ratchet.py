@@ -216,7 +216,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24331 -> 24333 (methods unchanged) 2026-10-29 by TASK-33621.51,
+    #: same owner rule: the transcript sync pushes each turn's Automatic Library
+    #: outcome lines (one call) and folds them into its refresh key (one row).
+    #: Dev ed7481a30c measures 24329/737; with the fix, 24333/737.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24333, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

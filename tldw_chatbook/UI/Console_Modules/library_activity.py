@@ -1,9 +1,20 @@
-"""Controller for minimized Console Library activity capture and review."""
+"""Console Library projections onto the transcript.
+
+``ConsoleLibraryActivityController`` owns minimized Library activity capture
+and review. ``ConsoleLibraryOutcomeLines`` (TASK-33621.51) owns each sent
+turn's Automatic Library outcome line: a send prepared with Library on
+Automatic persists one bounded ``library_preparation`` record on its USER
+message, in the transaction that accepts the turn (how many evidence
+references it sent, that the search found nothing, or that it was sent once
+without Library and why), and the line is projected from that record only,
+so it is the same after a repaint, a branch switch or a restart. Both live
+here because the module is already loaded when the Console first paints.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
 from loguru import logger
@@ -12,9 +23,14 @@ from tldw_chatbook.Chat.console_library_activity_buffer import (
     LibraryActivityFlushResult,
 )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.library_activity import (
     LibraryActivityEvent,
     LibraryActivityView,
+)
+from tldw_chatbook.Chat.library_preparation import (
+    LibraryPreparationView,
+    project_library_preparation,
 )
 
 
@@ -364,4 +380,216 @@ class ConsoleLibraryActivityController:
             self._notify(result.warning, severity="warning")
 
 
-__all__ = ["ConsoleLibraryActivityController"]
+#: Why a bypassed send's search paused, as the line words it.
+_BYPASS_REASON_COPY = {
+    "timed_out": "search timed out",
+    "stopped": "search stopped",
+    "failed": "search failed",
+}
+
+
+def library_outcome_copy(view: LibraryPreparationView) -> str:
+    """Return the one-line outcome for a projected preparation record.
+
+    Args:
+        view: One active turn's projected ``library_preparation`` record.
+
+    Returns:
+        Plain text naming what the turn's Automatic Library search did.
+    """
+    if view.outcome == "evidence_sent":
+        noun = "source" if view.result_count == 1 else "sources"
+        return f"Library: {view.result_count} {noun} sent"
+    if view.outcome == "zero_matches":
+        return "Library: 0 matches · sent without Library evidence"
+    reason = _BYPASS_REASON_COPY.get(view.bypass_reason or "")
+    line = "Library: sent once without Library"
+    return f"{line} · {reason}" if reason else line
+
+
+class ConsoleLibraryOutcomeLines:
+    """Own the screen's mapping of native USER message id -> outcome line.
+
+    The controller owns no DOM. Like the Library activity projection it
+    reads a file-backed conversation's rows on a view worker, and reads on
+    the loop for an in-memory database (its connection is per thread), for
+    a custom store, or during a send's start (``live_reads``).
+
+    Args:
+        ensure_store: Late-bound Console store accessor.
+        run_worker: Starts a coroutine as a screen worker; None reads inline.
+        repaint: Forced transcript sync, awaited after a worker read lands.
+        live_reads: True while a send's start keeps display reads on the loop.
+        presentation_paused: True while the Console must not render.
+        torn_down: True once the screen is closing.
+    """
+
+    def __init__(
+        self,
+        *,
+        ensure_store: Callable[[], Any],
+        run_worker: Callable[[Any], Any] | None = None,
+        repaint: Callable[[], Awaitable[None]] | None = None,
+        live_reads: Callable[[], bool] | None = None,
+        presentation_paused: Callable[[], bool] | None = None,
+        torn_down: Callable[[], bool] | None = None,
+    ) -> None:
+        self._ensure_store = ensure_store
+        self.run_worker = run_worker
+        self.repaint = repaint
+        self.live_reads = live_reads or (lambda: False)
+        self.presentation_paused = presentation_paused or (lambda: False)
+        self.torn_down = torn_down or (lambda: False)
+        #: Key of the newest projection that landed, and its views by durable
+        #: USER id. A record never changes once written, so views for ids
+        #: still on the path stay right while a newer key is being read.
+        self._landed_key: tuple | None = None
+        self._views: dict[str, LibraryPreparationView] = {}
+        self._requested: tuple | None = None
+
+    def sync_transcript(self, transcript: Any, messages: Iterable[Any]) -> dict[str, str]:
+        """Push the active turns' lines to the transcript and return them.
+
+        Args:
+            transcript: Mounted Console transcript widget.
+            messages: The active session's messages being rendered.
+
+        Returns:
+            Outcome line keyed by native USER message id.
+        """
+        lines = self.lines_for(messages)
+        transcript.set_library_outcome_lines(lines)
+        return lines
+
+    def lines_for(self, messages: Iterable[Any]) -> dict[str, str]:
+        """Return the outcome line of each persisted USER turn in ``messages``.
+
+        Args:
+            messages: The active session's messages being rendered.
+
+        Returns:
+            Outcome line keyed by native USER message id.
+        """
+        turns = {
+            message.persisted_message_id: message.id
+            for message in messages
+            if getattr(message, "role", None) is ConsoleMessageRole.USER
+            and getattr(message, "persisted_message_id", None)
+        }
+        source = self._source() if turns else None
+        if source is None:
+            return {}
+        database, session_id, conversation_id, off_loop = source
+        # A record is written in the acceptance that gives its USER turn a
+        # durable id, so a new turn moves this key once; opening a chat (a new
+        # session, a restart) moves it too and reads the records afresh.
+        key = (database, session_id, conversation_id, tuple(turns))
+        if key != self._landed_key:
+            if off_loop:
+                self._request(key)
+            else:
+                self._land(key, self._read_inline(database, conversation_id))
+        return {
+            native_id: library_outcome_copy(self._views[durable_id])
+            for durable_id, native_id in turns.items()
+            if durable_id in self._views
+        }
+
+    def _source(self) -> tuple[Any, str, str, bool] | None:
+        """Return (database, session, conversation, read off the loop?) or None."""
+        from tldw_chatbook.Chat.chat_persistence_service import (
+            ChatPersistenceService,
+        )
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        store = self._ensure_store()
+        session_id = getattr(store, "active_session_id", None)
+        persistence = getattr(store, "persistence", None)
+        database = getattr(persistence, "db", None)
+        if session_id is None or not callable(
+            getattr(database, "get_trajectory_rows", None)
+        ):
+            return None
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
+        conversation_id = getattr(session, "persisted_conversation_id", None)
+        if conversation_id is None:
+            return None
+        off_loop = (
+            self.run_worker is not None
+            and not self.live_reads()
+            and type(persistence) is ChatPersistenceService
+            and type(database) is CharactersRAGDB
+            and not database.is_memory_db
+        )
+        return database, session_id, conversation_id, off_loop
+
+    def _land(self, key: tuple, rows: Iterable[Any]) -> None:
+        """Project ``rows`` onto ``key``'s turns and keep them as current."""
+        durable_ids = key[-1]
+        self._views = {
+            view.turn_id: view
+            for view in project_library_preparation(rows, durable_ids)
+        }
+        self._landed_key = key
+
+    @staticmethod
+    def _read_inline(database: Any, conversation_id: str) -> tuple[Any, ...]:
+        """Read on the calling thread; a failure shows no lines."""
+        try:
+            return tuple(database.get_trajectory_rows(conversation_id))
+        except Exception:  # noqa: BLE001 - payload-free display degradation
+            logger.warning("library_outcome_projection_read_failed")
+            return ()
+
+    def _request(self, key: tuple) -> None:
+        """Start one worker read for ``key`` unless it is already in flight."""
+        if self._requested == key:
+            return
+        self._requested = key
+        assert self.run_worker is not None
+        self.run_worker(self._read_on_worker(key))
+
+    async def _read_on_worker(self, key: tuple) -> None:
+        """Read ``key``'s rows off the UI loop, then repaint with them.
+
+        Only the newest requested read lands, and none after teardown. A local
+        storage pause lands nothing (the next sync reads again); any other
+        failure lands no lines, so it is not retried on every sync.
+        """
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        from .view_workers import owned_display_read
+
+        database, _session_id, conversation_id, _turns = key
+        rows: tuple[Any, ...] | None = ()
+        try:
+            rows = tuple(
+                await owned_display_read(
+                    database, database.get_trajectory_rows, conversation_id
+                )
+            )
+        except RecoveryRequired as error:
+            if error.args == ("storage_locally_paused",):
+                rows = None
+            else:
+                logger.warning("library_outcome_projection_read_failed")
+        except Exception:  # noqa: BLE001 - payload-free display degradation
+            logger.warning("library_outcome_projection_read_failed")
+        finally:
+            newest = self._requested == key
+            if newest:
+                self._requested = None
+        if not newest or self.torn_down() or rows is None:
+            return
+        self._land(key, rows)
+        if self.repaint is not None and not self.presentation_paused():
+            await self.repaint()
+
+
+__all__ = [
+    "ConsoleLibraryActivityController",
+    "ConsoleLibraryOutcomeLines",
+    "library_outcome_copy",
+]
