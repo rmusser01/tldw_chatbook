@@ -94,6 +94,8 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "swap_session_character_roleplay",
         "transition_dispatch_recovery_for_retry",
         "update_message_content",
+        # TASK-35582: read-only live-owner recheck under the generation scope.
+        "validate_live_native_trace_owner",
     }
 )
 
