@@ -845,7 +845,7 @@ class ConsoleFleetWakeCoordinator:
             return
         session_id = self._resolve_session_id(conversation_id)
         if not autowake_enabled():
-            review_owner = getattr(self._controller, "code_review", None)
+            review_owner = getattr(self._controller, "_code_review", None)
             if review_owner is not None:
                 for receipt in tuple(reviews.values()):
                     review_owner.mark_continuation_blocked(
@@ -961,7 +961,9 @@ class ConsoleFleetWakeCoordinator:
         return True
 
     async def _pause(self, conversation_id, chain_id, reason, *, review=False):
-        review_owner = getattr(self._controller, "code_review", None)
+        # The loaded owner only: the lazy ``code_review`` property would build
+        # (and import) the review stack on ordinary wake paths.
+        review_owner = getattr(self._controller, "_code_review", None)
         with self._registry_lock:
             receipts = tuple(self._pending_reviews.get(conversation_id, {}).values())
         if review_owner is not None:
@@ -1064,7 +1066,7 @@ class ConsoleFleetWakeCoordinator:
             self._discard_pending_progress(
                 conversation_id, set(progress) - {mid for mid, _, _ in progress_sources}
             )
-            review_owner = getattr(self._controller, "code_review", None)
+            review_owner = getattr(self._controller, "_code_review", None)
             with self._registry_lock:
                 candidates = tuple(
                     self._pending_reviews.get(conversation_id, {}).values()
