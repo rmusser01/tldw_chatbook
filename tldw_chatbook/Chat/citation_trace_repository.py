@@ -414,6 +414,7 @@ class CitationTraceRepository:
         identity_context: LocalCitationIdentityContext | None,
         fingerprint_codec: CitationFingerprintCodec | None,
         failure_after_row_family: str | None = None,
+        key_provider: CitationFingerprintKeyProvider | None = None,
     ) -> None:
         if (
             failure_after_row_family is not None
@@ -424,6 +425,10 @@ class CitationTraceRepository:
         self.policy = policy
         self.identity_context = identity_context
         self._fingerprint_codec = fingerprint_codec
+        # TASK-33620.8: a provider defers the key to its first use.
+        self._key_provider = key_provider
+        self._key_lock = threading.Lock()
+        self._key_state: str | None = None
         self._failure_after_row_family = failure_after_row_family
         self._prepared_write_token = object()
         self._issued_prepared_writes: dict[
@@ -489,6 +494,54 @@ class CitationTraceRepository:
         """Return whether signed artifact bindings can currently be verified."""
 
         return self._fingerprint_codec is not None and self.identity_context is not None
+
+    @property
+    def fingerprint_key_pending(self) -> bool:
+        """Return whether a deferred key has yet to be acquired."""
+
+        return (
+            self._fingerprint_codec is None
+            and self._key_state in (None, "unavailable")  # unexpected: retry
+            and self._key_provider is not None
+            and self.policy.canonical_writes_enabled
+        )
+
+    @property
+    def fingerprint_key_state(self) -> str:
+        """Return the bounded ``CitationKeyState`` value for honest copy."""
+
+        if self._fingerprint_codec is not None:
+            return "ready"
+        if not self.policy.canonical_writes_enabled:
+            return "writes_disabled"
+        if self._key_state is not None:
+            return self._key_state
+        return "pending" if self._key_provider is not None else "key_unreadable"
+
+    def ensure_local_fingerprint_key(self) -> bool:
+        """Acquire, or provision on first use, the deferred fingerprint key.
+
+        Blocking (keyring and a guarded write transaction); idempotent and
+        thread-safe. A definitive outcome is kept for the repository's life;
+        an unexpected failure is retried at the next use. Call it off the
+        UI loop.
+
+        Returns:
+            Whether local canonical writes are ready afterwards.
+        """
+
+        with self._key_lock:
+            provider = self._key_provider
+            if self.fingerprint_key_pending and provider is not None:
+                from .citation_key_first_use import acquire_local_fingerprint_codec
+
+                try:
+                    codec, state = acquire_local_fingerprint_codec(self, provider)
+                except Exception:
+                    codec, state = None, "unavailable"
+                self._fingerprint_codec = codec
+                self._key_state = getattr(state, "value", state)
+        return self.local_citation_writes_ready
 
     @property
     def local_citation_writes_ready(self) -> bool:

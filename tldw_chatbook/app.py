@@ -5068,7 +5068,7 @@ class TldwCli(
                     "citation_legacy_migration_service",
                     None,
                 )
-                if migration is None or not migration.ready:
+                if migration is None or not migration.writes_enabled:
                     return
                 from tldw_chatbook.Chat.citation_legacy_migration import (
                     CitationLegacyMigrationService,

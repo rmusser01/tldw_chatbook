@@ -98,7 +98,7 @@ def _schedule_deferred_startup_work(
         "citation_legacy_migration_service",
         None,
     )
-    if migration is not None and migration.ready:
+    if migration is not None and migration.writes_enabled:  # key: first use
         self._create_deferred_startup_task(
             self._migrate_legacy_citations_idle_unit(),
             name="deferred_legacy_citation_migration",
