@@ -3,11 +3,11 @@ id: TASK-37811
 title: >-
   Console: Temporary-chat capture copy promises capture that saving would not
   turn on
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29 17:30'
-updated_date: '2026-10-30 04:56'
+updated_date: '2026-10-30 05:38'
 labels:
   - console
   - copy
@@ -101,4 +101,13 @@ Tests: `Tests/UI/test_console_temporary_save_copy.py` adds global Off + Next sen
 Live (fix head, 160x45, real Anthropic claude-haiku-4-5 via the review proxy): global Off + Next send On -> row 'Save chat', hint '...once saved, only your next send is traced'; after saving, sends logged capture_enabled=true then false (replies 'OK 41', 'OK 42'). Global On + Next send Off -> 'Save chat (enables capture)', hint '...once saved, traces start after your next send'; after saving, capture_enabled=false then true ('OK 43', 'OK 44'). Global Off alone -> 'Save chat' / 'Not saved locally; saving keeps traces off'.
 
 Follow-ups filed: TASK-37840 (the always-visible Temporary surfaces no longer say 'not saved'; owner call), TASK-37841 (the Impersonate payload test's stale controller double, red on dev).
+
+**Second review fix (2026-10-30, AC#6) and merge evidence on dev ff815f8559.**
+- Verified the AC#5 fix first: the extended mounted test run against the pre-fix head failed on the two one-shot cases for the reviewed reason (global Off + Next send On read 'traces stay off once saved' while the next send captured), and passes on the fix.
+- AC#6: the Exchange Capture Policy dialog's Temporary guidance said 'Turn Capture On here and each send pauses'; only This conversation On pauses every send, Next send On pauses one. It now names both scopes. The copy pin (test_capture_policy_explains_temporary_save_and_send_boundary) was red first on the old string and runs under the bootstrap profile so it passes under the plain command. Live: this branch cannot render in the app, because the Trace screen refuses a Temporary chat ('The active conversation has no persisted trace yet.', evidence 50); filed TASK-38001 for the guidance a Temporary chat can actually reach.
+- The diagnostic inventory pins the fix's one debug call (composer_menu_save_chat_capture_unavailable, bound to the exception class name only), reviewed with --statements before --write.
+- Rebased onto dev ff815f8559: census conflicts kept both sides (MINIMUM_FILES = dev's 1149 + this branch's 2 = 1151, dated comments kept); lessons-testing-evidence.md keeps dev's two new entries above this branch's.
+- Gates on the rebased head (plain command; reds compared by test id against a detached dev worktree): test_console_temporary_save_copy 1 passed (dev with the branch's tests: 1 failed); test_console_temporary_capture_flow 5 passed (dev: 5 failed), 29 s alone; test_console_composer_menu 40 passed + the known Impersonate red (dev with the branch's tests: 3 failed); test_console_temporary_capture_admission 1 passed + 3 RecoveryRequired setup errors, as on dev (dev with the branch's test: the copy pin fails). Under a local bootstrap-all plugin on both arms: capture_policy_dialog 21/21, admission 4/4, buddy_entry_points 4/4 on head and dev. No new reds vs dev in ephemeral, unsent_turn, staged_evidence_dispatch_pin, modal_theme_frames, modal_dismissal, composer_run_controls (36/36), exchange_capture, global_capture_settings, turn_preparation, committed_send_recovery, trace_call_recovery, library_controls_workflow, chat_controller_exchanges (2 reds, a subset of dev's 6), native_chat_flow (261 RecoveryRequired reds, identical ids on dev), Tests/Docs (same 4 reds), module-size ratchet (same 8 reds). UI-ready census: 1032 vs limit 1031 on both head and dev with identical module lists (dev's own red; this branch adds no module). Boot CSS budget: passed. ruff: no findings beyond dev's on the changed files. ./scripts/preflight.sh: exit 0.
+- Live (rebased head, 160x45, real Anthropic claude-haiku-4-5 via the review proxy): Temporary chat, global On: 'Save chat (enables capture)' / 'Not saved locally; records no traces until saved' (51). Next send Off chosen in Trace Privacy (52): hint 'Not saved locally; once saved, traces start after your next send' (53); after Save chat, sends logged capture_enabled=false then true (replies 'OK 61', 'OK 62'; 54).
+- Follow-ups filed: TASK-38000 (the Save chat promise ignores the runtime durable-capture gate), TASK-38001 (above); TASK-37840 gains the review's status-strip question.
 <!-- SECTION:NOTES:END -->
