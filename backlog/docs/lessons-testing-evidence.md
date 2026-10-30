@@ -100,6 +100,14 @@ returned it to 5706 without changing the builder or budget. Run the existing
 size envelope beside bundle generation early; source parity alone does not
 establish that the generated artifact fits its governed envelope.
 
+Selecting the full bundle contracts next exposed an AST-census false positive:
+`_write_file_os`'s native Windows import was counted as reachable on a POSIX SSH
+host. Keep platform reachability explicit and narrow: only the true body of
+`os.name == "nt"` is excluded under ADR-181. Three reachable-condition mutations
+and an else-body mutation must still expose the stub. Move a POSIX-only test's
+fcntl import into that test so portable static/bare-interpreter controls can
+collect natively; Windows collection failure had hidden this guard locally.
+
 ## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
 
 The real Windows workspace worker could preview a write but failed creation at
