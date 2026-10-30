@@ -1145,7 +1145,7 @@ class TraceGarbageCollector:
                 # whole deletion before restoring the caller's FK mode.
                 cursor.execute("PRAGMA defer_foreign_keys = ON")
                 deleted_rows = self._sweep_unmarked(cursor, request_id)
-                if cursor.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                if self._has_swept_dependency(cursor):
                     raise RuntimeError("trace_gc_foreign_key_dependency")
             pages_after = int(cursor.execute("PRAGMA page_count").fetchone()[0])
             free_after = int(cursor.execute("PRAGMA freelist_count").fetchone()[0])
@@ -1902,6 +1902,28 @@ class TraceGarbageCollector:
             (str(row[1]),),
         ).fetchall()
         return tuple(str(item[0]) for item in rows)
+
+    @staticmethod
+    def _has_swept_dependency(cursor: sqlite3.Cursor) -> bool:
+        """Check only tables whose foreign keys reference a swept table.
+
+        A whole-database ``PRAGMA foreign_key_check`` would scan every table
+        inside this IMMEDIATE transaction and fail on unrelated orphans.
+        """
+        placeholders = ", ".join("?" for _ in _GC_ENTITY_TABLES)
+        children = cursor.execute(
+            f"""SELECT DISTINCT m.name
+                  FROM sqlite_master AS m, pragma_foreign_key_list(m.name) AS fk
+                 WHERE m.type = 'table' AND fk."table" IN ({placeholders})""",
+            _GC_ENTITY_TABLES,
+        ).fetchall()
+        return any(
+            cursor.execute(
+                "SELECT 1 FROM pragma_foreign_key_check(?) LIMIT 1", (child[0],)
+            ).fetchone()
+            is not None
+            for child in children
+        )
 
     @staticmethod
     def _sweep_unmarked(cursor: sqlite3.Cursor, request_id: str) -> dict[str, int]:

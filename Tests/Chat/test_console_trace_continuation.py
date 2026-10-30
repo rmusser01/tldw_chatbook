@@ -425,3 +425,22 @@ def test_sweep_failure_restores_graph_and_foreign_key_mode(
             for table in tables
         } == before
     assert connection.execute("PRAGMA defer_foreign_keys").fetchone()[0] == 0
+
+
+def test_sweep_dependency_check_is_scoped_to_trace_tables(db):
+    """An unrelated pre-existing orphan neither blocks nor is scanned by trace GC."""
+    repository = ConsoleTraceRepository()
+    _root_graph(db, repository)
+    _finish_legacy_migration(db)
+    connection = db.get_connection()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute(
+        "INSERT INTO conversation_keywords (conversation_id, keyword_id) "
+        "VALUES ('missing-conversation', 987654)"
+    )
+    connection.execute("PRAGMA foreign_keys = ON")
+    assert connection.execute("PRAGMA foreign_key_check").fetchall()
+
+    result = TraceGarbageCollector(db).collect(request_id="unrelated-orphan")
+
+    assert result.status == "completed"
