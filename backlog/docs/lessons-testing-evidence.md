@@ -22509,3 +22509,23 @@ test directly replaces settings and before acting on them. Its existing held-rea
 regression verifies old revision 1 is discarded and revision 2 renders; its bounded
 wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
 assertions, rather than retrying the action or weakening its ownership checks.
+
+## On an old commit, a private-profile failure's reason is in the child's pytest.xml, not the parent's output
+
+**TASK-33621.4, 2026-10-29.** AC#6 asked for a test that fails on the review
+commit 64579cce2c. The real-ChatScreen hold test, copied into a detached
+worktree at that commit, failed, but the parent's report showed only DEBUG log
+lines: that commit's `@private_profile_test` wrapper fails with the *last
+16,000 characters* of the child's log, and a real Console run fills them with
+SQLite and screen-unmount chatter. The child's assertion was cut off. (Newer
+wrappers print a `--- child failure:` line; old commits do not have it.) The
+child's `pytest.xml` sits in the parent's `tmp_path`, which pytest's basetemp
+rotation then deleted. Re-running with `--basetemp=<a scratch dir>` kept it,
+and its `<failure message=...>` gave the reason in one line:
+`AttributeError: ... 'ConsolePreparationPauseKind' has no attribute
+'CONTEXT_COMPACTION'` (no compaction hold exists at that commit).
+
+**What to do.** When checking that a private-profile test fails on an older
+commit, pass `--basetemp=<scratch dir>` and read the child's `pytest.xml`
+failure message before calling the red "for the right reason". A red you cannot
+read is not evidence of anything.
