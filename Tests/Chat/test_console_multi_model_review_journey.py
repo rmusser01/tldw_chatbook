@@ -26,6 +26,34 @@ from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 pytestmark = pytest.mark.bootstrap_profile
 
 
+async def _settled(controller, session, service, review_id, *, timeout=20.0):
+    """Wait until every launched child is terminal and wake delivery is idle.
+
+    The schedule driver stops once the expected launches exist; the last child
+    (and the wake its settlement triggers) can still be running at that point.
+    """
+    import asyncio
+
+    conversation_id = session.persisted_conversation_id
+    quiet = 0
+    for _ in range(int(timeout / 0.03)):
+        with service.store.lease(review_id) as context:
+            terminal = all(
+                context.streams[
+                    (claim.slot.slot_id, claim.binding.attempt_id)
+                ].terminal_status
+                for claim in context.launch_claims.values()
+            )
+        idle = (
+            not controller.fleet_wake.has_pending(conversation_id)
+            and session.id not in controller.fleet_wake.delivering_session_ids()
+        )
+        quiet = quiet + 1 if terminal and idle else 0
+        if quiet >= 3:
+            return
+        await asyncio.sleep(0.03)
+
+
 @dataclass
 class ReviewRunObservation:
     reviewer_run_ids: set[str] = field(default_factory=set)
@@ -199,6 +227,7 @@ class ReviewRunObservation:
 
     async def collect(self, controller, session, review_id):
         service = controller.code_review._reviews[review_id]
+        await _settled(controller, session, service, review_id)
         with use_run_actor(service.actor):
             expanded = service.expand_dispositions(review_id)
         self.final_dispositions = {
