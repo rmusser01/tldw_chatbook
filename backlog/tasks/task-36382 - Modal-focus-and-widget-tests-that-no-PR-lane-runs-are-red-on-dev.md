@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: '2026-10-24 15:47'
+updated_date: '2026-10-30 04:03'
 labels:
 - follow-up
 - tests
@@ -96,7 +96,9 @@ Found by the implementation and reviews of TASK-35648/35649 (PR #3217, 2026-10-2
 
 **Post-rebase round (onto dev after TASK-36512's census re-deal).** PR run 40007935895 showed `test_every_anchor_targets_real_code`'s ~90 parametrized cases costing about 1 s of teardown each. It is now one test that checks every anchor and names every one that no longer resolves in a single assertion; the census node id is unchanged. Renaming one registry anchor made it fail naming that anchor and its owner, and it was then reverted. Measured alone, its setup, call and teardown take 0.16 s, in a 1.2 s session. A whole-census `--collect-only --keep-duplicates` collects 89 fewer tests than at the previous head (the 90 cases became one), with no duplicate node ids. The block is now in the order the review's measured slack calls for (heavy entries on the shards with the most slack, sub-second ones on the near-cap shards), and the census and floor comments no longer claim the anchor check is cheap in total. Five files `-n 4`: 197 passed; `Tests/CI -n 4`: 1029 passed, 1 skipped; census checker OK; preflight passed.
 
-**Not verified.** This round's placement has not yet run in CI.
+**Re-sync 2026-10-30 onto dev ff815f8559.** The census conflicts were resolved to dev's side, and the nine entries were re-appended once at the tail of dev's 28-shard census. The block comment now says only what the entries pin and why the modal file runs by node; the earlier placement commits dropped out as empty, and the floor equals the entry count. The reverse sweep then named two modals dev had added since (`PortraitCompositionReview` and `PortraitRegionEditor`, base width 120), and they joined the registry as "follow-up wave" entries. After the re-sync, the census checker passed; `--collect-only --keep-duplicates` over the whole census showed 0 duplicates; the five files plus the panel file passed with `-n 4` (220 passed); `Tests/CI -n 4` passed 1060 with 1 skipped; and preflight passed.
+
+**Not verified.** The block's first CI run at 28 shards.
 
 Files: `Tests/UI/modal_wide_tier_registry.py`, `Tests/UI/test_modal_wide_tier.py`, `Tests/UI/test_non_obscuring_focus_contract.py`, `Tests/UI/test_css_staleness_manifest.py`, `Tests/UI/test_llamacpp_setup_refresh_gate.py`, `Tests/UI/test_evals_skill_eval_screen.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-textual.md`.
 <!-- SECTION:NOTES:END -->
