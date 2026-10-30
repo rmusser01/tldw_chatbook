@@ -315,9 +315,11 @@ class ConsoleCodeReviewCoordinator:
         ]
         if len(held) < _MAX_ACCEPTED_REQUESTS:
             return
+        # A narrowed request whose prepare failed (quota, history, drift) is
+        # never tracked, so narrowing alone does not pin it. The current turn's
+        # own request is the newest, never the oldest evicted here.
         in_use = (
-            set(self._narrowed)
-            | set(self._accepted_stages)
+            set(self._accepted_stages)
             | set(self._stage_admissions)
             | set().union(*self._review_requests.values())
         )
@@ -325,8 +327,14 @@ class ConsoleCodeReviewCoordinator:
         if stale is None:
             raise ReviewRefused("review_authority_quota_exceeded")
         evicted = self._requests.pop(stale)
+        self._narrowed.pop(stale, None)
         with self.issuer._lock:
             self.issuer._intents.pop(id(evicted), None)
+            self.issuer._grants = {
+                key: grant
+                for key, grant in self.issuer._grants.items()
+                if grant.acceptance_id != stale
+            }
 
     def narrow_request(
         self,
@@ -597,11 +605,22 @@ class ConsoleCodeReviewCoordinator:
                 all_presented = all_presented and all(
                     slot.slot_id in context.active_attempts for slot in reviewers
                 )
+                # A retried reviewer's service has no verification grant even
+                # after "yes" scheduled or ran the verifier: never re-offer.
+                verifier_started = any(
+                    slot.role == "verifier"
+                    and (
+                        slot.slot_id in context.launch_claims
+                        or slot.slot_id in context.scheduled_attempts
+                    )
+                    for slot in service.slots(context)
+                )
             with self._lock:
                 offered = any(offer[0] == review_id for offer in self._offers.values())
             if (
                 all_presented
                 and not offered
+                and not verifier_started
                 and self.present_offer(service.store._session_id, review_id)
             ):
                 self.offer_stage(review_id)
@@ -1164,6 +1183,16 @@ def compose_native_review_provider(
                 for service in existing._reviews.values()
             )
     if not stages and not (offered and reply in _OFFER_ACCEPT | _OFFER_DECLINE):
+        return None
+    if offered and reply in _OFFER_DECLINE:
+        # A decline needs no source or tools: record it (consuming the offer)
+        # even when the root is gone, and compose nothing.
+        existing.bind_accepted_request(
+            message.id,
+            session_id=session_id,
+            source_epoch=0,
+            trusted_skill_bindings=trusted_skill_bindings,
+        )
         return None
     settings = config.load_settings()
     tools = settings.get("tools", {})

@@ -745,15 +745,17 @@ def test_unprepared_requests_are_evicted_oldest_first_per_session(native_review)
         other.id, role=ConsoleMessageRole.USER, content="Review my changes"
     )
     c.coordinator.bind_accepted_request(foreign.id, session_id=other.id, source_epoch=0)
-    narrowed = c.accept("Review my changes")
-    c.grants(narrowed)
+    prepared = c.accept("Review my changes")
+    c.grants(prepared)
+    # As track_prepared records a prepared review's accepted requests.
+    c.coordinator._review_requests["prepared-review"] = {prepared.id}
     first = c.accept("Review my cover letter draft 0")
     evicted = c.coordinator._requests[first.id]
     for index in range(1, 64):
         c.accept(f"Review my cover letter draft {index}")
     latest = c.accept("Review my changes.")
     assert first.id not in c.coordinator._requests
-    assert {narrowed.id, latest.id, foreign.id} <= set(c.coordinator._requests)
+    assert {prepared.id, latest.id, foreign.id} <= set(c.coordinator._requests)
     assert len(c.coordinator._requests) == 65
     with pytest.raises(ReviewRefused, match="accepted_review_intent_required"):
         c.coordinator.issuer.validate_intent(evicted)
@@ -795,3 +797,48 @@ def test_agent_turn_without_user_message_builds_no_review_owner(native_review, w
     controller = _ComposeController()
     assert _compose(controller, None, c.session.id, wake=wake) is None
     assert controller._code_review is None
+
+
+def test_narrowed_request_from_a_failed_prepare_stays_evictable(native_review):
+    """A prepare that narrows, then fails capture, must not pin a slot forever."""
+    c = native_review
+    first = c.accept("Review my changes 0.")
+    stale_grant, _ = c.grants(first)
+    for index in range(1, 64):
+        c.grants(c.accept(f"Review my changes {index}."))
+    latest = c.accept("Review my changes again.")
+    assert first.id not in c.coordinator._requests
+    assert first.id not in c.coordinator._narrowed
+    assert latest.id in c.coordinator._requests
+    with pytest.raises(ReviewRefused, match="stage_grant_unavailable"):
+        c.coordinator.issuer.validate(stale_grant)
+
+
+def test_decline_without_a_bound_root_consumes_the_offer_silently(native_dispatch):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    c.coordinator.offer_stage(c.prepared.review_id)
+    message = c.chat_store.append_message(
+        "chat", role=ConsoleMessageRole.USER, content="no"
+    )
+    assert _compose(_ComposeController(c.coordinator), message, "chat") is None
+    assert "chat" not in c.coordinator._offers
+
+
+def test_no_second_offer_once_verification_has_started(native_dispatch):
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    offers = []
+    c.coordinator.present_report = lambda *args: True
+    c.coordinator.present_offer = lambda *args: offers.append(args) or True
+    c.coordinator.on_settled(c.prepared.review_id)
+    assert len(offers) == 1
+    # "yes" consumed the offer and the verifier slot was scheduled; a later
+    # retried reviewer settling must not offer verification again.
+    c.coordinator._offers.clear()
+    with c.store.lease(c.prepared.review_id) as context:
+        verifier = next(
+            slot.slot_id for slot in c.primary.slots(context) if slot.role == "verifier"
+        )
+        context.scheduled_attempts[verifier] = "verifier-attempt"
+    c.coordinator.on_settled(c.prepared.review_id)
+    assert len(offers) == 1
+    assert "chat" not in c.coordinator._offers
