@@ -546,7 +546,8 @@ _BUDGETS: dict[str, int] = {
     # 25693 -> 25705 (+12). The conversation search gains `title_only` (the
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25693,
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/config.py": 12251,
     "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
@@ -558,7 +559,8 @@ _BUDGETS: dict[str, int] = {
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
     # asks storage for its count by title only (owner decision 2026-10-27),
     # so the two can no longer disagree.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
