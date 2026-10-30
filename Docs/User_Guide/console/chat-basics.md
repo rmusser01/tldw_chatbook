@@ -357,7 +357,8 @@ as its block format.
 Pasting more than 50 characters (configurable) collapses the paste into a
 single token reading "Pasted text | N characters | Expand". A text file you
 insert and a large `/prompt` insert become tokens too; a file's token shows
-its name, for example "📄 notes.md · 4 KB | Expand".
+its name, for example "📄 notes.md · 4 KB | Expand". Nothing collapses inside
+a raw CLI command (see Raw CLI user commands below).
 
 Enter sends the draft, every token in full, unless the caret is on a token,
 which means right before it. A caret right after a token is not on it, so
@@ -409,7 +410,9 @@ To run a command, physically type the exact prefix `! ` (exclamation mark,
 space), then type or paste the command body and send. Pasting the prefix cannot
 select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
-Start with `\! ` to send an ordinary chat message beginning with literal `! `;
+Text you paste or a file you insert after the prefix is never collapsed into
+a token, however long it is, so the whole command is on screen before Enter
+or **Run** starts it. Start with `\! ` to send an ordinary chat message beginning with literal `! `;
 it is sent without the backslash and leaves the composer like any message.
 When raw mode is recognized, the composer turns red and its status names the
 raw CLI state before you send:
