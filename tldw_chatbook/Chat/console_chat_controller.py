@@ -342,7 +342,10 @@ from tldw_chatbook.Chat.console_configuration_capture import (
     capture_prompt_transform_inputs as capture_prompt_transform_inputs,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
     capture_skill_context_maximum as capture_skill_context_maximum,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
 )
-from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+from tldw_chatbook.Chat.console_compaction_gate import (
+    refuse_at_ask_trigger,
+    refuse_without_card,
+)
 from tldw_chatbook.Chat.console_turn_context import (
     commit_fence_configuration,
     read_session_change_review_admission,
@@ -24081,13 +24084,18 @@ class ConsoleChatController:
             The result to return for a held or refused send, else ``None``.
         """
 
+        # TASK-33621.4: a queued or Buddy send cannot show the hold card; at
+        # the Ask trigger it is refused here, before commit, never Failed.
+        card = origin is ConsoleSubmissionOrigin.MANUAL and not preserve_composer
+        mode = self._compaction_mode_for(session)
         if (
-            origin is not ConsoleSubmissionOrigin.MANUAL
+            origin
+            not in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
             or preparation is None
-            or preserve_composer
             or preparation.preparation_id in self._compaction_hold_answered
             or not isinstance(resolution, ConsoleProviderResolution)
-            or self._compaction_mode_for(session) is ContextCompactionMode.OFF
+            or mode is ContextCompactionMode.OFF
+            or (not card and mode is not ContextCompactionMode.ASK)
         ):
             return None
         hold, alert = await self._assess_context_compaction(
@@ -24099,6 +24107,15 @@ class ConsoleChatController:
                 echoed_user.id if echoed_user is not None else None
             ),
         )
+        if not card:
+            return refuse_without_card(
+                self,
+                preparation,
+                hold,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                preserve_composer=preserve_composer,
+            )
         if alert is not None:
             # Compacting cannot make it fit: refuse before commit, so the
             # alert is not buried under a dispatch-recovery panel and the

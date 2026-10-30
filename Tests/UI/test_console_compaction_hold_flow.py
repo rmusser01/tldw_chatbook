@@ -115,11 +115,12 @@ async def _send(console, host, runtime_tasks, draft: str) -> None:
     await console._sync_native_console_chat_ui()
 
 
-async def _drive_to_hold(host, pilot, monkeypatch, adapter, adapter_calls):
-    """Send until the custom budget's Ask trigger holds a send; return the hold.
+async def _ask_console(host, pilot, monkeypatch, adapter):
+    """Open Console on the custom Ask budget with the provider call doubled.
 
     Returns:
-        ``(console, controller, session, runtime, held_draft)``.
+        ``(console, controller, session, runtime, runtime_tasks)``; every
+        accepted turn's task is appended to ``runtime_tasks``.
     """
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -144,7 +145,18 @@ async def _drive_to_hold(host, pilot, monkeypatch, adapter, adapter_calls):
         return turn_id
 
     monkeypatch.setattr(runtime, "accept_turn", capture_turn)
+    return console, controller, session, runtime, runtime_tasks
 
+
+async def _drive_to_hold(host, pilot, monkeypatch, adapter, adapter_calls):
+    """Send until the custom budget's Ask trigger holds a send; return the hold.
+
+    Returns:
+        ``(console, controller, session, runtime, held_draft)``.
+    """
+    console, controller, session, runtime, runtime_tasks = await _ask_console(
+        host, pilot, monkeypatch, adapter
+    )
     held_draft = None
     for index in range(12):
         draft = f"question-{index}: explain step {index} in detail."
