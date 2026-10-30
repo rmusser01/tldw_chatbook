@@ -781,7 +781,8 @@ user text (exact match, then unique prefix). Bare `/prompt`, or an
 ambiguous/unknown name, opens the **Insert prompt** picker ("Search
 prompts…"; empty state "No saved prompts yet — create them in Library ▸
 Prompts."). A large prompt body arrives in the composer as a collapsed
-paste token: click it, or press Enter with the caret on it, to expand it.
+paste token. Enter sends it as it is; to expand it, click it, or press Left
+to put the caret right before it and then Enter.
 
 Saved Prompt System and User lanes may contain insertion-time variables such
 as `{customer}`. Names are case-sensitive and must match
