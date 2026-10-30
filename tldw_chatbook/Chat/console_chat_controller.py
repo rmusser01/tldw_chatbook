@@ -3795,6 +3795,8 @@ class ConsoleChatController:
         # Held after skills / retrieval / hooks already ran (rare, late check):
         # the resumed pass must not append their notes and events again.
         self._compaction_hold_after_effects: set[str] = set()
+        # TASK-33621.8: per session, the last retrieval trace event written.
+        self._recorded_retrieval_events: dict[str, str] = {}
         self._ordinary_native_commits: dict[str, _OrdinaryNativeCommitOwner] = {}
         self._durable_postcommit_continuations: dict[
             str, _DurablePostcommitContinuation
@@ -10763,11 +10765,15 @@ class ConsoleChatController:
                         else ()
                     ),
                 )
+            # TASK-33621.8: name only a retrieval event this turn wrote; the
+            # staged (frozen) and prepared-bundle routes write none.
+            retrieval_event_id = self._recorded_retrieval_events.pop(session.id, None)
             if citation_context and echoed_user is not None and not repeated_pass:
                 trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
-                retrieval_event_id = f"{trace_prefix}:retrieval_completed"
+                if not str(retrieval_event_id).startswith(f"{trace_prefix}:"):
+                    retrieval_event_id = None
                 attached_event_id = f"{trace_prefix}:context_attached"
-                self.store.record_trace_event(
+                if not self.store.record_trace_event(
                     session.id,
                     anchor_message_id=echoed_user.id,
                     event_kind="context_attached",
@@ -10777,7 +10783,8 @@ class ConsoleChatController:
                     parent_event_id=retrieval_event_id,
                     source_event_id=retrieval_event_id,
                     sensitivity="system_context",
-                )
+                ):
+                    attached_event_id = None
                 self.store.record_trace_event(
                     session.id,
                     anchor_message_id=echoed_user.id,
@@ -22456,7 +22463,7 @@ class ConsoleChatController:
             if session_id is None or anchor_message_id is None:
                 return
             event_id = f"{trace_prefix}:{event_kind}"
-            self.store.record_trace_event(
+            if self.store.record_trace_event(
                 session_id,
                 anchor_message_id=anchor_message_id,
                 event_kind=event_kind,
@@ -22466,8 +22473,9 @@ class ConsoleChatController:
                 parent_event_id=previous_event_id,
                 source_event_id=previous_event_id,
                 sensitivity="retrieval_metadata",
-            )
-            previous_event_id = event_id
+            ):  # an unwritten event is never named as a parent (TASK-33621.8)
+                previous_event_id = event_id
+                self._recorded_retrieval_events[session_id] = event_id
 
         record("retrieval_started", "Retrieval started", "started")
         try:
