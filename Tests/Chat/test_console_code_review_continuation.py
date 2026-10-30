@@ -121,7 +121,10 @@ async def test_default_two_child_schedule(
     app.unified_mcp_service = mcp
     mounted = app.run_test(size=(100, 30))
     await mounted.__aenter__()
-    controller.app = app
+    # Stands in for ChatScreen's attach: the app plus the report presenter.
+    from tldw_chatbook.UI.Console_Modules import review_reports
+
+    review_reports.attach_app(controller, app)
     controller.request_mcp_approvals = lambda calls, **kw: (
         {call.llm_name: permission_decision for call in calls}
         if permission_decision

@@ -466,6 +466,32 @@ def test_concurrent_settlement_callbacks_present_each_original_once(native_dispa
     assert len(presented) == 1
 
 
+def test_settled_while_headless_is_presented_on_attach_then_offered(native_dispatch):
+    """A review that settles with no Console view stays pending, not lost.
+
+    The launch wake attaches the app but no view, so nothing can present the
+    originals; the verification offer needs every original presented first.
+    When a view attaches, ``present_pending`` presents them and then offers.
+    """
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    presented, offered = [], []
+    c.coordinator.present_offer = lambda session_id, review_id: (
+        offered.append(review_id) or True
+    )
+    c.coordinator.present_report = lambda *args: False  # headless: no view
+    c.coordinator.on_settled(c.prepared.review_id)
+    assert offered == []
+
+    c.coordinator.present_report = lambda *args: presented.append(args) or True
+    c.coordinator.present_pending()
+
+    assert [args[1] for args in presented] == [c.prepared.review_id]
+    assert offered == [c.prepared.review_id]
+    # Idempotent: a second attach presents nothing new and never re-offers.
+    c.coordinator.present_pending()
+    assert len(presented) == 1 and offered == [c.prepared.review_id]
+
+
 @pytest.mark.asyncio
 async def test_native_issuer_registration_tracks_actual_runtime_attachment(tmp_path):
     from Tests.Chat.test_console_agent_swap import _controller

@@ -555,12 +555,33 @@ class ConsoleCodeReviewCoordinator:
         with self._presentation_lock:
             self._present_settled(review_id)
 
+    def present_pending(self):
+        """Present originals left pending while no Console view could show them.
+
+        A review can settle with no view attached (the launch wake attaches
+        only the app), and its verification offer waits for every original.
+        A view attach calls this, off the UI loop; boundaries are not resealed.
+        """
+        with self._lock:
+            review_ids = list(self._reviews)
+        for review_id in review_ids:
+            with self._presentation_lock:
+                self._present_originals_and_offer(review_id)
+
     def _present_settled(self, review_id):
         """Present actual originals, then notify outside every store lock."""
+        if not self._present_originals_and_offer(review_id):
+            return
+        receipt = self.seal_next_boundary(review_id)
+        if receipt is not None and self._on_boundary is not None:
+            self._on_boundary(receipt)
+
+    def _present_originals_and_offer(self, review_id) -> bool:
+        """Present settled originals, then the offer; False for an unknown review."""
         with self._lock:
             service = self._reviews.get(review_id)
         if service is None:
-            return
+            return False
         pending = []
         with service.store._tab.lock, service.store.lease(review_id) as context:
             for slot in service.slots(context):
@@ -624,9 +645,7 @@ class ConsoleCodeReviewCoordinator:
                 and self.present_offer(service.store._session_id, review_id)
             ):
                 self.offer_stage(review_id)
-        receipt = self.seal_next_boundary(review_id)
-        if receipt is not None and self._on_boundary is not None:
-            self._on_boundary(receipt)
+        return True
 
     def report_service(self, session_id: str, review_id: str | None = None):
         """Native screen lookup constrained to the owning active Console chat."""
