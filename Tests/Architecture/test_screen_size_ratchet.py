@@ -1409,6 +1409,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: decision): the screen's class-forwarded interlock release goes through
     #: the controller's ONE release body (its docstring names what a release
     #: owes): 38885 -> 38891 lines, 1400 methods (measured with ``_measure``).
+    #: 2026-10-29, TASK-34000.40 final review Task 10 N-1 + m-2 (same owner
+    #: decision): the two lasting-sync Back controls and Cancel import name
+    #: their Enter action (one decision with the Escape chip; the import tier
+    #: appends the focus chip), and the Folder files Ctrl+S refusal answers a
+    #: marker, never the raw state: 38891 -> 38912 lines, 1400 methods
+    #: (measured with ``_measure``).
     "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38149, 1375),
 }
 

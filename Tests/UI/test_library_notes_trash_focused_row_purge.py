@@ -38,7 +38,6 @@ from Tests.UI.test_library_notes_trash_pages_and_purges_extended import (
 )
 from Tests.UI.test_library_shell import LibraryProductionCSSHarness, _seed_conversations
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-from tldw_chatbook.Widgets.Library.library_notes_canvas import PURGE_BUSY_NOTICE
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -95,6 +94,10 @@ def _rows(screen) -> list:
 async def test_every_unfocused_title_reads_whole_and_a_title_click_restores_nothing(
     tmp_path, monkeypatch
 ) -> None:
+    # Review R1 m-r1-2: the canvas constant is read here, where the busy
+    # arm uses it, not at module level.
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import PURGE_BUSY_NOTICE
+
     app = _build_test_app()
     _seed_conversations(app, [])
     seed = _JournalSeed(tmp_path)
