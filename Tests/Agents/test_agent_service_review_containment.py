@@ -43,13 +43,16 @@ pytestmark = pytest.mark.bootstrap_profile
 # -- check-ending rule, on the real invoke/observation seams -------------------
 
 
-def _checked_service(behave, *, end=None, prepare=None, hook=None):
-    """A service whose code-review owner is a recording stub."""
+def _checked_service(
+    behave, *, end=None, prepare=None, hook=None, claimed=False, review=None
+):
+    """A service whose code-review owner is a recording stub (or ``review``)."""
     ended = []
-    stub = SimpleNamespace(
+    stub = review or SimpleNamespace(
         end_check_actor=end
         or (lambda run_id, reason, **kw: ended.append((run_id, reason, kw))),
         prepare_check_process=prepare or (lambda call: contextlib.nullcontext()),
+        is_claimed_check_call=lambda run_id, call: claimed,
     )
     registry = ToolCatalogRegistry()
     registry.register_provider(_Provider(behave))
@@ -114,12 +117,66 @@ def test_check_gate_block_keeps_the_claim_it_protects():
     assert ended == []
 
 
-@pytest.mark.parametrize("name,ends", [("shell_exec", True), ("probe", False)])
-def test_approval_denial_ends_checks_only_for_the_check_process_tool(name, ends):
-    service, _config, ended = _checked_service(lambda: ToolResult(ok=True))
+@pytest.mark.parametrize("claimed", [True, False])
+def test_approval_denial_ends_checks_only_for_the_claimed_check_process(claimed):
+    service, _config, ended = _checked_service(
+        lambda: ToolResult(ok=True), claimed=claimed
+    )
     denied = ToolResult(ok=False, error="deny", outcome="review_denied")
-    service._fire_post_tool_dispatch(ToolCall(name=name, args={}), denied, 0.0, "p")
-    assert bool(ended) is ends
+    service._fire_post_tool_dispatch(
+        ToolCall(name="shell_exec", args={}), denied, 0.0, "p"
+    )
+    assert bool(ended) is claimed
+
+
+def test_claimed_check_predicate_matches_only_the_bound_process(
+    review_case, monkeypatch
+):
+    """Only the claimed check's own argv-exact process denial ends its wait."""
+    from tldw_chatbook.Agents.code_review_checks import (
+        PendingCheck,
+        ReviewCheckExecution,
+    )
+
+    c = review_case
+    prepared = c.prepare()
+    spec = {
+        "command": "python -m pytest -q",
+        "shell": "auto",
+        "initial_directory": str(c.root),
+        "timeout_seconds": 30.0,
+    }
+    check = PendingCheck("p1", None, None, "verifier", "primary")
+    check.execution = ReviewCheckExecution(c.primary, None, check, None, None, spec)
+    with c.store.lease(prepared.review_id) as context:
+        context.checks["p1"] = check
+    ended = []
+    monkeypatch.setattr(
+        c.primary,
+        "end_check_actor",
+        lambda run_id, reason, **kw: ended.append((run_id, reason)),
+    )
+    service, _config, _ = _checked_service(
+        lambda: ToolResult(ok=True), review=c.primary
+    )
+    denied = ToolResult(ok=False, error="deny", outcome="review_denied")
+    claimed = ToolCall(name="shell_exec", args=dict(spec))
+    unrelated = ToolCall(name="shell_exec", args={**spec, "command": "ls"})
+    try:
+        assert c.primary.is_claimed_check_call("primary", claimed)
+        assert not c.primary.is_claimed_check_call("other-run", claimed)
+        assert not c.primary.is_claimed_check_call(
+            "primary", ToolCall(name="fs_read", args=dict(spec))
+        )
+        service._fire_post_tool_dispatch(unrelated, denied, 0.0, "primary")
+        assert ended == []
+        service._fire_post_tool_dispatch(claimed, denied, 0.0, "primary")
+        assert ended == [("primary", "deny")]
+        check.execution.started = True
+        assert not c.primary.is_claimed_check_call("primary", claimed)
+    finally:
+        with c.store.lease(prepared.review_id) as context:
+            context.checks.pop("p1")
 
 
 def test_raising_check_cleanup_keeps_the_result_and_post_dispatch_hook():

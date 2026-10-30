@@ -879,13 +879,19 @@ def settle_review_capture(
 
 
 def end_review_checks(
-    self, run_id: str, reason: str, *, unstarted_only: bool = False
+    self,
+    run_id: str,
+    reason: str,
+    *,
+    unstarted_only: bool = False,
+    denied_call=None,
 ) -> None:
     """Signal this run's pending review checks; never raises.
 
     Callers are containment seams (end-of-turn settling, post-dispatch
     observation): a check-store failure must not skip the fleet settle or
-    discard an already executed tool result.
+    discard an already executed tool result. With ``denied_call``, checks end
+    only when that call is the claimed check's own process.
     """
     from tldw_chatbook.Agents import agent_service as runtime
 
@@ -895,10 +901,11 @@ def end_review_checks(
             return
         from .code_review_tool_provider import CodeReviewToolProvider
 
-        if type(owner[1]) is CodeReviewToolProvider:
-            owner[1].service.end_check_actor(
-                run_id, reason, unstarted_only=unstarted_only
-            )
+        if type(owner[1]) is not CodeReviewToolProvider:
+            return
+        service = owner[1].service
+        if denied_call is None or service.is_claimed_check_call(run_id, denied_call):
+            service.end_check_actor(run_id, reason, unstarted_only=unstarted_only)
     except Exception as exc:  # noqa: BLE001 - never break the caller's seam
         runtime.logger.warning(
             "could not end review checks run_id={} error_type={}",
@@ -917,19 +924,19 @@ def end_checks_after_refusal(self, call, result, run_id: str) -> None:
     guide says to retry (``invalid_source_range``,
     ``submission_revision_conflict``), the check gate's block of a
     non-matching ``shell_exec`` (the very claim it protects) and unrelated
-    tool failures. A started claimed execution settles through its own
+    tool failures or denials. A started claimed execution settles through its own
     activation scope; primary finalization ends whatever remains.
     """
     if result.ok:
         return
-    admission = (result.error or "").startswith(TOOL_ADMISSION_REFUSED)
-    # shell_exec is the only process tool a claimed check binds
-    # (CodeReviewService.prepare_check_process).
-    denial = result.outcome == "review_denied" and call.name == "shell_exec"
-    if admission or denial:
-        end_review_checks(
-            self, run_id, result.error or "tool_unavailable", unstarted_only=True
-        )
+    reason = result.error or "tool_unavailable"
+    if (result.error or "").startswith(TOOL_ADMISSION_REFUSED):
+        end_review_checks(self, run_id, reason, unstarted_only=True)
+    elif result.outcome == "review_denied":
+        # Only a denial of the claimed check's own argv-exact process
+        # (CodeReviewService.is_claimed_check_call); any other denied call,
+        # including an unrelated shell_exec, leaves the claim pending.
+        end_review_checks(self, run_id, reason, unstarted_only=True, denied_call=call)
 
 
 def attach_review_launch(review_service, review_launch, run_id: str) -> None:
