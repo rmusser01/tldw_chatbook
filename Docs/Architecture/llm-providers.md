@@ -177,10 +177,13 @@ chain with `usage_unknown` (ADR-134). There is no estimate/refund fallback.
 
 A custom endpoint that rejects the option is not a send failure:
 `hosted_chat.owned_json_post` retries once without `stream_options` when a 400
-body names it, as `chat_with_openai`/`chat_with_huggingface` do. Any other 400
-(or a second rejection) surfaces as the ordinary typed provider error, and the
-degraded stream simply carries no usage (so automatic work pauses with
-`usage_unknown` rather than estimating).
+(or FastAPI-style 422) body names it, as `chat_with_openai`/`chat_with_huggingface`
+do. The engine enables this only for records whose stream may end without usage
+(`tolerant_response_extras` or `stream_usage_optional`); a strict preset keeps the
+clean 400, because a usage-free retry would bill a whole generation and then fail
+for missing usage. Any other rejection (or a second one) surfaces as the ordinary
+typed provider error, and the degraded stream simply carries no usage (so
+automatic work pauses with `usage_unknown` rather than estimating).
 The local synthetic two-request differential for TASK-35582 established that the
 qualification server omitted usage without the option and supplied complete
 usage with it. This diagnoses the current server behavior; the earlier retained

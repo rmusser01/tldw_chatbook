@@ -229,7 +229,9 @@ class ProviderRecord:
     # ``stream_usage_optional`` is for providers whose documented chunk schema
     # carries no usage at all -- the stream then ends as a usage-None turn
     # (finish reason still required). Both default off so existing presets
-    # send byte-identical payloads.
+    # send byte-identical payloads; CUSTOM_HOSTED opts in (TASK-35582) and,
+    # like every record whose stream may end without usage, the transport
+    # retries once without ``stream_options`` when a server rejects it.
     stream_include_usage: bool = False
     stream_usage_optional: bool = False
     # Provider status envelope (TASK-33201): the top-level object some
