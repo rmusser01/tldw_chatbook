@@ -1540,7 +1540,10 @@ def test_joined_continuation_never_logs_private_tool_arguments_or_results(
             # owner (production always passes assistant_message_id and
             # derives the owner key from the continuation target).
             continuation_target=target,
-            expand_provider_continuation=lambda _checkpoint: [],
+            # Production's only expander: an active checkpoint always
+            # projects its exact native batch (an empty projection is an
+            # impossible resume state the runtime refuses).
+            expand_provider_continuation=ConsoleProviderGateway.expand_provider_continuation,
             resume_provider_continuation=True,
         )
     finally:

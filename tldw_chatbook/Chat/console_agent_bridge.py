@@ -5732,7 +5732,8 @@ class ConsoleAgentBridge:
                 protocol=protocol,
                 model=model_name,
                 api_base_url=base_url,
-                selected_provider=resolution.selected_provider or resolution.provider,
+                selected_provider=getattr(resolution, "selected_provider", None)
+                or getattr(resolution, "provider", None),
             )
         if continuation_target is not None and continuation_owner_key is None:
             continuation_owner_key = CONTINUATION_OWNER_KEY
@@ -7454,12 +7455,7 @@ class ConsoleAgentBridge:
                 bind_plugin_root(event.context.run_id)
             self._store.persist_provider_continuation_event(
                 event,
-                continuation_target=(
-                    continuation_target
-                    if getattr(resolution, "endpoint_provenance", None)
-                    != ConsoleEndpointProvenance.EPHEMERAL_SESSION
-                    else None
-                ),
+                continuation_target=continuation_target,
                 checkpoint_finalizer=(
                     finalize_managed_checkpoint if plugin_entries else None
                 ),
@@ -7685,9 +7681,13 @@ class ConsoleAgentBridge:
                 should_cancel=should_cancel,
                 supersede_run_id=supersede_run_id,
                 continuation_owner_message_id=assistant_message_id,
+                # A session-only endpoint keeps its in-turn tool loop but is
+                # never written to durable continuation state.
                 continuation_durability=(
                     "ephemeral"
                     if self._store.session_is_ephemeral(session_id)
+                    or getattr(resolution, "endpoint_provenance", None)
+                    == ConsoleEndpointProvenance.EPHEMERAL_SESSION
                     else "persistent"
                 ),
                 restore_provider_continuation=restore_provider_continuation,
