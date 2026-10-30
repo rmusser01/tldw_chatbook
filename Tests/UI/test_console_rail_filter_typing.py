@@ -319,6 +319,59 @@ async def test_the_match_count_and_rows_follow_one_title_rule(tmp_path):
         assert any("Okra recipes" in row for row in rows)
 
 
+def _unpainted_rows(console) -> list[str]:
+    """Matched rows whose cell is painted by something else (clipped/covered)."""
+    hidden = []
+    for row in console.query(".console-workspace-conversation-row"):
+        region = row.region
+        try:
+            hit, _ = console.get_widget_at(region.x + 1, region.y)
+        except Exception:  # noqa: BLE001 - off-screen counts as unpainted
+            hit = None
+        if hit is not row and row not in getattr(hit, "ancestors", ()):
+            hidden.append(f"{str(row.label).splitlines()[0]!r} under {getattr(hit, 'id', hit)}")
+    return hidden
+
+
+@pytest.mark.asyncio
+async def test_every_counted_row_is_painted_after_each_filter(tmp_path):
+    """AC#4: the rows the count promises are ones the user can SEE.
+
+    Keeping the filter row across a rebuild leaves it laid out while the new
+    children are not yet, and a height fit that ran in that window pinned the
+    tray short (the TASK-37160 mechanism): the matched row sat under the next
+    rail section's header while the status said '1 match'.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    _seed_conversations(app, tmp_path)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, search = await _focused_filter(host, pilot)
+        typed = ""
+        for chunk in ("OK", " 9", "", "Q", "u", "a"):
+            if chunk == "":
+                await pilot.click("#console-workspace-conversation-search-clear")
+                for _ in range(20):
+                    await pilot.pause(0.05)
+                    if not search.value and not console.query(STATUS):
+                        break
+                search.focus()
+                await pilot.pause()
+                typed = ""
+                continue
+            await pilot.press(*("space" if char == " " else char for char in chunk))
+            typed += chunk
+            await pilot.pause(PAST_DEBOUNCE_S)
+            assert await _wait_for_search_to_settle(console, pilot, typed)
+            for _ in range(6):
+                await pilot.pause()
+            status, rows = _shown(console)
+            assert rows, f"{typed!r}: no rows for {status!r}"
+            assert _unpainted_rows(console) == [], f"{typed!r}: {status!r}"
+
+
 # ---------------------------------------------------------------------------
 # The tray itself: what a rebuild may and may not do to a kept filter row.
 # ---------------------------------------------------------------------------

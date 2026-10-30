@@ -880,6 +880,10 @@ class _KeepsConversationFilterRow:
         tray: Any = self
         if not tray.is_attached or tray._pruning:
             return
+        # The kept row stays laid out while the new children are not, so a
+        # fit before the next layout would pin a short height (TASK-37160's
+        # mechanism, made routine by this rebuild): make it wait.
+        tray._fit_waits_for_layout = True
         async with tray.batch():
             doomed = [
                 child
@@ -956,6 +960,9 @@ class ConsoleWorkspaceContextTray(
     _composed_browser_paint: _BrowserPaintRecord | None = None
     #: Live collector for the compose pass currently running, or None.
     _composing_browser_paint: _BrowserPaintRecord | None = None
+    #: TASK-33622.6: set when a rebuild kept the filter row; the height fit
+    #: waits for the screen's next layout (see `_fit_height_to_content`).
+    _fit_waits_for_layout: bool = False
 
     class WorkspaceFilesRequested(Message):
         """Typed request to inspect one stable workspace without activation."""
@@ -1621,6 +1628,13 @@ class ConsoleWorkspaceContextTray(
         if self._maybe_relabel_for_width():
             return
 
+        if self._fit_waits_for_layout:
+            # TASK-33622.6: a rebuild kept the (laid-out) filter row, so the
+            # check below cannot tell that the new children are not laid
+            # out yet; wait for the layout instead of pinning a short tray.
+            self._fit_after_screen_layout()
+            return
+
         content_top = 0
         content_bottom = 1
         for child in self.children:
@@ -1635,15 +1649,7 @@ class ConsoleWorkspaceContextTray(
             )
 
         if content_bottom == 1 and len(self.children) > 1:
-            # Coalesce retries until this screen actually lays out children.
-            if (
-                self.is_mounted
-                and self.display
-                and self._height_fit_layout_signal is None
-            ):
-                signal = self.screen.screen_layout_refresh_signal
-                signal.subscribe(self, self._fit_height_after_layout, immediate=True)
-                self._height_fit_layout_signal = signal
+            self._fit_after_screen_layout()
             return
 
         target_height = max(1, content_bottom - content_top)
@@ -1662,11 +1668,42 @@ class ConsoleWorkspaceContextTray(
             # ds-runtime: The rail region is measured to retain its viewport height during reflow.
             self.set_styles(height=target_height)
 
+    def _fit_after_screen_layout(self) -> None:
+        """Retry the fit once this screen lays out children (coalesced)."""
+        if (
+            self.is_mounted
+            and self.display
+            and self._height_fit_layout_signal is None
+        ):
+            signal = self.screen.screen_layout_refresh_signal
+            signal.subscribe(self, self._fit_height_after_layout, immediate=True)
+            self._height_fit_layout_signal = signal
+
     def _fit_height_after_layout(self, screen: Any) -> None:
         """Retry once after the owning screen supplies fresh child geometry."""
         screen.screen_layout_refresh_signal.unsubscribe(self)
         self._height_fit_layout_signal = None
+        # A layout after a kept-row rebuild finished has laid out its new
+        # children (TASK-33622.6).
+        settled_rebuild = self._fit_waits_for_layout and not self.recompose_in_flight
+        if settled_rebuild:
+            self._fit_waits_for_layout = False
         self.call_after_refresh(self._fit_height_to_content)
+        if settled_rebuild:
+            # The owning section measured this tray while only the kept row
+            # was laid out; nothing else re-measures it once the tray settles.
+            self.call_after_refresh(self._request_owning_section_reconcile)
+
+    def _request_owning_section_reconcile(self) -> None:
+        """Ask the bounded rail section holding this tray to re-measure it."""
+        for ancestor in self.ancestors:
+            if str(getattr(ancestor, "id", "") or "").startswith(
+                "console-bounded-section-"
+            ):
+                request_reconcile = getattr(ancestor, "request_reconcile", None)
+                if callable(request_reconcile):
+                    request_reconcile()
+                return
 
     def _is_inside_rail_section_body(self) -> bool:
         """Return whether this tray is nested in a collapsible rail section body.
