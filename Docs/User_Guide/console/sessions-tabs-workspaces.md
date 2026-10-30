@@ -224,7 +224,7 @@ History remain usable.
 
 | Control | What it does |
 |---|---|
-| "Filter visible titles" + "Clear" | Filters only Default and unassigned conversations, by **title** (case does not matter). The match count counts exactly the rows the filter shows. It does not look inside messages: use **Search all chats…** or Ctrl+K for that. The box keeps your text, its case and the cursor while results update, so you can keep typing through a search. "Clear" empties it without changing Workspaces search |
+| "Filter visible titles" + "Clear" | Filters only Default and unassigned conversations, by **title**. Case is ignored for plain A–Z letters; for accented letters, type the case the title uses. The match count follows the same title rule; when more titles match than the list has room for, it reads "N matches. Showing K of N". It does not look inside messages: use **Search all chats…** or Ctrl+K for that. The box keeps your text, its case and the cursor while results update, so you can keep typing through a search. "Clear" empties it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
 | Conversation row | Click to open it in the Console |
 | "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
