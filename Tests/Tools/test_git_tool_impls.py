@@ -701,3 +701,17 @@ def test_review_index_case_variant_matches_a_single_literal_lookup(
     assert entries["file.txt"] is not None
     assert entries["file.txt"].path == "file.txt"
     assert reader.index("FILE.TXT") is None
+
+
+def test_review_tracked_case_variants_fold_case_but_not_wildcards(tmp_git_repo):
+    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+
+    (tmp_git_repo / "sub").mkdir()
+    (tmp_git_repo / "sub" / "a*.txt").write_text("star\n")
+    _git(tmp_git_repo, "add", ".")
+    _git(tmp_git_repo, "commit", "-m", "nested")
+    reader = ReviewGitReader(tmp_git_repo)
+    assert reader.tracked_case_variants(
+        ("FILE.TXT", "file.txt", "SUB", "Sub/A*.TXT", "sub/ab.txt", "missing.txt")
+    ) == frozenset({"FILE.TXT", "file.txt", "SUB", "Sub/A*.TXT"})
+    assert reader.tracked_case_variants(()) == frozenset()

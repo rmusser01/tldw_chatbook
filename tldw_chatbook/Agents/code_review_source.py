@@ -434,7 +434,10 @@ def _capture(target, authority, store, context, root, exclusions):
             if not _in_scope(path, target.scope):
                 raise ReviewRefused("invalid_untracked_selection")
         paths = tuple(dict.fromkeys((*staged, *unstaged)))
-        indexed = reader.index_entries((*paths, *target.untracked_paths))
+        indexed = reader.index_entries(paths)
+        # Exact or case-variant (or directory) tracked paths are not untracked.
+        if reader.tracked_case_variants(target.untracked_paths):
+            raise ReviewRefused("invalid_untracked_selection")
         for path in paths:
             selected["base", path] = reader.entry(head, path)
             selected["staged", path] = indexed[path]
@@ -442,8 +445,6 @@ def _capture(target, authority, store, context, root, exclusions):
                 selected["worktree", path] = "mutable"
                 mutable.add(path)
         for path in target.untracked_paths:
-            if indexed[path] is not None:
-                raise ReviewRefused("invalid_untracked_selection")
             selected["worktree", path] = "mutable"
             mutable.add(path)
     else:
@@ -632,17 +633,13 @@ def _capture(target, authority, store, context, root, exclusions):
                 raise ReviewRefused("source_drift")
             # A fresh index read: drift between the passes is still seen.
             staged_now = reader.index_entries(
-                (
-                    *(path for side, path in selected if side == "staged"),
-                    *target.untracked_paths,
-                )
+                path for side, path in selected if side == "staged"
             )
             for (side, path), entry in selected.items():
                 if side == "staged" and staged_now[path] != entry:
                     raise ReviewRefused("source_drift")
-            for path in target.untracked_paths:
-                if staged_now[path] is not None:
-                    raise ReviewRefused("source_drift")
+            if reader.tracked_case_variants(target.untracked_paths):
+                raise ReviewRefused("source_drift")
         if not authority.admitted.guard(False):
             raise ReviewRefused("source_authority_unavailable")
         identity = {
