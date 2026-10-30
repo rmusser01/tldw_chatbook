@@ -510,12 +510,29 @@ async def test_a_rebuild_that_drops_the_focused_chat_keeps_focus_in_the_tray(
             restorer == "rail"
         ), f"setup: Textual's reset lands on {_describe(reset)}"
 
+        # The prediction above is the code under test; also record where
+        # Textual's reset really landed (the first focus change mid-rebuild).
+        landings: list = []
+        set_focus = app.screen.set_focus
+
+        def recording_set_focus(widget, *args, **kwargs):
+            if tray.recompose_in_flight and not landings:
+                landings.append(widget)
+            return set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(app.screen, "set_focus", recording_set_focus)
         rail.sync_workspace_context(_chats_state(after, **after_kw))
         assert await _wait_until(
             pilot, lambda: not control.is_attached and not tray.recompose_in_flight
         ), "the tray never rebuilt the rows"
         await pilot.pause(0.3)
         await _settle(pilot)
+        assert landings == [reset], (
+            f"setup: Textual's reset landed on {_describe(landings[0])}, "
+            f"not the predicted {_describe(reset)}"
+            if landings
+            else "setup: Textual's reset never moved focus"
+        )
 
         focused = app.focused
         assert focused is not None and focused.is_attached, (
