@@ -474,20 +474,21 @@ async def test_native_issuer_registration_tracks_actual_runtime_attachment(tmp_p
         controller.update_agent_runtime(enabled=False, bridge=None)
         assert owner not in db.automatic_work._review_authorities
         controller.update_agent_runtime(enabled=True, bridge=bridge)
+        # The review owner is built on first use (6721ae8830), so attaching a
+        # runtime alone registers no boundary authority.
+        assert owner not in db.automatic_work._review_authorities
+        review = controller.code_review
         assert (
-            db.automatic_work._review_authorities[owner][0]
-            == controller.code_review.validate_boundary
+            db.automatic_work._review_authorities[owner][0] == review.validate_boundary
         )
         session = store.create_session(ephemeral=True)
         message = store.append_message(
             session.id, role=ConsoleMessageRole.USER, content="Review my changes"
         )
-        controller.code_review.bind_accepted_request(
-            message.id, session_id=session.id, source_epoch=0
-        )
-        controller.code_review.issuer.validate_intent(
-            controller.code_review._requests[message.id]
-        )
+        review.bind_accepted_request(message.id, session_id=session.id, source_epoch=0)
+        review.issuer.validate_intent(review._requests[message.id])
+        controller.update_agent_runtime(enabled=False, bridge=None)
+        assert owner not in db.automatic_work._review_authorities
     finally:
         await controller.shutdown()
         store.persistence.db.close()
@@ -583,7 +584,9 @@ async def test_controller_defers_review_owner_until_first_use(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_first_review_owner_matches_registered_ledger(tmp_path, monkeypatch):
+async def test_concurrent_first_review_owner_matches_registered_ledger(
+    tmp_path, monkeypatch
+):
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
@@ -629,7 +632,9 @@ async def test_concurrent_first_review_owner_matches_registered_ledger(tmp_path,
             owners = [first.result(5), second.result(5), controller.code_review]
         authority = ledger._review_authorities[controller.fleet_wake.runtime_owner_id]
         owners.extend(callback.__self__ for callback in authority)
-        assert all(owner is owners[0] for owner in owners), [id(owner) for owner in owners]
+        assert all(owner is owners[0] for owner in owners), [
+            id(owner) for owner in owners
+        ]
         assert len(constructors) == 1
     finally:
         release.set()
