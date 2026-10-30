@@ -34,6 +34,8 @@ explicit gap. Preparation returns review_id, admitted slots, capture/route gaps
 and continuation requirements. Missing/disabled presets, duplicate destinations,
 unknown input capacity, unavailable history, drift, binaries and quota failures
 must remain visible. Do not substitute another model or silently narrow scope.
+State any coverage_gaps (plus coverage_gaps_omitted) before launching reviewers;
+when they narrow the requested scope, get the user's scope choice first.
 
 ## Inspect through captured references
 

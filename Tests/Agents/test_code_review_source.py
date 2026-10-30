@@ -1305,3 +1305,30 @@ def test_oversized_changed_file_is_a_gap_but_a_selected_file_refuses(
                 update={"untracked_paths": ("large-untracked.py",)}
             )
         )
+
+
+def _binary_changes(c, count):
+    names = [f"blob{index:02}.bin" for index in range(count)]
+    for name in names:
+        (c.root / name).write_bytes(b"\x00first")
+    _commit_paths(c.root, "binaries", *names)
+    for name in names:
+        (c.root / name).write_bytes(b"\x00second")
+    return names
+
+
+def test_first_scope_listing_reports_bounded_capture_gaps(source_case):
+    c = source_case
+    _binary_changes(c, 10)
+    (c.root / "secret.txt").write_text("ROTATED\n")
+    manifest = c.capture()
+    query = ListSourceQuery(op="list", relative_dir=".", side="worktree")
+    with c.bound(manifest):
+        first = query_review_source(manifest.review_id, query)
+        again = query_review_source(manifest.review_id, query)
+    reasons = [gap.reason for gap in first.gaps]
+    assert reasons[0] == "excluded_source: 1 changed file(s) withheld"
+    assert reasons[1:8] == [f"binary_source: blob{index:02}.bin" for index in range(7)]
+    assert reasons[8] == "capture_gaps_omitted: 3 more"
+    assert [gap.reason for gap in again.gaps] == reasons
+    assert "secret.txt" not in first.model_dump_json()
