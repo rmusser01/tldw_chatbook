@@ -274,6 +274,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (one branch in action_focus_console_composer_home, one line in the
     #: footer); 24389/737 measured on dev b5150753eb plus this branch.
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24391/737 -> 24389/737.
+    #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24566, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
