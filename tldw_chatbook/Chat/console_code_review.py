@@ -315,19 +315,18 @@ class ConsoleCodeReviewCoordinator:
         ]
         if len(held) < _MAX_ACCEPTED_REQUESTS:
             return
-        # A narrowed request whose prepare failed (quota, history, drift) is
-        # never tracked, so narrowing alone does not pin it. The current turn's
+        # Only a tracked review or an accepted stage pins a request. A narrowed
+        # request whose prepare failed (quota, history, drift) and a stage
+        # admission that accept_stage refused (consent, budget, missing
+        # verifier, already started) never reach either. The current turn's
         # own request is the newest, never the oldest evicted here.
-        in_use = (
-            set(self._accepted_stages)
-            | set(self._stage_admissions)
-            | set().union(*self._review_requests.values())
-        )
+        in_use = set(self._accepted_stages).union(*self._review_requests.values())
         stale = next((key for key in held if key not in in_use), None)
         if stale is None:
             raise ReviewRefused("review_authority_quota_exceeded")
         evicted = self._requests.pop(stale)
         self._narrowed.pop(stale, None)
+        self._stage_admissions.pop(stale, None)
         with self.issuer._lock:
             self.issuer._intents.pop(id(evicted), None)
             self.issuer._grants = {
