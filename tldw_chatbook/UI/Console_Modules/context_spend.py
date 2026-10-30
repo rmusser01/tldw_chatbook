@@ -50,6 +50,7 @@ from ...Widgets.Console import ConsoleSettingsSummary
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    compaction_forecast_rows,
 )
 from ...Widgets.Console.console_status_chips import ConsoleStatusChips
 from ..Console_Modules import console_spend_projection as spend
@@ -258,6 +259,7 @@ class ConsoleContextSpendController:
         self._console_estimate_cache = None
         self._console_estimate_cache_owners = None
         self._console_settled_context_cache = None
+        self._console_compaction_forecast_cache = None
         self._console_settled_spend_cache = None
         self._console_cost_projection_tokens_cache = None
         self._last_console_context_control_state = None
@@ -621,6 +623,9 @@ class ConsoleContextSpendController:
             accounting = controller.context_breakdown_accounting(session_id)
         except Exception:  # noqa: BLE001 - Preserve optional accounting display fallback.
             accounting = None
+        forecast_tokens, forecast_units = self._console_compaction_forecast_inputs(
+            session_id, settings, overrides, global_overrides, memory
+        )
         return build_console_context_control_state(
             settings=settings,
             estimate=estimate,
@@ -636,7 +641,74 @@ class ConsoleContextSpendController:
                 else "auto"
             ),
             thinking_history_effective_policy=thinking_history_effective_policy,
+            forecast_tokens=forecast_tokens,
+            forecast_units=forecast_units,
         )
+
+    def _console_compaction_forecast_inputs(
+        self,
+        session_id: str,
+        settings: ConsoleSessionSettings,
+        overrides: Any,
+        global_overrides: Any,
+        memory: Any,
+    ) -> tuple[int | None, int]:
+        """The next send's conversation tokens and turns, under Ask only.
+
+        TASK-33621.4 AC#3. Counted from the rows ``compaction_forecast_rows``
+        selects (memory text plus turns after its boundary, no system prompt,
+        sources or draft), once per transcript/memory/model change. Nothing
+        is measured until the memory read has warmed (``memory`` None).
+        """
+        from ...Chat.console_context_compaction import EffectiveMemoryResult
+        from ...Chat.console_context_policy import (
+            ContextCompactionMode,
+            merge_context_policy,
+        )
+
+        if not isinstance(memory, EffectiveMemoryResult) or (
+            merge_context_policy(
+                global_overrides=global_overrides, conversation_overrides=overrides
+            ).compaction_mode
+            is not ContextCompactionMode.ASK
+        ):
+            return None, 0
+        store = self._ensure_console_chat_store()
+        history_key, messages, history = self._console_display_history(
+            store, session_id, self._ensure_console_chat_controller()
+        )
+        record = memory.memory
+        key = (
+            history_key,
+            memory.kind,
+            getattr(record, "memory_id", None),
+            getattr(record, "revision", None),
+            settings.provider,
+            settings.model,
+        )
+        cached = self._console_compaction_forecast_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        admitted = [
+            message
+            for message in messages
+            if history.request_ids is None or message.id in history.request_ids
+        ]
+        projected = compaction_forecast_rows(admitted, memory)
+        result: tuple[int | None, int] = (None, 0)
+        if projected is not None:
+            rows, units = projected
+            estimate = self._build_context_estimate(
+                list(rows), settings.provider, settings.model
+            )
+            result = (estimate.used_tokens, units)
+        self._console_compaction_forecast_cache = (key, result)
+        return result
+
+    def compaction_pause_expected(self) -> bool:
+        """Whether the active chat's next send will pause for compaction."""
+        state = self._last_console_context_control_state
+        return state is not None and state.compaction_pause_forecast is not None
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""

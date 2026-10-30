@@ -318,3 +318,70 @@ async def test_the_hold_card_names_its_trigger_and_policy_with_no_dispatch_panel
         if console is not None:
             await console._console_runtime().dispose()
         database.close()
+
+
+@private_profile_test
+async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
+    request, monkeypatch, tmp_path
+):
+    """TASK-33621.4 AC#3 through the real ChatScreen, controller and store.
+
+    Held: the header badge and Inspect's Run line say the send is blocked on
+    the compaction choice (dev said "Ready"). Cancelled: the chat is still
+    over its Ask trigger, so the header, Inspect and the Context chip say
+    the next send will pause for compaction approval.
+    """
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        COMPACTION_PAUSE_FORECAST_COPY,
+    )
+    from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
+        project_console_send_authority,
+    )
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, held_draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+
+            def run_line() -> str:
+                return project_console_send_authority(
+                    console._build_console_inspector_state(None)
+                ).run
+
+            def badge() -> str:
+                return str(console.query_one("#workbench-header-status", Static).content)
+
+            async def settle(predicate) -> None:
+                for _ in range(100):
+                    await console._sync_native_console_chat_ui()
+                    await pilot.pause(0.1)
+                    if predicate():
+                        return
+
+            await settle(lambda: badge() == "Blocked")
+            assert run_line() == "Blocked — compaction choice"
+            assert badge() == "Blocked"
+
+            card = console.query_one(TraceCallRecoveryCallout)
+            button = card.query_one("#console-trace-cancel", Button)
+            button.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await settle(lambda: not card.display)
+            assert console._console_composer_or_none().draft_text() == held_draft
+
+            await settle(lambda: badge() == COMPACTION_PAUSE_FORECAST_COPY)
+            assert run_line() == "Next send pauses for compaction approval"
+            assert badge() == COMPACTION_PAUSE_FORECAST_COPY
+            chip = console._context_spend._build_console_cost_state()
+            assert chip.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
+            assert "Next send pauses for compaction approval" in chip.tooltip
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
