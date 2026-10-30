@@ -10,6 +10,7 @@ reaches it only through the presenter this module installs on attach.
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -29,34 +30,60 @@ def attach_app(controller: Any, app: Any) -> None:
     """
     controller.app = app
     controller.review_report_presenter = present_code_review_original
+    # The runtime calls this after every store activation (ADR-281).
+    controller.review_session_activated = partial(session_activated, controller)
     runtime = getattr(app, "console_runtime", None)
     claim = getattr(runtime, "_attached_generation", None)
     if getattr(controller, "_review_presenter_claim", _UNCLAIMED) == claim:
         return
     controller._review_presenter_claim = claim
+    _schedule_present_pending(controller)
+
+
+def session_activated(controller: Any) -> None:
+    """Present the newly active chat's pending originals on a real switch.
+
+    Args:
+        controller: The Console chat controller whose store changed chats.
+    """
+    session_id = controller.store.active_session_id
+    if getattr(controller, "_review_active_session", None) == session_id:
+        return  # re-activating the active chat is not a switch
+    controller._review_active_session = session_id
+    if session_id is not None:  # None would mean every chat's reviews
+        _schedule_present_pending(controller, session_id)
+
+
+def _schedule_present_pending(controller: Any, session_id: str | None = None) -> None:
+    """Run one off-loop ``present_pending`` pass; owe a full one if busy."""
     coordinator = getattr(controller, "_code_review", None)
     if coordinator is None or not coordinator._reviews:
         return  # never build the review owner just to find nothing pending
     in_flight = getattr(controller, "_review_present_task", None)
     if in_flight is not None and not in_flight.done():
-        return  # the running pass presents onto whichever view is attached
+        # The running pass may already have passed this chat; rerun once.
+        controller._review_present_again = True
+        return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
     # Presenting hops back onto this loop, so it must run off it.
-    task = loop.create_task(asyncio.to_thread(coordinator.present_pending))
+    task = loop.create_task(asyncio.to_thread(coordinator.present_pending, session_id))
     controller._review_present_task = task
-    task.add_done_callback(_log_present_failure)
+    task.add_done_callback(partial(_present_done, controller))
 
 
-def _log_present_failure(task: asyncio.Task) -> None:
-    """Retrieve a failed re-presentation pass; log its type, never its text."""
+def _present_done(controller: Any, task: asyncio.Task) -> None:
+    """Retrieve a failed pass (type only, never text); run an owed pass."""
     if not task.cancelled() and (exc := task.exception()) is not None:
         logger.warning(
             "Console review re-presentation failed | exception_type={}",
             type(exc).__name__,
         )
+    if getattr(controller, "_review_present_again", False):
+        controller._review_present_again = False
+        _schedule_present_pending(controller)
 
 
 def present_code_review_original(

@@ -528,6 +528,62 @@ def test_attach_never_reoffers_an_answered_or_fenced_review(native_dispatch, ans
 
 
 @pytest.mark.asyncio
+async def test_switching_to_a_chat_presents_its_pending_original_once(native_dispatch):
+    """A review that settled in another chat opens when its chat becomes active.
+
+    The store's activation hook (through the runtime) runs one off-loop
+    ``present_pending`` pass for the newly active chat. Switching back and
+    forth never re-offers, a declined offer is never raised again, and
+    re-activating the already active chat schedules nothing.
+    """
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.UI.Console_Modules import review_reports
+
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    store, review_id = c.chat_store, c.prepared.review_id
+    store.create_session(session_id="other", ephemeral=True)
+    store.switch_session("other")
+    presented, offered = [], []
+    c.coordinator.present_offer = lambda session_id, review_id: (
+        offered.append(review_id) or True
+    )
+    # Mirrors the presenter: only the owning chat, while active, can show it.
+    c.coordinator.present_report = lambda session_id, *args: (
+        store.active_session_id == session_id and (presented.append(args) or True)
+    )
+    c.coordinator.on_settled(review_id)
+    assert presented == [] and offered == []
+
+    controller = SimpleNamespace(_code_review=c.coordinator, store=store)
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    review_reports.attach_app(controller, SimpleNamespace(console_runtime=runtime))
+
+    async def switch(session_id):
+        store.switch_session(session_id)
+        await controller._review_present_task
+
+    await controller._review_present_task  # the attach pass: "other" is active
+    await switch("chat")
+    assert len(presented) == 1 and offered == [review_id]
+
+    await switch("other")
+    await switch("chat")
+    assert len(presented) == 1 and offered == [review_id]
+
+    task = controller._review_present_task
+    store.switch_session("chat")  # re-activation, not a switch
+    assert controller._review_present_task is task
+
+    reply = store.append_message("chat", role=ConsoleMessageRole.USER, content="no")
+    c.coordinator.bind_accepted_request(reply.id, session_id="chat", source_epoch=0)
+    await switch("other")
+    await switch("chat")
+    assert len(presented) == 1 and offered == [review_id]
+
+
+@pytest.mark.asyncio
 async def test_native_issuer_registration_tracks_actual_runtime_attachment(tmp_path):
     from Tests.Chat.test_console_agent_swap import _controller
 
