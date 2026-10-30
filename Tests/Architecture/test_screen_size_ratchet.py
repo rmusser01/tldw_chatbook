@@ -228,7 +228,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 7b9fb3d555, which
     #: measures 24329/737 against its own 24331 row: with both fixes,
     #: 24337/737, the exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24337, 737),
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24337/737 -> 24335/737.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
