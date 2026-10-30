@@ -225,8 +225,9 @@ def test_unexpected_launch_failure_releases_the_unaccepted_claim(
     assert c.outcome.subagents_spawned == 1
 
 
-def test_fleet_check_actor_refusal_retires_the_half_applied_attach(
-    dispatch_case, monkeypatch
+@pytest.mark.parametrize("inline", [False, True])
+def test_check_actor_refusal_retires_the_half_applied_attach(
+    dispatch_case, monkeypatch, inline
 ):
     c = dispatch_case
     refused = []
@@ -250,13 +251,115 @@ def test_fleet_check_actor_refusal_retires_the_half_applied_attach(
         )
         return [spawn, spawn]
 
-    c.run(verify=True, prepare_hook=refuse_once, parent_script=parent_script)
+    c.run(
+        verify=True,
+        inline=inline,
+        prepare_hook=refuse_once,
+        parent_script=parent_script,
+    )
+    assert c.outcome.status == "done"
     assert refused and refused[0]
     assert c.db.get_run(refused[0])["status"] == "error"
     assert refused[0] not in c.store._tab.runs
     children = [a for a, _ in c.calls if a.kind == "subagent"]
     assert children and refused[0] not in {a.run_id for a in children}
     assert "verification_attempt_closed" in json.dumps(c.calls[1][1])
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_failed_spawn_gives_its_child_slot_back(dispatch_case, monkeypatch, inline):
+    c = dispatch_case
+    original_loop = agent_service.run_agent_loop
+    remaining = []
+    if inline:
+        # The inline child's run row exists, but its launch raises before a turn.
+        original_fork = AgentService._fork_review_child
+
+        def fork(self, *args, **kwargs):
+            if not remaining:
+                raise RuntimeError("scripted spawn failure")
+            return original_fork(self, *args, **kwargs)
+
+        monkeypatch.setattr(AgentService, "_fork_review_child", fork)
+    else:
+        # Child setup after the slot was counted raises before any launch.
+        original_prompt = agent_service.get_internal_prompt
+
+        def prompt(prompt_id):
+            if not remaining:
+                raise RuntimeError("scripted spawn failure")
+            return original_prompt(prompt_id)
+
+        monkeypatch.setattr(agent_service, "get_internal_prompt", prompt)
+
+    def loop(config, messages, schemas, deps):
+        if config.review_binding is None and not remaining:
+            before = c.primary.capacity().remaining_children
+            with pytest.raises(RuntimeError, match="scripted spawn failure"):
+                deps.spawn(review_id=c.prepared.review_id, review_slot_id="R1")
+            remaining.append((before, c.primary.capacity().remaining_children))
+        return original_loop(config, messages, schemas, deps)
+
+    monkeypatch.setattr(agent_service, "run_agent_loop", loop)
+    c.run(inline=inline)
+    assert remaining == [(2, 2)]
+
+
+def test_thread_start_refusal_survives_a_refused_launch_retirement(
+    dispatch_case, monkeypatch
+):
+    import threading
+
+    c = dispatch_case
+    original_start = threading.Thread.start
+    started = []
+
+    def start(thread):
+        if thread.name.startswith("fleet-") and not started:
+            started.append(thread)
+            raise RuntimeError("scripted fleet start failure")
+        return original_start(thread)
+
+    def expire(c):
+        def retire(claim, run_id):
+            raise ReviewRefused("review_expired")
+
+        monkeypatch.setattr(c.primary, "retire_unstarted_launch", retire)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    c.run(prepare_hook=expire)
+    assert started
+    assert c.outcome.status == "done"
+    assert "could not start sub-agent" in json.dumps(c.calls[1][1])
+
+
+def test_wait_notice_cleanup_failure_still_returns_the_refusal(
+    dispatch_case, monkeypatch
+):
+    c = dispatch_case
+    original_end = CodeReviewService.end_check_actor
+    notices = []
+
+    def notice(self, run_id, child_run_ids):
+        if notices:
+            return None
+        # A notice that cannot fit the live tool-result cap.
+        notices.append(SimpleNamespace(review_id="r" * 100_000, proposal_id="p"))
+        notices[0].child_run_id = child_run_ids[0] if child_run_ids else ""
+        return notices[0]
+
+    def end(self, run_id, reason, **kwargs):
+        if reason == "tool_check_notice_transport_unavailable":
+            raise OSError("scratch quota")
+        return original_end(self, run_id, reason, **kwargs)
+
+    monkeypatch.setattr(CodeReviewService, "pending_check_for_wait", notice)
+    monkeypatch.setattr(CodeReviewService, "end_check_actor", end)
+    c.run()
+    assert notices
+    assert c.outcome.status == "done"
+    primary = [request for actor, request in c.calls if actor.kind == "primary"]
+    assert "check_notice_transport_unavailable" in json.dumps(primary[-1])
 
 
 # -- wake-claim predecessor check ------------------------------------------------
