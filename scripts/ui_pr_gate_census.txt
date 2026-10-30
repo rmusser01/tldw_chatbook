@@ -1634,3 +1634,7 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-33621.22 (2026-10-29): Stop in the pre-provider "Connecting tools…"
+# window settles as Stopped and the next send reaches the provider (two
+# mounted cases, about 16 s locally), appended at the tail.
+Tests/UI/test_console_stop_connecting_tools.py
