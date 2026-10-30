@@ -19,6 +19,7 @@ from typing import Any, Literal, Never, Protocol, cast
 from urllib.parse import unquote, urlsplit
 
 import requests
+from loguru import logger
 from requests.exceptions import RequestException, Timeout as RequestsTimeout
 from urllib3.util import Retry
 
@@ -886,6 +887,31 @@ def owned_json_post(
                     unavailable = model_unavailable_error(config.provider, status, error_payload)
                     if unavailable is not None:
                         raise unavailable
+                if status == 400 and "stream_options" in payload:
+                    from tldw_chatbook.Chat.provider_error_reason import (
+                        bounded_response_body,
+                    )
+
+                    if "stream_options" in bounded_response_body(response):
+                        # Mirror chat_with_openai: a strict OpenAI-compatible
+                        # server may reject the usage option; drop it once.
+                        logger.warning(
+                            "{}: endpoint rejected stream_options; retrying "
+                            "without usage reporting.",
+                            label,
+                        )
+                        _best_effort_close(response)
+                        response = None
+                        return owned_json_post(
+                            config=config,
+                            route=route,
+                            payload={
+                                key: value
+                                for key, value in payload.items()
+                                if key != "stream_options"
+                            },
+                            streaming=streaming,
+                        )
                 _raise_http_error(
                     config.provider,
                     status,

@@ -491,10 +491,17 @@ def test_streaming_reasoning_only_length_stop_reaches_caller_as_token_limit(
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-def test_custom_hosted_requests_usage_only_for_streams_and_preserves_400(
-    monkeypatch, streaming
+@pytest.mark.parametrize(
+    ("body", "names_stream_options"),
+    [
+        (b'{"error":{"message":"stream_options unsupported"}}', True),
+        (b'{"error":{"message":"tools are unsupported"}}', False),
+    ],
+)
+def test_custom_hosted_requests_usage_only_for_streams_and_degrades_once(
+    monkeypatch, streaming, body, names_stream_options
 ):
-    """An unsupported usage option is one typed refusal, never a hidden retry."""
+    """A 400 naming the usage option retries once without it (chat_with_openai)."""
     import requests
 
     from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
@@ -504,7 +511,7 @@ def test_custom_hosted_requests_usage_only_for_streams_and_preserves_400(
     attempts = []
     response = requests.Response()
     response.status_code = 400
-    response._content = b'{"error":{"message":"stream_options unsupported"}}'
+    response._content = body
     response._content_consumed = True
 
     class Session:
@@ -529,8 +536,15 @@ def test_custom_hosted_requests_usage_only_for_streams_and_preserves_400(
             streaming=streaming,
         )
     assert error.value.status_code == 400
-    assert len(attempts) == 1
-    if streaming:
-        assert attempts[0]["stream_options"] == {"include_usage": True}
+    if not streaming:
+        assert attempts == [attempts[0]] and "stream_options" not in attempts[0]
+        return
+    assert attempts[0]["stream_options"] == {"include_usage": True}
+    if names_stream_options:
+        # One degrade retry, then the server's own refusal stands.
+        assert len(attempts) == 2
+        assert attempts[1] == {
+            key: value for key, value in attempts[0].items() if key != "stream_options"
+        }
     else:
-        assert "stream_options" not in attempts[0]
+        assert len(attempts) == 1
