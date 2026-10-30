@@ -28,6 +28,22 @@ MAX_TOKENS_SETTING = "Max tokens in Chat settings ▸ Model and generation (Ctrl
 MODEL_WINDOW_SETTING = "Settings ▸ Providers & Models (F4)"
 
 
+#: TASK-33621.4 AC#5: F1 help's group on what happens at the context limit.
+CONTEXT_LIMIT_HELP: tuple[str, tuple[tuple[str, str], ...]] = (
+    "Context limit",
+    (
+        (
+            "Ask (default)",
+            "a send over the compaction trigger is held: Compact and send, "
+            "Send without compacting, Change policy, or Cancel send",
+        ),
+        ("Before it", "header and Inspect say Next send pauses to compact"),
+        ("/compact", "summarize older turns now (one model call)"),
+        ("/rewind", "Summarize up to here previews what would be summarized"),
+    ),
+)
+
+
 class ContextOverflowCause(str, Enum):
     """Why compacting older turns cannot make a send fit."""
 

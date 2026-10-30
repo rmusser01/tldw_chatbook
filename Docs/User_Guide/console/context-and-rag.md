@@ -117,20 +117,44 @@ and memory:
 - **Ask** (the default). When a message you send would take the chat past its
   compaction threshold, the message is held before anything is sent or saved.
   A card above the transcript shows how many tokens the chat uses out of its
-  budget, and offers three choices:
+  budget and where compaction starts (the trigger, for example "compaction
+  trigger 1,200 tokens (80%)"), and offers four choices:
   - **Compact and send** summarizes older turns, then sends your message. The
     summary is one extra model call and may be billed. If it fails, the card
     stays, says why, and your message is still held.
   - **Send without compacting** sends this one message as it is. Older turns
     that do not fit the model's context window are left out of the request.
+  - **Change policy** opens Chat settings at Context and memory, where you can
+    set **When limit nears** to Automatic or Off, or raise the budget. Your
+    message stays held until you pick one of the other choices.
   - **Cancel send** sends nothing and compacts nothing; your message goes back
     to the composer.
+
+  To see which turns would be summarized before choosing, use `/rewind` ▸
+  **Summarize up to here**: it shows a preview before anything changes, and
+  it works while the message is held (the held message is not offered as a
+  rewind target, because it is not part of the chat yet).
 - **Automatic** compacts and sends without asking.
 - **Off** never compacts.
 
-A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
-with a note instead: use **Compact now** in Chat settings ▸ Context and
-memory (Ctrl+O), then send again.
+You can see the pause coming. Once the chat's history is over its trigger
+under **Ask**, the header badge reads **Next send pauses to compact**,
+Inspect's "What happens if I send now?" Run line reads **Pauses for
+compaction**, and the Context chip in the status strip starts with **Next
+send pauses to compact** (its tooltip gives the numbers). While a message is
+held, the badge reads **Blocked** and the Run line **Blocked — compaction
+ask**. F1 help lists the same in its **Context limit** group.
+
+To compact without sending, type `/compact` or choose **Console: Compact
+context now** from the command palette (Ctrl+P). Both run the same summary as
+**Compact now** in Chat settings ▸ Context and memory (one model call) and
+report the result in the chat.
+
+**Continue**, **Regenerate** and **Retry** cannot show the card. Over the
+trigger they stop before anything is saved, and a note gives the numbers and
+the way on: run `/compact`, then try again, or change **When limit nears**. A
+queued prompt still stops with a note after it is accepted: run `/compact` or
+**Compact now**, then send again.
 
 When compacting cannot make enough room, the message is not sent and the note
 says what fills the window and what to change:
