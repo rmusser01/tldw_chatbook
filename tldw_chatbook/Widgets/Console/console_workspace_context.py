@@ -926,6 +926,15 @@ class _KeepsConversationFilterRow:
             if index + 1 < len(nodes):
                 await tray.mount_all(nodes[index + 1 :], after=kept)
 
+    def _recompose_kept_child(self) -> Horizontal | None:
+        """Name the kept row to ``RecomposeCaptureGuard``'s focus prediction.
+
+        Textual's reset lands on the kept filter input when a focused row
+        control is torn down; counted as removed, the guard missed that and
+        left focus in the filter, where the next key started a search.
+        """
+        return self._filter_row_to_keep()
+
     def _filter_row_to_keep(self) -> Horizontal | None:
         """The tray's own mounted filter row, when a rebuild can keep it."""
         tray: Any = self
@@ -1683,11 +1692,7 @@ class ConsoleWorkspaceContextTray(
 
     def _fit_after_screen_layout(self) -> None:
         """Retry the fit once this screen lays out children (coalesced)."""
-        if (
-            self.is_mounted
-            and self.display
-            and self._height_fit_layout_signal is None
-        ):
+        if self.is_mounted and self.display and self._height_fit_layout_signal is None:
             signal = self.screen.screen_layout_refresh_signal
             signal.subscribe(self, self._fit_height_after_layout, immediate=True)
             self._height_fit_layout_signal = signal
