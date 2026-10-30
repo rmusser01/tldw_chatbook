@@ -600,6 +600,35 @@ same way. Expect the setup-modal and caret-blink cases to flip from run to run u
 shared profile, on dev as well; rerun a suspect alone on both trees before you call it a
 regression.
 
+## A crash fix that makes a value encodable is not a fix until the consumer accepts it (TASK-33621.9, 2026-10-29)
+
+**Incident.** The Inspector could never load a captured call: the native trace
+reader ran `json.dumps(dict(usage))` on usage frozen into nested
+mappingproxy, and every Anthropic and OpenAI call raised TypeError. Deep-thawing
+the value made the reader test pass, but a test that also read the call through
+the production `ConsoleTraceProjection` still returned nothing: the projection
+rejected the now-encodable raw provider keys as `usage_json`, because the
+capture contract carries normalized ProviderUsage. Both layers had to change.
+
+**What to do.** After a serialization fix, read the value through the next real
+consumer (here the projection the Inspector's loader uses), not just the
+function that crashed. Use a payload the provider actually stored (read it from
+a live profile's database) rather than a flat fixture that both layers accept.
+
+## A focused list that "scrolls down one row" may be painted over, not scrolled (TASK-33621.9, 2026-10-29)
+
+**Incident.** The review and its triage both described the Conversation
+Inspector's section list as scrolling one row on focus, hiding Turn 1. The
+painted frame showed no scroll: the app-wide `*:focus` outline was drawn over
+the list's first row, and the first visible text was the second line of a
+wrapped row. A compositor-strip test at 80x24 and 235x52 reproduced it in all
+four list/size cases; TASK-28226's content-safe cue (no outline, focus tint,
+focus-coloured highlight) and single-line rows fixed it.
+
+**What to do.** Before changing scroll logic, read the painted rows inside the
+widget's region (`screen._compositor.render_strips()`). An outline occupies no
+layout space, so geometry and scroll offsets look correct while a row is hidden.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
