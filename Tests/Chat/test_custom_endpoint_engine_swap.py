@@ -1207,7 +1207,7 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
     A swapped custom-ep selection resolves with the IDENTITY spelling on
     ``provider`` (``custom-ep:<slug>``) but executes -- and pins
     checkpoints -- under the EXECUTION key (``custom-hosted``, the registry
-    ``record.key``). ``_continuation_restore_target_for_resolution`` built
+    ``record.key``). ``continuation_restore_target_for_resolution`` built
     the target from ``provider_config_key(resolution.provider)``
     (``custom_ep:paid``), a spelling no checkpoint ever pins, so the durable
     resume/crash-recovery pre-gate (byte-exact by design) matched nothing.
@@ -1215,14 +1215,14 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
     the bridge records -- falling back to the normalized provider only when
     ``execution_key`` is empty.
     """
-    from tldw_chatbook.Chat.console_chat_controller import (
-        _continuation_restore_target_for_resolution,
+    from tldw_chatbook.Chat.console_continuation_binding import (
+        continuation_restore_target_for_resolution,
     )
     from tldw_chatbook.Chat.provider_continuation import (
         validate_continuation_restore,
     )
 
-    target = _continuation_restore_target_for_resolution(
+    target = continuation_restore_target_for_resolution(
         _swap_console_resolution()
     )
     assert target is not None
@@ -1243,7 +1243,7 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
         ConsoleProviderResolution,
     )
 
-    preset = _continuation_restore_target_for_resolution(
+    preset = continuation_restore_target_for_resolution(
         ConsoleProviderResolution(
             provider="Databricks",
             base_url="https://databricks.example/serving-endpoints",
@@ -1261,7 +1261,7 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
     # Fallback: a resolution without an execution key (legacy doubles)
     # keeps the normalized provider spelling, so existing consumers of
     # that path are byte-identical.
-    legacy = _continuation_restore_target_for_resolution(
+    legacy = continuation_restore_target_for_resolution(
         ConsoleProviderResolution(
             provider="DeepSeek",
             base_url="https://api.deepseek.com/v1",
@@ -1288,8 +1288,8 @@ def test_custom_endpoint_swap_target_prepares_through_the_gateway() -> None:
     the pre-gate fix activates this flow, so the comparisons downstream
     must compare execution key to execution key.
     """
-    from tldw_chatbook.Chat.console_chat_controller import (
-        _continuation_restore_target_for_resolution,
+    from tldw_chatbook.Chat.console_continuation_binding import (
+        continuation_restore_target_for_resolution,
     )
     from tldw_chatbook.Chat.console_history_budget import (
         ProviderContinuationSidecar,
@@ -1300,7 +1300,7 @@ def test_custom_endpoint_swap_target_prepares_through_the_gateway() -> None:
     )
 
     resolution = _swap_console_resolution()
-    target = _continuation_restore_target_for_resolution(resolution)
+    target = continuation_restore_target_for_resolution(resolution)
     assert target is not None
     checkpoint = _complete_custom_hosted_checkpoint()
     sidecar = (ProviderContinuationSidecar("a1", checkpoint),)

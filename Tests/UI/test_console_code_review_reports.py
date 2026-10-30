@@ -734,7 +734,7 @@ def test_review_reports_key_is_advertised_and_inert_under_the_setup_card():
 
 
 def test_console_resume_presents_pending_review_originals(monkeypatch):
-    """ChatScreen's resume handler hands the controller to ``view_resumed``."""
+    """ChatScreen's resume handler hands the controller to ``review_view_resumed``."""
     from types import SimpleNamespace
 
     from tldw_chatbook.UI.Console_Modules import wiring

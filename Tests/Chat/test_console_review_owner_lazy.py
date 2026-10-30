@@ -155,9 +155,9 @@ def test_review_offer_on_its_owner_loop_presents_without_deadlock():
 async def test_view_attach_installs_presenter_and_presents_pending_originals():
     """Only a fresh view claim re-presents pending originals, one pass at a time.
 
-    ``attach_app`` runs on every ensure call; a refresh of the same claim must
-    schedule nothing, a claim made mid-pass is owed one pass after it, and a
-    failed pass is retrieved and logged.
+    ``attach_review_presenter`` runs on every ensure call; a refresh of the same
+    claim must schedule nothing, a claim made mid-pass is owed one pass after
+    it, and a failed pass is retrieved and logged.
     """
     import asyncio
     import threading
@@ -184,9 +184,7 @@ async def test_view_attach_installs_presenter_and_presents_pending_originals():
 
     wiring.attach_review_presenter(controller, app)
     assert controller.app is app
-    assert controller.review_report_presenter is (
-        wiring.present_code_review_original
-    )
+    assert controller.review_report_presenter is wiring.present_code_review_original
     first = controller._review_present_task
     runtime._attached_generation = 2  # a fresh claim while the first pass runs
     wiring.attach_review_presenter(controller, app)

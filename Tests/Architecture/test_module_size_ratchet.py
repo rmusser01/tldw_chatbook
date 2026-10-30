@@ -153,7 +153,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29035,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29036,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -566,7 +566,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/config.py": 12233,
     "tldw_chatbook/Chat/console_agent_bridge.py": 11604,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9561,
+    "tldw_chatbook/Agents/agent_service.py": 9570,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.

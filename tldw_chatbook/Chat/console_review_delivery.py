@@ -16,14 +16,7 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-
-
-def _on_owner_loop(controller: Any) -> tuple[Any, bool]:
-    loop = controller._fleet_wake._loop
-    try:
-        return loop, asyncio.get_running_loop() is loop
-    except RuntimeError:
-        return loop, False
+from tldw_chatbook.Chat.console_fleet_wake import owner_loop_state
 
 
 def present_review_status(controller: Any, session_id, review_id, status) -> None:
@@ -38,7 +31,7 @@ def present_review_status(controller: Any, session_id, review_id, status) -> Non
             content=f"Review {review_id}: {status}. Captured progress is retained; a new explicit request can resume an available stage.",
         )
 
-    loop, on_loop = _on_owner_loop(controller)
+    loop, on_loop = owner_loop_state(controller._fleet_wake)
     if on_loop:
         present()
     elif loop is not None and loop.is_running():
@@ -61,7 +54,7 @@ def present_review_offer(controller: Any, session_id, review_id) -> bool:
     async def hop():
         return present()
 
-    loop, on_loop = _on_owner_loop(controller)
+    loop, on_loop = owner_loop_state(controller._fleet_wake)
     if on_loop:
         # Blocking on a coroutine scheduled onto our own loop deadlocks.
         return present()

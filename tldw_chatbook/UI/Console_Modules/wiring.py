@@ -59,6 +59,7 @@ from loguru import logger
 from textual.css.query import QueryError
 
 from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
+from tldw_chatbook.Chat.console_fleet_wake import owner_loop_state
 from tldw_chatbook.Chat.console_fleet_attention import (
     FLEET_UNSEEN_REVISION_ATTR,
     clear_fleet_unseen_completion,
@@ -150,6 +151,8 @@ __all__ = [
     "attach_review_presenter",
     "build_console_controllers",
     "open_code_review_reports",
+    "present_code_review_original",
+    "review_session_activated",
     "review_view_resumed",
 ]
 
@@ -3177,15 +3180,6 @@ _CHARACTER_VIEW_ACCESSORS = (
 _REVIEW_UNCLAIMED = object()
 
 
-def _on_review_owner_loop(controller: Any) -> tuple[Any, bool]:
-    """Mirror `console_review_delivery._on_owner_loop` without loading it."""
-    loop = controller._fleet_wake._loop
-    try:
-        return loop, asyncio.get_running_loop() is loop
-    except RuntimeError:
-        return loop, False
-
-
 def attach_review_presenter(controller: Any, app: Any) -> None:
     """Give the controller the app, the report presenter, and pending originals.
 
@@ -3218,7 +3212,7 @@ def review_session_activated(controller: Any) -> None:
     Args:
         controller: The Console chat controller whose store changed chats.
     """
-    loop, on_loop = _on_review_owner_loop(controller)
+    loop, on_loop = owner_loop_state(controller._fleet_wake)
     if not on_loop:
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(review_session_activated, controller)
@@ -3329,7 +3323,7 @@ def present_code_review_original(
             # A closed/unavailable screen does not acknowledge presentation.
             return False
 
-    loop, on_loop = _on_review_owner_loop(controller)
+    loop, on_loop = owner_loop_state(controller._fleet_wake)
     if not on_loop and loop is not None and loop.is_running():
         call_from_thread = getattr(controller.app, "call_from_thread", None)
         if callable(call_from_thread):
