@@ -492,6 +492,41 @@ def test_settled_while_headless_is_presented_on_attach_then_offered(native_dispa
     assert len(presented) == 1 and offered == [c.prepared.review_id]
 
 
+@pytest.mark.parametrize("answer", ["decline", "fence", "fence_while_pending"])
+def test_attach_never_reoffers_an_answered_or_fenced_review(native_dispatch, answer):
+    """The first yes or no answers the offer, and Stop fences pending work.
+
+    A later view attach (``present_pending``) offers only after presenting a
+    previously pending original, and never for a fenced session.
+    """
+    c = native_dispatch.run(reviewers=1, work_chain_id=native_dispatch.chain_id)
+    presented, offered = [], []
+    c.coordinator.present_offer = lambda session_id, review_id: (
+        offered.append(review_id) or True
+    )
+    showing = answer != "fence_while_pending"
+    c.coordinator.present_report = lambda *args: (
+        presented.append(args) or True if showing else False
+    )
+    c.coordinator.on_settled(c.prepared.review_id)
+    assert offered == ([c.prepared.review_id] if showing else [])
+    if answer == "decline":
+        reply = c.chat_store.append_message(
+            "chat", role=ConsoleMessageRole.USER, content="no"
+        )
+        c.coordinator.bind_accepted_request(reply.id, session_id="chat", source_epoch=0)
+    else:
+        c.coordinator.fence_session("chat")
+    offers_before = list(offered)
+    showing = True
+
+    c.coordinator.present_pending()
+
+    assert offered == offers_before
+    if answer == "fence_while_pending":
+        assert presented == []
+
+
 @pytest.mark.asyncio
 async def test_native_issuer_registration_tracks_actual_runtime_attachment(tmp_path):
     from Tests.Chat.test_console_agent_swap import _controller

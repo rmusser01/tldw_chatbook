@@ -563,10 +563,23 @@ class ConsoleCodeReviewCoordinator:
         A view attach calls this, off the UI loop; boundaries are not resealed.
         """
         with self._lock:
-            review_ids = list(self._reviews)
+            review_ids = [
+                review_id
+                for review_id, service in self._reviews.items()
+                # Stop/close fences pending work: nothing is shown or offered.
+                if service.store._session_id not in self._fenced
+            ]
+        failure = None
         for review_id in review_ids:
-            with self._presentation_lock:
-                self._present_originals_and_offer(review_id)
+            try:
+                with self._presentation_lock:
+                    # Offer only after presenting a previously pending original,
+                    # so an answered offer (yes/no consumed it) is never re-raised.
+                    self._present_originals_and_offer(review_id, offer_if_new=True)
+            except Exception as exc:  # noqa: BLE001 - one review must not starve the rest
+                failure = failure or exc
+        if failure is not None:
+            raise failure
 
     def _present_settled(self, review_id):
         """Present actual originals, then notify outside every store lock."""
@@ -576,8 +589,12 @@ class ConsoleCodeReviewCoordinator:
         if receipt is not None and self._on_boundary is not None:
             self._on_boundary(receipt)
 
-    def _present_originals_and_offer(self, review_id) -> bool:
-        """Present settled originals, then the offer; False for an unknown review."""
+    def _present_originals_and_offer(self, review_id, *, offer_if_new=False) -> bool:
+        """Present settled originals, then the offer; False for an unknown review.
+
+        With ``offer_if_new`` the offer is raised only when this pass presented
+        a previously pending original.
+        """
         with self._lock:
             service = self._reviews.get(review_id)
         if service is None:
@@ -599,6 +616,7 @@ class ConsoleCodeReviewCoordinator:
                 if not report.get("terminal_status"):
                     continue
                 pending.append((slot.slot_id, binding.attempt_id, report))
+        newly_presented = False
         for slot_id, attempt_id, report in pending:
             if self.present_report is None:
                 continue
@@ -608,11 +626,16 @@ class ConsoleCodeReviewCoordinator:
                 service.store._session_id, review_id, report
             )
             if presented:
+                newly_presented = True
                 with service.store._tab.lock, service.store.lease(review_id) as context:
                     binding = context.active_attempts.get(slot_id)
                     if binding is not None and binding.attempt_id == attempt_id:
                         context.presented_attempts.add((slot_id, attempt_id))
-        if service.verification_grant is None and self.present_offer is not None:
+        if (
+            service.verification_grant is None
+            and self.present_offer is not None
+            and (newly_presented or not offer_if_new)
+        ):
             with service.store._tab.lock, service.store.lease(review_id) as context:
                 reviewers = [
                     slot for slot in service.slots(context) if slot.role == "reviewer"
