@@ -823,6 +823,12 @@ setting native_tools alone does not override provider capability policy.
 
 **What to do.** When a test switches off a subsystem that the live path runs, list what that subsystem publishes to the UI during the window the test measures. Drive each of those seams in the test (here the controller's own publish call), and confirm the count once live.
 
+## A test that claims the shipped config must not switch the dispatcher off (TASK-33620.8 review, 2026-10-30)
+
+**Incident.** TASK-33620.8's AC#6 test said it ran "the shipped default config", but a fixture set `[console] agent_runtime = false` so that sends would stay on the provider-gateway double. The default is on, and with a file-backed DB every send runs through `ConsoleAgentBridge`, so neither send path the test covered was the one users get. The independent review caught the mismatch. The override was never needed: the bridge's model adapter streams from the same gateway double. The fix ran the staged and Automatic tests at the default, with a spy on `ConsoleAgentBridge.run_reply` that still runs each turn and asserts every send took it, plus a provider-direct variant. Mutating the checkpoint settle and the transcript-gate reset turned the agent-runtime variants red too.
+
+**What to do.** Before switching a production default off to keep a double in reach, check whether the double is reachable on the default path. If a test has to override a default, its AC and docstring must say so. Assert the path each send took, so the claim is checked rather than assumed.
+
 ## A held rebuild makes later updates skip the path a test meant to cover (TASK-37000, 2026-10-27)
 
 **Incident.** TASK-37000 made the collapsed Inspector hold its rebuilds until the rail opens and re-write row copy without a layout. A mounted test counted layout requests from inside the hidden rail across a chat's first send and a later send: zero on the branch, 56 on dev. Mutation M3 put the layout back on the hidden in-place row update, and the test stayed green. The first send had left a rebuild held, and while one is held every later sync skips the in-place path and waits for the rebuild. The later send never reached the code M3 changed. Two changes caught it: opening and closing the rail between the sends, so the later send meets nothing held, and widget-level cases that drive each path (held rebuild, in-place patch) through the production collapse cascade directly.
