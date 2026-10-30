@@ -127,3 +127,22 @@ Tool Recovery matrix, along with early generated-size checks. Scoped lint has
 only the existing undefined-re diagnostic. Fresh independent review found no
 issues and independently repeated the size/routing checks and multi-chunk
 preview/CAS control. Existing ADR-254 applies; no new ADR is needed.
+
+
+## POSIX bundle import-guard follow-up (TASK-37632)
+
+The full Linux bundle selection passed 194 checks but its import census rejected
+`_write_file_os`'s Windows-only native backend. ADR-181 targets POSIX SSH hosts;
+the import is unreachable there. The AST guard now recognizes only the true
+body of the exact `os.name == "nt"` condition, without expanding the existing
+function allowlist. Three POSIX-reachable condition mutations and an else-body
+mutation still fail the guard. Executing the generated selector itself returns
+the stdlib backend on POSIX and retains the loud import stub on Windows.
+
+The sole fcntl test now imports fcntl inside its POSIX-marked function so the
+portable bundle contracts can also collect on Windows. The original census
+failure reproduced natively before the guard repair. Final targeted checks:
+58 passed, one explicit POSIX skip; two size guards and CI routing passed;
+bundle bytes still match the unchanged builder and lint adds no findings.
+No production source, artifact, budget, workflow or permission changed.
+ADR required: no; this verifies the existing ADR-181 platform boundary.
