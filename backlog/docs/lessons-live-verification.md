@@ -1,5 +1,24 @@
 # Lessons: verifying against the real thing
 
+## A `.txt` capture shows the composer's history ghost text as if it were typed (TASK-33621.51, 2026-10-29)
+
+**Incident.** On the live re-check of the Library outcome line, the second prompt
+was typed as `Project Zephyr launch codename` and the pane text read
+`Project Zephyr launch codename  and launch lead? One short sentence.` (the caret
+cell was blinked off in that capture). It looked like the previous draft had
+survived the send, so the driver cleared the composer with 80 Backspaces and typed
+again; the next capture read `Project Zephyr launch codename▌ and launch lead? …`. The tail is the
+composer's history suggestion (TASK-1364: a render-only suffix of the most recent
+sent prompt with that prefix, drawn `bright_black` after the caret).
+`capture-pane -p` drops the style, so it reads as typed text. Enter sent only the
+typed part: the transcript showed `Project Zephyr launch codename`.
+
+**What to do.** Before deciding the composer holds the wrong draft, look for the
+caret cell (`▌`; it blinks, so one capture may not show it). Text after the caret,
+when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
+bright-black run) or by the message the transcript shows after the send, not by
+the `.txt` row.
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured
