@@ -1,5 +1,5 @@
 ---
-id: TASK-37620
+id: TASK-37960
 title: Closed Console row menus keep claiming Esc
 status: Done
 assignee: []

@@ -2363,7 +2363,7 @@ assertion so it cannot pass vacuously.**
 
 ---
 
-## A widget method named `_detach` silently replaces Textual's own, and closed widgets stay "attached" (TASK-37620, 2026-10-29)
+## A widget method named `_detach` silently replaces Textual's own, and closed widgets stay "attached" (TASK-37960, 2026-10-29)
 
 **Incident.** The Console's conversation- and workspace-row action menus named
 their memoized removal helper `_detach`. Textual already has a
