@@ -109,7 +109,9 @@ Top to bottom:
   streaming — and the reason shows inline next to it (e.g. "Send blocked —
   choose a model to continue ›"), so you never have to hover to find out
   why. When setup is the blocker, that reason is clickable and opens the
-  setup wizard directly.
+  setup wizard directly. A staged image the model can't read is not setup:
+  the reason reads "Send blocked — \<model\> can't accept images" and is not
+  a link.
   You can just start typing from almost anywhere on
   the screen — printable keys go straight into the draft. A physically typed
   `! ` prefix switches to a red raw-host-command state only after the saved

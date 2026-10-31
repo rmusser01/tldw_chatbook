@@ -359,6 +359,7 @@ from ...Chat.console_display_state import (
     build_console_evidence_display_state,
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
+    console_image_blocked_reason,
     console_prompted_source_count,
     console_setup_blocked_reason,
     console_staged_source_count,
@@ -17978,9 +17979,9 @@ class ChatScreen(BaseAppScreen):
         if self._console_pending_image_attachment() is None:
             return ""
         effective_settings, _readiness = self._active_console_settings_readiness()
-        return (
-            vision_block_reason(effective_settings.provider, effective_settings.model)
-            or ""
+        return console_image_blocked_reason(  # TASK-33621.11: coded, never setup
+            vision_block_reason(effective_settings.provider, effective_settings.model),
+            effective_settings.model,
         )
 
     def _console_send_blocked_reason(self) -> str:
