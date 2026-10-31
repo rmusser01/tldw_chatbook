@@ -413,9 +413,11 @@ def test_remote_cancel_failure_is_swallowed(adapter, http_recorder, monkeypatch)
 class _RecordedMiniMax:
     """Replay one recorded MiniMax exchange; set the Stop on the first poll."""
 
-    def __init__(self, *, poll: str, delete: "str | Exception") -> None:
+    def __init__(self, *, poll: str, delete: "str | dict | Exception") -> None:
         self.poll = RECORDED[poll]
-        self.delete = delete if isinstance(delete, Exception) else RECORDED[delete]
+        # A str names a recorded exchange; a dict is a synthesized one with
+        # the same {http_status, body} shape; an Exception is a transport error.
+        self.delete = RECORDED[delete] if isinstance(delete, str) else delete
         self.task_id = self.poll["body"]["task"]["id"]
         self.cancel_event = threading.Event()
         self.requests: list[httpx.Request] = []
@@ -498,7 +500,13 @@ def test_stop_sends_the_cancel_minimax_accepted_live_and_logs_success(
     assert (delete.method, str(delete.url)) == (recorded["method"], recorded["url"])
     assert delete.headers["authorization"] == "Bearer test-secret-key"
     assert delete.headers["content-type"] == "application/json"
-    assert "content-type" in RECORDED["cancel_request_headers_sent"]
+    # The header names match the request MiniMax accepted live (its value
+    # for authorization is redacted in the recording).
+    recorded_names = {
+        name.removesuffix("(redacted)")
+        for name in RECORDED["cancel_request_headers_sent"]
+    }
+    assert {name.lower() for name in delete.headers.keys()} == recorded_names
     assert delete.content == b""
     assert any(
         level == "INFO" and "cancel confirmed" in text for level, text in log_lines
@@ -550,5 +558,38 @@ def test_stop_with_an_unreachable_cancel_endpoint_is_unconfirmed(
     assert stopped.remote_cancel == "unconfirmed"
     assert any(
         level == "WARNING" and "error_type=ConnectError" in text
+        for level, text in log_lines
+    ), log_lines
+
+
+def _synthesized_400(message: str) -> dict:
+    """A 400 in the recorded refusal's shape with a different message."""
+    refusal = RECORDED["cancel_refused_while_running_43s"]
+    body = json.loads(json.dumps(refusal["body"]))
+    body["error"]["message"] = message
+    return {"http_status": 400, "body": body}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        # Another MiniMax error code: not the "cannot cancel now" refusal.
+        "invalid params, task_id is invalid (1004)",
+        # 2013 is MiniMax's generic invalid-params code; without the
+        # current-status wording it says nothing about the task's stage.
+        "invalid params, task_id is malformed (2013)",
+    ],
+)
+def test_stop_counts_only_minimaxs_current_status_refusal_as_refused(
+    adapter, replay, log_lines, message
+):
+    """Any other 400 must read as unconfirmed, never as "already rendering"."""
+    script = replay(poll="poll_running_at_submit", delete=_synthesized_400(message))
+
+    stopped = _stopped(adapter, script)
+
+    assert stopped.remote_cancel == "unconfirmed"
+    assert any(
+        level == "WARNING" and "unconfirmed" in text and "http_status=400" in text
         for level, text in log_lines
     ), log_lines
