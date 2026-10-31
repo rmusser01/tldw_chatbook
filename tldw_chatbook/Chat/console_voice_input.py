@@ -19,6 +19,7 @@ import math
 import string
 import sys  # noqa: F401 - patched seam; see comment above
 import threading
+import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -110,20 +111,32 @@ WARMUP_DETAIL_FIRST_RUN = (
     "and can take several minutes. Nothing is being recorded yet — the "
     "microphone opens once the model is ready."
 )
-WARMUP_REASON_TEMPLATE = "The '{provider}' speech model could not be prepared."
+#: TASK-33621.21: every warm-up failure is fatal and reads the same way. The
+#: warm-up transcribes silence through the very transcriber the capture would
+#: use, so recording after it failed records into a transcriber that already
+#: failed -- live, that was a "may be slow" warning followed by a streaming
+#: load that hung forever. Each press builds a fresh service and warms again,
+#: so a transient error costs one press, and pressing again is the retry. The
+#: raw error (errno values, cache paths, parakeet-mlx's misleading local-path
+#: fallback) goes to the log only.
+WARMUP_REASON_TEMPLATE = (
+    "The '{provider}' speech model could not be downloaded or loaded."
+)
+WARMUP_STALLED_REASON_TEMPLATE = (
+    "The '{provider}' speech model stopped loading: no progress for {seconds} seconds."
+)
 WARMUP_REMEDY = (
-    "Check the transcription provider and model in Settings, and that the "
-    "model can be downloaded or is already on disk."
+    "Nothing was recorded. Check your network connection and press Dictate "
+    "to try again. The log has the details."
 )
-#: A warm-up that fails *after* the model loaded (the silence transcription
-#: itself erroring) is weak evidence: it costs the user nothing to try the real
-#: capture, and Fix 2/3 mean a degraded capture can no longer be misreported as
-#: a dead microphone. Fatal warm-up is reserved for a transcription service that
-#: cannot be built at all.
-WARMUP_DEGRADED_REASON_TEMPLATE = (
-    "Could not pre-load the '{provider}' speech model; the first part of this "
-    "capture may be slow."
-)
+#: Chip text while a model download is visibly running. "◐ " plus this plus
+#: "1.2 GB" stays inside WARMUP_MESSAGE_MAX_CELLS.
+WARMUP_DOWNLOAD_MESSAGE_TEMPLATE = "Downloading speech model… {size}"
+#: How long the model load may go without any visible progress before the
+#: attempt ends (`dictation.model_prepare_stall_seconds`). Long enough for a
+#: cached multi-gigabyte model to load from a slow disk; a running download
+#: resets the clock every time bytes land in the Hugging Face cache.
+DEFAULT_MODEL_PREPARE_STALL_SECONDS = 120.0
 
 # --- Stop-side outcomes ----------------------------------------------------
 #
@@ -631,19 +644,6 @@ class VoiceModelPreparing:
 
 
 @dataclass(frozen=True)
-class VoiceModelWarmupFailed:
-    """Pre-loading the model failed, but the capture is going ahead anyway.
-
-    Not a `VoiceFailed`: nothing has gone wrong with the microphone or with the
-    session, and treating it as fatal would make one transient error render
-    dictation permanently unusable -- the Console warms on *every* press.
-    """
-
-    reason: str
-    remedy: str = ""
-
-
-@dataclass(frozen=True)
 class VoiceVadUnavailable:
     """The capture started, but the recorder's voice-activity detection did not.
 
@@ -898,8 +898,9 @@ def warm_before_capture_enabled() -> bool:
 
     `dictation.warm_model_before_capture`, default True. The escape hatch
     exists because warming runs on *every* press (the Console builds a fresh
-    service each time), so a provider that chokes on digital silence would
-    otherwise degrade every capture forever.
+    service each time), and a failed warm-up ends the attempt (TASK-33621.21),
+    so a provider that chokes on digital silence would otherwise fail every
+    press.
 
     Returns:
         True when the warm-up should run.
@@ -908,6 +909,63 @@ def warm_before_capture_enabled() -> bool:
     if isinstance(raw, str):
         return raw.strip().lower() not in {"false", "no", "0", "off"}
     return bool(raw)
+
+
+def model_prepare_stall_seconds() -> float:
+    """How long a model load may show no progress before it is abandoned.
+
+    `dictation.model_prepare_stall_seconds`, default
+    `DEFAULT_MODEL_PREPARE_STALL_SECONDS`. Same validation as
+    `handsfree_send_delay_seconds`: a non-numeric, non-positive or non-finite
+    value is logged and replaced by the default, because a zero bound would
+    fail every load and an infinite one is the indefinite hang this exists to
+    end (TASK-33621.21).
+
+    Returns:
+        The bound in seconds, always positive and finite.
+    """
+    raw = get_cli_setting(
+        "dictation",
+        "model_prepare_stall_seconds",
+        DEFAULT_MODEL_PREPARE_STALL_SECONDS,
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 0.0
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "dictation.model_prepare_stall_seconds invalid ({!r}); using {}",
+            raw,
+            DEFAULT_MODEL_PREPARE_STALL_SECONDS,
+        )
+        return DEFAULT_MODEL_PREPARE_STALL_SECONDS
+    return value
+
+
+def download_progress_probe() -> Any:
+    """Return a probe for bytes downloaded since now (`downloaded_bytes()`).
+
+    A seam: tests replace it with a scripted probe. Imported here, not at
+    module scope, so the Console's import closure stays as it was.
+    """
+    from ..Utils.model_download_guard import HubDownloadProgress
+
+    return HubDownloadProgress.for_default_cache()
+
+
+def _format_download_size(num_bytes: int) -> str:
+    from ..Utils.model_download_guard import format_download_size
+
+    return format_download_size(num_bytes)
+
+
+class SpeechModelStalled(TimeoutError):
+    """The model load made no visible progress for the stall bound."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"speech model load made no progress for {seconds:g} s")
+        self.seconds = seconds
 
 
 #: Default seconds a finalized segment sits in `countdown` before the
@@ -1331,6 +1389,9 @@ class ConsoleVoiceInputController:
     #: How often the abandon-aware warm-up wait re-checks. Small enough that
     #: quitting mid-download feels immediate, large enough not to spin.
     WARMUP_POLL_SECONDS = 0.05
+    #: How often that wait measures download progress (a directory scan of the
+    #: Hugging Face cache) and checks the stall bound.
+    WARMUP_PROGRESS_POLL_SECONDS = 1.0
 
     def __init__(
         self,
@@ -1634,6 +1695,21 @@ class ConsoleVoiceInputController:
         # orphaned processing thread from THIS attempt reports when it
         # finally calls one of them.
         capture_generation = self._pending_capture_generation
+        # TASK-33621.21: before anything can download a model -- the warm-up
+        # below, or the streaming load inside `start_dictation()` -- make
+        # tqdm's process-wide lock buildable under Textual's fd-less stderr.
+        # Unguarded, the first download died on `fds_to_keep` and left that
+        # lock held, so the next load blocked forever.
+        try:
+            from ..Utils.model_download_guard import (
+                allow_tqdm_without_stderr_descriptor,
+            )
+
+            allow_tqdm_without_stderr_descriptor()
+        except Exception:  # noqa: BLE001 - the guard must never cost a capture
+            logger.opt(exception=True).warning(
+                "Console dictation could not prepare tqdm for in-app downloads"
+            )
         try:
             service = self._service_factory(
                 transcription_provider=effective.provider,
@@ -1753,15 +1829,12 @@ class ConsoleVoiceInputController:
         thread join. Doing it here costs a warm press nothing extra (the load
         it performs is the one the first chunk would have performed anyway).
 
-        Two failure modes, deliberately weighted differently:
-
-        * The transcription service cannot be *built* -- models genuinely
-          absent. Fatal, reported as a model/provider problem.
-        * The silence transcription itself errors after the service was built.
-          Not fatal: the Console warms on every press, so making this fatal
-          would turn one transient error into permanently unusable dictation.
-          It is announced and the capture proceeds, which is only safe because
-          an empty result can no longer be misreported as a dead microphone.
+        Every failure here is fatal and never opens the microphone
+        (TASK-33621.21): the transcriber cannot be built, the warm-up raised
+        (a download or load error), or the load showed no progress for
+        `model_prepare_stall_seconds()`. Each one ends `preparing` with one
+        plain message and a retry (press Dictate again); the raw error is
+        logged, never shown.
 
         Opt out entirely with `dictation.warm_model_before_capture = false`.
 
@@ -1771,8 +1844,8 @@ class ConsoleVoiceInputController:
 
         Returns:
             True when capture may proceed. False when this attempt is over --
-            either the model could not be prepared at all (already reported
-            through `_fail`) or `abandon()` landed while the model was loading.
+            either the model could not be prepared (already reported through
+            `_fail`) or `abandon()` landed while the model was loading.
         """
         if self._abandoned:
             self._release(service)
@@ -1787,12 +1860,12 @@ class ConsoleVoiceInputController:
             return True
         try:
             transcriber = warmup_target(service)
-        except Exception as exc:  # noqa: BLE001 - reported as a model failure
+        except Exception:  # noqa: BLE001 - reported as a model failure
             logger.opt(exception=True).warning(
                 "Console dictation transcription service could not be built"
             )
             self._release(service)
-            self._fail(self._warmup_failure(effective, exc), WARMUP_REMEDY)
+            self._fail(self._warmup_failure(effective), WARMUP_REMEDY)
             return False
         if transcriber is None:
             return True
@@ -1815,19 +1888,13 @@ class ConsoleVoiceInputController:
             return False
         if error is not None:
             logger.opt(exception=error).warning(
-                "Console dictation model warm-up failed"
+                "Console dictation model warm-up failed ({}); not opening the "
+                "microphone",
+                type(error).__name__,
             )
-            self._emit_quietly(
-                VoiceModelWarmupFailed(
-                    reason=(
-                        f"{WARMUP_DEGRADED_REASON_TEMPLATE.format(provider=effective.provider)}"
-                        f" {error}"
-                    ).strip(),
-                    remedy=WARMUP_REMEDY,
-                ),
-                "model warm-up warning",
-            )
-            return True
+            self._release(service)
+            self._fail(self._warmup_failure(effective, error), WARMUP_REMEDY)
+            return False
         _mark_warmed(effective)
         return True
 
@@ -1845,12 +1912,19 @@ class ConsoleVoiceInputController:
         releases this frame promptly, the executor thread returns, and the
         process can exit; the orphaned download dies with it.
 
+        The wait is also bounded (TASK-33621.21). Once a second it measures the
+        bytes that have reached the Hugging Face cache: growth is shown in the
+        chip ("Downloading speech model… 412 MB") and resets the stall clock;
+        no growth for `model_prepare_stall_seconds()` ends the wait with
+        `SpeechModelStalled`, leaving the stuck load on its daemon thread.
+
         Args:
             transcriber: The transcription service to warm.
             effective: The provider/model/language the capture will run with.
 
         Returns:
-            None when the model loaded, the exception when it did not, or a
+            None when the model loaded, the exception when it did not,
+            `SpeechModelStalled` when it stopped making progress, or a
             `RuntimeError` placeholder when `abandon()` ended the wait early
             (the caller checks `_abandoned` first, so that value is unused).
         """
@@ -1865,6 +1939,11 @@ class ConsoleVoiceInputController:
             finally:
                 done.set()
 
+        stall_seconds = model_prepare_stall_seconds()
+        progress = self._download_progress()
+        downloaded = self._read_downloaded_bytes(progress)
+        shown = ""
+        last_progress_at = next_check = time.monotonic()
         threading.Thread(
             target=_work, daemon=True, name="ConsoleDictationModelWarmup"
         ).start()
@@ -1875,7 +1954,54 @@ class ConsoleVoiceInputController:
                     "leaving the load to finish on its daemon thread"
                 )
                 return RuntimeError("abandoned during model warm-up")
+            now = time.monotonic()
+            if now < next_check:
+                continue
+            next_check = now + self.WARMUP_PROGRESS_POLL_SECONDS
+            current = self._read_downloaded_bytes(progress)
+            if current > downloaded:
+                downloaded, last_progress_at = current, now
+                message = WARMUP_DOWNLOAD_MESSAGE_TEMPLATE.format(
+                    size=_format_download_size(current)
+                )
+                if message != shown:
+                    shown = message
+                    self._emit_quietly(
+                        VoiceModelPreparing(message=message), "download progress"
+                    )
+            elif now - last_progress_at >= stall_seconds:
+                logger.warning(
+                    "Console dictation speech model load made no progress for "
+                    "{:g} s ({} bytes downloaded); giving up on this attempt",
+                    stall_seconds,
+                    downloaded,
+                )
+                return SpeechModelStalled(stall_seconds)
         return box.get("error")
+
+    @staticmethod
+    def _download_progress() -> Any | None:
+        """Build this attempt's download-progress probe; None if it cannot."""
+        try:
+            return download_progress_probe()
+        except Exception:  # noqa: BLE001 - no probe means no progress, not a crash
+            logger.opt(exception=True).debug(
+                "Console dictation download progress is unavailable"
+            )
+            return None
+
+    @staticmethod
+    def _read_downloaded_bytes(progress: Any | None) -> int:
+        """Read the probe, treating any failure as no progress."""
+        if progress is None:
+            return 0
+        try:
+            return int(progress.downloaded_bytes())
+        except Exception:  # noqa: BLE001 - a broken probe is no progress
+            logger.opt(exception=True).debug(
+                "Console dictation download progress could not be read"
+            )
+            return 0
 
     def _emit_quietly(self, event: Any, description: str) -> None:
         """Emit an advisory event, swallowing a plumbing failure.
@@ -1896,9 +2022,21 @@ class ConsoleVoiceInputController:
             )
 
     @staticmethod
-    def _warmup_failure(effective: EffectiveConfig, exc: Exception) -> str:
-        """Phrase a warm-up failure as a model problem, never a microphone one."""
-        return f"{WARMUP_REASON_TEMPLATE.format(provider=effective.provider)} {exc}".strip()
+    def _warmup_failure(
+        effective: EffectiveConfig, error: BaseException | None = None
+    ) -> str:
+        """Phrase a warm-up failure as a model problem, never a microphone one.
+
+        The raw error is deliberately not included: it is logged by the
+        caller, and what it says is often misleading (parakeet-mlx reports a
+        failed fetch as a missing local `config.json`) and carries errno
+        values and cache paths (TASK-33621.21).
+        """
+        if isinstance(error, SpeechModelStalled):
+            return WARMUP_STALLED_REASON_TEMPLATE.format(
+                provider=effective.provider, seconds=f"{error.seconds:g}"
+            )
+        return WARMUP_REASON_TEMPLATE.format(provider=effective.provider)
 
     def _report_service_error(
         self, error: Any, *, generation: int | None = None

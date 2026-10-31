@@ -29,6 +29,12 @@ os.environ["TQDM_DISABLE"] = "1"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# TASK-33621.21: model downloads stream into the hub cache's `.incomplete`
+# file (plain HTTP), so the Console can show and bound them and a cancelled
+# download resumes. With hf_xet the 2.4 GB speech model kept that file at
+# 0 bytes while the app's memory grew 1.1 -> 1.7 GB in 70 s. A user who sets
+# HF_HUB_DISABLE_XET themselves keeps their choice.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 # task-2119 (security): Loguru's `diagnose` option defaults to True and, on
 # any record logged via `logger.opt(exception=True)`, dumps every stack
