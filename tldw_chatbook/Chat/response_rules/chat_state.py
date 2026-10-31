@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from typing import Literal, cast
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
@@ -150,7 +151,10 @@ def record_response_rule_tool_result(
         raise ValueError("invalid_rule_dispatch_fact")
     self._message_or_raise(message_id)
     ref = f"{message_id}:{call_id}"
-    fact = RuleEvidence(ref, state, outcome, None, f"{tool_name[:128]}: {outcome}")
+    checked_state = cast(Literal["settled", "not_started", "uncertain"], state)
+    fact = RuleEvidence(
+        ref, checked_state, outcome, None, f"{tool_name[:128]}: {outcome}"
+    )
     with self._response_rule_evidence_lock:
         previous = self._response_rule_results.setdefault(message_id, {}).get(ref)
         if previous is not None and previous != fact:

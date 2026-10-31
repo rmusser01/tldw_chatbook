@@ -651,7 +651,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR #3173, 2026-10-31: retain all 1177 base entries and append four reviewed nodes.
 # PR #3183: preserve current-base prefix and append five reviewed mount/retry/config-capture controls.
 # PR #3259 (2026-10-31): retain all 1187 current-base entries and append ten reviewed Notes selectors.
-MINIMUM_FILES = 1197
+# PR3289 (2026-10-31): retain all1197 current-dev entries and the one mounted rule journey.
+MINIMUM_FILES = 1198
 
 
 def read_census(path: Path) -> list[str]:

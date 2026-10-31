@@ -26,10 +26,12 @@ message=db.add_message({'conversation_id':conversation,'sender':'assistant','rol
 created=CanvasRepository(db).create_canvas(conversation,title='Retained payload',source='<main>recovery-canvas-source</main>',runtime_profile='canvas-v1',actor_kind='assistant',origin_message_id=message,origin_turn_id='original-turn')
 row=tuple(db.get_connection().execute('SELECT * FROM canvas_revisions').fetchone())
 db.close()
+chachanotes_owner=next(a for a in core_adapters() if a.owner_id=='db.chachanotes.primary')
+chachanotes_version=max(chachanotes_owner.schema_policy().versions)
 if sys.argv[1]=='hybrid':
  from tldw_chatbook.DB.recovery_operations import recovery_adapters
  owner=next(a for a in recovery_adapters() if a.owner_id=='db.subscriptions')
-else:owner=next(a for a in core_adapters() if a.owner_id=='db.chachanotes.primary')
+else:owner=chachanotes_owner
 case=sys.argv[2]
 if case=='corrupt':
  data=path.read_bytes();original=b'<main>recovery-canvas-source</main>'
@@ -106,7 +108,7 @@ _V81_SCRIPT = (
         "else:\n"
         " migrated=CharactersRAGDB(path,'hybrid-upgrade');migrated.close()\n"
         "with sqlite3.connect(path) as connection:\n"
-        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(85,)\n"
+        " assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(chachanotes_version,)\n"
         "case=sys.argv[2]",
     )
 )
@@ -146,7 +148,7 @@ for index,schema in enumerate(CHACHANOTES_V81_SCHEMAS):
  assert owner.validate(path)==(),(index,owner.validate(path))
  assert validate_candidate(owner,path,Event(),migrate=True)==()
  with sqlite3.connect(path) as connection:
-  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(85,)
+  assert connection.execute('SELECT version FROM db_schema_version').fetchone()==(max(owner.schema_policy().versions),)
   assert connection.execute("SELECT [unique] FROM pragma_index_list('canvas_revisions') WHERE name='idx_canvas_revisions_canvas_sequence'").fetchone()==(0,)
 print('retired and reopened')
 """
@@ -158,3 +160,95 @@ def test_all_four_frozen_lineages_remain_accepted_and_migrate(tmp_path, predeces
         "CHACHANOTES_V81_SCHEMAS", f"CHACHANOTES_V{predecessor}_SCHEMAS"
     ).replace("',81)", f"',{predecessor})")
     _run(tmp_path, "core", "lineages", script=script)
+
+
+@pytest.mark.parametrize("chat_version", (83, 84))
+@pytest.mark.parametrize("lineage", range(4))
+@pytest.mark.parametrize("source_index", (False, True))
+def test_current_hybrid_catalog_requires_its_exact_embedded_stamp(
+    tmp_path, chat_version, lineage, source_index
+):
+    """Every added physical lineage admits only its matching Primary stamp."""
+    import sqlite3
+    from contextlib import closing
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+    from tldw_chatbook.DB.canvas_payload_validation import (
+        install_canvas_revision_payload_validator,
+    )
+    from tldw_chatbook.DB.recovery_core_schema import (
+        CHACHANOTES_V83_SCHEMAS,
+        CHACHANOTES_V84_SCHEMAS,
+    )
+    from tldw_chatbook.DB.recovery_operations import (
+        _SUBSCRIPTIONS_SCHEMA,
+        _SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA,
+        recovery_adapters,
+    )
+
+    owner = next(a for a in recovery_adapters() if a.owner_id == "db.subscriptions")
+    primary = {83: CHACHANOTES_V83_SCHEMAS, 84: CHACHANOTES_V84_SCHEMAS}[chat_version][
+        lineage
+    ]
+    subscriptions = tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA)
+    # The historical base is the bare Subscription catalog, never a composed
+    # catalog returned by the new v83/v84 admission implementation.
+    if not source_index:
+        subscriptions = next(
+            schema
+            for version, schema in _SUBSCRIPTIONS_SCHEMA
+            if version == 2 and not any("db_schema_version" in sql for sql in schema)
+        )
+    catalog = primary + tuple(
+        sql for sql in subscriptions if sql != "CREATE TABLE sqlite_sequence(name,seq)"
+    )
+    path = tmp_path / "hybrid.sqlite"
+    with closing(sqlite3.connect(path)) as connection, connection:
+        install_canvas_revision_payload_validator(connection)
+        for sql in sorted(
+            catalog,
+            key=lambda value: (
+                not value.startswith("CREATE VIRTUAL TABLE"),
+                not value.startswith("CREATE TABLE"),
+            ),
+        ):
+            if sql.startswith("CREATE TABLE sqlite_sequence"):
+                continue
+            try:
+                connection.execute(sql)
+            except sqlite3.OperationalError as error:
+                if "already exists" not in str(error):
+                    raise
+                assert connection.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE sql=?", (sql,)
+                ).fetchone()
+        connection.execute(
+            "INSERT INTO db_schema_version VALUES ('rag_char_chat_schema',?)",
+            (chat_version,),
+        )
+        connection.execute("INSERT INTO schema_version(version) VALUES (3)")
+    path.chmod(0o600)
+    for subscription_version in (2, 3):
+        with closing(sqlite3.connect(path)) as connection, connection:
+            connection.execute(
+                "UPDATE schema_version SET version=?", (subscription_version,)
+            )
+        before = path.read_bytes()
+        assert owner.validate(path) == ()
+        assert validate_candidate(owner, path, Event(), migrate=False) == ()
+        assert path.read_bytes() == before
+        for wrong_stamp in (chat_version - 1, chat_version + 1):
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute(
+                    "UPDATE db_schema_version SET version=?", (wrong_stamp,)
+                )
+            rejected = path.read_bytes()
+            assert validate_candidate(owner, path, Event(), migrate=True) == (
+                "unsupported_schema_version",
+            )
+            assert path.read_bytes() == rejected
+        with closing(sqlite3.connect(path)) as connection, connection:
+            connection.execute(
+                "UPDATE db_schema_version SET version=?", (chat_version,)
+            )
