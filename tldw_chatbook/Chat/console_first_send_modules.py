@@ -49,6 +49,7 @@ not name.
 from __future__ import annotations
 
 import importlib
+import sys
 import time
 from typing import Any
 
@@ -185,8 +186,9 @@ def preimport_first_send_modules(app: Any) -> None:
     ``INPUT_QUIET_SECONDS`` and parks again, so a click's navigation finds
     no new step started under it. A module that fails to import is left to fail
     again, identically, where the send imports it (a failed import is never
-    cached). When it finishes it freezes the heap, as the routes' pass did
-    before it (ADR-198: these modules live as long as the app).
+    cached). Each step that loaded modules freezes the heap, and so does the
+    end, as the routes' pass did before it (ADR-198: these modules live as
+    long as the app).
 
     Args:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
@@ -218,6 +220,7 @@ def _warm_first_send(app: Any) -> None:
         if getattr(app, "_shutting_down", False):
             return
         started = time.monotonic()
+        loaded = len(sys.modules)
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 -- a speculative warm-up
@@ -226,6 +229,11 @@ def _warm_first_send(app: Any) -> None:
                 name,
                 type(exc).__name__,
             )
+        if len(sys.modules) != loaded:
+            # Left unfrozen until the last step, what the steps loaded made a
+            # generation-2 pass due, and a navigation's allocations ran it on
+            # the UI loop (TASK-33620.15.18). A boot freeze is about 1 ms now.
+            freeze_long_lived_heap("first_send_step")
         previous = time.monotonic() - started
     _pause(app, min(previous * ratio, cap))
     if getattr(app, "_shutting_down", False):
