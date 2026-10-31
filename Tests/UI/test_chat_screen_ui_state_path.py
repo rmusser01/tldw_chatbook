@@ -19,6 +19,7 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 def _bare_screen_with_ui_state():
     screen = ChatScreen.__new__(ChatScreen)
+    screen._console_rail_first_use_seeds = {}
     screen.ui_state = SimpleNamespace(
         collapsible_states={"notes": True},
         sidebar_search_query="hello",
@@ -80,6 +81,7 @@ def test_two_profiles_do_not_share_sidebar_state(monkeypatch, tmp_path):
     profile_b_config = tmp_path / "profile-b" / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile_b_config))
     screen_b = ChatScreen.__new__(ChatScreen)
+    screen_b._console_rail_first_use_seeds = {}
     screen_b.ui_state = SimpleNamespace(
         collapsible_states={"chat": False},
         sidebar_search_query="other",

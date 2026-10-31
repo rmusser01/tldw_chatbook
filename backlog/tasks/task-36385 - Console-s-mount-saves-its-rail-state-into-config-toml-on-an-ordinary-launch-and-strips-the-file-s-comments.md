@@ -180,7 +180,7 @@ No User Guide change: no page says that a launch rewrites config.toml.
 Rebased original ccbd3e8 onto dev198eca8b93. Mechanical conflicts preserved both size-ratchet histories; user subsequently waived size limits. Independent review reproduced two issues.
 
 1. Fixed seed persistence failure: False and exceptions retain the failed queued seed, prevent the dependent record write, and notify on the requested failure path. A retry writes the seed before the dependent record. Both real mounted-App regressions failed on the original worker because the dependent record was written. After the fix their assertions pass, but full-App teardown hits Native app workers remain uncertain; this is not reported as a green run. A bounded Textual App dispatching the actual decorated ChatScreen worker against a real private config file passes both failure/retry cases (2 passed). Existing full-App ordering controls remain intact.
-2. Unresolved behavior decision: first-use defaults currently survive only this session. An untouched workspace can inherit a later Global edit after restarting, contrary to ADR-083's one-time seeding contract. User input requested; no merge until resolved.
+2. First-use durability decision: the owner selected retaining the first-use layout across restarts and later Global edits. The implementation and evidence below resolve the original session-only behavior under ADR-083.
 
 The pre-fix/rebase focused battery produced 97 passed and 6 failed: four full-App tests report native-worker retirement/teardown issues, the boot/quit subprocess needs diagnosis, and the ChatScreen size test observed concurrent local code growth during the run. This is not final-head qualification. Diagnostic inventory verified before the seed fix (708 owners,7773 TASK494 calls,16 sinks); final inventory verification remains due. Fatal-name/import lint and whitespace checks passed. Task remains In Progress.
 
@@ -210,3 +210,16 @@ The three source-seed cases, held-defaults ordering, and both sidebar-restore
 cases passed. Diagnostic inventory verifies 708 owners,1058 TASK-492 calls,
 56 TASK-31551 calls,7773 TASK-494 calls,16 sinks. Fatal lint and diff whitespace
 checks pass. Independent re-review is pending; no merge readiness claim yet.
+
+
+Final review fixture repair: the three existing bare-ChatScreen fixture sites
+now initialize the first-use seed mapping. The cancellation/quit-flush case
+passes. Three UI path tests still fail before their bodies with
+raw_source_selection_changed, and the profile guard returns True rather than
+its expected False. Independent base/current probes loaded both changed
+production modules from dev198eca8b93 and reproduced all four failures
+identically; the writer methods themselves are unchanged. These failures are
+baseline-attributed, not reported as passing.
+
+Independent review approved the full production change and the fixture
+correction. Required CI and resolved threads remain merge gates.
