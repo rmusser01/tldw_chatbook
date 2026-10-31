@@ -894,6 +894,7 @@ CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
     (
         "console-workbench-header",
         "console-control-bar",
+        "console-attachment-block",  # TASK-33620.2: its two actions
         "console-native-composer",
     ),
     ("console-context-rail-handle", "console-left-rail"),
@@ -908,6 +909,7 @@ CONSOLE_TAB_REGIONS: tuple[tuple[str, ...], ...] = (
 CONSOLE_FOCUS_PANE_FOR_WIDGET = {
     "console-workbench-header": "console-native-composer",
     "console-control-bar": "console-native-composer",
+    "console-attachment-block": "console-native-composer",
     "console-status-chips": "console-transcript-surface",
     "console-context-rail-handle": "console-left-rail",
     "console-inspector-rail-handle": "console-right-rail",
@@ -15158,6 +15160,7 @@ class ChatScreen(BaseAppScreen):
                     )
                 ),
             )
+            yield run_controls.attachment_block_strip()  # TASK-33620.2
             if status_chips_position == STATUS_CHIPS_POSITION_ABOVE:
                 yield status_chips
             composer = ConsoleComposerBar(
@@ -19597,7 +19600,7 @@ class ChatScreen(BaseAppScreen):
             )
         self._sync_console_control_bar()
 
-    @on(Button.Pressed, "#console-clear-attachment")
+    @on(Button.Pressed, "#console-clear-attachment, #console-attachment-block-remove")
     def handle_console_clear_attachment(self, event: Button.Pressed) -> None:
         """Remove the pending native Console attachment."""
         event.stop()
@@ -21347,11 +21350,11 @@ class ChatScreen(BaseAppScreen):
         run_active = run_active or videogen_active or image_edit_active
         send_blocked = send_blocked or image_edit_active
         setup_blocked_reason = self._console_setup_blocked_reason()
-        attachment_blocked_reason = self._console_attachment_blocked_reason()
+        attachment_block = run_controls.sync_attachment_block(self)  # TASK-33620.2
         send_blocked = (
             send_blocked
             or bool(setup_blocked_reason)
-            or bool(attachment_blocked_reason)
+            or attachment_block is not None
         )
 
         composer.sync_action_state(
@@ -21362,7 +21365,8 @@ class ChatScreen(BaseAppScreen):
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
-            setup_blocked_reason=setup_blocked_reason or attachment_blocked_reason,
+            setup_blocked_reason=setup_blocked_reason,
+            attachment_block=attachment_block,
             queue_blocked_reason=(
                 queue_presentation.send_tooltip
                 if queue_presentation is not None

@@ -88,9 +88,37 @@ not the file picker. (That control is labeled **Context rail** as of
 ### Vision check before sending
 
 If an image is staged but the current model can't accept images, Send is
-blocked with: "Console send blocked: <model> can't accept images. Remove
-the attachment, switch to a vision model, or mark this model as
-vision-capable under [model_capabilities.models] in config.toml."
+disabled and a row above the status line names the model and the cause —
+`<model> can't accept images` — with two buttons:
+
+- **Remove image** clears what's staged (the same as **✕**); your draft
+  stays.
+- **Switch model** opens Switch model (**Alt+M**); your draft and the image
+  stay staged, and Send is ready again once you pick a model that reads
+  images. The row goes away and the keyboard is back in your draft, so you
+  can keep typing or press Enter to send.
+
+From the composer, **Shift+Tab** reaches **Switch model**, then **Remove
+image**; **Enter** presses the focused one.
+
+A model name too long for the row is cut short with `…`; hover the row's
+text for the full message. If no model is chosen yet, the row stays hidden
+and the strip asks you to choose a model first; the row appears once you
+pick one that can't read images.
+
+Where the composer row has room, the strip beside Send reads
+`Send blocked — <model> can't accept images` (it is not a link). Hovering
+Send, or pressing Enter, gives the full message: "Console send blocked:
+<model> can't accept images. Remove the attachment, switch to a vision
+model, or mark this model as vision-capable under
+[model_capabilities.models] in config.toml."
+
+With the Anthropic provider, every Claude model from the 4 generation on
+(Haiku 4.5, Sonnet, Opus and Fable included) is treated as able to read
+images, even when your
+config.toml still carries an older `[model_capabilities]` pattern list. An
+explicit `vision = false` entry for a model under
+`[model_capabilities.models]` still wins.
 
 An image already in the conversation is re-sent with every later turn. If the
 provider rejects it, the failure row suggests switching to a vision-capable

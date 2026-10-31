@@ -216,7 +216,17 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised to 24333/737 on 2026-10-29 by TASK-33620.2, owner rule (a fix
+    #: over a size ratchet raises the row with a dated comment; never move or
+    #: reflow code to make it fit). Dev d36affec9b measures 24329/737; the
+    #: fix adds 4 lines and no methods: the composer sync passes the vision
+    #: block in its own slot (one kwarg line), compose yields its row (one
+    #: line), and the row joins the composer's Tab region and F6 pane map
+    #: (two lines) so both actions are keyboard-reachable. The row, its sync
+    #: and both actions live in Console_Modules/composer_run_controls.py.
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24333/737 -> 24331/737.
+    #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24331/737 -> 24335/737.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

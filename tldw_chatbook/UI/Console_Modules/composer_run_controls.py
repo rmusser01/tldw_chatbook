@@ -12,6 +12,11 @@ share one cause, so their fix shares this module:
   out entirely while a run was active. The stop key, the ``/stop`` command and
   the palette entries below give the viewed tab's run keyboard routes that do
   not depend on the row's geometry.
+* TASK-33620.2: a staged image the selected model can't take rode the setup
+  slot, so the strip read "choose a model" and linked to the first-run
+  wizard. It is now its own blocker: `sync_attachment_block` names the model
+  in a row with Remove image and Switch model, and hands the composer a
+  typed `ConsoleAttachmentBlock`.
 
 TASK-33620.15.17 adds the arrival case of the same key routing: keys typed
 right after the Console opens, before its focus restore lands, reached the
@@ -30,10 +35,14 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import QueryError
 from textual.dom import DOMNode
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
+from ...Chat.console_display_state import ConsoleAttachmentBlock
+from ...Utils.input_validation import escape_markup
 from ...Widgets.Console import console_composer_bar as composer_module
 from ...Widgets.Console.console_composer_bar import ConsoleComposerBar
 from ...Widgets.Console.console_composer_menu_modal import (
@@ -61,6 +70,14 @@ STOP_RUN_FOOTER_HINT = (STOP_RUN_KEY_LABEL, "stop run")
 _CONTROL_PASSTHROUGH_KEYS = frozenset(
     {"pageup", "pagedown", "ctrl+z", "ctrl+shift+z", "ctrl+shift+Z", "ctrl+y"}
 )
+
+#: TASK-33620.2: the vision-block row. Remove image shares the composer's
+#: clear-attachment handler (`ChatScreen.handle_console_clear_attachment`);
+#: Switch model runs the Alt+M action, the Console model picker.
+ATTACHMENT_BLOCK_ID = "console-attachment-block"
+ATTACHMENT_BLOCK_COPY_ID = "console-attachment-block-copy"
+ATTACHMENT_BLOCK_REMOVE_ID = "console-attachment-block-remove"
+ATTACHMENT_BLOCK_SWITCH_ID = "console-attachment-block-switch-model"
 
 #: Why a menu action that the Composer menu would not even list is refused.
 _MENU_ACTION_ABSENT_COPY = {
@@ -369,6 +386,82 @@ def sync_stop_affordances(screen: Any) -> None:
     screen._console_stop_key_advertised = available
     screen._register_console_footer_shortcuts()
     screen.refresh_bindings()
+
+
+def attachment_block_strip() -> Horizontal:
+    """Build the hidden vision-block row the Console composes above its status line.
+
+    Returns:
+        The row: the model-and-cause copy, then Remove image and Switch model.
+    """
+    return Horizontal(
+        Static("", id=ATTACHMENT_BLOCK_COPY_ID, markup=False),
+        Button("Remove image", id=ATTACHMENT_BLOCK_REMOVE_ID, compact=True),
+        Button(
+            "Switch model",
+            id=ATTACHMENT_BLOCK_SWITCH_ID,
+            compact=True,
+            action="screen.open_console_model_popover",
+            tooltip="Open Switch model (Alt+M). Your draft and image are kept.",
+        ),
+        id=ATTACHMENT_BLOCK_ID,
+        disabled=True,  # hidden, so unfocusable (see sync_attachment_block)
+    )
+
+
+def sync_attachment_block(screen: Any) -> ConsoleAttachmentBlock | None:
+    """Show or hide the vision-block row and return the composer's typed block.
+
+    The block carries the send gate's own verbatim refusal
+    (``_console_attachment_blocked_reason``), so the row, the Send tooltip
+    and a refused Enter all come from one check.
+
+    Args:
+        screen: The Console screen.
+
+    Returns:
+        The block for ``ConsoleComposerBar.sync_action_state``, or None when
+        no staged image is refused.
+    """
+    block = None
+    model = None
+    reason = screen._console_attachment_blocked_reason()
+    if reason:
+        from ...Chat.attachment_core import vision_block_notice
+
+        settings, _readiness = screen._active_console_settings_readiness()
+        model = settings.model
+        block = ConsoleAttachmentBlock(vision_block_notice(model), reason)
+    # No model chosen: the image still holds Send, but the setup blocker's
+    # "choose a model" owns the strip and the row has no model to name.
+    show = block is not None and bool(model)
+    if not show and not getattr(screen, "_console_attachment_block_shown", False):
+        return block  # hidden already: skip the query on every ordinary sync
+    try:
+        row = screen.query_one(f"#{ATTACHMENT_BLOCK_ID}", Horizontal)
+    except QueryError:
+        return block
+    screen._console_attachment_block_shown = show
+    focused = screen.focused
+    row.set_class(show, "-visible")
+    # A hidden row is disabled too, so no focus write can land on it: Switch
+    # model's picker restores focus to its opener with a deferred focus()
+    # that otherwise ran after this hand-back and left every key going to
+    # the hidden button (live 2026-10-29).
+    row.disabled = not show
+    if not show and focused is not None and row in focused.ancestors_with_self:
+        # A keyboard Remove image (or a Switch model that fixed it) hides the
+        # focused button: hand the keyboard back to the draft, not to nowhere.
+        composer = _composer(screen)
+        if composer is not None:
+            screen.set_focus(composer)
+    if show:
+        copy = row.query_one(f"#{ATTACHMENT_BLOCK_COPY_ID}", Static)
+        notice = Content(block.notice)
+        if copy.content != notice:
+            copy.update(notice)
+        copy.tooltip = escape_markup(block.reason)  # TASK-1513
+    return block
 
 
 async def stop_this_tab_run(screen: Any) -> None:

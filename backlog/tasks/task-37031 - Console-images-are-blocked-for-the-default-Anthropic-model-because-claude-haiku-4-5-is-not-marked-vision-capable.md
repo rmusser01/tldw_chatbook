@@ -3,9 +3,11 @@ id: TASK-37031
 title: >-
   Console: images are blocked for the default Anthropic model because
   claude-haiku-4-5 is not marked vision-capable
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-10-27 16:12'
+updated_date: '2026-10-29 08:07'
 labels:
   - console
   - p2
@@ -21,6 +23,20 @@ Found live while verifying TASK-33620.15.22 (2026-10-27, branch fix/task-33620.1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 With the shipped defaults and no capability override, a staged image with claude-haiku-4-5 selected leaves Send ready and the image reaches the model
-- [ ] #2 Every Anthropic model in the shipped provider list that accepts image input is vision-capable by default, pinned by a test
+- [x] #1 With the shipped defaults and no capability override, a staged image with claude-haiku-4-5 selected leaves Send ready and the image reaches the model
+- [x] #2 Every Anthropic model in the shipped provider list that accepts image input is vision-capable by default, pinned by a test
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Fixed with TASK-33620.2 (same root cause): see that task's plan.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed by TASK-33620.2 (branch fix/task-33620.2-image-attach-haiku, 2026-10-27). Root cause: no vision row in DEFAULT_MODEL_PATTERNS or the shipped [model_capabilities] template matched claude-haiku-4-5 (nor claude-opus-5 / claude-fable-5), and an older config.toml's Anthropic pattern list replaces the shipped one wholesale. Fix: an Anthropic family rule in ModelCapabilities.get_model_capabilities (claude-<tier>-<major>, major >= 4, provider anthropic) beneath the user's own rows. AC#2 is pinned by Tests/Chat/test_anthropic_vision_capability.py, which iterates the shipped Anthropic list under a fresh and an old config (red on dev f9baac8706 for haiku-4-5, opus-5, fable-5). AC#1 verified live: shipped defaults + no override, a 64x64 PNG staged on claude-haiku-4-5 left Send ready and the real model answered 'Green, purple.' (evidence tools/evidence/bd5/U14/20-21). Re-verified 2026-10-29 on the branch rebased onto dev 3efe8476ce: a fresh orange-left/blue-right PNG staged on claude-haiku-4-5 left Send ready, and the reply was 'Orange is on the left, blue is on the right.' (evidence 40-41).
+
+**Merge evidence (2026-10-29, after the TASK-33620.2 review round, base origin/dev b5150753eb).** The family rule now merges `vision` over the models.dev gap-fill instead of running ahead of it, so an opted-in models.dev context window survives for Claude 4+ ids. `Tests/Chat/test_anthropic_vision_capability.py`: 18 passed on the branch, 10 failed / 8 passed on origin/dev. Live on the review head: a staged PNG on claude-haiku-4-5 left Send ready, and the real model answered "Yellow is on top and teal is on the bottom."
+<!-- SECTION:NOTES:END -->
