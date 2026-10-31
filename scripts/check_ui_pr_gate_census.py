@@ -697,6 +697,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36381 appends 8 entries at the tail: the Settings endpoint probe
 # file, one model-discovery race node and six hub guards, all red on dev
 # while no PR lane ran them, so no existing entry changes shard.
+# The floor now equals the entry count, which also absorbs any lag in
+# dev's floor (tail entries a merge added without raising it).
 MINIMUM_FILES = 1276
 
 
