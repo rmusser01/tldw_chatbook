@@ -22747,3 +22747,30 @@ so the next run failed at workspace creation before exercising the corrected
 boundary. A newly created private profile root made the original regression pass.
 Keep TEMP/TMP and config isolation, but give each independent pytest invocation
 a fresh private root; a private path is not necessarily an empty profile.
+
+## Explicit Retry must traverse the real worker and every read cache (PR #3134, 2026-10-31)
+
+The keyring cooldown repair initially delayed the public unlock method, while
+Library Retry only requested an ordinary posture refresh. Moving the deadline
+alone would still leave the button throttled; current dev also retained failed
+keyring reads for two seconds. A mounted Skills header test froze both clocks,
+pressed the real Retry button, and required fresh key and marker reads in the
+posture worker. Removing the explicit retry wiring left the rendered posture
+unavailable despite a recovered backend. Test the actual action through its
+worker and underlying caches; a direct service call cannot prove that wiring.
+
+The independent review then found that this test seeded an already-unblocked
+row: it proved the ready posture but missed the retained page still reporting
+blocked rows. Replacing that seed with an actual failing LocalSkillsService
+page made the test fail at blocked_total=1 after Retry succeeded. The corrected
+regression requires the row glyph, blocked total, and page actions to recover
+through the scoped browse refresh, and keeps cancellation/route/generation
+controls. Seed the real failure state when testing recovery; a healthy row
+can hide a missing refresh behind a healthy header.
+
+Re-review exposed a second interleaving: while Retry waited on the keyring, a
+new filter was submitted but its service page had not finished. The mutation
+refresh defaulted to the old applied scope and reset that newer request. An
+independently gated real Input Enter test failed with query demo instead of
+newer; Retry must refresh the latest requested scope, since route and snapshot
+generation fences do not change when the user submits a filter.

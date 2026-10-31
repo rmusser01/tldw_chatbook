@@ -1218,7 +1218,7 @@ class LibrarySkillsController:
             self._request_library_skills_browse(refresh_scope)
 
     async def _load_library_skills_trust_posture(
-        self, posture_fn
+        self, posture_fn, *, retry: bool = False
     ) -> LibraryEntryReconcileResult:
         """Await the off-thread ``trust_posture()`` call and apply the result.
 
@@ -1228,6 +1228,7 @@ class LibrarySkillsController:
                 this never re-reads ``local_skill_trust_service`` itself --
                 irrelevant here, but keeps this a pure "run this callable
                 off-thread" step).
+            retry: Refresh the scoped Skills page after a successful explicit retry.
         """
         route_key = self._library_entry_route_key()
         generation = self._library_snapshot_state_generation
@@ -1243,6 +1244,11 @@ class LibrarySkillsController:
             or self._library_skills_view != "list"
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
+        if retry and posture == "ready":
+            # A newer filter/page request may still be loading while Retry waits.
+            self._refresh_library_skills_after_committed_mutation(
+                scope=self._library_skills_browse_controller.scope
+            )
         identity = self._capture_library_entry_focus()
         prior_callback: Callable[[], None] | None = None
         pending = (generation, route_key)
