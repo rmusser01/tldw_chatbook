@@ -99,7 +99,7 @@ def _repo_text(path: Path) -> str:
 
 def _paste_confirm(text: str) -> str:
     """TASK-33622.1: a paste token's confirm keeps its name and answer keys."""
-    return f"Expand pasted text ({len(text)} characters)? Enter: yes · Esc: no"
+    return f"Expand pasted text ({len(text)} characters)? Ctrl+E: yes · Esc: no"
 
 
 def _assert_visible(plain: str, expected: str) -> None:
@@ -1117,7 +1117,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
         command_input = composer.query_one("#console-command-input", Input)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "pasted composer qa " * 80
-        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
 
         console.on_paste(Paste(pasted_text))
         await pilot.pause(0.2)
@@ -1140,7 +1140,7 @@ async def test_console_large_paste_collapses_visible_token_but_preserves_payload
 
 def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
     pasted_text = "x" * 51
-    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
     display_text = f"... {expected_token}"
 
     renderable = ConsoleComposerBar._draft_renderable(
@@ -1159,7 +1159,7 @@ def test_console_paste_token_style_span_survives_literal_ellipsis_prefix():
 
 def test_console_paste_token_style_span_survives_crlf_before_token():
     pasted_text = "x" * 51
-    expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+    expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
     display_text = f"before\r\n{expected_token}"
     token_start = display_text.index(expected_token)
 
@@ -1260,9 +1260,10 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         await pilot.pause(0.1)
 
         assert composer.draft_text() == over_custom_threshold
-        assert (
-            _without_trailing_cursor(visible_draft.renderable.plain)
-            == "Pasted text | 81 characters | Expand"
+        # The chip names its key now, so it can soft-wrap (TASK-37870).
+        _assert_visible(
+            visible_draft.renderable.plain,
+            "Pasted text | 81 characters | Ctrl+E expand",
         )
 
 
@@ -1607,7 +1608,8 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
 
 
 @pytest.mark.asyncio
-async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_flow():
+async def test_console_collapsed_paste_ctrl_e_on_focused_composer_expands_in_place():
+    """Owner decision 2026-10-30: Ctrl+E, not Enter, expands a token, at once."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1622,23 +1624,10 @@ async def test_console_collapsed_paste_enter_on_focused_composer_matches_click_f
 
         composer.insert_pasted_text(pasted_text)
         composer.focus()
-        # TASK-37800: right after the token Enter sends; Left puts the caret
-        # on the token (its left edge), where Enter answers like a click.
-        await pilot.press("left")
-        await pilot.press("enter")
+        await pilot.press("ctrl+e")
         await pilot.pause(0.1)
 
         assert console.app.focused is composer
-        # The caret's one cell (glyph, or a space while it blinks off) now
-        # leads the row, ahead of the confirm.
-        plain = visible_draft.renderable.plain
-        assert plain[0] in {ConsoleComposerBar.CURSOR_GLYPH, " "}
-        _assert_visible(plain[1:], _paste_confirm(pasted_text))
-        assert composer.draft_text() == pasted_text
-
-        await pilot.press("enter")
-        await pilot.pause(0.1)
-
         visible_plain = visible_draft.renderable.plain
         assert "keyboard unfurl paste" in visible_plain
         assert "Pasted text |" not in visible_plain
@@ -1685,8 +1674,8 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         first_paste = "first large paste " * 10
         second_paste = "second large paste " * 10
-        first_token = f"Pasted text | {len(first_paste)} characters | Expand"
-        second_token = f"Pasted text | {len(second_paste)} characters | Expand"
+        first_token = f"Pasted text | {len(first_paste)} characters | Ctrl+E expand"
+        second_token = f"Pasted text | {len(second_paste)} characters | Ctrl+E expand"
 
         composer.insert_pasted_text(first_paste)
         composer.insert_pasted_text(second_paste)
@@ -1713,7 +1702,7 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
-        assert first_token in visible_plain
+        assert first_token in visible_plain.replace("\n", "")
         assert "second large paste" in visible_plain
         assert "first large paste" not in visible_plain
         assert "Expand pasted text" not in visible_plain
@@ -1733,7 +1722,7 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "typing resets pending paste " * 10
-        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text", offset=(1, 0))
@@ -1751,7 +1740,7 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         await pilot.click("#console-command-visible-text", offset=(1, 0))
         await pilot.pause(0.1)
         # TASK-33622.1: the click also puts the caret on the token, between
-        # it and the typed "x", so Enter answers this confirm.
+        # it and the typed "x", so Ctrl+E answers this confirm.
         assert composer._display_draft_text() == f"{_paste_confirm(pasted_text)}x"
         assert composer.cursor_index == len(pasted_text)
         assert composer.draft_text() == f"{pasted_text}x"
@@ -1770,7 +1759,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         prefix = "preceding wrapped composer text " * 40
         pasted_text = "visible clipped paste " * 10
-        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
 
         composer.insert_text(prefix)
         composer.insert_pasted_text(pasted_text)
@@ -1829,7 +1818,7 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "reset pending unfurl " * 10
-        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
@@ -1840,7 +1829,7 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
-        assert expected_token in visible_plain
+        _assert_visible(visible_plain, expected_token)
         assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == pasted_text
 
@@ -1857,7 +1846,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         pasted_text = "stale suppressed click reset paste " * 6
-        expected_token = f"Pasted text | {len(pasted_text)} characters | Expand"
+        expected_token = f"Pasted text | {len(pasted_text)} characters | Ctrl+E expand"
 
         composer.insert_pasted_text(pasted_text)
         await pilot.click("#console-command-visible-text")
@@ -1869,7 +1858,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         await pilot.pause(0.1)
 
         visible_plain = visible_draft.renderable.plain
-        assert expected_token in visible_plain
+        _assert_visible(visible_plain, expected_token)
         assert "Expand pasted text" not in visible_plain
         assert composer.draft_text() == pasted_text
 

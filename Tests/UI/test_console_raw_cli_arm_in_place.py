@@ -182,7 +182,7 @@ async def test_text_inserted_into_an_armed_raw_command_shows_in_full_before_it_r
 
     Since TASK-37800 one Enter right after a collapsed token sends, so an
     armed ``! `` plus a large paste ran on one Enter while the composer read
-    "! Pasted text | 125 characters | Expand". A paste and an inserted text
+    "! Pasted text | 125 characters | Ctrl+E expand". A paste and an inserted text
     file after the typed prefix must both show in full before Enter runs the
     command. One app run covers both, so the gated file stays fast.
     """

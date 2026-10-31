@@ -414,6 +414,12 @@ ATTACHMENT_ACTIONS_WIDTH = BASE_ACTIONS_WIDTH + 4
 REDIRECT_ACTION_WIDTH = 10
 
 
+#: Owner decision 2026-10-30 (TASK-37870/37871): Enter always sends. This
+#: key expands the collapsed token beside the caret, and every chip names it.
+#: Free in the Console and in ADR-031's grammar; 0x05 in every terminal.
+EXPAND_TOKEN_KEY = "ctrl+e"
+EXPAND_TOKEN_KEY_LABEL = "Ctrl+E"
+
 #: TASK-25826: every label this control can display for a given state, so its
 #: width can be fixed once instead of tracking the current string. The price
 #: suffix appears mid-typing (`sync_action_state` runs on the keystroke path),
@@ -700,7 +706,7 @@ class ConsoleComposerBar(Horizontal):
     #: `_apply_history_snapshot` must NOT reuse `paste_collapse_threshold`
     #: -- that constant is a cosmetic PASTE-display preference (shipped
     #: default 50 characters) and, applied to undo/redo, converted ORDINARY
-    #: TYPED draft text into an opaque "Pasted text | N characters | Expand" token on
+    #: TYPED draft text into an opaque "Pasted text | N characters" token on
     #: every restore over 50 characters, including the AC's own flagship
     #: Ctrl+U -> Ctrl+Z recovery path (one Backspace then destroyed the
     #: whole recovered draft in a single step, since a collapsed token
@@ -2074,17 +2080,17 @@ class ConsoleComposerBar(Horizontal):
     def _segment_display_text(segment: _DraftSegment) -> str:
         """Return display text for a single draft segment.
 
-        TASK-33622.1: every collapsed chip ends in "Expand" (its affordance:
-        a click, or Enter with the caret on it), and the confirm keeps the
-        token's name and the keys that answer it.
+        Every collapsed chip ends in its expand key (TASK-37870/37871); a
+        click's confirm keeps the token's name and the keys that answer it.
         """
+        key = EXPAND_TOKEN_KEY_LABEL
         if segment.collapse_state == "collapsed":
             if segment.label:
-                return f"{segment.label} | Expand"
-            token = f"Pasted text | {len(segment.text)} characters | Expand"
+                return f"{segment.label} | {key} expand"
+            token = f"Pasted text | {len(segment.text)} characters | {key} expand"
         elif segment.collapse_state == "confirm":
             name = segment.label or f"pasted text ({len(segment.text)} characters)"
-            token = f"Expand {name}? Enter: yes · Esc: no"
+            token = f"Expand {name}? {key}: yes · Esc: no"
         else:
             return segment.text
         if segment.origin == "paste" and not segment.label:
@@ -4637,7 +4643,7 @@ class ConsoleComposerBar(Horizontal):
         docstring for the measurements behind the threshold value.
 
         An oversized restored token remains a generic
-        "Pasted text | N characters | Expand" collapse because carrying a
+        "Pasted text | N characters" collapse because carrying a
         potentially unbounded segment graph would defeat the history bound.
 
         Collapsed tokens are atomic for the caret everywhere else in this
@@ -4854,6 +4860,10 @@ class ConsoleComposerBar(Horizontal):
             self._raw_cli_prefix_stage_one = False
         # TASK-33622.1: Esc answers "no" to a pending expand confirm.
         if event.key == "escape" and self.reset_pending_unfurl():
+            event.stop()
+            event.prevent_default()
+            return True
+        if event.key == EXPAND_TOKEN_KEY and self.expand_token_at_caret():
             event.stop()
             event.prevent_default()
             return True
@@ -5454,7 +5464,7 @@ class ConsoleComposerBar(Horizontal):
         previous = self._cursor_index
         self._cursor_index = index
         self._clamp_cursor()
-        # TASK-33622.1: a confirm the caret has left no longer owns Enter.
+        # TASK-33622.1: the caret leaving a pending confirm answers no.
         caret_token = self._caret_token()
         if caret_token is None or caret_token.collapse_state != "confirm":
             self._reset_pending_unfurl_state()
@@ -5943,7 +5953,7 @@ class ConsoleComposerBar(Horizontal):
         """Return whether a collapsed paste token is waiting on confirm.
 
         Returns:
-            True when at least one pasted segment is showing the `Expand?` prompt.
+            True when at least one pasted segment is asking to expand.
         """
         return any(segment.collapse_state == "confirm" for segment in self._segments)
 
@@ -5990,28 +6000,44 @@ class ConsoleComposerBar(Horizontal):
         return True
 
     def _caret_token(self) -> _DraftSegment | None:
-        """Return the collapsed/confirm token the caret is on (TASK-33622.1).
+        """Return the collapsed or confirm token beside the caret.
 
-        Owner ruling 2026-10-29 (TASK-37800): a collapsed token counts only
-        with the caret right before it, never after it, and not when a
-        paste's leading line break (drawn outside its chip) parts the two. A
-        pending confirm owns Enter at either edge and wins between tokens.
+        Owner decision 2026-10-30 (TASK-37870/37871): the caret never sits
+        inside a token, so beside it means either edge, line breaks drawn
+        outside a chip included. A pending confirm wins, then the token right
+        after the caret (under it), then the one right before it.
         """
-        touching: list[_DraftSegment] = []
-        start = 0
         cursor = self._cursor_index
+        start = 0
+        pending = under = behind = None
         for segment in self._segments:
             end = start + len(segment.text)
-            state = segment.collapse_state
-            if state == "confirm" and start <= cursor <= end:
-                touching.append(segment)
-            elif state == "collapsed" and cursor == start:
-                unbroken = segment.origin != "paste" or bool(segment.label)
-                if unbroken or not self._paste_edge_line_breaks(segment.text)[0]:
-                    touching.append(segment)
+            if segment.collapse_state in {"collapsed", "confirm"}:
+                if segment.collapse_state == "confirm" and start <= cursor <= end:
+                    pending = pending or segment
+                if cursor == start:
+                    under = under or segment
+                elif cursor == end:
+                    behind = segment
             start = end
-        pending = [item for item in touching if item.collapse_state == "confirm"]
-        return (pending or touching or [None])[0]
+        return pending or under or behind
+
+    def _expand_target(self) -> _DraftSegment | None:
+        """Return the token beside the caret, else the nearest collapsed one."""
+        target = self._caret_token()
+        if target is not None:
+            return target
+        cursor, start, best, best_gap = self._cursor_index, 0, None, None
+        for segment in self._segments:
+            end = start + len(segment.text)
+            if segment.collapse_state == "collapsed":
+                gap = start - cursor if start >= cursor else cursor - end
+                # A tie goes to the token ahead of the caret, as beside it.
+                ahead = gap == best_gap and start >= cursor
+                if best_gap is None or gap < best_gap or ahead:
+                    best, best_gap = segment, gap
+            start = end
+        return best
 
     def _advance_paste_token(self, segment: _DraftSegment) -> None:
         """Step one token collapsed -> confirm -> expanded; one confirm at a time."""
@@ -6020,30 +6046,23 @@ class ConsoleComposerBar(Horizontal):
         segment.collapse_state = target
         self._refresh_visible_draft()
 
-    def activate_focused_paste_token(self) -> bool:
-        """Advance the collapsed token the caret is on, for Enter.
+    def expand_token_at_caret(self) -> bool:
+        """Expand the collapsed token beside the caret, for ``EXPAND_TOKEN_KEY``.
 
-        TASK-33622.1/TASK-37800 (owner rulings 2026-10-27, 2026-10-29): Enter
-        expands a token only with the caret on it (right before it); anywhere
-        else, right after a token included, this returns False and Enter
-        sends. It used to step the FIRST token, so a token draft never sent.
+        Owner decision 2026-10-30 (TASK-37870/37871): Enter always sends and
+        never expands a token. This key expands one in a single press, a
+        click's pending confirm included; with no token beside the caret it
+        expands the nearest one, so a chip's hint holds after typing.
 
         Returns:
-            True when a paste token was advanced.
+            True when a token was expanded.
         """
-        if not self._segments_initialized:
-            return False
-        segment = self._caret_token()
+        segment = self._expand_target() if self._segments_initialized else None
         if segment is None:
             return False
-        try:
-            visible_draft = self.query_one("#console-command-visible-text", Static)
-            refocus_composer = self.app.focused in {self, visible_draft}
-        except NoMatches:
-            refocus_composer = self.app.focused is self
-        self._advance_paste_token(segment)
-        if refocus_composer:
-            self.focus()
+        self._reset_pending_unfurl_state()
+        segment.collapse_state = "expanded"
+        self._refresh_visible_draft()
         return True
 
     def _display_index_at(
@@ -6169,8 +6188,8 @@ class ConsoleComposerBar(Horizontal):
             if changed:
                 self._refresh_visible_draft()
             return changed
-        # TASK-33622.1: the caret moves onto the clicked token (its right
-        # edge), so the Enter its confirm names answers this token.
+        # TASK-33622.1: the caret moves beside the clicked token (its right
+        # edge), so the Ctrl+E its confirm names answers this token.
         self._raw_cli_prefix_stage_one = False
         self._clear_draft_selection()
         self._coalescing_active = False

@@ -437,9 +437,8 @@ async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody
         composer.insert_text(" tail")
         # TASK-33622.1: this used to unfurl the token fully first (collapsed
         # -> confirm -> expanded), because Enter only sent once no token was
-        # left to step. With the caret off the token Enter's token step does
-        # nothing, so the collapsed draft sends as it is, in full.
-        assert not composer.activate_focused_paste_token()
+        # left to step. Enter always sends now (owner decision 2026-10-30),
+        # so the collapsed draft sends as it is, in full.
         assert not composer.has_pending_paste_confirmation()
         assert composer.has_paste_segments()
         expected = composer.draft_text()

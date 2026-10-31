@@ -222,7 +222,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: in Settings meanwhile. Dev 38c9d2edcf measures 24329/737; with the
     #: fix, 24334/737, the exact measurement.
     #: 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 24334/737 -> 24332/737.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24332, 737),
+    #: 2026-10-30, TASK-37870/37871: 24332 -> 24330 (methods unchanged), the
+    #: exact measurement after Enter stopped stepping collapsed tokens (owner
+    #: decision 2026-10-30: Enter always sends; Ctrl+E expands, in the composer).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24330, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

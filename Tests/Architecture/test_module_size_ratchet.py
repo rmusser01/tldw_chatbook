@@ -596,7 +596,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29, TASK-37873 (same owner rule): 7142 -> 7155 (+13). A paste
     # or file inserted into a trusted raw-CLI command is never collapsed, so
     # a host command is on screen in full before Enter or Run starts it.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7155,
+    # 2026-10-30, TASK-37870/37871 (same owner rule): 7155 -> 7174 (+19).
+    # Owner decision 2026-10-30: Enter always sends; Ctrl+E (EXPAND_TOKEN_KEY)
+    # expands the token beside the caret, or the nearest one, and every chip
+    # and click confirm names it.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7174,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,

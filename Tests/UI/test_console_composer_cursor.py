@@ -28,7 +28,7 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 
 PASTE_CHUNK = "chunk of pasted console text " * 10
-PASTE_TOKEN = f"Pasted text | {len(PASTE_CHUNK)} characters | Expand"
+PASTE_TOKEN = f"Pasted text | {len(PASTE_CHUNK)} characters | Ctrl+E expand"
 
 
 def _composer_with(*parts: str) -> ConsoleComposerBar:

@@ -1263,6 +1263,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         "Composer",
         (
             ("Enter", "send now or queue after an accepted turn"),
+            ("Ctrl+E", "expand the paste, file or prompt token beside the caret"),
             ("Ctrl+G", "stop this tab's run (shown while one is running)"),
             ("Queue shelf", "manage, pause, resume, and recover queued prompts"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
@@ -21792,10 +21793,7 @@ class ChatScreen(BaseAppScreen):
             event.prevent_default()
             return
         if event.key == "enter":
-            if composer.activate_focused_paste_token():
-                event.stop()
-                event.prevent_default()
-                return
+            # Enter always sends; Ctrl+E expands a token (owner, 2026-10-30).
             event.stop()
             event.prevent_default()
 

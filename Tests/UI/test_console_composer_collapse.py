@@ -171,8 +171,8 @@ def test_adjacent_collapsed_pastes_have_one_literal_newline_and_expand_copy():
 
     assert composer.draft_text() == first + "\n" + second
     assert composer._display_draft_text() == (
-        f"Pasted text | {len(first)} characters | Expand\n"
-        f"Pasted text | {len(second)} characters | Expand"
+        f"Pasted text | {len(first)} characters | Ctrl+E expand\n"
+        f"Pasted text | {len(second)} characters | Ctrl+E expand"
     )
     assert [
         (segment.text, segment.origin, segment.collapse_state)
@@ -224,7 +224,7 @@ def test_adjacent_paste_snapshot_restore_preserves_boundary_and_block_states():
 
 
 def _paste_token(text: str) -> str:
-    return f"Pasted text | {len(text)} characters | Expand"
+    return f"Pasted text | {len(text)} characters | Ctrl+E expand"
 
 
 @pytest.mark.parametrize(
