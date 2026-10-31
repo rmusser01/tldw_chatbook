@@ -1076,3 +1076,27 @@ def test_interrupting_the_migration_version_swap_rolls_back_not_duplicates(tmp_p
         assert [
             row[0] for row in conn.execute("SELECT version FROM schema_version")
         ] == [1]
+
+
+@pytest.mark.parametrize("immediate", [False, True])
+def test_base_exception_in_transaction_rolls_back_and_leaves_no_open_transaction(
+    db, immediate
+):
+    """A KeyboardInterrupt must roll back, not strand an open transaction."""
+    with pytest.raises(KeyboardInterrupt):
+        with db.transaction(immediate=immediate) as conn:
+            conn.execute(
+                "INSERT INTO subscriptions (name, type, source) VALUES (?, ?, ?)",
+                ("interrupted", "rss", "https://example.test/feed"),
+            )
+            raise KeyboardInterrupt
+
+    assert not db.conn.in_transaction
+    with db.transaction(immediate=True) as conn:  # would fail if still open
+        pass
+    with db.transaction() as conn:
+        conn.execute("SELECT 1")  # a later commit must not persist the write
+    count = db.conn.execute(
+        "SELECT COUNT(*) FROM subscriptions WHERE name = 'interrupted'"
+    ).fetchone()[0]
+    assert count == 0
