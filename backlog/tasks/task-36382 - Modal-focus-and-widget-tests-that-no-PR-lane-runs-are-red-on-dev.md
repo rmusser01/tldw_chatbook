@@ -100,5 +100,7 @@ Found by the implementation and reviews of TASK-35648/35649 (PR #3217, 2026-10-2
 
 **Not verified.** The block's first CI run at 28 shards.
 
+**Re-sync 2026-10-31 onto dev 1eaa6a9429.** The only conflict was the census tail and floor, where dev's TASK-33622.6 appended five nodes. Dev's census was kept, this task's block re-appended after dev's last entry, and `MINIMUM_FILES` again equals the entry count. The range-diff shows no other change. Preflight and the census tests in `Tests/CI` pass.
+
 Files: `Tests/UI/modal_wide_tier_registry.py`, `Tests/UI/test_modal_wide_tier.py`, `Tests/UI/test_non_obscuring_focus_contract.py`, `Tests/UI/test_css_staleness_manifest.py`, `Tests/UI/test_llamacpp_setup_refresh_gate.py`, `Tests/UI/test_evals_skill_eval_screen.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-textual.md`.
 <!-- SECTION:NOTES:END -->
