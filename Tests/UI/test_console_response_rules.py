@@ -900,26 +900,31 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             holder.join(3)
             assert not holder.is_alive()
             assert observed_entry == [console], "the intended native refresh never started"
-            # An already-issued native readiness read may acquire the locks as
-            # soon as our holder releases. Its filesystem work is not delivery
-            # time for the pending display callbacks; await its own completion.
-            projection = getattr(console, "_console_readiness_config_projection", None)
-            if projection is not None and projection.pending:
-                async with asyncio.timeout(30):
-                    await projection._settled.wait()
-            # Deferred, not dropped: every retry runs, and discovery fetches
-            # unless it already had before the hold began.
+            # Native startup work can reacquire the locks after our holder
+            # releases. Attach, discovery, and readiness own that lifecycle;
+            # their completion is not the display callback delivery budget.
+            # Re-read readiness because startup may issue another projection.
+            async with asyncio.timeout(30):
+                while (
+                    not console._console_attach_reconciled
+                    or not {"before", "after"} & set(fetches)
+                    or any(
+                        worker.group == "console-skill-discovery" and not worker.is_finished
+                        for worker in console.workers
+                    )
+                    or (
+                        (projection := getattr(console, "_console_readiness_config_projection", None))
+                        is not None and projection.pending
+                    )
+                ):
+                    await asyncio.sleep(0.02)
+            # Deferred, not dropped: every original display retry must run
+            # within the unchanged five-second delivery budget.
             try:
                 async with asyncio.timeout(5):
                     while (
                         getattr(console, "_console_config_retries", None)
                         or not deferred.issubset({name for name, phase in bodies if phase == "after"})
-                        or not console._console_attach_reconciled
-                        or not {"before", "after"} & set(fetches)
-                        or any(
-                            worker.group == "console-skill-discovery" and not worker.is_finished
-                            for worker in console.workers
-                        )
                     ):
                         await asyncio.sleep(0.02)
             except TimeoutError:

@@ -127,9 +127,28 @@ class ConsoleSkillController:
             ):
                 # Capture again after cold preparation: it may publish trust or
                 # reload config. The decorated context call owns fresh admission.
-                reader = _capture_console_skill_context_read(
-                    self.app_instance, service, wiring, metadata
-                )
+                from tldw_chatbook import config
+
+                while True:
+                    with ExitStack() as acquired:
+                        for lock in (
+                            config._settings_rebuild_lock(), config._config_file_lock()
+                        ):
+                            if not lock.acquire(blocking=False):
+                                break
+                            acquired.callback(lock.release)
+                        else:
+                            if (
+                                not current()
+                                or not metadata._source_current(wiring_source)
+                                or not metadata._source_current(helper_source)
+                            ):
+                                raise RuntimeError("console_skill_trust_source_changed")
+                            reader = _capture_console_skill_context_read(
+                                self.app_instance, service, wiring, metadata
+                            )
+                            break
+                    await asyncio.sleep(0.2)
             if reader is None:
                 context = await get_context(mode="local")
             else:

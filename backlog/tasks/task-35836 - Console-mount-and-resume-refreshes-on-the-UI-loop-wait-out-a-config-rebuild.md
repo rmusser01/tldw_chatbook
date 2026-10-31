@@ -10,7 +10,7 @@ labels:
 - performance
 - flaky
 priority: medium
-updated_date: '2026-10-21 00:27'
+updated_date: 2026-10-31 22:08
 ---
 
 ## Description
@@ -87,8 +87,9 @@ Final validation (Windows, fresh private TEMP/TMP/config roots; repository impor
 Earlier focused readiness/rail verification also reported one unchanged readiness fixture failure (SimpleNamespace lacks content; the mode-bar method's AST is identical to dev) and seven rail fixture setup failures (raw_source_selection_changed). These are recorded limitations, not passing tests or proven baseline results. Two isolated response-rule controls passed. Fatal Ruff checks and git diff --check pass; the census retains the exact dev byte prefix, has five appended nodes, and validates at 1,178 entries. No full sweep or remote action was performed.
 
 ADR required: no new ADR; this is a routine lock-lifetime repair preserving TASK-35645's decision and ADR-230/231 ownership and callback affinity.
+2026-10-31 final integration on dev73b03cd0603e0ac1f0f41a38f070155785b84f86: independent review identified the second stock context capture introduced by the native owned-read integration. A rebuild invalidating its cached source could decline qualified capture and route through the custom-affinity fallback. The native regression reproduced a non-None capture assertion failure (not a demonstrated lock freeze). Both native config locks now cover that synchronous second capture with asynchronous nonblocking retry and owner/source rechecks; locks release before worker await, and custom callback affinity stays intact. The new regression passed1/35.052s and is explicitly appended to the census (complete1181baseprefix+6nodes=1187;checker passes).
+The eight overlap cases returned7passes and one mount deadline failure166.66s. The failed catch snapshot was fully settled. Source-preserving timing diagnostics retained all deadlines and original methods; they showed continued native lock ownership, then discovery, consuming the delivery window, while both display callbacks returned in about15ms. They do not retroactively reconstruct the initial failure. The test-only correction assigns attach/discovery/live readiness settlement to its existing30-second startup bound and reserves the unchanged5-second bound for display retry delivery. Native holds/watchdog/15heartbeats/all completion assertions remain. All3 mounted parameters passed57.71s after that correction. The earlier7 passing overlap cases and1 new-capture pass remain on unchanged product code; no broad rerun. Receipts: sibling test-runtime/secondcapture-green-1793483546110218700, final-overlap-1793483757176147800, mount-timing-1793484055212766100, mount-return-timing-1793484161922328900, mount-lifecycle-green-1793484328465933500. Hashes are UTF8/LF-normalized and recorded with commands/XML. Temporary diagnostics removed from checkout. Fatal Ruff and whitespace checks pass. Prior readiness/rail fixture limitations remain recorded above. ADR required:no new ADR; existing230/231 native ownership and affinity boundaries preserved. HostedCI and size limits are waived by explicit user instruction; ChatScreen exact measurement remains24437lines/741methods. Final independent review required before publish/merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
