@@ -221,11 +221,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: provider, and on_screen_resume repaints a raw draft armed or disarmed
     #: in Settings meanwhile. Dev 38c9d2edcf measures 24329/737; with the
     #: fix, 24334/737, the exact measurement.
-    #: 2026-10-30: re-measured after rebasing onto dev 1eaa6a9429 (owner rule: the row is the exact measurement): 24334/737 -> 24332/737.
-    #: 2026-10-30, TASK-37870/37871: 24332 -> 24330 (methods unchanged), the
-    #: exact measurement after Enter stopped stepping collapsed tokens (owner
-    #: decision 2026-10-30: Enter always sends; Ctrl+E expands, in the composer).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24330, 737),
+    #: 2026-10-30, TASK-37870/37871, rebased onto dev 7536ac3b87 (row
+    #: 24331/737, its exact measurement): TASK-33622.9's five lines above stay
+    #: and Enter no longer steps collapsed tokens (-2; owner decision
+    #: 2026-10-30: Enter always sends, Ctrl+E expands in the composer), so
+    #: 24334/737, the exact measurement (same owner rule).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24334, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
