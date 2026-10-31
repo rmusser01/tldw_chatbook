@@ -646,8 +646,13 @@ def test_cancellation_interrupts_and_stops(adapter, json_recorder, monkeypatch):
     routes[("POST", "/interrupt")] = {}
     event.set()
 
-    with pytest.raises(VideoGenerationError, match="cancelled"):
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
+    # A typed stop, so the Console reports it as stopped, not failed
+    # (TASK-33621.45); a local backend has no remote outcome to report.
+    with pytest.raises(VideoGenerationCancelled, match="cancelled") as caught:
         adapter.generate(_request(), cancel_event=event)
+    assert caught.value.remote_cancel is None
     interrupt = next(call for call in calls if call["url"].endswith("/interrupt"))
     assert interrupt["method"] == "POST"
     assert interrupt["trusted_origins"] == frozenset({"127.0.0.1"})
