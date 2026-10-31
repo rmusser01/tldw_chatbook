@@ -162,7 +162,10 @@ is never sent automatically, so you can edit before pressing Enter.
 - **First run:** "Preparing the speech model for the first time. The first
   run downloads it and can take several minutes. Nothing is being recorded
   yet — the microphone opens once the model is ready." While the download
-  runs, the chip counts it: "◐ Downloading speech model… 412 MB".
+  runs, the chip counts it: "◐ Downloading speech model… 412 MB". The
+  download streams into the Hugging Face cache, so one interrupted by
+  quitting resumes on the next press (set `HF_HUB_DISABLE_XET=0` to use
+  hf_xet instead; it shows no progress).
 - **Model download or load fails:** the attempt ends with one message —
   "Dictation failed: The 'parakeet-mlx' speech model could not be downloaded
   or loaded. Nothing was recorded. Check your network connection and press
