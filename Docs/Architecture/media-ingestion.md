@@ -85,3 +85,9 @@ ADR-013 (library ingest ownership and job lifecycle), ADR-014 (ingest service au
 
 - [rag.md](./rag.md) — what happens after the post-commit hook
 - [database-layer.md](./database-layer.md) — the Media DB schema and write seam
+
+
+The local STT default parser adapter translates the parent-minted
+UrlProvenance enum into the parser's explicit argument (ADR-207), matching
+the ordinary ingest worker. Missing or forged string values remain unknown;
+preserving URL text does not establish user entry or bypass egress policy.

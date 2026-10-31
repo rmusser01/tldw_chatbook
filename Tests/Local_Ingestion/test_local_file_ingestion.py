@@ -337,11 +337,18 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert all(measured_data not in event for event in progress_events)
 
 
-def test_url_text_is_preserved_for_video_processor(
+@pytest.mark.parametrize("provenance_kind", ["user", "unknown", "forged", "missing"])
+def test_url_text_and_provenance_reach_video_processor(
     monkeypatch,
+    provenance_kind,
 ) -> None:
     """TASK-38207: the existing parse boundary keeps an intact URL unchanged."""
-    original_url = "https://www.youtube.com/watch?v=wtTd8PJPMVg&next=https://example.org/a%2Fb"
+    from tldw_chatbook.STT.executor_worker import _default_parse_job
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    original_url = (
+        "https://www.youtube.com/watch?v=wtTd8PJPMVg&next=https://example.org/a%2Fb"
+    )
 
     video_calls: list[Dict[str, Any]] = []
     article_calls: list[str] = []
@@ -389,23 +396,34 @@ def test_url_text_is_preserved_for_video_processor(
         lambda media_type: {},
     )
 
-    parse_local_file_for_ingest(
-        original_url,
-        {
-            "transcription_provider": "faster-whisper",
-            "transcription_model": "base",
-            "language": "en",
-            "transcription_precision": "int8",
-            "transcription_local_files_only": True,
-            "transcription_batch_route_resolved": True,
-            "timestamps": True,
-            "diarization": False,
-        },
-    )
+    options = {
+        "transcription_provider": "parakeet-onnx",
+        "transcription_model": "base",
+        "language": "en",
+        "transcription_precision": "int8",
+        "transcription_local_files_only": True,
+        "transcription_batch_route_resolved": True,
+        "timestamps": True,
+        "diarization": False,
+    }
+    provenance = {
+        "user": UrlProvenance.USER_ENTERED,
+        "unknown": UrlProvenance.UNKNOWN,
+        "forged": "USER_ENTERED",
+    }
+    if provenance_kind in provenance:
+        options["url_provenance"] = provenance[provenance_kind]
+    _default_parse_job(original_url, options, transcription_runner=object())
 
     assert article_calls == []
     assert len(video_calls) == 1
     assert video_calls[0]["inputs"] == [original_url]
+
+    assert video_calls[0]["url_provenance"] is (
+        UrlProvenance.USER_ENTERED
+        if provenance_kind == "user"
+        else UrlProvenance.UNKNOWN
+    )
 
 
 @pytest.mark.parametrize(

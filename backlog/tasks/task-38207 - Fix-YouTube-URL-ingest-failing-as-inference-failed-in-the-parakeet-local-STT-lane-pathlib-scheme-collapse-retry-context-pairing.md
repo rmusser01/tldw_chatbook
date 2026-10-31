@@ -29,10 +29,11 @@ Library HTTP(S) ingestion through the Parakeet or transcribe-cpp lane must prese
 3. Reproduce URL corruption at the actual Library-to-coordinator handoff.
 4. Transport immutable URL text without Path conversion; keep file/buffer and provider source contracts unchanged.
 5. Exercise request validation, serialization, spawned worker dispatch, and existing parse routing with focused tests.
-6. Renumber the younger duplicate task 35080 after checking existing refs and registered worktrees, then obtain independent review before publishing.
+6. Forward only existing enum URL provenance through the default parser adapter under ADR-207; test genuine, unknown, forged, and missing values through the real parser.
+7. Renumber the younger duplicate task 35080 after checking existing refs and registered worktrees, then obtain independent review before publishing.
 
 ADR required: amend existing ADR
-ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md
+ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md; backlog/decisions/207-url-provenance-seeds-egress-self-trust.md
 Reason: represent Library URL input explicitly at the existing executor boundary while preserving provider contracts and egress ownership.
 <!-- SECTION:PLAN:END -->
 
@@ -59,3 +60,12 @@ Verification on 2026-10-31:
 
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+
+Final review correction: the default STT parser adapter now forwards only the
+existing UrlProvenance enum under ADR-207. The real adapter-to-parser-to-video
+regression first failed with USER_ENTERED becoming UNKNOWN; unknown, forged
+string, and absent controls stayed closed. After the fix, all 41 focused URL
+provenance and executor checks passed in 127.36 seconds, including existing
+private-address and metadata-address guard tests. URL source/job identity
+never mints trust. The caller's options mapping is copied before extraction.

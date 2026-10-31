@@ -350,3 +350,9 @@ Windows also changes separators within the authority/path. Repairing a prefix
 afterward cannot recover exact query/path spelling and can reinterpret a local
 filename as a network source. A parallel downloader was rejected because the
 parse pipeline already owns guarded retrieval.
+
+
+The default executor parser adapter forwards the existing UrlProvenance enum
+under ADR-207. Missing or forged string values remain unknown. Neither a URL
+source nor a Library job ID establishes user entry; the parent boundary owns
+that decision. The URL text and its provenance remain distinct inputs.
