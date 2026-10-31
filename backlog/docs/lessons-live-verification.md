@@ -1,5 +1,43 @@
 # Lessons: verifying against the real thing
 
+## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
+
+**Incident.** The Library outcome line passed two review rounds: every test read
+the compositor's `strip.text`, and the live `.txt` captures showed the line
+correctly placed under its turn. The third review read the `.ansi` capture and
+the PNG instead. The cell left of each line's text was `ESC[2m ESC[49m`, the
+terminal's default background, which showed as a white block in the PNG. The
+line was inset with `margin-left: 1`. `#console-transcript-surface` layers a
+transparent `#console-transcript-background-effect` under the transcript, and a
+margin cell is not painted by the row, so it shows that layer. Switching the
+inset to padding (same text column) removed the notch.
+
+**What to do.** Inset a Console transcript row with padding, not margin. To test
+paint, read each cell's background from the compositor strip
+(`strip.crop(x, x + 1)`, then `segment.style.bgcolor`; `None` is the terminal
+default), not `strip.text`. Live, read the `.ansi` or look at the `.png`. The
+annotations and citation-chip rows also use a left margin; they were not checked
+here.
+
+## A `.txt` capture shows the composer's history ghost text as if it were typed (TASK-33621.51, 2026-10-29)
+
+**Incident.** On the live re-check of the Library outcome line, the second prompt
+was typed as `Project Zephyr launch codename` and the pane text read
+`Project Zephyr launch codename  and launch lead? One short sentence.` (the caret
+cell was blinked off in that capture). It looked like the previous draft had
+survived the send, so the driver cleared the composer with 80 Backspaces and typed
+again; the next capture read `Project Zephyr launch codename▌ and launch lead? …`. The tail is the
+composer's history suggestion (TASK-1364: a render-only suffix of the most recent
+sent prompt with that prefix, drawn `bright_black` after the caret).
+`capture-pane -p` drops the style, so it reads as typed text. Enter sent only the
+typed part: the transcript showed `Project Zephyr launch codename`.
+
+**What to do.** Before deciding the composer holds the wrong draft, look for the
+caret cell (`▌`; it blinks, so one capture may not show it). Text after the caret,
+when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
+bright-black run) or by the message the transcript shows after the send, not by
+the `.txt` row.
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured

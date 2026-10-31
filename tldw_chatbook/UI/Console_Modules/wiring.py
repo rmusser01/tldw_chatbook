@@ -108,7 +108,10 @@ from .hands_free import ConsoleHandsFreeController
 from .hooks import ConsoleHooksController
 from .response_rules import ConsoleResponseRulesUI
 from .image import ConsoleImageController
-from .library_activity import ConsoleLibraryActivityController
+from .library_activity import (
+    ConsoleLibraryActivityController,
+    ConsoleLibraryOutcomeLines,
+)
 from .library_policy import ConsoleLibraryPolicyController
 from .message import ConsoleMessageController
 from .prompt_queue import (
@@ -1655,6 +1658,19 @@ def build_console_controllers(
         presentation_paused=lambda: _console_presentation_paused(screen),
         torn_down=resume_screen_is_torn_down,
         live_reads=lambda: _console_send_start_in_progress(screen),
+    )
+    # TASK-33621.51: each sent turn's Automatic Library outcome line, read
+    # from its persisted record the same way (a view worker, inline while a
+    # send starts) and repainted when a worker read lands on an idle screen.
+    screen._library_outcome = ConsoleLibraryOutcomeLines(
+        ensure_store=lambda: screen._ensure_console_chat_store(),
+        run_worker=lambda work: screen.run_worker(
+            work, exclusive=False, group="console-library-outcome"
+        ),
+        repaint=lambda: screen._sync_native_console_transcript(force=True),
+        live_reads=lambda: _console_send_start_in_progress(screen),
+        presentation_paused=lambda: _console_presentation_paused(screen),
+        torn_down=resume_screen_is_torn_down,
     )
     from ...Widgets.Console.portrait_radio import update_portrait_radio
 

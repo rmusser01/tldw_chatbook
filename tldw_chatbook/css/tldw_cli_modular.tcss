@@ -7574,6 +7574,14 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
 }
 
 
+.console-transcript-library-outcome {
+    width: $ds-width-fill;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-2;
+    color: $ds-text-muted;
+}
+
+
 .console-kb-selection-hint {
     dock: bottom;
     width: $ds-width-full;

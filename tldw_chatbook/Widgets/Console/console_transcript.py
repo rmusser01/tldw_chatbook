@@ -1156,6 +1156,8 @@ class _TranscriptRow:
         "generation-card",
         "video-card",
         "canvas-card",
+        "library-outcome",
+        "library-activity",
         "actions",
         "action-help",
         "assistant-turn",
@@ -3124,6 +3126,7 @@ class ConsoleTranscript(VerticalScroll):
             "console-transcript-summary-banner",
             "console-transcript-citation-sources",
             "console-transcript-library-activity",
+            "console-transcript-library-outcome",
             "console-transcript-annotations",
             # Textual scrollbars carry the generic system-widget class; ignore them
             # defensively if a scrollbar click ever bubbles up to the transcript.
@@ -3208,6 +3211,7 @@ class ConsoleTranscript(VerticalScroll):
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
         self._library_activity_counts: dict[str, int] = {}
+        self._library_outcome_lines: dict[str, str] = {}  # TASK-33621.51
         # task-17169: screen-owned review-note previews keyed by native
         # message id -- a message with entries gains an inline marker row.
         self._annotation_previews: dict[str, tuple[str, ...]] = {}
@@ -4876,6 +4880,12 @@ class ConsoleTranscript(VerticalScroll):
             and message_id
             and type(count) is int
             and count > 0
+        }
+
+    def set_library_outcome_lines(self, lines: Mapping[str, str]) -> None:
+        """Replace screen-owned Automatic Library outcome lines by USER message ID."""
+        self._library_outcome_lines = {
+            key: line for key, line in lines.items() if key and type(line) is str
         }
 
     def set_annotation_previews(self, previews: Mapping[str, tuple[str, ...]]) -> None:
@@ -6964,6 +6974,16 @@ class ConsoleTranscript(VerticalScroll):
                     selected=selected,
                 )
             )
+            if outcome := self._library_outcome_lines.get(message.id):
+                rows.append(  # TASK-33621.51: what this turn's Library search did
+                    _TranscriptRow(
+                        key=f"library-outcome:{message.id}",
+                        kind="library-outcome",
+                        signature=("library-outcome", message.id, outcome),
+                        message=message,
+                        renderable=outcome,
+                    )
+                )
             for index, card in enumerate(canvas_card_presentations(message)):
                 card_session_id = self._canvas_card_session_id()
                 rows.append(
@@ -7604,6 +7624,13 @@ class ConsoleTranscript(VerticalScroll):
                 row.renderable,
                 id=self._row_widget_id(row),
                 classes="console-transcript-action-guide",
+            )
+        if row.kind == "library-outcome" and row.message is not None:
+            return Static(
+                row.renderable,
+                id=f"console-library-outcome-{row.message.id}",
+                classes="console-transcript-library-outcome",
+                markup=False,
             )
         if row.kind == "original-attempt" and row.message is not None:
             return Static(

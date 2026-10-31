@@ -976,8 +976,31 @@ very first time, while the model downloads). That start-up has its own,
 longer 60-second limit and does not count against the 5 seconds, so the first
 send after launch no longer times out just because the service was cold.
 Successful evidence is staged and then consumed by that send. **Zero results**
-is a completed retrieval, so the send continues without evidence. (A
-per-turn line saying so is not shown yet.)
+is a completed retrieval, so the send continues without evidence.
+
+Each turn sent this way says what its search did, in one quiet line under
+your message:
+
+- **Library: 3 sources sent**: the search found evidence and the send
+  carried it. The count is the number of references it sent.
+- **Library: 0 matches · sent without Library evidence**: the search
+  finished and found nothing.
+- **Library: sent once without Library · search timed out** (or *search
+  stopped* / *search failed*): you chose **Send once without Library** on the
+  recovery card described below.
+
+The line is read from a small record saved with your message, so it is still
+there after you reopen the chat, switch branches or restart the app.
+
+A turn has no line when no automatic search ran for it, or when nothing
+recorded one:
+
+- Auto was set to **Never**.
+- Evidence was already staged (a manual **Search Library** run or a Library
+  **Use in Console** handoff), so the send used that instead of searching.
+- The message was an **Edit & resend**, or started with `/` or `@`.
+- The chat was temporary when you sent it, or the turn was sent before this
+  record existed.
 
 A timeout, a failed search, or **Stop** pauses the prepared send before
 provider dispatch. The model provider is not contacted. A recovery card in

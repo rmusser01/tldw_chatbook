@@ -39,6 +39,28 @@ rescued the end state. Assert setup claims against what Textual actually did
 test. When two mechanisms can restore the same state, switch one off to test
 the other.
 
+## A Tests/UI suite that errors at setup locally can still run, under the bootstrap profile (TASK-33621.51 review, 2026-10-29)
+
+**Incident.** The review of the Library outcome line asked whether its new
+transcript row kind broke selection, windowing or pruning. The suites that answer
+that (selection contract, annotation markers, transcript region, window reconcile,
+pruning, turn attention) errored at setup on this machine on both trees with
+`RecoveryRequired: raw_source_selection_changed`, and none of them is in the PR UI
+census, so no pull-request lane runs them either. The question was about to be
+left for "CI after merge". The error is the per-test config sandbox meeting a
+config module already registered for the collection-time profile;
+`bootstrap_profile` tests keep that profile instead. A throwaway pytest plugin
+under `Tests/UI/` that adds the marker to every collected item
+(`def pytest_collection_modifyitems(items): item.add_marker(pytest.mark.bootstrap_profile)`),
+loaded with `-p Tests.UI.<module>`, made twelve such suites run on the branch and
+on a detached dev worktree. turn_attention went from 41 setup errors to 38 passed
+and 3 failed, the same 3 ids on dev. No failure appeared only on the branch.
+
+**What to do.** Before writing "unverified locally" for a Tests/UI suite that dies
+with `raw_source_selection_changed`, run it with that probe plugin on both trees
+and compare failing ids. Delete the plugin before committing. This is a local
+measurement aid, not a fix: the suite still fails in a lane that runs it plain.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its
@@ -72,6 +94,40 @@ coordinator's `sync_controls()`. A later re-sync then repaints the same state, s
 assertion stops depending on when the owner's own sync lands. A presentation-only
 push is fine for a widget mounted alone (`Tests/UI/test_console_speech_controls.py`),
 never inside the real screen.
+
+## A display cache keyed by the turns it shows hides a missing record: delete it and reopen (TASK-33621.51, 2026-10-29)
+
+**Incident.** The per-turn Library outcome line cached its projection by
+(database, conversation, persisted USER ids), on the grounds that a record is
+written once, in the acceptance that gives the turn its durable id. Every
+positive test passed, live and after a reload into a new session. A negative
+control added to the mounted test (delete the persisted record, reopen the
+chat in a new session, expect no line) failed: the reopened session had the
+same conversation and turn ids, so the cached projection painted a line whose
+record no longer existed. Adding the session to the key made every open read
+the records afresh.
+
+**What to do.** When a line is meant to come "only from the persisted
+record", prove it with a test that removes the record and reloads through
+the real open path, not only with tests where the record is present. Key a
+display cache by the session (or another identity a reopen changes) as well
+as by the data it shows.
+
+## A same-tree baseline need not be a 1.2 GB worktree (TASK-33621.51, 2026-10-29)
+
+**Incident.** Midway through a base-against-branch comparison, the shared
+disk fell from 9.3 GB to 524 MB free (other sessions' work, plus pytest temp
+dirs at 1.2-1.3 GB). The detached baseline worktree was 1.2 GB, so both runs
+were killed and it was removed. A `git archive <base> tldw_chatbook Tests
+pyproject.toml README.md Docs scripts` baseline was still 1.1 GB, because
+`Docs/superpowers` is 728 MB and `Docs/QA` 81 MB. Without those two it was
+276 MB and ran the same test files.
+
+**What to do.** Check `df -m /System/Volumes/Data` before a comparison and
+keep a disk guard running beside it. For a baseline, archive only what the
+tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
+only in such a tree (a missing `.git` or doc) is not a branch regression.
+Compare failing ids only.
 
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
