@@ -148,8 +148,10 @@ budget" when the replacements did not fit — over one line per rule that fired
 
 **Import…** in the rail opens the one Import picker (see the [parent
 page](../roleplay-chat-dictionaries.md)); a dictionary lands in Dictionaries
-whatever mode is showing, and the toast names where it went ("Imported Ship
-Talk · in Chat dictionaries"). `.json` and `.md` files up to 10 MB are read
+whatever mode is showing. When it is selected for you (Dictionaries showing
+or switched to, nothing unsaved in the way) the toast reads "Ship Talk
+imported."; when it is not, the toast names where it went instead ("Imported
+Ship Talk · in Chat dictionaries"). `.json` and `.md` files up to 10 MB are read
 ("{file} is larger than 10 MB; nothing was imported." above that; Markdown
 is under the picker's **Markdown** filter), and a file that could also be a
 card asks "Import {file} as:" first. So does a Markdown file without a

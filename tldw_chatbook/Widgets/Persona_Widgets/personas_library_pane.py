@@ -733,6 +733,8 @@ class PersonasLibraryPane(Vertical):
         self._no_match_args: tuple[str, str | None, int | None] | None = None
         # Whether counts were laid over that message (a leave can cut them short).
         self._also_in_landed = False
+        # Retry held the focus when a reload's blank hid it (``_show_retry``).
+        self._retry_owed_focus = False
 
     @property
     def item_list(self) -> RoleplayItemList:
@@ -1174,11 +1176,23 @@ class PersonasLibraryPane(Vertical):
         return bool(self.query_one("#personas-library-nomatch", Vertical).display)
 
     def _show_retry(self, shown: bool) -> None:
-        """Show Retry with the recovery copy; a hidden Retry hands its focus to the list (I1)."""
+        """Show Retry with the recovery copy; a hidden Retry hands its focus to the list (I1).
+
+        A server reload blanks the list first (``show_loading``), which hid
+        Retry under the focus; a read that then failed again brought Retry
+        back unfocused, so a second Enter did nothing (new with B2b, closed
+        in its final fix wave). The blank remembers that Retry held the
+        focus: a failed read gives it back, and rows leave it on the list.
+        """
         retry = self.query_one("#personas-library-retry", Button)
+        owed = self._retry_owed_focus
+        self._retry_owed_focus = False
         if not shown and retry.has_focus:
+            self._retry_owed_focus = True
             self.item_list.focus()
         retry.display = shown
+        if shown and owed:
+            retry.focus()
 
     async def show_loading(self) -> None:
         """A kind's first read started: blank the old kind's rows now, and say

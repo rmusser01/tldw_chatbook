@@ -126,10 +126,12 @@ own exports, the character-book array form found inside character cards,
 and SillyTavern "World Info" files — including their "key",
 "keysecondary", "caseSensitive" and "disable" field names and their
 numbered positions. Bad files are rejected before anything is written,
-naming the entry ("Entry 3 has no keys."). The toast names where it went:
+naming the entry ("Entry 3 has no keys."). When the book is selected for you
+(Lore showing or switched to, nothing unsaved in the way) the toast reads
+"Ashfall imported."; when it is not, the toast names where it went instead:
 "Imported Ashfall · in Lore books". If the name is already taken the book is
-imported under a new one: "Imported Ashfall 2 · in Lore books. Renamed to
-avoid a name clash." Export lives on the Settings tab.
+imported under a new one, and either toast says so: "Ashfall 2 imported.
+Renamed to avoid a name clash." Export lives on the Settings tab.
 
 ### Attaching a book to a character
 

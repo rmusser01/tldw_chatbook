@@ -4029,6 +4029,98 @@ async def test_escape_in_the_search_box_with_matches_moves_focus_to_the_list(
         assert screen.state.search_query == "Character 00"
 
 
+async def test_escape_on_retry_clears_a_search_whose_read_failed(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Final review F1: in Lore, a search whose read fails shows the recovery
+    row; Tab reaches Retry, and Escape there clears the search, as the hint
+    "esc clears the search" says. Retry is new with B2b, so on the branch
+    before this fix Escape on it did nothing (the rung acted only with focus
+    on the list, the marks bar or the no-match block); dev has no Retry."""
+    fail = {"on": True}
+    _failing_read("lore", mock_app_instance, volume_348, monkeypatch, fail)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        retry = screen.query_one("#personas-library-retry", Button)
+        search = screen.query_one("#personas-library-search", Input)
+        assert await pilot.click("#personas-mode-lore")
+        await wait_until(pilot, lambda: retry.display, what="the Retry button")
+        await _search_settled(pilot, screen, "x")
+        assert list_state(screen).state == "recovery" and retry.display
+        retry.focus()
+        await pilot.pause()
+        assert screen.focused is retry
+        intent = screen._import_intent
+        await pilot.press("escape")
+        await wait_until(
+            pilot, lambda: screen.state.search_query == "", what="the search cleared"
+        )
+        assert search.value == ""
+        assert screen._import_intent > intent  # a user's clear: newer intent
+        await settle(pilot)
+        assert list_state(screen).state == "recovery"  # the read still fails
+
+
+async def test_a_second_escape_during_a_slow_clear_fires_the_box_rung_once(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Deferred minor T9a: the box rung (owner decision D9) read only
+    ``no_match_showing()``, which stays stale until the cleared read lands,
+    so a second Escape during a slow clear ran the rung again: a redundant
+    reload and a second intent bump. New with B2b (dev has no D9 rung). Now
+    the rung also needs a search or tag in the state, which the first clear
+    emptied, so the second Escape moves focus to the list as on dev."""
+    page = personas_screen_module.get_character_page_for_ui
+    reading, release = threading.Event(), threading.Event()
+    armed = {"on": False}
+
+    def window(db, **kwargs):
+        if armed["on"] and not kwargs.get("search_term"):
+            armed["on"] = False
+            reading.set()
+            release.wait(timeout=30)
+        return page(db, **kwargs)
+
+    monkeypatch.setattr(personas_screen_module, "get_character_page_for_ui", window)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        search = screen.query_one("#personas-library-search", Input)
+        item_list = screen.query_one(RoleplayItemList)
+        clears: list[int] = []
+        clear = screen._clear_search_and_tag
+
+        def counted_clear() -> None:
+            clears.append(1)
+            clear()
+
+        monkeypatch.setattr(screen, "_clear_search_and_tag", counted_clear)
+        search.focus()
+        await _search_settled(pilot, screen, "zzqx")
+        assert list_state(screen).state == "no_match"
+        intent = screen._import_intent
+        armed["on"] = True
+        try:
+            await pilot.press("escape")
+            await _poll(reading.is_set, "the held cleared read")
+            # The no-match block still shows: the cleared read has not landed.
+            assert screen.query_one(PersonasLibraryPane).no_match_showing()
+            assert screen.state.search_query == ""
+            await pilot.press("escape")
+            await _poll(lambda: screen.focused is item_list, "focus on the list", 5.0)
+        finally:
+            release.set()
+        await wait_until(
+            pilot, lambda: bool(visible_item_ids(screen)), what="the cleared rows"
+        )
+        await settle(pilot)
+        assert clears == [1]
+        assert screen._import_intent == intent + 1
+
+
 async def _poll(predicate, what: str, timeout: float = 15.0) -> None:
     """Wait on the event loop alone: ``pilot.pause`` waits for every message
     pump, and a kind switch's handler is still awaiting its read."""
@@ -4222,6 +4314,52 @@ async def test_retry_reloads_a_failed_list_in_every_kind(
         await settle(pilot)
         assert list_state(screen).state == "rows" and not retry.display
         assert not screen.query("#personas-service-error")
+
+
+async def test_a_server_retry_that_fails_again_keeps_focus_on_retry(
+    mock_app_instance,
+):
+    """Deferred minor T9b: a server reload blanks the list first, and the
+    blank hid Retry under the focus, handing it to the list; when the read
+    failed again Retry came back unfocused, so a second Enter did nothing.
+    New with B2b (dev has no Retry). The blank now remembers that Retry held
+    the focus and a failed read gives it back; rows take it to the list."""
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=AsyncMock(side_effect=RuntimeError("server unreachable")),
+        search_characters=AsyncMock(return_value=[]),
+        get_character=AsyncMock(return_value={}),
+    )
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        retry = screen.query_one("#personas-library-retry", Button)
+        await wait_until(pilot, lambda: retry.display, what="the Retry button")
+        await settle(pilot)
+        assert screen.state.runtime_source == "server"
+        assert list_state(screen).state == "recovery"
+        retry.focus()
+        await pilot.pause()
+        assert screen.focused is retry
+        await pilot.press("enter")
+        await settle(pilot)
+        assert list_state(screen).state == "recovery" and retry.display
+        assert screen.focused is retry
+        # A read that succeeds hands the focus to the list, as before.
+        records = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 4)]
+        service = mock_app_instance.character_persona_scope_service
+        service.list_characters = AsyncMock(return_value=records)
+        # A Button ignores a second press for 0.2 s after one.
+        await wait_until(
+            pilot, lambda: not retry.has_class("-active"), what="Retry ready again"
+        )
+        await pilot.press("enter")
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 3, what="the server rows"
+        )
+        await settle(pilot)
+        assert not retry.display
+        assert screen.focused is screen.query_one(RoleplayItemList)
 
 
 # ---- Also in: the other kinds' counts (frame slice B2b, spec 1.5.4) ----

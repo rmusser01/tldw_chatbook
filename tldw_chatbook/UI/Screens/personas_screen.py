@@ -15196,10 +15196,16 @@ class PersonasScreen(BaseAppScreen):
             return
         # Selected only when nothing is lost (frame slice B2b, spec 1.4.6); on
         # dev it was selected whenever Lore showed, else "open Lore to see it".
-        await self._land_import("lore", str(new_id), name, intent)
-        landed = frame_state.import_landed_toast(name, "lore")
-        suffix = ". Renamed to avoid a name clash." if name != base else ""
-        self._notify(f"{landed}{suffix}", "information")
+        # Where it went is named only when it was NOT selected (R33), as the
+        # character path does; the rename note follows either copy.
+        selected = await self._land_import("lore", str(new_id), name, intent)
+        note = "Renamed to avoid a name clash." if name != base else ""
+        if selected:
+            toast = f"{frame_state.imported_toast(name)} {note}".rstrip()
+        else:
+            landed = frame_state.import_landed_toast(name, "lore")
+            toast = f"{landed}. {note}" if note else landed
+        self._notify(toast, "information")
 
     async def _import_dictionary_from_path(
         self, path: str, *, intent: tuple[int, int] | None = None
@@ -15310,9 +15316,18 @@ class PersonasScreen(BaseAppScreen):
             return
         # Selected only when nothing is lost (frame slice B2b, spec 1.4.6); on
         # dev it was selected whenever Dictionaries showed, with no toast.
+        # Where it went is named only when it was NOT selected (R33), as the
+        # character path does; the rename note above stays its own toast.
         name = str(record.get("name") or "")
-        await self._land_import("dictionary", str(record.get("id")), name, intent)
-        self._notify(frame_state.import_landed_toast(name, "dictionary"), "information")
+        selected = await self._land_import(
+            "dictionary", str(record.get("id")), name, intent
+        )
+        self._notify(
+            frame_state.imported_toast(name)
+            if selected
+            else frame_state.import_landed_toast(name, "dictionary"),
+            "information",
+        )
 
     @on(Button.Pressed, "#personas-export-json")
     async def _handle_export_json_pressed(self, event: Button.Pressed) -> None:
@@ -17158,23 +17173,31 @@ class PersonasScreen(BaseAppScreen):
             return
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
-            if self.query_one(PersonasLibraryPane).no_match_showing():
+            if (
+                self.state.search_query or self.state.tag_filter
+            ) and self.query_one(PersonasLibraryPane).no_match_showing():
                 # Owner decision D9 (2026-10-29): while nothing matches, rung 8
                 # runs before the focus move, as the hint "esc clears the
                 # search" says. Otherwise focus moves to the list, as on dev.
+                # The state check: the message stays up until the cleared
+                # read lands, and a second Escape then ran the rung again
+                # (new with B2b's rung, closed in its final fix wave).
                 self._clear_search_and_tag()
                 return
             self._focus_library_list(force=True)
             return
         # Frame slice B2a: the marks bar's "Clear esc" (spec 1.5.5). It sits
         # below every context above, where B3's Escape ladder puts it, and
-        # acts only with focus on the list or in its marks bar.
+        # acts only with focus on the list, in its marks bar or its no-match
+        # block, or on the recovery row's Retry (B2b: a failed search's way
+        # out is the same "esc clears the search"; dev had no Retry).
         try:
             library = self.query_one(PersonasLibraryPane)
         except QueryError:
             return
         if focused is None or not (
             focused is library.item_list
+            or focused.id == "personas-library-retry"
             or any(
                 node.id in ("personas-library-marks", "personas-library-nomatch")
                 for node in focused.ancestors
