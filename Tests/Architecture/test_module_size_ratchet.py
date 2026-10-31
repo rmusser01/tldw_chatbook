@@ -153,6 +153,8 @@ _BUDGETS: dict[str, int] = {
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
     # 2026-10-30, TASK-33621.11: shrank to the exact measurement, 29055 -> 29053.
+    # 2026-10-30, TASK-33621.11: shrank to the exact measurement on dev
+    # 7536ac3b87, 29038 -> 29036.
     "tldw_chatbook/Chat/console_chat_controller.py": 29036,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
