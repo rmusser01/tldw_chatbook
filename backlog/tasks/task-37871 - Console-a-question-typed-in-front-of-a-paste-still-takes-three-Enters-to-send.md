@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-30 01:36'
-updated_date: '2026-10-31 01:27'
+updated_date: '2026-10-31 03:35'
 labels:
   - console
   - composer
@@ -47,4 +47,6 @@ Under the TASK-37800 ruling (owner, 2026-10-29) a caret right before a collapsed
 **Live** (real app, claude-haiku-4-5 via the review proxy, isolated profile, null keyring, 160x45). Pre-change head: paste, Home, 'Q: ', Enter showed 'Q: ▌Expand pasted text (156 characters)? Enter: yes · Esc: no' with 0 proxy requests. Fix: paste, Home, 'In 5 words: ', one Enter sent at once (1 request) and the model replied 'Worker-1 crashed, restarted successfully.' Evidence: tools/evidence/bd5/U11/B0-B1 (before), B5-B7 (fix).
 
 **Docs (AC#3).** User Guide console/chat-basics.md 'Large pastes' says Enter always sends, a question typed in front of a paste included.
+
+**Merge evidence (2026-10-30, after the TASK-37870 review round, head on dev 7536ac3b87, 0 behind).** Plain command on head: test_console_composer_token_enter.py 14 passed (14 failed on a detached origin/dev worktree, 13 with 'one Enter did not send'); test_console_composer_token_expand_key.py 20 passed (19 failed on dev; the no-token control passes). Touched neighbours compared by failing id with bootstrap_profile forced on both trees: no new failure (details in TASK-37870). ./scripts/preflight.sh passes. Live on this head (claude-haiku-4-5, 160x45): a paste plus a typed question sent on one Enter and the model answered.
 <!-- SECTION:NOTES:END -->
