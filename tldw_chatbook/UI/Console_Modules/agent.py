@@ -229,14 +229,19 @@ def apply_console_agent_status_state(widget: Any, status_line: str) -> None:
 
     Args:
         widget: The status-line widget (any object exposing Textual's
-            ``set_class(bool, name)``), normally the
+            ``update_classes(mapping)``), normally the
             ``#console-agent-section-status`` Static.
         status_line: The rendered status text the widget shows; see
             :func:`console_agent_status_state` for the accepted shapes.
     """
     state = console_agent_status_state(status_line)
-    for status in _AGENT_STATUS_GLYPHS:
-        widget.set_class(status == state, f"console-agent-section-status-{status}")
+    # TASK-36571: one restyle for the swap, not one per changed class.
+    widget.update_classes(
+        {
+            f"console-agent-section-status-{status}": status == state
+            for status in _AGENT_STATUS_GLYPHS
+        }
+    )
 
 
 #: The ``ConsoleInspectorSection.section_id`` the fleet mini-section is
