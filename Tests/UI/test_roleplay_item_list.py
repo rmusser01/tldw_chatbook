@@ -1726,6 +1726,23 @@ _CHOOSER_ORDER = [
 ]
 
 
+def test_the_actor_pack_import_message_and_create_action_are_gone():
+    """Final review F4: after B2b's rework nothing posts
+    ``ActorPackImportRequested`` (the one Import picker routes packs by
+    extension) or the action ``"create_actor_pack"`` (the New chooser calls
+    ``_begin_create_actor_pack`` itself), yet the screen kept a handler, a
+    branch, the message class and the literal. Both leave with B2b."""
+    import typing
+
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets import personas_messages
+
+    assert not hasattr(personas_messages, "ActorPackImportRequested")
+    assert "create_actor_pack" not in typing.get_args(personas_messages.PersonaAction)
+    assert not hasattr(PersonasScreen, "_handle_actor_pack_import")
+    assert hasattr(PersonasScreen, "_begin_create_actor_pack")  # the chooser's
+
+
 @pytest.mark.parametrize(
     ("mode", "blank"),
     [

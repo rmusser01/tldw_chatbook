@@ -257,7 +257,6 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
     option_id_for,
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
-    ActorPackImportRequested,
     ActorPackExportRequested,
     AlsoInRequested,
     PersonaActionRequested,
@@ -5513,16 +5512,6 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._io_dialog_active = False
 
-    @on(ActorPackImportRequested)
-    def _handle_actor_pack_import(self, message: ActorPackImportRequested) -> None:
-        """An Actor Pack import opens the one Import picker (frame slice B2b).
-
-        On dev it opened a picker of its own (``.tldw-actor-pack`` only,
-        folder ``actor_pack_import``), from the toolbar's Import Actor Pack.
-        """
-        message.stop()
-        self._open_roleplay_import()
-
     async def _import_actor_pack_from_path(
         self, selected: Path | str, controller: object, importer: object
     ) -> None:
@@ -8088,8 +8077,8 @@ class PersonasScreen(BaseAppScreen):
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._begin_create_lore)
             # Creation in the remaining modes is wired in follow-up tasks.
-        elif message.action == "create_actor_pack":
-            await self._run_guarded(self._begin_create_actor_pack)
+            # "From a portrait" is the New chooser's (_run_new_choice); dev's
+            # separate New Actor Pack action left with its toolbar button.
         elif message.action == "import":
             self._open_roleplay_import()
         elif message.action == "duplicate":
@@ -17307,7 +17296,11 @@ class PersonasScreen(BaseAppScreen):
         library.clear_marks()
 
     def _clear_search_and_tag(self) -> None:
-        """Escape's rung 8: the search box and the tag cleared, the list read again now."""
+        """Escape's rung 8: the search box and the tag cleared, the list read again.
+
+        The read starts at once in its worker (``_start_debounced_search_render``
+        is the step the 0.2 s debounce timer would reach; no timer is armed).
+        """
         # The user's own clear is a newer intent than an import in flight,
         # like a typed search (B2b Task 5); the prevented Input.Changed below
         # would otherwise skip _handle_search_changed's bump.
