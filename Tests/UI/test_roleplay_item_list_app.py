@@ -4519,6 +4519,64 @@ async def test_a_server_retry_that_fails_again_keeps_focus_on_retry(
         assert screen.focused is screen.query_one(RoleplayItemList)
 
 
+async def test_a_failed_server_retry_leaves_focus_the_user_moved_to_the_search_box(
+    mock_app_instance,
+):
+    """Final fix wave residual: T9b's fix gave Retry the focus back whenever
+    the blank had taken it, so a user who moved to the search box during a
+    slow reload lost that focus when the read failed again. New with the fix
+    wave (dev has no Retry; the pre-wave branch left focus on the list).
+    Retry takes the focus back only while it is still where the blank left
+    it, on the list, or nowhere."""
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    held = {"on": False}
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def list_characters(**_kwargs):
+        if held["on"]:
+            started.set()
+            await release.wait()
+        raise RuntimeError("server unreachable")
+
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=list_characters,
+        search_characters=AsyncMock(return_value=[]),
+        get_character=AsyncMock(return_value={}),
+    )
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        retry = screen.query_one("#personas-library-retry", Button)
+        await wait_until(pilot, lambda: retry.display, what="the Retry button")
+        await settle(pilot)
+        assert list_state(screen).state == "recovery"
+        retry.focus()
+        await pilot.pause()
+        assert screen.focused is retry
+        held["on"] = True
+        # Retry's handler awaits the read, so the press ends with it (as the
+        # kind-key tests do); the held window is polled on the loop alone.
+        press = asyncio.create_task(pilot.press("enter"))
+        item_list = screen.query_one(RoleplayItemList)
+        search = screen.query_one("#personas-library-search", Input)
+        try:
+            await _poll(
+                lambda: started.is_set() and screen.focused is item_list,
+                "the blank to take the focus while the read is held",
+            )
+            # The user moves on during the slow reload.
+            search.focus()
+            await _poll(lambda: screen.focused is search, "focus in the search box")
+        finally:
+            release.set()
+            await press
+        await wait_until(pilot, lambda: retry.display, what="Retry back")
+        await settle(pilot)
+        assert list_state(screen).state == "recovery"
+        assert screen.focused is search
+
+
 # ---- Also in: the other kinds' counts (frame slice B2b, spec 1.5.4) ----
 
 
