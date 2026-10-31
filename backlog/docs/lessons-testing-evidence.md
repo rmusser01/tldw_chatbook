@@ -342,7 +342,10 @@ thread dump for `_win_sleep.wait_inner` before blaming CPU speed. To reproduce
 it on macOS, route `textual.timer.sleep` and `textual._time.sleep` through
 `run_in_executor`, both the sleep and its cancel, and cap the app's
 `FreshContextExecutor` at 8 workers. Size Windows wait budgets for executor
-queueing, which CPU load does not reproduce.
+queueing, which CPU load does not reproduce -- as one deadline shared by the
+test's waits, not a budget per wait: the first fix gave each wait 60 s, and
+review caught that three slow waits sum past the job's 180 s node timeout,
+which kills the test instead of failing its assertion.
 
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 

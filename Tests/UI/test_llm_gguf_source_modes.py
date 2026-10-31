@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -306,7 +307,19 @@ async def _press_until_focus(
 # windows-latest runner's pool has 8 threads, all seen parked in `wait_inner`,
 # so a screen recompose's timer teardown queues for seconds (TASK-38206: over
 # 10 s in CI; 12.8-23.6 s under a local 8-thread proxy, ~1 s with 64 threads).
-_SETTLE_SECONDS = 60.0 if sys.platform == "win32" else 10.0
+# So Windows settles share one deadline per test instead of 10 s each: the
+# Windows UI jobs kill a node at --timeout=180, and per-wait budgets could sum
+# past that and turn a failed settle's assertion into a timeout kill.
+_SETTLE_SECONDS = 10.0
+_WINDOWS_TEST_SETTLE_SECONDS = 120.0
+_WINDOWS = sys.platform == "win32"
+_windows_settle_deadline = 0.0
+
+
+@pytest.fixture(autouse=True)
+def _windows_settle_deadline_per_test() -> None:
+    global _windows_settle_deadline
+    _windows_settle_deadline = time.monotonic() + _WINDOWS_TEST_SETTLE_SECONDS
 
 
 async def _settle_pilot_until(
@@ -317,8 +330,13 @@ async def _settle_pilot_until(
 ) -> None:
     """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
 
+    seconds = (
+        max(0.0, _windows_settle_deadline - time.monotonic())
+        if _WINDOWS
+        else _SETTLE_SECONDS
+    )
     try:
-        async with asyncio.timeout(_SETTLE_SECONDS):
+        async with asyncio.timeout(seconds):
             while True:
                 await pilot.pause()
                 if predicate():
@@ -360,6 +378,45 @@ async def test_pilot_settle_reports_a_clear_timeout(
             lambda: False,
             message="condition did not settle",
         )
+
+
+@pytest.mark.asyncio
+async def test_windows_settles_share_one_deadline_per_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38206 review: Windows waits draw on one per-test budget.
+
+    A 60 s budget per wait let several waits in one test sum past the Windows
+    jobs' 180 s per-node timeout, turning a failed settle's assertion into a
+    pytest-timeout kill. Elsewhere each wait keeps its own 10 s.
+    """
+
+    class YieldingPilot:
+        async def pause(self) -> None:
+            await asyncio.sleep(0)
+
+    budgets: list[float] = []
+    real_timeout = asyncio.timeout
+
+    def recording_timeout(seconds: float) -> Any:
+        budgets.append(seconds)
+        return real_timeout(seconds)
+
+    monkeypatch.setattr(asyncio, "timeout", recording_timeout)
+    monkeypatch.setitem(globals(), "_WINDOWS", True)
+    for _ in range(2):
+        await _settle_pilot_until(YieldingPilot(), lambda: True, message="settled")
+        await asyncio.sleep(0.01)
+    assert _WINDOWS_TEST_SETTLE_SECONDS >= budgets[0] > budgets[1] > 0
+    assert _WINDOWS_TEST_SETTLE_SECONDS <= 180 - 60
+    monkeypatch.setitem(globals(), "_windows_settle_deadline", time.monotonic())
+    with pytest.raises(AssertionError, match="budget spent"):
+        await _settle_pilot_until(
+            YieldingPilot(), lambda: False, message="budget spent"
+        )
+    monkeypatch.setitem(globals(), "_WINDOWS", False)
+    await _settle_pilot_until(YieldingPilot(), lambda: True, message="settled")
+    assert budgets[-1] == _SETTLE_SECONDS
 
 
 @pytest.mark.asyncio

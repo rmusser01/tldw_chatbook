@@ -60,6 +60,8 @@ Tests/UI/test_llm_gguf_source_modes.py::test_claim_authority_survives_screen_rec
 **AC#2 is open.** It needs 10 consecutive Windows runs of the GGUF source evidence job, which cannot be triggered from here.
 
 **Follow-up worth filing (not in scope).** The same starvation applies to the shipped app on Windows machines with few cores. Three 24 h timers pin 3 of the 8 threads permanently, and thread workers queue behind sleeping timers. Sizing or splitting the default executor on Windows would address it at the source.
+
+**Review round (2026-10-31, claude/burn-fixB).** The 60 s budget applied per wait, so several waits in one test could sum past the 180 s node timeout and turn an assertion into a pytest-timeout kill. Windows settles now share one deadline per test, 120 s from its setup (autouse fixture), leaving 60 s of the node timeout for teardown; other platforms keep 10 s per wait. No assertion changed. `test_windows_settles_share_one_deadline_per_test` pins it (RED: missing; GREEN); the whole file passes locally (32, bootstrap-profile aid).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
