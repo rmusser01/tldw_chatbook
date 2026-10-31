@@ -556,6 +556,17 @@ assertion stops depending on when the owner's own sync lands. A presentation-onl
 push is fine for a widget mounted alone (`Tests/UI/test_console_speech_controls.py`),
 never inside the real screen.
 
+**Same shape for a faked store read (TASK-37654, 2026-10-31).** The Send-acceptance
+projection test patched `store.session_draft` to return `""` instead of running the
+input CAS, so the store still held the typed draft at the revision the projection
+recorded. A Console sync tick then wrote the cleared draft back (revision 1 -> 2) and
+the next tick saw the revision move and reloaded the composer: a second action-row
+sync, in about 1 run of 6, whenever `pilot.pause()` waited long enough for two ticks.
+Running the real `commit_session_input_draft` before projecting made the write-back
+a no-op. Calling the tick's `_sync_console_session_draft()` twice by hand reproduced
+it 3 of 3 under the fake. Do not patch a store getter to fake a write: perform the
+write, or a reconcile pass will make the store agree with the screen later.
+
 ## A display cache keyed by the turns it shows hides a missing record: delete it and reopen (TASK-33621.51, 2026-10-29)
 
 **Incident.** The per-turn Library outcome line cached its projection by
