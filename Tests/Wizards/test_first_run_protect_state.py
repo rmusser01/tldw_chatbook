@@ -207,7 +207,7 @@ def test_an_unsaved_typed_key_is_called_out_on_an_encrypted_config():
     ["sk-decrypted", ConfigEncryption().encrypt_value("sk-real", "session-pw")],
     ids=["unlocked", "locked"],
 )
-def test_a_typed_key_saved_into_an_encrypted_config_is_not_called_out(openai_value):
+def test_a_committed_typed_key_in_an_encrypted_config_is_not_called_out(openai_value):
     state = read_protect_state(
         {
             "encryption": {"enabled": True},
@@ -215,6 +215,7 @@ def test_a_typed_key_saved_into_an_encrypted_config_is_not_called_out(openai_val
         },
         {},
         typed_provider_key="openai",
+        typed_key_committed=True,
     )
 
     assert state == ProtectState(PROTECT_ENCRYPTED)
@@ -356,9 +357,12 @@ def test_an_unsaved_typed_key_is_still_called_out_beside_a_stored_one():
     assert copy.show_keep_plain and copy.show_back_to_model
 
 
-def test_a_typed_key_that_is_on_disk_is_not_called_out():
+def test_a_committed_typed_key_that_is_on_disk_is_not_called_out():
     state = read_protect_state(
-        {"API": {"openai_api_key": "sk-legacy-plain"}}, {}, typed_provider_key="openai"
+        {"API": {"openai_api_key": "sk-legacy-plain"}},
+        {},
+        typed_provider_key="openai",
+        typed_key_committed=True,
     )
 
     assert state == ProtectState(PROTECT_PLAINTEXT, providers=("OpenAI",))
@@ -370,7 +374,8 @@ def test_a_typed_key_that_is_on_disk_is_not_called_out():
 @pytest.fixture
 def real_config_file(tmp_path, monkeypatch):
     """Write config.toml and select it as the real config module's source."""
-    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.Chat import provider_setup_persistence
 
     def _select(text: str | None):
         path = tmp_path / "profile" / "config.toml"
@@ -379,7 +384,9 @@ def real_config_file(tmp_path, monkeypatch):
             path.write_text(text)
             path.chmod(0o600)
         monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
-        module = install_config_source(monkeypatch)
+        module = select_config_source(
+            monkeypatch, path, vars(provider_setup_persistence)
+        )
         monkeypatch.setattr(
             module, "DEFAULT_CONFIG_PATH", tmp_path / "decoy" / "config.toml"
         )
@@ -696,3 +703,173 @@ def test_no_wizard_copy_points_at_privacy_and_security_without_the_card():
         and "Privacy & Security ▸ Encryption" not in text
     ]
     assert bare == []
+
+
+@pytest.mark.parametrize(
+    "retained_good", [False, True], ids=["no-cache", "retained-key"]
+)
+def test_protect_rejects_fallback_after_real_toml_parse_failure(
+    real_config_file, retained_good
+):
+    import sys
+    from tldw_chatbook.UI.Wizards.first_run_protect_step import _load_persisted_config
+
+    path = real_config_file('[api_settings.openai]\napi_key = "sk-old-synthetic"\n')
+    module = sys.modules["tldw_chatbook.config"]
+    if retained_good:
+        assert _protect_state_from_disk().kind == PROTECT_PLAINTEXT
+    path.write_text("[malformed\n", encoding="utf-8")
+
+    # The actual loader catches this failure and returns defaults/last-good.
+    # Protect must reject that fallback, regardless of the data it contains.
+    with pytest.raises(ValueError, match="persisted configuration"):
+        _load_persisted_config()
+    assert module.get_config_load_failure() is not None
+
+
+def test_protect_rejects_fallback_after_real_strict_decryption_failure(
+    real_config_file,
+):
+    import sys
+    from tldw_chatbook.UI.Wizards.first_run_protect_step import _load_persisted_config
+
+    real_config_file('[api_settings.openai]\napi_key = "sk-old-synthetic"\n')
+    module = sys.modules["tldw_chatbook.config"]
+    assert module.enable_config_encryption("synthetic-protect-master") is True
+    module.set_encryption_password("synthetic-wrong-master")
+
+    with pytest.raises(ValueError, match="persisted configuration"):
+        _load_persisted_config()
+
+
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "encrypted"])
+def test_old_same_provider_key_does_not_prove_typed_replacement_was_saved(encrypted):
+    document = {"api_settings": {"openai": {"api_key": "sk-old-synthetic"}}}
+    if encrypted:
+        document["encryption"] = {"enabled": True}
+    state = read_protect_state(document, {}, typed_provider_key="openai")
+
+    assert state.unsaved_provider == "OpenAI"
+    assert protect_copy(state, config_path="/p/config.toml").show_back_to_model
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encrypted", [False, True], ids=["plaintext", "encrypted"])
+async def test_same_provider_draft_skip_commit_and_later_edit_remain_honest(
+    real_config_file, encrypted
+):
+    import sys
+    from types import SimpleNamespace
+    from textual.app import App
+    from textual.widgets import Button, Static
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as state_module
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    real_config_file('[api_settings.openai]\napi_key = "sk-old-synthetic"\n')
+    module = sys.modules["tldw_chatbook.config"]
+    if encrypted:
+        assert module.enable_config_encryption("synthetic-protect-master")
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    draft = state_module.FirstRunProviderDraft(
+        provider="openai",
+        endpoint="",
+        credential=state_module.ProviderCredentialDraft("draft", "sk-new-synthetic", 1),
+    )
+    assert container.stage_provider_setup(draft)
+    container.wizard_data[STEP_PROVIDER] = {
+        "provider_key": "openai",
+        "provider_value": "OpenAI",
+        "entered_key": True,
+    }
+    model = container.steps[container._step_index_for_id(state_module.STEP_MODEL)]
+    # No selected model takes the real skip-safe commit path and writes no key.
+    assert await model.commit() == (True, "")
+    assert (
+        module.load_cli_config_and_ensure_existence(force_reload=True)["api_settings"][
+            "openai"
+        ]["api_key"]
+        == "sk-old-synthetic"
+    )
+    step = container.steps[container._step_index_for_id(STEP_PROTECT)]
+
+    class Host(App):
+        def compose(self):
+            yield step
+
+    async with Host().run_test(size=(120, 40)) as pilot:
+        await step._load_state_worker(step._state_generation)
+
+        def body():
+            return str(step.query_one("#setup-protect-body", Static).render())
+
+        back = step.query_one("#setup-protect-back-to-model", Button)
+        assert "OpenAI key you typed isn't saved" in body()
+        assert back.display
+
+        assert await container.commit_staged_provider_setup("synthetic-model")
+        assert (
+            module.load_cli_config_and_ensure_existence(force_reload=True)[
+                "api_settings"
+            ]["openai"]["api_key"]
+            == "sk-new-synthetic"
+        )
+        await step._load_state_worker(step._state_generation)
+        assert "isn't saved" not in body()
+        assert not back.display
+
+        assert container.stage_provider_setup(
+            state_module.FirstRunProviderDraft(
+                provider="openai",
+                endpoint="",
+                credential=state_module.ProviderCredentialDraft(
+                    "draft", "sk-later-synthetic", 2
+                ),
+            )
+        )
+        await step._load_state_worker(step._state_generation)
+        assert "OpenAI key you typed isn't saved" in body()
+        assert back.display
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["malformed", "retained-key", "wrong-password"])
+async def test_real_failed_read_never_renders_plaintext_or_nothing_to_protect(
+    real_config_file, failure
+):
+    import sys
+    from types import SimpleNamespace
+    from textual.app import App
+    from textual.widgets import Button, Static
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    path = real_config_file('[api_settings.openai]\napi_key = "sk-old-synthetic"\n')
+    module = sys.modules["tldw_chatbook.config"]
+    if failure == "wrong-password":
+        assert module.enable_config_encryption("synthetic-protect-master")
+        module.set_encryption_password("synthetic-wrong-master")
+    else:
+        if failure == "retained-key":
+            assert _protect_state_from_disk().kind == PROTECT_PLAINTEXT
+        path.write_text("[malformed\n", encoding="utf-8")
+    container = SetupWizardContainer(SimpleNamespace(app_config={}))
+    step = container.steps[container._step_index_for_id(STEP_PROTECT)]
+
+    class Host(App):
+        def compose(self):
+            yield step
+
+    async with Host().run_test(size=(120, 40)):
+        await step._load_state_worker(step._state_generation)
+        title = str(step.query_one("#setup-protect-title", Static).render())
+        body = str(step.query_one("#setup-protect-body", Static).render())
+        assert "Nothing to protect" not in title
+        assert "plain text" not in body
+        assert (
+            str(step.query_one("#setup-protect-set-password", Button).label)
+            != "Encrypt with a password…"
+            or not step.query_one("#setup-protect-set-password", Button).display
+        )
+        assert step._state.kind == (
+            PROTECT_ENCRYPTED if failure == "wrong-password" else PROTECT_UNREADABLE
+        )

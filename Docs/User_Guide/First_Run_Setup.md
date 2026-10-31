@@ -269,7 +269,9 @@ says what it holds:
 - **A key you typed but that isn't saved yet** (you skipped the Model step;
   the key is saved together with the model) — it says so and offers **Back
   to Model**. The keyboard stays on **Next →**, so Enter still moves forward;
-  **Back to Model** is one Tab away. Only the key typed for the provider you
+  **Back to Model** is one Tab away. An older key for the same provider does
+  not count as saving its replacement. Encrypting saved keys also leaves this
+  warning visible until Model saves the new draft. Only the key typed for the provider you
   last chose counts: switching to a provider that needs no key drops it.
 - **Keys only from environment variables** — it names them (for example
   `OPENAI_API_KEY`) and says config.toml holds no key to encrypt.

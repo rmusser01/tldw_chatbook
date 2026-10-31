@@ -51,18 +51,24 @@ BUSY_REFUSAL = "Encryption is still running. Wait for it to finish."
 
 
 def _load_persisted_config() -> tuple[Mapping[str, Any], str]:
-    """Read config.toml back the way Summary does, plus its path.
+    """Read authoritative fresh config.toml state, plus its path.
 
     Returns:
         The merged config (decrypted with the session password, if any) and
         the config file path as text ("" when it cannot be resolved).
+
+    Raises:
+        ValueError: The fresh loader returned fallback data after a failure.
     """
     from tldw_chatbook.config import (
         get_cli_config_path,
-        load_cli_config_and_ensure_existence,
+        _load_cli_config_bootstrap,
     )
 
-    config = load_cli_config_and_ensure_existence(force_reload=True)
+    loaded = _load_cli_config_bootstrap(force_reload=True)
+    if not loaded.succeeded:
+        raise ValueError("Could not read persisted configuration")
+    config = loaded.config
     try:
         path_text = str(get_cli_config_path())
     except Exception as error:
@@ -241,6 +247,9 @@ class ProtectKeysStep(SetupStep):
                 environ,
                 typed_provider_key=protect_state.typed_provider_key(
                     getattr(self.wizard, "wizard_data", None)
+                ),
+                typed_key_committed=(
+                    getattr(self.wizard, "provider_setup_committed", False) is True
                 ),
             )
         self._config_path = path_text
@@ -485,7 +494,12 @@ class ProtectKeysStep(SetupStep):
             return
         if ok:
             self.render_state(
-                protect_state.ProtectState(protect_state.PROTECT_ENCRYPTED)
+                protect_state.ProtectState(
+                    protect_state.PROTECT_ENCRYPTED,
+                    unsaved_provider=(
+                        self._state.unsaved_provider if self._state is not None else ""
+                    ),
+                )
             )
             self.clear_step_error()
             self._set_status(protect_state.ENABLED_STATUS)

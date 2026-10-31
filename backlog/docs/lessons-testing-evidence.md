@@ -23371,3 +23371,16 @@ The root rebased after starting the corrected UI partition controls. Two cases c
 ## Preserve the fixture layer when probing native UI controls (PR3290 CI repair, 2026-10-29)
 
 The first held-folder probe was collected from scratch outside Tests/UI. It failed marker registration before App execution, and config import occurred before the UI fixture bootstrap. It was invalid evidence and kept private. Selecting the original Tests/UI node and installing an observation/probe plugin preserved the real UI conftest/bootstrap/profile guards; later native runs reproduced the actual folder-publication and retired-row message gap. Do not mistake a scratch test with the same code for the original collection/fixture environment, and never count its setup failure as product RED.
+
+## Exception-only doubles can hide a loader's real fallback contract (TASK-34100.4, 2026-10-31)
+
+**Incident.** PR3293's Protect test replaced the public config loader with an
+OSError. The real loader catches malformed TOML and strict-decrypt failures and
+returns defaults or its retained good snapshot, so Protect still falsely said
+plain text or Nothing to protect. Real isolated-file regressions reproduced both
+failures; Protect now checks the existing bootstrap success result.
+
+**What to do.** Before mocking a load failure, inspect the loader's returned
+failure contract. Exercise swallowed failures with a real malformed file and a
+retained snapshot as well as an empty cache; a raising double only covers the
+exception branch.

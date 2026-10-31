@@ -315,6 +315,7 @@ def read_protect_state(
     environ: Mapping[str, str],
     *,
     typed_provider_key: str = "",
+    typed_key_committed: bool = False,
 ) -> ProtectState:
     """Derive the Protect state from the persisted config.
 
@@ -324,6 +325,8 @@ def read_protect_state(
         environ: Process environment, for keys supplied by env vars.
         typed_provider_key: The provider a key was typed for on the Provider
             step this run, or "" when none was typed.
+        typed_key_committed: Whether the wizard owner successfully committed
+            this exact staged draft. An older saved key is not a receipt.
 
     Returns:
         The state, with the provider names or env vars its copy names.
@@ -349,13 +352,17 @@ def read_protect_state(
     )
 
     def _unsaved(saved: set[str]) -> str:
-        return _display_name(typed_provider_key) if typed and typed not in saved else ""
+        return (
+            _display_name(typed_provider_key)
+            if typed and (not typed_key_committed or typed not in saved)
+            else ""
+        )
 
     encryption = config.get("encryption")
     if isinstance(encryption, Mapping) and _flag(encryption.get("enabled")):
         # Review v5r1 (R1-3): a key typed this run but never saved is called
-        # out here too. An `enc:` value is saved -- this session may just not
-        # hold the password -- so it never reads as unsaved.
+        # out here too. A stored value (locked or decrypted) belongs to this
+        # run only when the wizard owner committed the exact staged draft.
         saved = stored_keys | {_secret_owner(p, config)[0] for p in still_encrypted}
         return ProtectState(PROTECT_ENCRYPTED, unsaved_provider=_unsaved(saved))
     # With encryption off, a saved key still `enc:` is the user's typed key

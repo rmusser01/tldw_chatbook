@@ -101,6 +101,13 @@ def _install(monkeypatch, document: dict, *, enable_result: bool = True) -> _Dis
         "load_cli_config_and_ensure_existence",
         lambda force_reload=False: disk.document,
     )
+    monkeypatch.setattr(
+        config_module,
+        "_load_cli_config_bootstrap",
+        lambda force_reload=False: config_module._ConfigBootstrapResult(
+            disk.document, True
+        ),
+    )
     monkeypatch.setattr(config_module, "get_cli_config_path", lambda: CONFIG_PATH)
     monkeypatch.setattr(config_module, "enable_config_encryption", _enable)
     monkeypatch.setattr(config_module, "change_encryption_password", _change)
@@ -385,7 +392,7 @@ async def test_a_long_config_path_is_shown_whole(monkeypatch):
             str(long_path).split()
         )
         for line in shown.splitlines()[1:-1]:
-            assert line.endswith("/")  # broken only at separators
+            assert line.endswith(("/", "\\"))  # broken only at path separators
 
 
 # --- AC #2 + #1: success relabels and hands Enter to Next ------------------------
@@ -620,9 +627,7 @@ async def test_an_unreadable_config_never_falls_back_to_plain_text(
     def _unreadable(force_reload=False):
         raise OSError("config.toml is unreadable")
 
-    monkeypatch.setattr(
-        config_module, "load_cli_config_and_ensure_existence", _unreadable
-    )
+    monkeypatch.setattr(config_module, "_load_cli_config_bootstrap", _unreadable)
     monkeypatch.setattr(
         config_module, "config_encryption_enabled_on_disk", lambda: on_disk
     )
@@ -1037,3 +1042,31 @@ async def test_continuing_while_encrypting_waits_for_the_outcome(monkeypatch):
             await _until_progress_box(pilot, wizard, STEP_PROTECT, "✓")
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+async def test_encrypting_stored_key_keeps_unsaved_other_provider_warning(monkeypatch):
+    _install(monkeypatch, {"api_settings": {"openai": {"api_key": "sk-old-synthetic"}}})
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        _container, step = await _open_protect(
+            pilot,
+            wizard,
+            provider_data={"provider_key": "anthropic", "entered_key": True},
+        )
+        await _until(
+            pilot, lambda: "isn't saved" in _step_text(step), what="unsaved draft"
+        )
+        step._on_password_result("synthetic-protect-master")
+        await _until(
+            pilot,
+            lambda: "Encryption enabled" in _step_text(step),
+            what="enable result",
+        )
+
+        assert "Anthropic key you typed isn't saved" in _step_text(step)
+        assert "Back to Model" in _shown_buttons(step)
+        assert "Change password…" in _shown_buttons(step)
+        assert app.focused is wizard.query_one("#wizard-next", Button)
