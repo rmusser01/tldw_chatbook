@@ -57,7 +57,6 @@ from .console_project_instructions import (
     ProjectInstructionSetupModal,
     ProjectInstructionSetupResult,
 )
-from .console_rename_session_modal import ConsoleRenameSessionModal
 from .console_retrieval_scope_row import ConsoleRetrievalScopeRow
 from .console_run_inspector import ConsoleRunInspector
 from .console_send_authority_summary import ConsoleSendAuthoritySummary
@@ -106,6 +105,10 @@ def __getattr__(name: str):
         from . import console_voice_preview
 
         return getattr(console_voice_preview, name)
+    if name == "ConsoleRenameSessionModal":
+        from . import console_rename_session_modal
+
+        return console_rename_session_modal.ConsoleRenameSessionModal
     if name == "ConsoleSettingsModal":
         from . import console_settings_modal
 

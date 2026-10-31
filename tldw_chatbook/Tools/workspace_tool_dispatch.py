@@ -211,6 +211,7 @@ def execute_pinned_operation(
             workspace=Path("."),
             max_entries=MAX_LIST_ENTRIES,
             sensitive_exclusions=exclusions,
+            long_format=request.arguments.get("long_format", False),
         )
     if request.operation == "fs_read":
         return _read_relative_file(

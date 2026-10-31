@@ -43,6 +43,19 @@ VirtualCliCommand = Literal[
     "git_branches",
 ]
 
+VIRTUAL_CLI_USAGE = {
+    "ls": "ls [-a|-A|--all|--almost-all] [-l] [PATH] (combined -la/-al accepted)",
+    "cat": "cat PATH [--offset N] [--limit N]",
+    "grep": "grep PATTERN [--mode content|files|count]",
+    "find": "find GLOB",
+    "stat": "stat PATH",
+    "git_status": "git_status [PATH]",
+    "git_diff": "git_diff [--staged] [--range REF] [--path PATH] [--stat]",
+    "git_log": "git_log [--count N] [--path PATH]",
+    "git_blame": "git_blame PATH [--start N] [--end N]",
+    "git_branches": "git_branches",
+}
+
 MAX_ARGV_ITEMS = 64
 MAX_ARG_BYTES = 4 * 1024
 MAX_ARGV_BYTES = 16 * 1024
@@ -79,6 +92,8 @@ def _build_parsers() -> dict[str, _ArgumentParser]:
 
     ls_parser = _parser()
     ls_parser.add_argument("path", nargs="?", default=".")
+    ls_parser.add_argument("-a", "-A", "--all", "--almost-all", action="store_true")
+    ls_parser.add_argument("-l", dest="long_format", action="store_true")
     parsers["ls"] = ls_parser
 
     cat_parser = _parser()
@@ -170,13 +185,18 @@ def parse_request(
     command: str, argv: Sequence[str]
 ) -> tuple[VirtualCliRequest, argparse.Namespace]:
     """Validate the outer request and its command-specific argv grammar."""
-    request = validate_request(command, argv)
     try:
+        request = validate_request(command, argv)
         parsed = _PARSERS[request.command].parse_args(list(request.argv))
     except (argparse.ArgumentError, TypeError, ValueError) as exc:
-        if isinstance(exc, VirtualCliArgumentError):
-            raise
-        raise VirtualCliArgumentError(f"invalid arguments: {exc}") from exc
+        message = (
+            str(exc)
+            if isinstance(exc, VirtualCliArgumentError)
+            else f"invalid arguments: {exc}"
+        )
+        if isinstance(command, str) and command in VIRTUAL_CLI_USAGE:
+            message += f"\nUsage: {VIRTUAL_CLI_USAGE[command]}"
+        raise VirtualCliArgumentError(message) from exc
     return request, parsed
 
 
@@ -236,7 +256,9 @@ class VirtualCliRegistry:
             )
 
         if request.command == "ls":
-            return list_directory(args.path, workspace_root=self._root)
+            return list_directory(
+                args.path, workspace_root=self._root, long_format=args.long_format
+            )
         if request.command == "cat":
             return read_file(
                 args.path,
@@ -278,7 +300,10 @@ def _leased_operation(
 ) -> tuple[str, dict[str, Any]]:
     """Project one parsed virtual command onto the closed executor protocol."""
     if command == "ls":
-        return "fs_list", {"path": args.path}
+        arguments = {"path": args.path}
+        if args.long_format:
+            arguments["long_format"] = True
+        return "fs_list", arguments
     if command == "cat":
         arguments = {"path": args.path, "offset": args.offset}
         if args.limit is not None:

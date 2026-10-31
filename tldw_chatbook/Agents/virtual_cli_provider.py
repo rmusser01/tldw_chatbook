@@ -25,6 +25,7 @@ from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
 from tldw_chatbook.Tools.virtual_cli_impls import (
     MAX_ARGV_ITEMS,
     VIRTUAL_CLI_COMMANDS,
+    VIRTUAL_CLI_USAGE as _USAGE,
     VirtualCliCommand,
     VirtualCliArgumentError,
     VirtualCliRegistry,
@@ -61,18 +62,6 @@ _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
 _ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
-_USAGE = {
-    "ls": "ls [PATH]",
-    "cat": "cat PATH [--offset N] [--limit N]",
-    "grep": "grep PATTERN [--mode content|files|count]",
-    "find": "find GLOB",
-    "stat": "stat PATH",
-    "git_status": "git_status [PATH]",
-    "git_diff": "git_diff [--staged] [--range REF] [--path PATH] [--stat]",
-    "git_log": "git_log [--count N] [--path PATH]",
-    "git_blame": "git_blame PATH [--start N] [--end N]",
-    "git_branches": "git_branches",
-}
 
 _MODEL_SCHEMA = {
     "type": "object",
@@ -86,7 +75,11 @@ _MODEL_SCHEMA = {
             "type": "array",
             "items": {"type": "string", "maxLength": 4096},
             "maxItems": MAX_ARGV_ITEMS,
-            "description": "Arguments for the selected command; no shell syntax.",
+            "description": (
+                "Arguments for the selected command; no shell syntax. "
+                "Usage: " + "; ".join(_USAGE.values()) + ". "
+                "ls always includes hidden entries; -l adds type/permissions and byte size."
+            ),
         },
     },
     "required": ["command", "argv"],
@@ -322,9 +315,11 @@ class VirtualCliProvider:
         try:
             validated = model.model_validate(dict(args))
         except PydanticValidationError as exc:
-            raise VirtualCliArgumentError(
-                "virtual_cli arguments do not match the tool schema"
-            ) from exc
+            message = "virtual_cli arguments do not match the tool schema"
+            command = args.get("command")
+            if isinstance(command, str) and command in _USAGE:
+                message += f"\nUsage: {_USAGE[command]}"
+            raise VirtualCliArgumentError(message) from exc
         alias = (
             validated.root_alias
             if isinstance(validated, _AdmittedVirtualCliInput)

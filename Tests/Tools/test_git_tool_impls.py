@@ -599,7 +599,7 @@ def test_run_git_bare_argv_requires_subcommand() -> None:
 
 
 def test_internal_review_reader_preserves_bytes_and_refuses_options(tmp_git_repo):
-    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
 
     path = tmp_git_repo / "raw.bin"
     path.write_bytes(b"\xff\x00\r\n")
@@ -616,6 +616,7 @@ def test_internal_review_reader_preserves_bytes_and_refuses_options(tmp_git_repo
 
 
 def test_internal_review_reader_propagates_pipe_failure(tmp_git_repo, monkeypatch):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
     from tldw_chatbook.Tools import git_tool_impls as module
 
     def fail(*args):
@@ -623,11 +624,11 @@ def test_internal_review_reader_propagates_pipe_failure(tmp_git_repo, monkeypatc
 
     monkeypatch.setattr(module, "_read_bounded_stream", fail)
     with pytest.raises(LocalToolError, match="read failed"):
-        module.ReviewGitReader(tmp_git_repo)
+        ReviewGitReader(tmp_git_repo)
 
 
 def test_review_reader_ignores_replace_and_rejects_promisor(tmp_git_repo):
-    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
 
     reader = ReviewGitReader(tmp_git_repo)
     old = reader.head()
@@ -649,7 +650,7 @@ def test_review_reader_ignores_replace_and_rejects_promisor(tmp_git_repo):
 
 
 def test_review_reader_validates_repository_object_format(tmp_path):
-    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
 
     root = tmp_path / "sha256"
     root.mkdir()
@@ -660,10 +661,11 @@ def test_review_reader_validates_repository_object_format(tmp_path):
         pytest.skip("installed Git has no SHA256 repository support")
     for args in [
         ("config", "user.name", "Test"),
+        ("config", "core.autocrlf", "false"),
         ("config", "user.email", "test@example.invalid"),
     ]:
         subprocess.run(["git", *args], cwd=root, check=True)
-    (root / "safe.py").write_text("utf8 café\r\n")
+    (root / "safe.py").write_bytes("utf8 café\r\n".encode("utf-8"))
     subprocess.run(["git", "add", "."], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "source"], cwd=root, check=True)
     reader = ReviewGitReader(root)
@@ -685,7 +687,7 @@ def test_review_index_case_variant_matches_a_single_literal_lookup(
     returns no record for a case variant of a tracked file: the old single-
     path read and the batch both answer None (no new acceptance).
     """
-    from tldw_chatbook.Tools.git_tool_impls import ReviewGitReader
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
 
     _git(tmp_git_repo, "config", "core.ignorecase", ignorecase)
     raw = subprocess.run(

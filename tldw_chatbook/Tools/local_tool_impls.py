@@ -57,7 +57,7 @@ import stat as stat_module
 import threading
 import uuid
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
 from tldw_chatbook.Utils.path_validation import validate_path
@@ -287,7 +287,11 @@ def resolve_workspace_path(
 
 
 def list_directory(
-    path: str, *, workspace_root: Path, max_entries: int = MAX_LIST_ENTRIES
+    path: str,
+    *,
+    workspace_root: Path,
+    max_entries: int = MAX_LIST_ENTRIES,
+    long_format: bool = False,
 ) -> str:
     """One-level listing of ``path``: ``name/`` for dirs, ``name`` for files.
 
@@ -311,6 +315,7 @@ def list_directory(
         workspace_root: The confinement root ``path`` must resolve within.
         max_entries: Maximum number of entries included in the output
             before a truncation notice is appended.
+        long_format: Prefix each admitted entry with type/permissions and byte size.
 
     Returns:
         The newline-joined listing, with a truncation and/or scan-cap
@@ -332,6 +337,7 @@ def list_directory(
             Path(workspace_root).resolve(), sensitive_ctx
         ),
         display_path=path,
+        long_format=long_format,
     )
 
 
@@ -342,6 +348,7 @@ def _list_relative_directory(
     max_entries: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
+    long_format: bool = False,
 ) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
@@ -387,7 +394,13 @@ def _list_relative_directory(
             continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
-    lines = [f"{p.name}/" if p.is_dir() else p.name for p in entries[:max_entries]]
+    lines = []
+    for entry in entries[:max_entries]:
+        name = f"{entry.name}/" if entry.is_dir() else entry.name
+        if long_format:
+            metadata = entry.lstat()
+            name = f"{stat_module.filemode(metadata.st_mode)} {metadata.st_size} {name}"
+        lines.append(name)
     remaining = len(entries) - max_entries
     if remaining > 0:
         lines.append(f"… ({remaining} more entries, truncated)")
@@ -780,30 +793,41 @@ def _write_lock_for(key: str) -> threading.Lock:
         return _WRITE_LOCKS.setdefault(key, threading.Lock())
 
 
+def _write_file_os():
+    """Select retained-directory operations without importing native code remotely."""
+    if os.name == "nt":
+        from tldw_chatbook.Utils.platform_files import os as native_file_os
+
+        return native_file_os
+    return os
+
+
+def _read_write_descriptor_bytes(descriptor: int, file_os: Any) -> bytes:
+    return b"".join(iter(lambda: file_os.read(descriptor, 1024 * 1024), b""))
+
+
 def _read_write_target(target: Path, shown: str) -> bytes | None:
+    file_os = _write_file_os()
     try:
-        before = os.lstat(target)
+        before = file_os.stat(target, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if not stat_module.S_ISREG(before.st_mode) or stat_module.S_ISLNK(before.st_mode):
         raise LocalToolError(f"write target is not a regular file: {shown}")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        descriptor = os.open(target, flags)
+        descriptor = file_os.open(target, flags)
         try:
-            opened = os.fstat(descriptor)
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(descriptor, 1024 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            finished = os.fstat(descriptor)
+            opened = file_os.fstat(descriptor)
+            data = _read_write_descriptor_bytes(descriptor, file_os)
+            finished = file_os.fstat(descriptor)
         finally:
-            os.close(descriptor)
-        after = os.lstat(target)
+            file_os.close(descriptor)
+        after = file_os.stat(target, follow_symlinks=False)
     except OSError:
         raise LocalToolError(f"write target changed while reading: {shown}") from None
     identities = tuple(
@@ -818,7 +842,7 @@ def _read_write_target(target: Path, shown: str) -> bytes | None:
     )
     if len(set(identities)) != 1:
         raise LocalToolError(f"write target changed while reading: {shown}")
-    return b"".join(chunks)
+    return data
 
 
 def _write_preview_json(
@@ -870,13 +894,15 @@ def _atomic_write_target(
     parent ``dir_fd`` (TOCTOU-safe rename), ``O_NOFOLLOW``, an sha256/absent
     precondition and a target lock, none of which the shared helper offers.
     """
-    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_DIRECTORY"):
-        directory_flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        directory_flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    directory_flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_DIRECTORY", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        parent_fd = os.open(target.parent, directory_flags)
+        parent_fd = file_os.open(target.parent, directory_flags)
     except OSError:
         raise LocalToolError(f"write parent changed: {shown}") from None
     temp_name = f".chatbook-write-{uuid.uuid4().hex}.tmp"
@@ -886,7 +912,7 @@ def _atomic_write_target(
     # death must not leave the partial temp behind. Absolute because
     # the sweep unlinks by path from another thread while this one
     # holds only the parent descriptor.
-    temp_path = os.path.abspath(os.path.join(str(target.parent), temp_name))
+    temp_path = file_os.path.abspath(file_os.path.join(str(target.parent), temp_name))
     temp_created = False
     target_lock = None
     try:
@@ -899,40 +925,48 @@ def _atomic_write_target(
             )
         # Recheck after acquiring the retained directory descriptor.  This is
         # the mutation boundary; no later path traversal is used.
-        live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
+        if target_lock is not None and os.name == "nt":
+            # Windows byte locks also exclude this process's other handles.
+            target_lock.seek(0)
+            live, live_mode = target_lock.read(), None
+        else:
+            live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
         live_digest = None if live is None else hashlib.sha256(live).hexdigest()
         if expected_absent and live is not None:
             raise LocalToolError("write precondition failed: target is present")
         if expected_sha256 is not None and live_digest != expected_sha256:
             raise LocalToolError("write precondition failed: target digest changed")
 
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        temp_fd = os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
+        flags = (
+            file_os.O_WRONLY
+            | file_os.O_CREAT
+            | file_os.O_EXCL
+            | getattr(file_os, "O_CLOEXEC", 0)
+            | getattr(file_os, "O_NOFOLLOW", 0)
+        )
+        temp_fd = file_os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
         temp_created = True
         register_temp(temp_path)
         try:
-            if live_mode is not None:
-                os.fchmod(temp_fd, live_mode)
+            if live_mode is not None and os.name != "nt":
+                file_os.fchmod(temp_fd, live_mode)
+            # Native Windows creates private files; POSIX modes are not ACLs.
             view = memoryview(data)
             while view:
-                written = os.write(temp_fd, view)
+                written = file_os.write(temp_fd, view)
                 view = view[written:]
-            os.fsync(temp_fd)
+            file_os.fsync(temp_fd)
         finally:
-            os.close(temp_fd)
+            file_os.close(temp_fd)
         if expected_absent:
-            os.link(
+            file_os.link(
                 temp_name,
                 target.name,
                 src_dir_fd=parent_fd,
                 dst_dir_fd=parent_fd,
                 follow_symlinks=False,
             )
-            os.unlink(temp_name, dir_fd=parent_fd)
-            temp_created = False
-            unregister_temp(temp_path)
+            file_os.unlink(temp_name, dir_fd=parent_fd)
         else:
             if target_lock is not None:
                 _assert_expected_target_is_current(
@@ -942,15 +976,20 @@ def _atomic_write_target(
                     expected_sha256,
                     target_lock,
                 )
-            os.replace(
+            replace = (
+                file_os.replace_open_target
+                if target_lock is not None and os.name == "nt"
+                else file_os.replace
+            )
+            replace(
                 temp_name,
                 target.name,
                 src_dir_fd=parent_fd,
                 dst_dir_fd=parent_fd,
             )
-            temp_created = False
-            unregister_temp(temp_path)
-        os.fsync(parent_fd)
+        temp_created = False
+        unregister_temp(temp_path)
+        file_os.fsync(parent_fd)
     except FileExistsError:
         raise LocalToolError("write precondition failed: target is present") from None
     except LocalToolError:
@@ -960,14 +999,14 @@ def _atomic_write_target(
     finally:
         if temp_created:
             try:
-                os.unlink(temp_name, dir_fd=parent_fd)
+                file_os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
             unregister_temp(temp_path)
         if target_lock is not None:
             _unlock_target_handle(target_lock)
             target_lock.close()
-        os.close(parent_fd)
+        file_os.close(parent_fd)
 
 
 def _portalocker_module():
@@ -1039,12 +1078,15 @@ def _acquire_expected_target_lock(
     expected_sha256: str,
 ) -> BinaryIO:
     """Acquire a non-blocking process lock on the expected target inode."""
-    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    flags = (
+        file_os.O_RDWR
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        descriptor = os.open(filename, flags, dir_fd=parent_fd)
-        handle = os.fdopen(descriptor, "r+b", buffering=0)
+        descriptor = file_os.open(filename, flags, dir_fd=parent_fd)
+        handle = file_os.fdopen(descriptor, "r+b", buffering=0)
     except OSError:
         raise LocalToolError(
             "write precondition failed: target digest changed"
@@ -1073,26 +1115,29 @@ def _assert_expected_target_is_current(
     locked_handle: BinaryIO,
 ) -> None:
     """Verify the locked inode is still the named path with the expected bytes."""
+    file_os = _write_file_os()
     if expected_sha256 is None:
         raise LocalToolError("write precondition failed: target digest changed")
-    locked_info = os.fstat(locked_handle.fileno())
+    locked_info = file_os.fstat(locked_handle.fileno())
     if not stat_module.S_ISREG(locked_info.st_mode):
         raise LocalToolError(f"write target is not a regular file: {shown}")
     locked_handle.seek(0)
     locked_digest = hashlib.sha256(locked_handle.read()).hexdigest()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        current_fd = os.open(filename, flags, dir_fd=parent_fd)
+        current_fd = file_os.open(filename, flags, dir_fd=parent_fd)
     except OSError:
         raise LocalToolError(
             "write precondition failed: target digest changed"
         ) from None
     try:
-        current_info = os.fstat(current_fd)
+        current_info = file_os.fstat(current_fd)
     finally:
-        os.close(current_fd)
+        file_os.close(current_fd)
     if (locked_info.st_dev, locked_info.st_ino) != (
         current_info.st_dev,
         current_info.st_ino,
@@ -1103,28 +1148,25 @@ def _assert_expected_target_is_current(
 def _read_relative_descriptor(
     parent_fd: int, filename: str, shown: str
 ) -> tuple[bytes | None, int | None]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        descriptor = os.open(filename, flags, dir_fd=parent_fd)
+        descriptor = file_os.open(filename, flags, dir_fd=parent_fd)
     except FileNotFoundError:
         return None, None
     except OSError:
         raise LocalToolError(f"write target changed: {shown}") from None
     try:
-        info = os.fstat(descriptor)
+        info = file_os.fstat(descriptor)
         if not stat_module.S_ISREG(info.st_mode):
             raise LocalToolError(f"write target is not a regular file: {shown}")
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(descriptor, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        return b"".join(chunks), info.st_mode & 0o7777
+        return _read_write_descriptor_bytes(descriptor, file_os), info.st_mode & 0o7777
     finally:
-        os.close(descriptor)
+        file_os.close(descriptor)
 
 
 def edit_file(

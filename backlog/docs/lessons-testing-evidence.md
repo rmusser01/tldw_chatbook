@@ -61,6 +61,73 @@ with `raw_source_selection_changed`, run it with that probe plugin on both trees
 and compare failing ids. Delete the plugin before committing. This is a local
 measurement aid, not a fix: the suite still fails in a lane that runs it plain.
 
+## A bounded result test can certify missing diagnostics (TASK-37630, 2026-10-29)
+
+The CLI report showed the same-tool three-failure stop but omitted error bodies.
+A real command with 6,000 stdout characters and a unique stderr diagnostic
+proved that the executor retained stderr while the provider's second 4,000-char
+slice erased it. The existing success test asserted only that output stayed
+within 4,000 characters, so it certified the lossy behavior. Assert independent
+stdout/stderr retention at the provider boundary, and separately exercise the
+executor's genuine storage limits. GNU grep no-match exits also reproduced the
+stop despite normal process settlement; successful dispatch alone does not
+establish that the outcome classification is suitable for search results.
+
+PR #3314 review found another mismatch: POSIX shlex escaping stripped native
+PowerShell executable-path backslashes and let a backslash before a quote hide
+real semicolon commands. Both a full-path findstr no-match and a compound with
+observable output reproduced natively. Keep shell-specific escape rules and
+positive/negative real-shell controls; pure POSIX tokenization cannot certify
+Windows command outcomes. All eight new cases failed before that fix.
+
+The Linux Python3.14 ferry then timed out reading the launch Event after
+worker termination. Recording real parent-side signal requests avoids
+acquiring that potentially orphaned lock. A native retry exposed the
+executor finally block re-signaling the abort Event after cleanup too.
+A bounded fault-injection guard caught that call without another hang;
+skip dead-worker signaling rather than lengthening timeouts.
+
+A proposed Watchlists service import deferral passed the ready census but
+shifted two modules into screen preimport (560/558), so it was rejected.
+Check adjacent import budgets when paying down boot residency; a passing
+first-paint count alone can hide a transfer. The replacement uses the
+Console package's existing lazy export for the first-use Rename dialog.
+
+Fast Lane later passed 3257 checks but rejected the generated worker at 5730
+lines against 5706. Byte-equality only proved the larger artifact matched its
+sources. Sharing canonical descriptor reads/flag assembly/temp bookkeeping
+returned it to 5706 without changing the builder or budget. Run the existing
+size envelope beside bundle generation early; source parity alone does not
+establish that the generated artifact fits its governed envelope.
+
+A later conflict-free queue rebase of PR #3314 integrated host-only immutable
+Git review helpers into a shared worker module. Rebuilding then produced 5934
+lines while the committed 5706-line artifact was stale. The builder embeds
+whole closure modules, including dormant classes: keeping the unchanged review
+reader in its existing host source owner restored parity at 5705 lines without
+changing the builder, closure list, guards or budget. Check generated parity
+and size after integration even when every replayed patch is unchanged.
+
+Selecting the full bundle contracts next exposed an AST-census false positive:
+`_write_file_os`'s native Windows import was counted as reachable on a POSIX SSH
+host. Keep platform reachability explicit and narrow: only the true body of
+`os.name == "nt"` is excluded under ADR-181. Three reachable-condition mutations
+and an else-body mutation must still expose the stub. Move a POSIX-only test's
+fcntl import into that test so portable static/bare-interpreter controls can
+collect natively; Windows collection failure had hidden this guard locally.
+
+## Native atomic replacement must be tested while the target stays locked (TASK-37632, 2026-10-29)
+
+The real Windows workspace worker could preview a write but failed creation at
+stdlib os.open(directory). Selecting native retained-directory operations fixed
+creation, but CAS then failed because Windows byte locks prevent a second
+handle's read, and ordinary rename cannot replace the open locked target.
+Reading through the retained lock handle and explicit FileRenameInformationEx
+POSIX rename semantics passed native replacement. The regression attempts a
+competing lock immediately inside the replacement call, proving the original
+lock remains held, and independently refuses a late target-inode substitution.
+Releasing the lock to make rename succeed would discard the guarantee under test.
+
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 
 **Incident.** The Hands-free consent keeps a live one-shot capture alive under its

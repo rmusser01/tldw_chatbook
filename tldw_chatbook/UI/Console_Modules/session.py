@@ -250,7 +250,6 @@ from ...Widgets.Console.console_composer_bar import ComposerDraftSnapshot
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
-    ConsoleRenameSessionModal,
     ConsoleForkChatModal,
     ConsoleForkDialogSummary,
     ConsoleForkSubmitResult,
@@ -2591,6 +2590,7 @@ class ConsoleSessionController:
                 group="console-sync",
             )
 
+        from tldw_chatbook.Widgets.Console import ConsoleRenameSessionModal
         self.push_screen(
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
