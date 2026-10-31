@@ -44,3 +44,24 @@ def test_fixture_refusal_is_explicit_and_precedes_runtime_setup(monkeypatch):
     monkeypatch.setattr(platform_support, "MANAGED_RUNTIME", False)
     with pytest.raises(pytest.skip.Exception, match="64-bit Darwin"):
         platform_support.require_managed_runtime()
+
+
+def test_unqualified_host_imports_source_facade_but_refuses_native_storage(tmp_path):
+    import pytest
+
+    if platform_support.MANAGED_RUNTIME:
+        pytest.skip("this control exercises the real unsupported host")
+
+    from tldw_chatbook.Plugins.source_service import SourceService
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    assert SourceService is not None
+    root = tmp_path / "unqualified-plugin-root"
+    owner = PluginRuntimeOwner(root)
+    with pytest.raises(PermissionError, match="platform is unqualified"):
+        owner.try_acquire()
+    assert not root.exists()
+    from tldw_chatbook.Plugins.data_cleanup import _directory_flags
+
+    with pytest.raises(PermissionError, match="root_platform_unqualified"):
+        _directory_flags()

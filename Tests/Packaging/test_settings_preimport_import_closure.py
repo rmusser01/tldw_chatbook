@@ -24,7 +24,7 @@ def test_preimport_defers_settings_category_services(
     env = {
         **{
             key: os.environ[key]
-            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
             if key in os.environ
         },
         "TLDW_TEST_MODE": "1",
@@ -79,11 +79,12 @@ def test_category_first_use_preserves_original_exports_and_assigned_patch_points
     env = {
         **{
             key: os.environ[key]
-            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
             if key in os.environ
         },
         "TLDW_TEST_MODE": "1",
         "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
         "XDG_CACHE_HOME": str(tmp_path / "cache"),
@@ -125,7 +126,8 @@ prefixes = (
     "tldw_chatbook.Widgets.settings_video_gen_panel",
     "tldw_chatbook.Widgets.settings_web_search_panel",
 )
-assert not [name for name in sys.modules if any(name == p or name.startswith(p + ".") for p in prefixes)]
+loaded = [name for name in sys.modules if any(name == p or name.startswith(p + ".") for p in prefixes)]
+assert not loaded, loaded
 from tldw_chatbook.UI.Screens import settings_screen as settings
 for name, (module, member) in settings._CATEGORY_EXPORTS.items():
     assert getattr(settings, name) is getattr(import_module(module, settings.__package__), member)
@@ -157,12 +159,13 @@ def test_cold_overview_defers_categories_until_actual_use_and_restores_drafts(tm
     env = {
         **{
             key: os.environ[key]
-            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+            for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")
             if key in os.environ
         },
         "TLDW_TEST_MODE": "1",
         "TLDW_SCREEN_PREIMPORT": "0",
         "HOME": str(tmp_path / "home"),
+        "USERPROFILE": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
         "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",

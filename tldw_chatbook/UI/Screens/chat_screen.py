@@ -303,14 +303,6 @@ from ...Chat.console_prefill import (
     describe_prefill_preview,
     parse_prefill_args,
 )
-from ...Chat.console_generate_image import insert_style_token_into_draft
-from ...Chat.console_side_chat import ConsoleSideChatService, render_prompt
-from ...Chat.console_token_rate import (
-    TokenRateReading,
-    TokenRateTracker,
-    format_rate_chip_settled,
-    merge_rate_into_run_copy,
-)
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleContextSnapshot,

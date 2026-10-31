@@ -1221,6 +1221,7 @@ def test_preparation_refusal_preserves_recovery_without_review_or_dispatch(
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_actual_local_operations_reach_pre_and_both_post_events(tmp_path):
     import json
 

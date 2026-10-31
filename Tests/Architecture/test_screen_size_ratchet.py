@@ -73,6 +73,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: feature tree measured 17,000/565. PR #2050 removes two remaining
 #: compatibility methods and keeps fork state behind the message controller;
 #: the final merged tree measures 16,966/563.
+# 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
+# pins changed owners at measured sizes without extra size-only moves.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     #: gone red on dev -- ~8,400 lines of feature work re-consumed the
@@ -222,7 +224,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: are the screen-owned half of the Review reports key: the `u` Binding,
     #: its workbench-shortcut legend entry, the action attribute and the
     #: `wiring` import that supplies it; the presenter lives in wiring.py.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24289, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

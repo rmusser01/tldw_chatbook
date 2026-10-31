@@ -3,6 +3,7 @@
 import pytest
 from textual.widgets import Button, OptionList
 
+from Tests.Plugins import platform_support
 from Tests.Plugins.conftest import native_console as _native_console
 from Tests.Plugins.conftest import native_package as _native_package
 from Tests.private_profile import private_profile_test
@@ -228,6 +229,7 @@ async def test_mounted_review_is_invalidated_by_changed_selection(
         assert not (await rig.service.lookup_operation(original.operation_id)).committed
 
 
+@platform_support.managed_runtime
 @private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
@@ -329,6 +331,7 @@ async def test_close_reopen_preserves_synthetic_data_and_focus(request, native_c
         assert app.focused is field
 
 
+@platform_support.managed_runtime
 @private_profile_test
 @pytest.mark.asyncio
 async def test_unlock_wrong_password_stays_in_masked_flow_then_correct_unlock(
@@ -1246,9 +1249,9 @@ async def _current_mapping_case(rig, native_package, tmp_path, aliases):
         }
     if aliases in {"legacy", "canonical", "mixed"}:
         key = "tool_references" if aliases == "legacy" else "component_tools"
-        values.setdefault(key, {}).setdefault("agent:reader", {})[
-            "search"
-        ] = "mcp:remote::echo"
+        values.setdefault(key, {}).setdefault("agent:reader", {})["search"] = (
+            "mcp:remote::echo"
+        )
     return installed, local, binding, values
 
 
@@ -2370,9 +2373,9 @@ async def test_confirmed_explicit_test_survives_close_during_child_prune(
             modal.query_one("#plugin-review-selection", SelectionList).select(
                 "hook:check"
             )
-            modal.query_one("#plugin-review-test-data", TextArea).text = (
-                '{"prompt":"synthetic teardown test"}'
-            )
+            modal.query_one(
+                "#plugin-review-test-data", TextArea
+            ).text = '{"prompt":"synthetic teardown test"}'
             await pilot.pause()
             modal.query_one("#plugin-review-prepare", Button).focus()
             await pilot.press("enter")

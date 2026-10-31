@@ -339,7 +339,6 @@ from .settings_tools_hub import (
     tool_pack_failure_copy,
     tools_footer_hints,
 )
-from ...Widgets.settings_splash_screen_viewer import SettingsSplashScreenViewer
 from ...Widgets.settings_theme_editor import SettingsThemeEditor, ThemeLeaveModal
 from ...Widgets.settings_theme_picker import ThemeOptionList, ThemePane, ThemePicker
 from ...Widgets.settings_internal_prompts_panel import InternalPromptsPanel

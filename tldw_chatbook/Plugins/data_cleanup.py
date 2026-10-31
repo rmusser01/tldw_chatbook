@@ -25,7 +25,12 @@ from .authority import DataRoot, PhysicalIdentity, RootBinding
 from .package_files import canonical_json
 from .review import OperationReceipt
 
-DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+def _directory_flags() -> int:
+    """Resolve native flags only when qualified storage is actually used."""
+    if sys.platform != "darwin" or ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise PermissionError("root_platform_unqualified")
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 def digest(value) -> str:
@@ -195,20 +200,20 @@ def open_root(owner, row, *, absent=False, rebind=False):
         raise PermissionError("root_boot_identity_changed")
     descriptors = []
     try:
-        descriptors.append(os.open(owner.root, DIR_FLAGS))
+        descriptors.append(os.open(owner.root, _directory_flags()))
         owner.require_owner(owner.root)
         if (
             os.fstat(descriptors[0]).st_dev,
             os.fstat(descriptors[0]).st_ino,
         ) != owner._root_identity:
             raise PermissionError("root_anchor_changed")
-        descriptors.append(os.open("data", DIR_FLAGS, dir_fd=descriptors[-1]))
+        descriptors.append(os.open("data", _directory_flags(), dir_fd=descriptors[-1]))
         anchors = [physical_identity(fd) for fd in descriptors]
         if binding is not None and anchors != binding["anchors"]:
             raise PermissionError("root_anchor_changed")
         try:
             descriptors.append(
-                os.open(row["root_id"], DIR_FLAGS, dir_fd=descriptors[-1])
+                os.open(row["root_id"], _directory_flags(), dir_fd=descriptors[-1])
             )
         except FileNotFoundError:
             if not (absent or completed_absence) or binding is None:
@@ -565,7 +570,7 @@ class RootUsage:
         if raw is not None and len(raw.encode()) > 256 * 1024:
             raise PermissionError("root_owner_coverage_incomplete")
         expected = json.loads(raw) if raw is not None else None
-        if expected is not None and (type(expected) is not list or len(expected) > 256):
+        if expected is not None and (type(expected) is not list or len(expected) > 256):  # noqa: E721 -- exact JSON container contract.
             raise PermissionError("root_owner_coverage_incomplete")
         actual = [
             dict(row)
@@ -583,7 +588,7 @@ class RootUsage:
         return actual
 
     def release(self, token: str, confirmed: bool) -> None:
-        if type(confirmed) is not bool:
+        if type(confirmed) is not bool:  # noqa: E721 -- truthy values cannot prove termination.
             raise ValueError("confirmation must be boolean")
         with self.coordinator.registry.transaction() as cursor:
             row = cursor.execute(
@@ -871,7 +876,7 @@ async def create_data(coordinator, review, operation_id):
     owner = coordinator.owner
     owner.require_owner(owner.root)
     # A failed creation stays authenticated/fenced; never adopt an existing leaf.
-    fd = os.open(owner.root, DIR_FLAGS)
+    fd = os.open(owner.root, _directory_flags())
     try:
         owner.require_owner(owner.root)
         opened = os.fstat(fd)
@@ -881,7 +886,7 @@ async def create_data(coordinator, review, operation_id):
             os.mkdir("data", mode=0o700, dir_fd=fd)
         except FileExistsError:
             pass
-        data_fd = os.open("data", DIR_FLAGS, dir_fd=fd)
+        data_fd = os.open("data", _directory_flags(), dir_fd=fd)
         try:
             os.mkdir(row["root_id"], mode=0o700, dir_fd=data_fd)
             os.fsync(data_fd)
@@ -1014,7 +1019,7 @@ def remove_root(coordinator, original, row):
             for name in os.listdir(fd):
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode):
-                    child_fd = os.open(name, DIR_FLAGS, dir_fd=fd)
+                    child_fd = os.open(name, _directory_flags(), dir_fd=fd)
                     try:
                         opened = os.fstat(child_fd)
                         if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
