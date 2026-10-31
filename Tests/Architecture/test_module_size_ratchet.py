@@ -377,7 +377,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-36361: staged completion delegates to the same-owner helper (-45).
     # TASK-36387: five badge branches read the category list's table (-3).
     # TASK-36388: the context-window suppress queue nothing wrote goes (-13).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35592,
+    #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    #: Keep canonical notification settings together; exact measured size,
+    #: with no reflow/extraction solely to satisfy the old ceiling.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35748,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -574,7 +577,9 @@ _BUDGETS: dict[str, int] = {
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
-    "tldw_chatbook/config.py": 12233,
+    #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    #: The OS notification defaults add 12 lines; pin the exact measurement.
+    "tldw_chatbook/config.py": 12245,
     "tldw_chatbook/Chat/console_agent_bridge.py": 11703,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     "tldw_chatbook/Agents/agent_service.py": 9582,

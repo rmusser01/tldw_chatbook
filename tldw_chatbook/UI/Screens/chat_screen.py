@@ -935,15 +935,14 @@ CONSOLE_ROLEPLAY_UNMOUNT_TIMEOUT_SECONDS = 0.25
 def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
     """Run one OS notification off the UI/event-loop thread (TASK-18925).
 
-    A daemon one-shot thread is the failure floor: the sender bounds
-    itself with a hard 3s subprocess timeout, needs no Textual worker
-    lifecycle, and is safe to abandon at app teardown (the notifier child
-    starts in its own session, so a quit can strand it for at most that
-    timeout). Never call this on the UI thread -- the whole point is that
-    a stuck ``osascript``/``notify-send`` cannot freeze the Console.
+    A non-daemon one-shot retains the sender's 3s subprocess timeout and
+    kill/reap path during orderly interpreter shutdown (ADR-282). The callback
+    holds only copied identity/settings, so it needs no Textual lifecycle.
+    The UI thread returns immediately; process exit may wait for the remaining
+    notifier timeout instead of abandoning a slow child.
     """
     threading.Thread(
-        target=notify, daemon=True, name="console-os-notification"
+        target=notify, daemon=False, name="console-os-notification"
     ).start()
 
 
@@ -23614,8 +23613,8 @@ class ChatScreen(BaseAppScreen):
     ) -> str:
         """Compose the OS-notification body's identity (TASK-18925).
 
-        Sanitized-but-NOT-markup-escaped (the OS channel renders raw text,
-        so ``escape_markup`` brackets would show up verbatim) and carrying
+        Sanitized without Rich escaping (the dispatcher applies each native
+        platform's text escaping), carrying
         only the conversation/tab name and workspace -- the outcome
         category is appended by the dispatcher from its own copy map, so
         no run copy, tool output, or secret can enter this string.

@@ -9,7 +9,14 @@ Pins the three AC surfaces of the pure dispatcher module:
 
 from __future__ import annotations
 
+import json
 import subprocess
+import sys
+import textwrap
+import time
+from pathlib import Path
+
+import pytest
 
 from tldw_chatbook.Utils.os_notifications import (
     OS_NOTIFICATION_APP_NAME,
@@ -130,9 +137,7 @@ class TestBuildNotificationArgv:
         """AC#3: nothing beyond the session display name and the outcome
         category may enter the command line -- construct with a message
         content canary and prove it absent."""
-        argv = build_notification_argv(
-            "linux", "run_finished", "Ops (Lab)"
-        )
+        argv = build_notification_argv("linux", "run_finished", "Ops (Lab)")
         assert argv is not None
         joined = " ".join(argv)
         assert SECRET_CANARY not in joined
@@ -220,7 +225,9 @@ class TestSendOSNotification:
 
     def test_timeout_returns_false_without_raising(self) -> None:
         runner = _RecordingRunner(
-            exc=subprocess.TimeoutExpired(cmd="osascript", timeout=OS_NOTIFICATION_TIMEOUT_S)
+            exc=subprocess.TimeoutExpired(
+                cmd="osascript", timeout=OS_NOTIFICATION_TIMEOUT_S
+            )
         )
         result = send_os_notification(
             "run_finished",
@@ -306,3 +313,139 @@ class TestSendOSNotification:
                     os.environ[key] = old
         env = runner.calls[0][1]["env"]
         assert set(env) == {"PATH"}
+
+
+def test_linux_notification_body_escapes_markup_but_preserves_literal_text() -> None:
+    display = """<b>Ops</b> & <img src="file:///private.png"> 'quoted'"""
+    argv = build_notification_argv("linux", "run_finished", display)
+    assert argv is not None
+    assert argv[-1] == (
+        "Agent in &lt;b&gt;Ops&lt;/b&gt; &amp; "
+        """&lt;img src="file:///private.png"&gt; 'quoted' run finished."""
+    )
+    darwin = build_notification_argv("darwin", "run_finished", "<Ops> & Lab")
+    assert darwin is not None
+    assert "Agent in <Ops> & Lab run finished." in darwin[-1]
+
+
+def test_nonzero_notifier_exit_returns_false_and_logs_only_status(monkeypatch) -> None:
+    from tldw_chatbook.Utils import os_notifications
+
+    logs = []
+    monkeypatch.setattr(os_notifications.logger, "debug", logs.append)
+    result = send_os_notification(
+        "run_failed",
+        SECRET_CANARY,
+        platform="linux",
+        runner=lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv, 7, SECRET_CANARY.encode(), SECRET_CANARY.encode()
+        ),
+    )
+    assert result is False
+    assert len(logs) == 1
+    assert "run_failed" in logs[0]
+    assert "7" in logs[0]
+    assert SECRET_CANARY not in logs[0]
+    assert "notify-send" not in logs[0]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FileNotFoundError(SECRET_CANARY),
+        subprocess.TimeoutExpired(cmd=["osascript", SECRET_CANARY], timeout=3),
+    ],
+)
+def test_notifier_exception_logs_exclude_command_and_exception_text(
+    monkeypatch, failure
+) -> None:
+    from tldw_chatbook.Utils import os_notifications
+
+    logs = []
+    monkeypatch.setattr(os_notifications.logger, "debug", logs.append)
+    result = send_os_notification(
+        "run_finished",
+        SECRET_CANARY,
+        platform="darwin",
+        runner=_RecordingRunner(exc=failure),
+    )
+    assert result is False
+    assert len(logs) == 1
+    assert "run_finished" in logs[0]
+    assert type(failure).__name__ in logs[0]
+    assert SECRET_CANARY not in logs[0]
+    assert "osascript" not in logs[0]
+
+
+def test_notification_timeout_survives_orderly_interpreter_shutdown(tmp_path) -> None:
+    """A daemon regression loses the timeout owner and never writes the result.
+
+    The real screen helper and sender run in a fresh parent interpreter; only
+    the external notifier binary is replaced with a deliberately slow Python
+    child. Its natural exit also bounds cleanup when this regression fails.
+    """
+    script = textwrap.dedent(
+        """
+        import json
+        import pathlib
+        import subprocess
+        import sys
+        import threading
+        import time
+        import Tests.conftest  # Private profile/egress guard before app imports.
+        from tldw_chatbook.UI.Screens.chat_screen import _spawn_os_notification_thread
+        from tldw_chatbook.Utils.os_notifications import send_os_notification
+
+        root = pathlib.Path(sys.argv[1])
+        child = (
+            "import pathlib,sys,time; root=pathlib.Path(sys.argv[1]); "
+            "(root / 'started').write_text('yes'); time.sleep(6); "
+            "(root / 'natural-exit').write_text('yes')"
+        )
+        main_thread = threading.get_ident()
+
+        def runner(argv, **kwargs):
+            return subprocess.run([sys.executable, "-c", child, str(root)], **kwargs)
+
+        def notify():
+            result = send_os_notification(
+                "run_finished", "Ops", platform="linux", runner=runner
+            )
+            (root / "result.json").write_text(json.dumps({
+                "result": result,
+                "off_thread": threading.get_ident() != main_thread,
+                "returned_before_completion": (root / "returned").exists(),
+            }))
+
+        _spawn_os_notification_thread(notify)
+        (root / "returned").write_text("yes")
+        deadline = time.monotonic() + 10
+        while not (root / "started").exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError("slow notifier never started")
+            time.sleep(0.01)
+        # Do not join: orderly interpreter shutdown must retain the owner.
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=40,
+    )
+    assert completed.returncode == 0, completed.stderr[-4000:]
+    result = tmp_path / "result.json"
+    if not result.exists():
+        # In the broken daemon case the orphan exits naturally within six
+        # seconds; wait before pytest removes its private directory.
+        deadline = time.monotonic() + 10
+        while not (tmp_path / "natural-exit").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert result.exists(), "interpreter exit abandoned the notifier timeout owner"
+    assert json.loads(result.read_text()) == {
+        "result": False,
+        "off_thread": True,
+        "returned_before_completion": True,
+    }
+    assert not (tmp_path / "natural-exit").exists(), "slow notifier escaped its timeout"

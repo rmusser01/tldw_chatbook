@@ -642,7 +642,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # among them is one test, ~1 s. The floor now equals the entry count, which
 # also absorbs any lag in dev's floor (tail entries a merge added without
 # raising it).
-MINIMUM_FILES = 1173
+# TASK-18925 adds the verified OS-notification Settings journey (+1).
+# Console hook-file qualification remains open after native-worker teardown
+# errors; no existing census entry is removed or replaced (review receipt).
+MINIMUM_FILES = 1174
 
 
 def read_census(path: Path) -> list[str]:

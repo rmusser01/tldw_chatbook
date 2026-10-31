@@ -228,3 +228,5 @@ Do not reuse numbers.
 | [ADR-250: Application services bundle](250-application-services-bundle.md) | Accepted | A frozen, typed, per-feature `ApplicationServices` bundle published once from `app_service_wiring`, with today's app attributes as shrink-only aliases and one shared `open_profile_storage` factory for the MCP server, mobile service and CLI tools; amends ADR-036's deferral clause. |
 
 | [ADR-253](253-compact-discovery-before-plain-chat.md) | Accepted | Try budgeted compact discovery before plain chat and retain its ceiling during schema loading. |
+
+| [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |

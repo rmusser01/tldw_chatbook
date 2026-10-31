@@ -14,8 +14,8 @@ debug log rather than pretending. The dispatcher is fixed-argv (no shell),
 runs with a scrubbed minimal environment, is bounded by a hard subprocess
 timeout, and swallows every spawn failure -- a missing binary or a stuck
 notifier must never crash or block the app. Callers run it off the
-UI/event-loop thread (a daemon one-shot thread bounded by the same
-timeout); this module itself is thread-agnostic and side-effect-pure
+UI/event-loop thread (a non-daemon one-shot thread retaining that timeout
+during orderly interpreter shutdown); this module itself is thread-agnostic and side-effect-pure
 apart from the subprocess it spawns.
 """
 
@@ -26,6 +26,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from html import escape
 from typing import Literal
 
 from loguru import logger
@@ -37,10 +38,9 @@ OSNotificationKind = Literal["run_finished", "run_failed", "needs_approval"]
 #: Fixed app identity shown as the notification title / notify-send app name.
 OS_NOTIFICATION_APP_NAME = "tldw Chatbook"
 
-#: Hard wall-clock bound on the notification subprocess. The sender also
-#: starts the child in its own session (``start_new_session``), isolating
-#: it from this process's groups, mirroring the Console run-hooks
-#: discipline (ADR-148).
+#: Bound on waiting for the notification subprocess, including orderly app
+#: exit (ADR-282). Platform process creation itself is not interruptible by
+#: subprocess.run's timeout. The child starts in its own session.
 OS_NOTIFICATION_TIMEOUT_S = 3.0
 
 #: Outcome categories this channel knows about. This map is the single
@@ -140,7 +140,7 @@ def build_notification_argv(
             OS_NOTIFICATION_APP_NAME,
             "--",
             title,
-            body,
+            escape(body, quote=False),
         ]
     return None
 
@@ -186,10 +186,10 @@ def send_os_notification(
         runner: ``subprocess.run``-shaped callable (tests).
 
     Returns:
-        True iff a dispatcher subprocess was actually invoked -- not a
-        claim that the OS displayed anything. Every failure (unsupported
-        platform, missing binary, timeout) returns False with a debug log;
-        nothing here raises.
+        True iff the dispatcher subprocess exited successfully, not a claim
+        that the OS displayed anything. Unsupported platforms, nonzero exits,
+        missing binaries and timeouts return False with a content-free debug
+        log. Spawn/process failures do not propagate.
     """
     resolved_platform = platform if platform is not None else sys.platform
     if settings is not None and not settings.allows(kind):
@@ -203,7 +203,7 @@ def send_os_notification(
         return False
     run = runner if runner is not None else subprocess.run
     try:
-        run(
+        result = run(
             argv,
             timeout=OS_NOTIFICATION_TIMEOUT_S,
             env=_notification_env(resolved_platform),
@@ -211,7 +211,14 @@ def send_os_notification(
             check=False,
             start_new_session=(resolved_platform != "win32"),
         )
+        if result.returncode != 0:
+            logger.debug(
+                f"OS notification failed (kind={kind!r}, returncode={result.returncode})"
+            )
+            return False
         return True
     except (OSError, subprocess.SubprocessError) as exc:
-        logger.debug(f"OS notification failed (kind={kind!r}): {exc}")
+        logger.debug(
+            f"OS notification failed (kind={kind!r}, error={type(exc).__name__})"
+        )
         return False

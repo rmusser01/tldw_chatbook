@@ -4131,6 +4131,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 3,
+      "diagnostic_digest": "b1687c2331944c91ff78",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Utils/os_notifications.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 9,
       "diagnostic_digest": "5c87aa034fdb12365052",
       "owner": "TASK-494",
