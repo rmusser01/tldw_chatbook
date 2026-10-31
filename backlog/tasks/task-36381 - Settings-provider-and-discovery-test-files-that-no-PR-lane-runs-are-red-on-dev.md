@@ -113,4 +113,6 @@ Re-verified:
 
 The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8 failed. 6 of the 8 are this task's own conversions: they are plain tests on dev, so they are red there through RecoveryRequired, the bug AC#3 explains. The other 2 were already private-profile tests on dev and passed there. At head, all 8 passed on a rerun at lower load, so the head failures are load-related, not regressions.
 
+**Re-sync 2026-10-31 onto dev 1eaa6a9429.** The only conflict was the census tail and floor, where dev's TASK-33622.6 appended five nodes. Dev's census was kept, this task's block re-appended after dev's last entry, and `MINIMUM_FILES` again equals the entry count. The range-diff shows no other change. Preflight and the census tests in `Tests/CI` pass.
+
 **Files.** `tldw_chatbook/UI/Screens/settings_screen.py` (TOOLS guidance), `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_settings_model_discovery_journeys.py`, `Tests/UI/test_settings_endpoint_probe.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/app_factory.py` (docstring), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
