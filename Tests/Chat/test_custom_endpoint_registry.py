@@ -12,6 +12,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     entry_for,
     family_execution_key,  # noqa: F401  (import-surface check)
     load_custom_endpoints,
+    resolve_entry_credential,
     split_custom_endpoint_id,
     validate_entry,
 )
@@ -167,3 +168,28 @@ def test_entry_mutation_round_trips_params():
         }}
     )
     assert reloaded["qwen-local"].params == (("temperature", 0.2),)
+
+
+@pytest.mark.parametrize(
+    ("exported", "expected"),
+    [
+        pytest.param(True, ("environment", "env:TEAM_GPU_KEY"), id="variable-exported"),
+        pytest.param(False, ("stored", "config:custom_endpoints.s.api_key"), id="variable-unset"),
+    ],
+)
+def test_entry_credential_keeps_adr146_order_variable_reference_then_stored_key(
+    exported, expected
+):
+    # TASK-36941.3: the owner kept ADR-146's order for custom endpoints
+    # (2026-10-26). The variable is one the user named on the entry, so it
+    # outranks the entry's stored key; the engine presets' ADR-012 order
+    # does not apply here. Fake keys; the assertion compares names only.
+    entry = CustomEndpointEntry(slug="s", display_name="D",
+                                family="openai_compatible",
+                                base_url="https://gpu.example/v1",
+                                api_key="sk-test-stored",
+                                api_key_env="TEAM_GPU_KEY")
+    environ = {"TEAM_GPU_KEY": "sk-test-env"} if exported else {}
+    key, source = resolve_entry_credential(entry, environ)
+    names = {"sk-test-env": "environment", "sk-test-stored": "stored"}
+    assert (names.get(key), source) == expected

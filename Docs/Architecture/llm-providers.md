@@ -46,16 +46,24 @@ Adding an OpenAI-compatible hosted provider is a record, a dispatch line and a p
 
 | Resolver | Order | Where |
 | --- | --- | --- |
-| Engine presets | explicit, then **env**, then stored `api_key` | `LLM_Calls/hosted_provider_engine.py::_resolve_api_key` |
+| Engine presets | explicit, then a recorded `credential_source`; with none recorded, **stored** `api_key`, then env | `LLM_Calls/hosted_provider_engine.py::_resolve_api_key`, through readiness's `Chat/provider_readiness.py::resolve_provider_credential` |
 | `moonshot.py`, `zai.py`, `qwencloud.py` | explicit, then **stored**, then env | `moonshot.py::_resolve_api_key`, `zai.py::_resolve_api_key`, `qwencloud.py::resolve_qwencloud_api_key` |
-| Custom-endpoint registry | env, then stored | `Chat/custom_endpoint_registry.py::resolve_entry_credential` (ADR-146) |
+| Custom-endpoint registry | the entry's `api_key_env` variable, then its stored `api_key` | `Chat/custom_endpoint_registry.py::resolve_entry_credential` (ADR-146) |
 
 Registry entry credentials end at none when neither source supplies a key. The
 gateway preserves that keyless decision through health checks and chat dispatch;
 a credential from the ordinary family slot never follows the entry's URL. Family
 readiness contributes capabilities, while entry-owned ciphertext still blocks.
 
-ADR-012's 2026-09-19 amendment rules that the stored `api_settings` key outranks the environment variable; the engine currently orders them the other way and the owner decided (2026-10-25) to keep ADR-012 for the hosted engine, so this row is expected to change under TASK-36941.3. Custom endpoints keep ADR-146's order by the owner's 2026-10-26 decision. A user with both set can therefore get a different key per provider family.
+Engine presets follow [ADR-012](../../backlog/decisions/012-provider-credential-settings-boundary.md) (TASK-36941.3):
+
+- A key the caller passes wins. Console passes the key readiness resolved.
+- Otherwise a recorded `credential_source` decides, as its 2026-10-17 amendment (TASK-33641.11) specifies: `"none"` sends no key, `"stored"` sends only the table's `api_key`, and `"environment"` sends only the variable the table's `api_key_env_var` names.
+- With no source recorded, the stored `api_key` outranks the environment variable (its 2026-09-19 amendment). The variable is the one the table names, or the preset's own variable when it names none.
+- The engine resolves through readiness's own resolver, so readiness reports the key a send spends.
+- A present-but-unusable stored key (a placeholder, or a key still encrypted) still fails closed when the source reads it.
+
+Custom endpoints keep ADR-146's order by the owner's 2026-10-26 decision. That variable is one the user named on the entry, not a provider default.
 
 ### Implemented providers
 

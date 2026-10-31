@@ -26,6 +26,12 @@ and this project adheres to Some kind of Versioning
   is the exception for now: its refused streamed request is still sent up
   to three times and fails as a general provider error (HTTP 502) without
   OpenAI's message or that advice.
+- Hosted provider presets (Together, Fireworks, Databricks and the other
+  engine presets) now use the saved API key when the provider's environment
+  variable is also set and the configuration records no key source (for
+  example, a key written into config.toml by hand). Previously the
+  environment variable won. To use the variable instead, clear the saved key
+  in Settings ▸ Providers & Models.
 
 ## [0.2.3] - 2026-10-02
 

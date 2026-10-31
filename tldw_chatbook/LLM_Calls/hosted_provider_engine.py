@@ -5,9 +5,10 @@ the PAYLOAD layer (``build_hosted_chat_payload``). Both port their
 ``LLM_Calls/zai.py`` counterparts, parameterized by a
 ``provider_registry.ProviderRecord`` preset instead of hardcoded Z.ai
 constants: error copy is ``record.display_name``-prefixed, provider identity
-is ``record.key``, env candidates are ``record.api_key_env_candidates``,
-numeric/streaming defaults come from ``record.settings_defaults``, and the
-payload surface is gated by ``record.payload_flags``.
+is ``record.key``, the default key variable is ``record.api_key_env_var``
+(read through readiness's resolver), numeric/streaming defaults come from
+``record.settings_defaults``, and the payload surface is gated by
+``record.payload_flags``.
 
 Deliberate divergences from the zai template (spec: Generic hosted provider
 engine and presets design, "Data flow" step 2):
@@ -28,10 +29,12 @@ engine and presets design, "Data flow" step 2):
   payload layer; a user-supplied blank model still fails closed here.
 - Credentials and endpoint are resolved before the model so missing-key and
   missing-URL errors surface with their actionable copy first.
-- Credential precedence follows the repo rule (env vars -> config.toml ->
-  defaults; Qodo finding 4): the env chain beats a USABLE stored
-  ``api_key``, while a present-but-unusable stored key still fails closed.
-  zai/moonshot keep their own legacy stored-key-first order.
+- Credential precedence follows ADR-012 (TASK-36941.3): a caller key, then
+  readiness's own ``resolve_provider_credential`` -- a recorded
+  ``credential_source`` decides, and with none recorded the stored
+  ``api_key`` outranks the environment variable -- so a call with no caller
+  key spends the key readiness reports. A present-but-unusable stored key
+  the source reads still fails closed.
 - ``record.auth_scheme`` gates credential strictness (Phase 2, Task 3):
   ``"bearer"`` (the default) keeps the hard key requirement, while
   ``"bearer_optional"`` lets keyless endpoints (ADR-146 custom endpoints)
@@ -139,7 +142,11 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
     validate_continuation_execution_target,
 )
-from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
+from tldw_chatbook.Chat.provider_readiness import (
+    configured_provider_credential_source,
+    configured_workspace_base_url,
+    resolve_provider_credential,
+)
 from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
@@ -460,6 +467,7 @@ def resolve_hosted_request(
         record,
         explicit=explicit_api_key,
         settings=settings,
+        settings_key=settings_key,
         environ=environment,
         resolved=api_key_resolved,
     )
@@ -603,6 +611,7 @@ def _resolve_api_key(
     *,
     explicit: object,
     settings: Mapping[str, object],
+    settings_key: str,
     environ: Mapping[str, str],
     resolved: bool | None = None,
 ) -> str:
@@ -615,13 +624,14 @@ def _resolve_api_key(
     ``bearer_optional`` records (the transport then sends no Authorization
     header at all) and still fails closed for strict ``bearer`` records.
 
-    Otherwise the chain follows the repo precedence rule (env vars ->
-    config.toml -> defaults; Qodo finding 4): explicit, then the env
-    candidates (the configured name plus the record's canonical
-    candidates), then the stored settings ``api_key``. A present-but-
-    unusable stored key still fails closed with the settings-path error
-    even when the environment would have won -- a placeholder the user
-    typed is surfaced, never silently shadowed.
+    Otherwise a usable explicit key wins, and then readiness's
+    ``resolve_provider_credential`` decides from the ``settings_key`` table
+    (ADR-012): a recorded ``credential_source`` decides ("none" no key,
+    "stored" the table's key, "environment" the variable the table names);
+    with none recorded the stored ``api_key`` outranks the variable. A
+    present-but-unusable stored key fails closed with the settings-path
+    error whenever the recorded source reads it (no source, or "stored") --
+    a placeholder the user typed is surfaced, never silently shadowed.
 
     ``"bearer"`` (the default) hard-requires a key: an unusable explicit or
     stored value, or an unresolved env chain, is an actionable configuration
@@ -651,45 +661,27 @@ def _resolve_api_key(
             )
         # bearer_optional: an explicit blank ("no key configured") defers to
         # the settings/env chain instead of winning with an unusable value.
-    # Precedence (repo rule: env vars -> config.toml -> defaults; Qodo
-    # finding 4): a present-but-unusable stored key still fails closed
-    # first -- a placeholder the user typed is an error to surface, never a
-    # value to silently shadow -- but between two USABLE credentials the
-    # environment now beats the stored settings key.
-    stored_key: str | None = None
-    if "api_key" in settings:
-        # Pydantic boundary: type failures surface with the stored-key copy
-        # the placeholder check below already raised.
-        stored_key = resolve_provider_api_key(
-            _typed_setting(record, settings, "api_key")
-        )
-        if stored_key is None:
-            raise validators.configuration_error(
-                f"{record.display_name} api_settings.{record.key}.api_key is invalid."
-            )
-    env_name: object = record.api_key_env_var
-    if "api_key_env_var" in settings:
-        # Pydantic boundary: a non-string, non-None configured name keeps
-        # its existing fail-closed copy.
-        env_name = _typed_setting(record, settings, "api_key_env_var")
-    names: tuple[str, ...] = ()
-    if isinstance(env_name, str):
-        if env_name.strip():
-            names = (env_name.strip(),)
-        # A blank name is "no name set", not an invalid one: a keyless
-        # preset ships neither a name nor candidates, so the name-validity
-        # check is skipped and the record's shipped candidates still run.
-    elif env_name is not None:
+    # ADR-012 (TASK-36941.3): readiness's resolver picks the key, so a call
+    # with no caller key spends the key readiness reports. A present-but-
+    # unusable stored key still fails closed wherever the recorded source
+    # reads it -- a placeholder the user typed is an error to surface, never
+    # a value to silently shadow. "none" and "environment" never read it.
+    if (
+        "api_key" in settings
+        and configured_provider_credential_source(settings) in (None, "stored")
+        # Pydantic boundary: a non-string key raises the same copy.
+        and resolve_provider_api_key(_typed_setting(record, settings, "api_key"))
+        is None
+    ):
         raise validators.configuration_error(
-            f"{record.display_name} api_settings.{record.key}.api_key_env_var "
-            "is invalid."
+            f"{record.display_name} api_settings.{record.key}.api_key is invalid."
         )
-    for candidate in dict.fromkeys((*names, *record.api_key_env_candidates)):
-        env_key = resolve_provider_api_key(environ.get(candidate))
-        if env_key is not None:
-            return env_key
-    if stored_key is not None:
-        return stored_key
+    # Pydantic boundary: a non-string, non-None configured name keeps its
+    # existing fail-closed copy.
+    _typed_setting(record, settings, "api_key_env_var")
+    api_key = resolve_provider_credential(settings_key, settings, environ=environ)[0]
+    if api_key is not None:
+        return api_key
     if optional:
         return ""
     raise validators.configuration_error(
