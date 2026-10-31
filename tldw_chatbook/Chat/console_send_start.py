@@ -114,7 +114,15 @@ def submission_send_start(owner: Any) -> Iterator[SendStart]:
 
 
 def note_provider_request() -> None:
-    """End the start of the send whose work makes this provider request."""
+    """End the start of the send whose work makes this provider request.
+
+    Called at every gateway adapter entry, so the send's FIRST request ends
+    its start. That is normally its main request, but an auxiliary one its
+    work makes first (an automatic compaction's summary, a response rule's
+    evaluation) ends it there instead, and the rest of the start's display
+    reads go off the loop. That costs time only, never wrong data, and the
+    base build's process-wide mark ended it at the same request.
+    """
     start = _BOUND.get()
     if start is not None:
         start.end()
