@@ -22416,20 +22416,20 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_display_state import console_sent_source_count
 
         prepared = continuation.staged_evidence if continuation is not None else None
-        for lease in (prepared, custody_lease):
-            result = None if lease is None or lease.released else lease.capture_result
-            context = getattr(result, "context", None)
-            if not isinstance(context, str) or not context.strip():
-                continue
-            count = console_sent_source_count(lease.launch, result)
-            try:
+        try:
+            for lease in (prepared, custody_lease):
+                result = None if lease is None or lease.released else lease.capture_result
+                context = getattr(result, "context", None)
+                if not isinstance(context, str) or not context.strip():
+                    continue
+                count = console_sent_source_count(lease.launch, result)
                 self.store.set_evidence_source_count(message_id, count or None)
-            except (KeyError, ValueError) as exc:
-                logger.debug(
-                    "Reply source count not shown (exception_type={})",
-                    type(exc).__name__,
-                )
-            return
+                return
+        except Exception as exc:  # display only: never costs the send
+            logger.debug(
+                "Reply source count not shown (exception_type={})",
+                type(exc).__name__,
+            )
 
     @staticmethod
     def _release_evidence_lease(lease: _PreparedEvidenceLease | None) -> None:

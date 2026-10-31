@@ -157,8 +157,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
     # 2026-10-30, TASK-33620.7 (same owner rule): 22338 -> 22348 (+10), the
-    # session-only setter for a reply's staged-source count.
-    "tldw_chatbook/Chat/console_chat_store.py": 22348,
+    # session-only setter for a reply's staged-source count. 22348 -> 22351
+    # (+3): a retry and both restore paths drop that count again.
+    "tldw_chatbook/Chat/console_chat_store.py": 22351,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
