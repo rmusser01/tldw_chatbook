@@ -2575,11 +2575,12 @@ async def test_console_armed_sent_notice_round_trips_to_a_fresh_screen():
     assert restored_screen._pending_console_launch_context is None
     assert restored_screen._console_evidence_sent_notice == 5
 
+    # TASK-33620.7: the receipt survives for the Inspector; the strip shows
+    # only staged evidence, so it stays hidden.
     strip_state = restored_screen._build_console_staged_evidence_strip_state(
         restored_screen._pending_console_launch_context
     )
-    assert strip_state.visible is True
-    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+    assert strip_state.visible is False
 
 
 def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys():

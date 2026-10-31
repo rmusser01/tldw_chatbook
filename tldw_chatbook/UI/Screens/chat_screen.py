@@ -378,8 +378,8 @@ from ...Chat.console_display_state import (
     build_console_staged_evidence_strip_state,
     coerce_non_negative_int,
     console_image_blocker,
-    console_prompted_source_count,
     console_send_gate_setup_copy,
+    console_sent_source_count,
     console_setup_blocked_reason,
     console_setup_blocker,
     console_staged_source_count,
@@ -9434,17 +9434,10 @@ class ChatScreen(BaseAppScreen):
         Returns:
             The number of evidence entries carried into the prompt.
         """
-        ordinals = getattr(
-            getattr(result, "citation_repair_contract", None),
-            "allowed_ordinals",
-            None,
-        )
-        if isinstance(ordinals, tuple) and ordinals:
-            return len(ordinals)
-        return console_prompted_source_count(launch)
+        return console_sent_source_count(launch, result)
 
     def _clear_console_evidence_sent_notice(self) -> None:
-        """Drop the one-send "evidence sent" line and refresh only the strip."""
+        """Drop the last send's source receipt and refresh only the strip."""
         if self._console_evidence_sent_notice is None:
             return
         self._console_evidence_sent_notice = None
@@ -14552,10 +14545,7 @@ class ChatScreen(BaseAppScreen):
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleStagedEvidenceStripState:
         """Build the composer-level staged-evidence strip state."""
-        return build_console_staged_evidence_strip_state(
-            pending_launch,
-            sent_source_count=self._console_evidence_sent_notice,
-        )
+        return build_console_staged_evidence_strip_state(pending_launch)
 
     def _sync_console_staged_evidence_strip(self) -> None:
         """Refresh the mounted staged-evidence strip from the launch context."""
@@ -16993,6 +16983,7 @@ class ChatScreen(BaseAppScreen):
                     _thinking_signature(getattr(message, "thinking", None)),
                     variant_signature,
                     getattr(message, "citation_presentation", None),
+                    getattr(message, "evidence_source_count", None),
                     getattr(message, "activity_presentation", None),
                     getattr(message, "raw_cli_presentation", None),
                 )
