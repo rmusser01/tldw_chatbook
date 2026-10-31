@@ -23,7 +23,7 @@ Found by TASK-36383's review (2026-10-23). At 60x20, the Library File Notes root
 QA logged the button as N-37/S-20. TASK-34000.30 AC#10 sets the button's visibility rule only for the no-folder state, so the linked row stays squeezed.
 
 Because of this defect:
-- `test_file_notes_linked_root_leads_with_friendly_folder_identity[60x20]` is red on dev.
+- `test_file_notes_linked_root_leads_with_friendly_folder_identity[size2]` (the 60x20 case) is red on dev.
 - `test_initial_root_scan_projects_checking_authority_while_actions_are_gated` checks the summary and the tooltip instead of the painted row.
 <!-- SECTION:DESCRIPTION:END -->
 
