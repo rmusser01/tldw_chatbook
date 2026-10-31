@@ -1672,3 +1672,13 @@ Tests/UI/test_console_resume_send_guard.py::test_enter_during_a_conversation_res
 Tests/UI/test_console_resume_send_guard.py::test_enter_right_after_a_resume_settles_sends_to_the_resumed_chat
 Tests/UI/test_console_resume_send_guard.py::test_resume_refusal_records_only_code_owned_send_diagnostics
 Tests/UI/test_console_resume_send_guard.py::test_pending_send_refusals_reach_the_metadata_sink
+
+# TASK-35836: Console mount retries during a config rebuild; appended after all existing dev slots.
+Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[mount]
+Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[view-start]
+Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]
+Tests/UI/test_console_response_rules.py::test_a_deferred_refresh_runs_once_with_its_latest_call
+# PR #3183 review: a stock skill-capture race must not fall back to UI-loop config IO.
+Tests/UI/test_console_skill_capture_config_rebuild.py::test_stock_skill_capture_keeps_rebuild_out_of_its_snapshot
+# PR #3183 integration: retain native locks through the second context capture.
+Tests/UI/test_console_skill_capture_config_rebuild.py::test_stock_skill_context_capture_keeps_rebuild_out_of_its_snapshot

@@ -11,12 +11,14 @@ import weakref
 from _thread import LockType
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial, wraps
 from inspect import getattr_static
 from types import FunctionType, MethodType, ModuleType
 from typing import Any
+
+from tldw_chatbook import config as _tldw_config
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
 from ...Chat.console_chat_controller import (
@@ -988,9 +990,55 @@ def _native_config_locks_held() -> bool:
     nested presentation read there is live, matches the rest of that pass, and
     cannot wait on another thread.
     """
-    from tldw_chatbook import config
+    return (
+        _tldw_config._settings_rebuild_lock()._is_owned()
+        and _tldw_config._config_file_lock()._is_owned()
+    )
 
-    return config._settings_rebuild_lock()._is_owned() and config._config_file_lock()._is_owned()
+
+def retry_after_config_rebuild(function: Callable) -> Callable:
+    """Retry a screen refresh shortly while a config rebuild holds a cold cache.
+
+    TASK-35836: refreshes the Console mount schedules (the identity surfaces a
+    roleplay refresh syncs, the width rail rules) read config live on the UI
+    loop. While ``config_read_would_wait()`` the call runs 0.2 s later instead,
+    once per refresh; the latest call's arguments win.
+    """
+
+    @wraps(function)
+    def wrapped(screen, *args, **kwargs):
+        pending = getattr(screen, "_console_config_retries", None)
+        with ExitStack() as acquired:
+            if not _tldw_config.config_read_would_wait():
+                # Retain both locks through this synchronous render: a rebuild
+                # can start after the optimistic cache/probe check above.
+                for lock in (
+                    _tldw_config._settings_rebuild_lock(), _tldw_config._config_file_lock()
+                ):
+                    if not lock.acquire(blocking=False):
+                        break
+                    acquired.callback(lock.release)
+                else:
+                    if pending is not None:
+                        pending.pop(function.__name__, None)
+                    return function(screen, *args, **kwargs)
+        if pending is None:
+            pending = screen._console_config_retries = {}
+        first = function.__name__ not in pending
+        pending[function.__name__] = (args, kwargs)
+        if first:
+
+            def retry() -> None:
+                call = pending.pop(function.__name__, None)
+                if call is not None and not (
+                    getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
+                ):
+                    wrapped(screen, *call[0], **call[1])
+
+            screen.set_timer(0.2, retry)
+        return None
+
+    return wrapped
 
 
 def console_readiness_presentation(function: Callable) -> Callable:
