@@ -1678,3 +1678,5 @@ Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait
 Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[view-start]
 Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]
 Tests/UI/test_console_response_rules.py::test_a_deferred_refresh_runs_once_with_its_latest_call
+# PR #3183 review: a stock skill-capture race must not fall back to UI-loop config IO.
+Tests/UI/test_console_skill_capture_config_rebuild.py::test_stock_skill_capture_keeps_rebuild_out_of_its_snapshot

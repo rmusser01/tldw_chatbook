@@ -6,6 +6,7 @@ import asyncio
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import replace
 from functools import partial
 from types import FunctionType, ModuleType
@@ -85,7 +86,23 @@ class ConsoleSkillController:
                         and metadata._source_current(wiring_source)
                         and metadata._source_current(helper_source)
                     ):
-                        prepared = entry[0](self.app_instance, service, current, source)
+                        from tldw_chatbook import config
+
+                        while True:
+                            with ExitStack() as acquired:
+                                for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
+                                    if not lock.acquire(blocking=False):
+                                        break
+                                    acquired.callback(lock.release)
+                                else:
+                                    if (not current() or not metadata._source_current(wiring_source)
+                                        or not metadata._source_current(helper_source)):
+                                        raise RuntimeError("console_skill_trust_source_changed")
+                                    # A rebuild must not invalidate the captured
+                                    # cache and send stock discovery into live IO.
+                                    prepared = entry[0](self.app_instance, service, current, source)
+                                    break
+                            await asyncio.sleep(0.2)
                         if prepared is not None:
                             if (not current() or not metadata._source_current(wiring_source)
                                 or not metadata._source_current(helper_source)):
@@ -552,7 +569,7 @@ def bind_console_skill_discovery(view_type: type, constructor: Callable) -> None
             *context_bindings,
             (globals(), "ConsoleSkillController", ConsoleSkillController),
             (globals(), "_DISCOVERY_VIEW", view_type),
-            (globals(), "partial", partial),
+            (globals(), "partial", partial), (globals(), "ExitStack", ExitStack),
             (globals(), "asyncio", asyncio), (globals(), "threading", threading),
             (globals(), "sys", sys), (globals(), "FunctionType", FunctionType),
             (globals(), "ModuleType", ModuleType),

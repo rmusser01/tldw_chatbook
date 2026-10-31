@@ -743,7 +743,7 @@ _MOUNT_REBUILD_STARTS = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("start", list(_MOUNT_REBUILD_STARTS))
 async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
-    tmp_path, monkeypatch, start
+    tmp_path, start
 ):
     """TASK-35836: the refreshes a Console mount schedules never wait for a rebuild.
 
@@ -756,7 +756,6 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     The watchdog records where the UI thread was waiting. After release, every
     deferred refresh finishes.
     """
-    import functools
     import itertools
     import sys
     import threading
@@ -790,29 +789,40 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
 
     step = getattr(ChatScreen, _MOUNT_REBUILD_STARTS[start])
 
-    @functools.wraps(step)  # Textual reads a handler's signature to pass its event
-    def rebuild_then_step(self, *args, **kwargs):
-        if not hold.is_set():
-            hold.set()
-            assert held.wait(3)
-            watchdog.start()
-        return step(self, *args, **kwargs)
-
     holder = threading.Thread(target=hold_rebuild)
     # 5 s, not 2: from on_mount the rest of startup runs inside the hold, and a
     # loaded runner can take seconds; a UI thread that waits stays blocked
     # until this fires, since the test cannot run to release it.
     watchdog = threading.Timer(5, expire)
-    monkeypatch.setattr(ChatScreen, _MOUNT_REBUILD_STARTS[start], rebuild_then_step)
     fetches = []  # when skill discovery fetched its context: before, in or after the hold
     service = app.skills_scope_service
     get_context = service.get_context
 
-    async def observed_get_context(*args, **kwargs):
-        fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
-        return await get_context(*args, **kwargs)
+    context_code = get_context.__func__.__code__
+    monitor = None
+    for candidate in range(5, 0, -1):
+        try:
+            sys.monitoring.use_tool_id(candidate, "console-mount-config-rebuild")
+        except ValueError:
+            continue
+        monitor = candidate
+        break
+    assert monitor is not None
 
-    monkeypatch.setattr(service, "get_context", observed_get_context)
+    def observe(code, _offset):
+        # Observe just these original entries. Replacing their methods changes
+        # native qualification; a process-wide profiler distorts mount timing.
+        if code is step.__code__ and not hold.is_set():
+            hold.set()
+            assert held.wait(3)
+            watchdog.start()
+        if code is context_code and sys._getframe(1).f_locals.get("self") is service:
+            fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
+
+    entry_event = sys.monitoring.events.PY_START
+    sys.monitoring.register_callback(monitor, entry_event, observe)
+    for code in (step.__code__, context_code):
+        sys.monitoring.set_local_events(monitor, code, entry_event)
     holder.start()
     try:
         async with ConsoleHarness(app).run_test(size=(120, 35)) as pilot:
@@ -865,6 +875,10 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             assert console._last_console_workspace_width_band is not None
             await console._console_runtime().dispose()
     finally:
+        for code in (step.__code__, context_code):
+            sys.monitoring.set_local_events(monitor, code, 0)
+        sys.monitoring.register_callback(monitor, entry_event, None)
+        sys.monitoring.free_tool_id(monitor)
         hold.set()
         watchdog.cancel()
         release.set()
