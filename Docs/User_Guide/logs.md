@@ -71,12 +71,16 @@ field holds a fixed code:
 | `trace_provenance` | The send's trace record could not be saved |
 | `trace_call` | Trace capture for the provider call could not start |
 | `delivery_unknown` | A retry could not confirm whether the provider already received the send |
-| `dispatch_settlement` | The send was held before dispatch (for example by a hook) and kept for Retry or Discard |
+| `dispatch_settlement` | A saved chat's send was refused before dispatch (for example by a hook, or because no project folder was chosen) and kept for Retry or Discard |
 | `settlement_failed` | Saving the send's outcome failed; it is kept for Retry or Discard |
 | `owner_changed` | Another action took over the saved send; it is kept for recovery |
+| `prerequisites_only` | The send was saved but deliberately not sent, so Discard or recovery can settle it |
+| `project_setup` | A temporary chat's send needed a project folder and none was chosen, or project instructions were turned off from the folder picker |
+| `turn_refused` | Another check stopped the send, for example a hook, the private scratch space or the context check; the run chip states the reason |
 
 The rotating application log's `phase=controller_submit status=blocked` line
-carries the same code as `error_category=`. Refused and failed sends log
+carries the same code as `error_category=`. Every blocked send logs a code.
+Sends refused before they were accepted (`status=refused`) and failed sends log
 `blocker=-`; the transcript or the unsent-turn shelf states their reason.
 Include the line in a bug report. It contains no message text.
 
