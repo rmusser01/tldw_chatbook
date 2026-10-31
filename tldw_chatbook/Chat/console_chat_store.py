@@ -381,6 +381,10 @@ def _ephemeral_promotion_global_lifecycle(
     return transitioned
 
 
+class _StaleContinuationSeal(RuntimeError):
+    """A managed seal's inputs changed before the locked write used it."""
+
+
 def _continuation_event_owner_scope(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
@@ -403,12 +407,19 @@ def _continuation_event_owner_scope(
         if owner_id not in self._message_session_index:
             return method(self, event, *args, **kwargs)
         finalizer = kwargs.get("checkpoint_finalizer")
-        if finalizer is not None:
-            kwargs["checkpoint_finalizer"] = self._presealed_continuation_finalizer(
-                event, kwargs.get("continuation_target"), finalizer
-            )
-        with self._generation_owner_scope(owner_id):
-            return method(self, event, *args, **kwargs)
+        for attempt in (1, 2):
+            if finalizer is not None:
+                kwargs["checkpoint_finalizer"] = self._presealed_continuation_finalizer(
+                    event, kwargs.get("continuation_target"), finalizer
+                )
+            try:
+                with self._generation_owner_scope(owner_id):
+                    return method(self, event, *args, **kwargs)
+            except _StaleContinuationSeal:
+                # A Stop may persist the owner mid-seal, giving it a durable
+                # id: seal once more over the fresh inputs, then refuse.
+                if attempt == 2:
+                    raise
 
     return transitioned
 
@@ -5098,18 +5109,21 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         # write, may persist this session, and the purge re-enters every owner.
         # Claim them first or close and that worker deadlock (TASK-37653 review).
         # Index order puts a parent before descendants, as the edit path nests.
+        claimed = [
+            message_id
+            for message_id, owner in list(self._message_session_index.items())
+            if owner == session_id
+        ]
         with ExitStack() as owners:
-            for message_id in [
-                message_id
-                for message_id, owner in list(self._message_session_index.items())
-                if owner == session_id
-            ]:
+            for message_id in claimed:
                 owners.enter_context(self._generation_owner_scope(message_id))
             with self._first_persistence_lock:
                 self.invalidate_response_rule_source(session_id, "closed")
-                return self._close_session_locked(session_id)
+                return self._close_session_locked(session_id, frozenset(claimed))
 
-    def _close_session_locked(self, session_id: str) -> ConsoleChatSession | None:
+    def _close_session_locked(
+        self, session_id: str, claimed_owner_ids: frozenset[str]
+    ) -> ConsoleChatSession | None:
         """Close while excluding first persistence and temporary promotion."""
 
         session = self._session_or_raise(session_id)
@@ -5151,7 +5165,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     result.pending_count,
                 )
             self._library_activity_buffer.discard_session(session_id)
-            self._purge_session_runtime_state(session_id)
+            self._purge_session_runtime_state(session_id, claimed_owner_ids)
 
         if self.active_session_id != session_id:
             return self._sessions.get(self.active_session_id or "")
@@ -5166,9 +5180,28 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._activate_session(next_session.id)
         return next_session
 
-    def _purge_session_runtime_state(self, session_id: str) -> None:
+    def _purge_session_runtime_state(
+        self, session_id: str, claimed_owner_ids: frozenset[str] | None = None
+    ) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
+        # Purge EVERY message the session owns, not just the active-path view:
+        # off-path tree nodes and dropped display-only TOOL markers both live in
+        # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
+        # session), so it is the authoritative set of owned ids to sweep.
+        owned_message_ids = [
+            message_id
+            for message_id, owner in list(self._message_session_index.items())
+            if owner == session_id
+        ]
+        # Close holds these owners' scopes; invalidating a later one without
+        # its scope would reopen the owner/first-persistence deadlock.
+        if claimed_owner_ids is not None and not claimed_owner_ids.issuperset(
+            owned_message_ids
+        ):
+            raise RuntimeError(
+                "A message joined this chat while closing; close it again."
+            )
         if self.response_rule_store is not None:
             self.response_rule_store.discard_temporary(session_id)
 
@@ -5180,15 +5213,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         ):
             self.canvas_turn_controller.discard_session(session_id)
 
-        # Purge EVERY message the session owns, not just the active-path view:
-        # off-path tree nodes and dropped display-only TOOL markers both live in
-        # ``_message_session_index`` (a superset of ``_nodes_by_session`` for the
-        # session), so it is the authoritative set of owned ids to sweep.
-        owned_message_ids = [
-            message_id
-            for message_id, owner in list(self._message_session_index.items())
-            if owner == session_id
-        ]
         with self._fence_provider_trace_settlement_registrations(owned_message_ids):
             self._purge_claimed_session_runtime_state(
                 session_id,
@@ -21072,7 +21096,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         def presealed(*inputs: Any) -> ProviderContinuationCheckpoint:
             if not sealed or sealed[0][0] != inputs:
-                raise RuntimeError(
+                raise _StaleContinuationSeal(
                     "Continuation owner changed while sealing; reload and retry."
                 )
             return sealed[0][1]

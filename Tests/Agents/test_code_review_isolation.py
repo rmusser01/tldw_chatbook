@@ -181,6 +181,7 @@ def test_refusal_projection_keeps_only_a_code_shaped_reason(dispatch_case):
         for error, label in (
             ("invalid_report_reference", "invalid_report_reference"),
             ("source_authority_unavailable", "source_authority_unavailable"),
+            ("review_session_fenced", "review_session_fenced"),
             ("Deferred because project instructions were loaded", "review_refused"),
             ("hook: /private/secret refused", "review_refused"),
             # Code-shaped but not a review refusal: an upstream routing code
@@ -195,7 +196,13 @@ def test_refusal_projection_keeps_only_a_code_shaped_reason(dispatch_case):
 
 
 def test_refusal_code_allowlist_matches_the_review_refusals_raised():
-    """Every literal ``ReviewRefused`` reason projects; no invented codes."""
+    """The allowlist is exactly the ``ReviewRefused`` reasons raised anywhere.
+
+    Both ways: every literal reason under tldw_chatbook/ (including the Console
+    review owner, e.g. ``review_session_fenced``) projects, and every listed
+    code is raised somewhere -- as a literal, or routed through a variable by
+    the module named below.
+    """
     import ast
     from pathlib import Path
 
@@ -208,24 +215,32 @@ def test_refusal_code_allowlist_matches_the_review_refusals_raised():
             return {node.value}
         return set()
 
-    sources = [
-        path.read_text(encoding="utf-8")
-        for path in Path(provider.__file__).parent.glob("code_review_*.py")
-    ]
-    raised = {
-        reason
-        for source in sources
-        for call in ast.walk(ast.parse(source))
-        if isinstance(call, ast.Call)
-        and getattr(call.func, "id", None) == "ReviewRefused"
-        and call.args
-        for reason in reasons(call.args[0])
+    package = Path(provider.__file__).parents[1]
+    raised = set()
+    for path in package.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "ReviewRefused" not in source:
+            continue
+        for call in ast.walk(ast.parse(source)):
+            if not isinstance(call, ast.Call) or not call.args:
+                continue
+            name = getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+            if name == "ReviewRefused":
+                raised |= reasons(call.args[0])
+    routed = {
+        "Agents/code_review_source.py": {
+            "ambiguous_comparison",
+            "history_unavailable",
+            "unmerged_source",
+        },
+        "Agents/code_review_service.py": {"check_result_transport_unavailable"},
+        "Chat/console_agent_bridge.py": {"review_stage_tools_unreachable"},
     }
-    assert raised <= provider._REVIEW_REFUSAL_CODES
-    assert all(
-        any(f'"{code}"' in source for source in sources)
-        for code in provider._REVIEW_REFUSAL_CODES
-    )
+    for relative, codes in routed.items():
+        source = (package / relative).read_text(encoding="utf-8")
+        assert all(f'"{code}"' in source for code in codes), relative
+    assert "review_session_fenced" in raised
+    assert raised | set().union(*routed.values()) == provider._REVIEW_REFUSAL_CODES
 
 
 def test_cycle_projection_preserves_call_identity_without_bodies(dispatch_case):

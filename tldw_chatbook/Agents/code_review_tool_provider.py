@@ -68,13 +68,16 @@ _ROLE_GUIDANCE = {
         "arguments (dispositions, empty records, same ID, current revision); accepted decisions remain unchanged."
     ),
 }
-# The review's own refusal codes (``ReviewRefused`` reasons raised in
-# Agents/code_review_*.py; a test pins the two together). Only these reach
+# The review's own refusal codes: every ``ReviewRefused`` reason raised under
+# tldw_chatbook/ (a test pins the two together, both ways). Only these reach
 # durable/display projections: upstream permission/routing reasons, hook text
 # and digests collapse to ``review_refused`` (TASK-37653 review).
 _REVIEW_REFUSAL_CODES = frozenset(
     """
-    accepted_review_intent_required ambiguous_comparison attempt_binding_conflict
+    accepted_request_already_narrowed accepted_review_intent_required
+    accepted_reviewer_selection_mismatch accepted_stage_intent_required
+    accepted_stage_selection_mismatch accepted_user_message_changed
+    accepted_user_message_required ambiguous_comparison attempt_binding_conflict
     batch_unavailable binary_source check_actor_conflict check_actor_mismatch
     check_actor_unbound check_already_pending check_attempt_mismatch
     check_deadline_expired check_execution_admission_expired
@@ -100,23 +103,30 @@ _REVIEW_REFUSAL_CODES = frozenset(
     original_reports_not_presented patch_preimage_mismatch preset_disabled
     preset_missing publication_failed record_too_large report_capture_missing
     report_unavailable reservation_actual_mismatch reservation_closed
-    reservation_exceeded review_attempt_has_publications review_busy
-    review_capture_closed review_checkpoint_scope_mismatch
-    review_context_capacity_unknown review_context_reduction_blocked
-    review_control_too_large_for_tool_result review_expired
-    review_guide_unavailable review_launch_already_bound review_launch_unknown
+    reservation_exceeded review_attempt_has_publications
+    review_attempt_not_settled review_attempt_outcome_uncertain
+    review_attempt_state_changed review_authority_quota_exceeded
+    review_boundary_unavailable review_busy review_capture_closed
+    review_checkpoint_scope_mismatch review_context_capacity_unknown
+    review_context_reduction_blocked review_control_too_large_for_tool_result
+    review_expired review_guide_unavailable review_launch_already_bound
+    review_launch_unknown review_no_unstarted_reviewers
     review_page_capacity_changed review_record_too_large_for_tool_result
     review_response_capacity_unavailable review_revision_conflict
-    review_run_settled review_scope_mismatch review_slot_unknown review_team_empty
-    reviewer_check_evidence_unavailable role_denied role_kind_mismatch
-    run_binding_conflict run_not_bound single_record_required source_absent
-    source_acquisition_failed source_already_published source_authority_changed
-    source_authority_mismatch source_authority_unavailable source_binding_mismatch
+    review_run_settled review_scope_mismatch review_selection_required
+    review_session_fenced review_slot_unknown review_stage_already_started
+    review_stage_tools_unreachable review_team_empty
+    reviewer_check_evidence_unavailable reviewer_selection_required role_denied
+    role_kind_mismatch run_binding_conflict run_not_bound single_record_required
+    source_absent source_acquisition_failed source_already_published
+    source_authority_changed source_authority_mismatch
+    source_authority_unavailable source_binding_mismatch
     source_capacity_unavailable source_cursor_conflict source_digest_mismatch
     source_drift source_epoch_mismatch source_outside_scope
     source_page_capacity_changed source_path_unavailable
     source_permission_unavailable source_query_capacity_unavailable
-    source_span_too_large_for_tool_result source_truncated source_unavailable
+    source_selection_required source_span_too_large_for_tool_result
+    source_truncated source_unavailable stage_admission_unavailable
     stage_grant_scope_mismatch stage_grant_unavailable stale_attempt
     storage_limits_conflict storage_quota_exceeded submission_conflict
     submission_revision_conflict target_acquisition_unavailable
@@ -126,21 +136,27 @@ _REVIEW_REFUSAL_CODES = frozenset(
     verification_attempt_closed verification_batch_unacknowledged
     verification_incomplete verification_unavailable
     verification_unit_not_delivered verifier_missing
-    """.split()  # noqa: SIM905 - 145 codes; one literal per line is unreadable
+    """.split()  # noqa: SIM905 - 164 codes; one literal per line is unreadable
 )
-# Refusals decided by a read's own arguments. invoke() refuses the same
-# arguments, so path_targets maps them to no path; state/authority refusals
-# (expired review, changed source authority) can clear before invoke and must
-# still raise so the instruction ledger defers the batch (TASK-37653 review).
+# Refusals that cannot clear before invoke(): fixed by the read's own
+# arguments (bad reference/cursor/path, out of scope, a symlink in the requested
+# path) or by a review that is gone (mistyped, foreign or expired review_id).
+# invoke() refuses them again, so path_targets maps them to no path instead of
+# deferring the whole batch. Transient state/authority refusals (changed source
+# epoch or authority, unbound run, disabled feature) may clear in between and
+# still raise so the instruction ledger defers (TASK-37653 review).
 _ARGUMENT_REFUSALS = frozenset(
     {
         "invalid_source_cursor",
         "invalid_source_path",
         "invalid_source_reference",
         "invalid_source_selection",
+        "review_expired",
         "source_cursor_conflict",
         "source_outside_scope",
         "source_path_unavailable",
+        "unknown_review",
+        "unsupported_source_type",
     }
 )
 _ROLE_READ_VIEWS = {

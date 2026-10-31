@@ -63,6 +63,14 @@ Files: `tldw_chatbook/Chat/console_chat_store.py` (decorator; size unchanged at 
 - *Projection allowlist.* The shape regex is replaced by `_REVIEW_REFUSAL_CODES` (145 codes); a test pins it to every literal `ReviewRefused` reason in `Agents/code_review_*.py`. RED: `provider_not_ready` and a 64-hex digest were kept.
 - Decorator renamed `_continuation_event_owner_scope`; User Guide sentence now covers every review tool failure.
 - `console_chat_store.py` ratchet row 22,338 -> 22,410 (+72, dated comment). Preflight green. Failures in the touched suites are identical with the base product files swapped back in (Architecture: 47, environment/drift; 28 Console controller/preparation cases).
+
+**Review round 3 (2026-10-31, claude/burn-fixB).**
+- *Stop test flake.* Stop cancels the test's own `submit_draft` task while the agent worker runs on under `asyncio.shield` (`_run_maintenance_agent_call`) until it writes the terminal status, so the test could read `running`. It now awaits `controller._maintenance_background` first. RED, made deterministic by delaying the worker's `cancelled` terminal write 0.5 s: `('running', []) != ('cancelled', [])`. GREEN with the delay, and 24/24 plain runs (6 in parallel) plus 6/6 delayed.
+- *Allowlist completeness.* `_REVIEW_REFUSAL_CODES` is now every `ReviewRefused` reason raised under tldw_chatbook/ (164; it was missing 18 Console-owned codes such as `review_session_fenced`). The pin test scans the whole package and checks both directions; the five codes routed through variables are pinned to the module that routes them. RED: 18 extra raised codes.
+- *Refusals that cannot clear.* `unknown_review`, `review_expired` and `unsupported_source_type` now map to no path, so they no longer defer the whole batch; transient state/authority refusals still raise. The test gained a symlink case and asserts that invoke refuses each path-free case with an argument code. RED: expired, other_chat and symlink raised.
+- *Stop persists the owner mid-seal.* The seal covers `persisted_message_id or message.id`, so a Stop that persisted the unpersisted assistant (DB-assigned id) during the unlocked seal made the recheck refuse. On that refusal (`_StaleContinuationSeal`) the write now leaves the scope, re-seals once over the fresh inputs and retries; a second change still refuses. RED: "Continuation owner changed while sealing"; GREEN: the row is written with a seal over the durable id (`sealed_for == [native, durable]`).
+- *Close snapshot.* Close passes the owner ids it claimed to the purge, which refuses ("joined this chat while closing") rather than invalidate an owner whose scope it does not hold. RED: did not raise.
+- Store ratchet row 22,410 -> 22,434 (+24, dated). Affected suites: 1002 passed. The Console store/controller suites fail only the 30 cases already known to fail on the base files.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
