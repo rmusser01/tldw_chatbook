@@ -157,8 +157,18 @@ class SQLiteStoreKernel:
         if conn is None:
             conn = self._get_connection()
             self._thread_local.conn = conn
+            self._on_connection_opened(conn)
         self._thread_local.conn_last_used = time.monotonic()
         return conn
+
+    def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
+        """Hook: a fresh connection just entered this thread's cache.
+
+        Stores that track ALL connections they own for cross-thread
+        shutdown (e.g. Dreams_DB's ``close_all``) override this to
+        register; the kernel itself keeps no global registry.
+        """
+
 
     @_core_transaction
     @contextmanager
