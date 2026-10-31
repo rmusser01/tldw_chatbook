@@ -489,6 +489,7 @@ class PermissionProfileContext:
     selector_generation: int
     policy_digest: str
     revision: int | None
+    policy_chain_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -673,10 +674,32 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         height: auto;
         min-height: 0;
     }
+    /* TASK-18928: the suggestion-review table hugs its row count like
+    #mcp-perm-table, capped so a long review list can never crowd out the
+    matrix above it. */
+    #mcp-perm-suggestions-table {
+        height: auto;
+        max-height: 12;
+        min-height: 0;
+    }
+    #mcp-perm-suggestions-label,
+    #mcp-perm-suggestions-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+    }
     """
 
     BINDINGS = [
         Binding("space", "cycle_state", "Cycle permission", show=False),
+        # TASK-18928: suggestion-review actions (htop-style single letters,
+        # ADR-031). All four act ONLY while the suggestions table holds
+        # focus (see `_focused_suggestion_row`), so they can never fire
+        # from the permission matrix and vice versa.
+        Binding("a", "accept_suggestion", "Accept suggestion", show=False),
+        Binding("d", "dismiss_suggestion", "Dismiss suggestion", show=False),
+        Binding("r", "restore_suggestion", "Restore dismissed", show=False),
+        Binding("c", "clear_suggestion_dismissals", "Clear dismissals", show=False),
     ]
 
     class RecoveryReviewRequested(Message, namespace="mcp_permissions_mode"):
@@ -728,6 +751,49 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
             super().__init__()
             self.value = value
 
+    # -- TASK-18928: suggestion review messages (single-writer contract --
+    # the workbench applies every mutation through the control-plane
+    # service and resyncs this canvas; the widget never touches the store).
+
+    class SuggestionAcceptRequested(Message, namespace="mcp_permissions_mode"):
+        """Accept one mined suggestion: persist a real Always-allow entry."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            *,
+            definition_hash: str = "",
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.definition_hash = definition_hash
+            self.profile_context = profile_context
+
+    class SuggestionDismissRequested(Message, namespace="mcp_permissions_mode"):
+        """Dismiss one suggestion so it is not re-proposed."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
+    class SuggestionRestoreRequested(Message, namespace="mcp_permissions_mode"):
+        """Restore one dismissed suggestion (it may be proposed again)."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
+    class SuggestionDismissalsClearRequested(Message, namespace="mcp_permissions_mode"):
+        """Clear every remembered dismissal (the review surface's reset)."""
+
+        def __init__(self) -> None:
+            super().__init__()
+
     class RowSelected(Message, namespace="mcp_permissions_mode"):
         """Posted when the user selects a matrix row (Enter/click on the
         DataTable's cursor row) -- mirrors `MCPToolsMode.on_data_table_row_
@@ -773,6 +839,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self._all_rows: list[PermRow] = []
         self._rows_by_key: dict[str, PermRow] = {}
         self._visible_rows: list[PermRow] = []
+        # TASK-18928: suggestion-review row identities (row key ->
+        # (server_key, tool_name, dismissed, definition_hash)), rebuilt by
+        # `populate_suggestions()` alongside its table.
+        self._suggestion_rows_by_key: dict[str, tuple[str, str, bool, str]] = {}
+        self._suggestion_profile_context: PermissionProfileContext | None = None
         # UX batch item 11: whether ANY row in the current (unfiltered)
         # matrix carries a real tag -- cached once per `update_matrix()`
         # call and reused by every `_apply_filter()` re-render so the Tags
@@ -867,6 +938,18 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         yield table
         yield Static("", id="mcp-perm-preview", markup=False)
         yield Static(_LEGEND_TEXT, id="mcp-perm-legend", markup=False)
+        # TASK-18928: suggestion review (approval-history mining). The whole
+        # section hides while there is nothing to review -- no dead chrome.
+        suggestions_label = Static("", id="mcp-perm-suggestions-label", markup=False)
+        suggestions_label.display = False
+        yield suggestions_label
+        suggestions_table = DataTable(id="mcp-perm-suggestions-table")
+        suggestions_table.cursor_type = "row"
+        suggestions_table.display = False
+        yield suggestions_table
+        suggestions_hint = Static("", id="mcp-perm-suggestions-hint", markup=False)
+        suggestions_hint.display = False
+        yield suggestions_hint
         # T8: dedicated slot container for the server-source governance
         # listing -- mirrors `MCPToolsMode`'s own
         # `#mcp-tools-filter-server-slot` pattern (a persistent empty
@@ -879,6 +962,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-perm-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
+        suggestions_table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        suggestions_table.add_columns("Server / tool", "Approvals", "Status")
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Reveal the focused descendant after its layout settles.
@@ -1412,6 +1497,140 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
                 return True
         return False
 
+    # -- suggestion review (TASK-18928) --------------------------------------
+
+    def populate_suggestions(
+        self,
+        recommendations: list[object],
+        dismissals: dict[str, str],
+        *,
+        profile_context: PermissionProfileContext | None = None,
+    ) -> None:
+        """Rebuild the suggestion-review section from one service snapshot.
+
+        Args:
+            recommendations: Current (already dismissal-filtered)
+                ``PermissionPromptRecommendation`` entries.
+            dismissals: The dismissed-suggestion map (tool id -> ISO ts).
+            profile_context: Profile authority captured for these recommendations.
+
+        The whole section hides while both inputs are empty -- an honest
+        empty state, no dead chrome and no phantom key targets.
+        """
+        table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        self._suggestion_rows_by_key = {}
+        self._suggestion_profile_context = profile_context
+        table.clear()
+        rows: list[tuple[str, tuple[str, str, str], tuple[str, str, bool, str]]] = []
+        for recommendation in recommendations:
+            label = (
+                f"{recommendation.server_label or recommendation.server_key}"
+                f" / {recommendation.tool_name}"
+            )
+            key = f"sugg:{recommendation.server_key}::{recommendation.tool_name}"
+            rows.append(
+                (
+                    key,
+                    (
+                        label,
+                        str(recommendation.approved_count),
+                        f"last approved {recommendation.last_seen}".rstrip(),
+                    ),
+                    (
+                        recommendation.server_key,
+                        recommendation.tool_name,
+                        False,
+                        recommendation.definition_hash,
+                    ),
+                )
+            )
+        for tool_id, dismissed_at in sorted(dismissals.items()):
+            server_key, _, tool_name = tool_id.partition("::")
+            rows.append(
+                (
+                    f"dismissed:{tool_id}",
+                    (f"{server_key} / {tool_name}", "-", f"dismissed {dismissed_at}"),
+                    (server_key, tool_name, True, ""),
+                )
+            )
+        for key, cells, identity in rows:
+            table.add_row(*cells, key=key)
+            self._suggestion_rows_by_key[key] = identity
+        visible = bool(rows)
+        table.display = visible
+        label = self.query_one("#mcp-perm-suggestions-label", Static)
+        hint = self.query_one("#mcp-perm-suggestions-hint", Static)
+        label.display = visible
+        hint.display = visible
+        if visible:
+            label.update("Suggested \"Always allow\" (from your approval history)")
+            hint.update(
+                "a: accept (writes a real Always-allow) · d: dismiss · "
+                "r: restore dismissed · c: clear dismissals"
+            )
+
+    def _focused_suggestion_row(self) -> tuple[str, str, bool, str] | None:
+        """The cursor row identity, dismissal flag, and reviewed definition hash.
+
+        None unless the suggestions table itself holds focus -- every
+        suggestion action is a no-op from any other focus (including the
+        permission matrix), and `space` on the matrix is a no-op while the
+        suggestions table holds focus, so the two key surfaces cannot
+        cross-fire.
+        """
+        try:
+            table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        except Exception:
+            return None
+        focused = getattr(self.screen, "focused", None)
+        if focused is not table:
+            return None
+        cursor_row = table.cursor_row
+        if cursor_row < 0:
+            return None
+        try:
+            row_key, _ = table.coordinate_to_cell_key((cursor_row, 0))
+        except Exception:
+            return None
+        key_value = row_key.value
+        if key_value is None:
+            return None
+        return self._suggestion_rows_by_key.get(str(key_value))
+
+    def action_accept_suggestion(self) -> None:
+        row = self._focused_suggestion_row()
+        if row is None or row[2]:
+            return
+        self.post_message(
+            self.SuggestionAcceptRequested(
+                server_key=row[0],
+                tool_name=row[1],
+                definition_hash=row[3],
+                profile_context=self._suggestion_profile_context,
+            )
+        )
+
+    def action_dismiss_suggestion(self) -> None:
+        row = self._focused_suggestion_row()
+        if row is None or row[2]:
+            return
+        self.post_message(
+            self.SuggestionDismissRequested(server_key=row[0], tool_name=row[1])
+        )
+
+    def action_restore_suggestion(self) -> None:
+        row = self._focused_suggestion_row()
+        if row is None or not row[2]:
+            return
+        self.post_message(
+            self.SuggestionRestoreRequested(server_key=row[0], tool_name=row[1])
+        )
+
+    def action_clear_suggestion_dismissals(self) -> None:
+        if self._focused_suggestion_row() is None:
+            return
+        self.post_message(self.SuggestionDismissalsClearRequested())
+
     def action_cycle_state(self) -> None:
         """Cycle the matrix's CURSOR row one Space-press (T2's cycle rules).
 
@@ -1420,6 +1639,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         posts `StateCycleRequested` with the next state already computed --
         the workbench applies it, it never re-derives it.
         """
+        suggestions_table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        if getattr(self.screen, "focused", None) is suggestions_table:
+            return
         table = self.query_one("#mcp-perm-table", DataTable)
         if table.row_count == 0:
             return

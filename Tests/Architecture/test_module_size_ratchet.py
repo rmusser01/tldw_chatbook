@@ -65,13 +65,15 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: them to silence a failure — see the module docstring.
 # 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
 # pins changed owners at measured sizes without extra size-only moves.
+# 2026-10-31: user waived size limits for PR3156 backlog integration;
+# its three touched owners are pinned at exact current measurements.
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 776,
     "tldw_chatbook/Chat/console_display_state.py": 2873,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
-    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1458,
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1680,
     "tldw_chatbook/tldw_api/exceptions.py": 139,
     "tldw_chatbook/tldw_api/utils.py": 175,
     "tldw_chatbook/UI/LLM_Management/vllm_setup_view.py": 1861,
@@ -485,7 +487,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
     # Its review: 6,162; a named custom endpoint's listing gets its own note.
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6162,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6818,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7011,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
@@ -612,7 +614,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_trace_service.py": 6662,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
-    "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
+    "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
     "tldw_chatbook/Agents/local_tool_provider.py": 5750,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -63,6 +64,7 @@ class ExecutionRecord:
     unknown_argument_count: int
     result_type: str
     result_size: int
+    definition_hash: str | None = None
 
 
 def _result_metadata(result: Any) -> tuple[str, int]:
@@ -114,6 +116,7 @@ def build_record(
     registered_argument_names: set[str] | tuple[str, ...] | list[str] | None = None,
     result: Any = None,
     decision: str = "allowed",
+    definition_hash: str | None = None,
 ) -> ExecutionRecord:
     """Build a timestamped record containing operational metadata only.
 
@@ -132,6 +135,7 @@ def build_record(
         result: Result used only for its type and top-level size.
         decision: Permission decision (for example, "allowed", "approved",
             or "approved-session").
+        definition_hash: Optional SHA-256 fingerprint of the reviewed tool definition.
 
     Returns:
         A frozen metadata-only ExecutionRecord safe to persist.
@@ -160,6 +164,21 @@ def build_record(
         unknown_argument_count=unknown_argument_count,
         result_type=result_type,
         result_size=result_size,
+        definition_hash=_definition_fingerprint(definition_hash, server_key, tool_name),
+    )
+
+
+def _definition_fingerprint(value: Any, server_key: Any, tool_name: Any) -> str | None:
+    """Keep canonical fingerprints only when audit identities remain exact."""
+    if any(
+        identity == "invalid" or safe_metadata_token(identity) != identity
+        for identity in (server_key, tool_name)
+    ):
+        return None
+    return (
+        value
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+        else None
     )
 
 
@@ -369,6 +388,17 @@ class MCPExecutionLog:
             "unknown_argument_count": unknown_argument_count,
             "result_type": safe_metadata_token(result_type or "none"),
             "result_size": result_size,
+            **(
+                {"definition_hash": fingerprint}
+                if (
+                    fingerprint := _definition_fingerprint(
+                        raw.get("definition_hash"),
+                        raw.get("server_key"),
+                        raw.get("tool_name"),
+                    )
+                )
+                else {}
+            ),
         }
 
     @staticmethod
