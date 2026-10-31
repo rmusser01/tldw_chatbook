@@ -1475,6 +1475,22 @@ RIGHTMOST selector only, so "is this class in `rules_map`?" does NOT answer
 "can this class affect anything" — a rule like `.marker Button {}` is filed
 under `Button`. Scan the whole selector text.
 
+**Two more ways one state flip pays several restyles (TASK-36571, 2026-10-30).**
+A status swap written as one `set_class` per candidate class restyles twice
+per flip (one removal, one addition): the Console's Workbench header did that
+on every run start, over its 26-node subtree (the speech controls live inside
+it), 3.8 ms of thread CPU per flip in the harness. And assigning
+`Button.variant` runs Textual's `watch_variant`, which removes the old
+`-<variant>` class and adds the new one: two more restyles before the
+button's own state classes pay theirs (Stop paid four for one availability
+flip). Batch the swap with `update_classes`; for a class no rule uses on a
+descendant, restyle just the node (`update_classes(..., update=False)` then
+`app.stylesheet.update_nodes([node])`, with a parsed-rule guard as above);
+for a variant, set the reactive with `set_reactive` and fold the watcher's
+two classes into the same batch, and pin the watcher's source in a test so
+a Textual upgrade cannot change what you are mirroring
+(`Tests/UI/test_console_projection_restyles.py`).
+
 ## Focus on a container, and a screen's first lazy CSS load, restyle whole subtrees too (TASK-33628.5.1, 2026-10-05)
 
 The entry above, "A class flip restyles the flipped node's ENTIRE subtree", has two
