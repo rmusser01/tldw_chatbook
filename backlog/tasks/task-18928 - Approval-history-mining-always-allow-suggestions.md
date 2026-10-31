@@ -1,7 +1,7 @@
 ---
 id: TASK-18928
 title: 'Approval history mining: "Always allow" suggestions surface'
-status: Done
+status: In Progress
 assignee:
 - '@Robert'
 created_date: 2026-08-19 09:55
@@ -39,6 +39,10 @@ Port of hermes-agent's `approvals suggest` (2026-08-19 hermes-release review). C
 4. Accept writes through service.set_tool_state(server_key, tool_name, 'allow', tool=<live HubTool>, profile context) — the same path the permissions mode state-cycle uses
 5. Surface: MCP Permissions mode Suggestions review subsection (accept/dismiss + dismissed restore/clear), keyboard actions per ADR-031
 6. Tests: no-runtime-change proof (resolution unchanged while suggestions exist), dismissal persistence round-trip, mining matrix additions, accept write, UI surface; docs mcp + settings guide
+7. 2026-10-31 backlog repair: rebase onto dev198eca8b93, retain canonical Settings host and permission ownership. Replace the newly census-flagged suggestion-accept notification with explicit literal text (markup=False), preserving arbitrary tool/server names. Run targeted reducer/store/service/mode/action-ownership tests and independent review.
+ADR required: no new ADR
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
+Reason: preserve existing explicit acceptance and permission boundaries; notification repair changes no authority.
 <!-- SECTION:PLAN:END -->
 ## Deferral note (2026-10-11, dev `9f8533686c`)
 

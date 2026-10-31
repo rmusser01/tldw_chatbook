@@ -3835,11 +3835,10 @@ class MCPWorkbench(Container):
             )
             return
         self.app.notify(
-            _toast(
-                f"Always-allow saved for {recommendation.tool_name} "
-                f"({recommendation.server_label or recommendation.server_key})."
-            ),
+            f"Always-allow saved for {recommendation.tool_name} "
+            f"({recommendation.server_label or recommendation.server_key}).",
             severity="information",
+            markup=False,
         )
         await self._sync_permissions_mode()
 
