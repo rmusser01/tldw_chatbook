@@ -2790,3 +2790,73 @@ def test_worker_revalidates_unmanaged_local_snapshot_before_reuse(
         assert second.failures[0].recovery_actions == ("retry_faster_whisper",)
     finally:
         executor.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=demo&next=https://example.org/a%2Fb",
+        "http://example.org/audio/path.wav?literal=a/b",
+    ],
+)
+def test_url_ingest_source_survives_spawn_and_reaches_parse_unchanged(url):
+    from tldw_chatbook.STT.executor import URLIngestSource
+
+    source = URLIngestSource(url)
+    assert pickle.loads(pickle.dumps(source)) == source
+    assert url not in repr(source)
+    with pytest.raises(FrozenInstanceError):
+        source.url = "https://changed.invalid/"
+    executor = _protocol_executor()
+    callbacks = _Callbacks()
+    try:
+        executor.submit(
+            attempt_id="url-attempt",
+            job_id="url-job",
+            source=source,
+            identity=_identity(
+                root_revision=None, closure_fingerprint=None, local_snapshot_token=None
+            ),
+            options={"transcription_provider": "parakeet-onnx"},
+            on_event=callbacks.on_event,
+            on_result=callbacks.on_result,
+            on_failure=callbacks.on_failure,
+        )
+        _wait_for_terminal(callbacks)
+        assert callbacks.failures == []
+        assert callbacks.results[0].payload["file_path"] == url
+    finally:
+        executor.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///private/audio.wav",
+        "https:/broken",
+        "https:\\broken",
+        "ftp://example.org/a",
+        "",
+    ],
+)
+def test_url_ingest_source_rejects_non_http_or_missing_authority(url):
+    from tldw_chatbook.STT.executor import URLIngestSource
+
+    with pytest.raises(ValueError):
+        URLIngestSource(url)
+
+
+def test_url_ingest_source_requires_text_and_a_library_job():
+    from tldw_chatbook.STT.executor import URLIngestSource
+
+    with pytest.raises(TypeError):
+        URLIngestSource(Path("https://example.org/audio.wav"))
+    with pytest.raises(ValueError, match="Library job ID"):
+        ExecutorRequest(
+            generation=1,
+            attempt_id="url",
+            job_id=None,
+            source=URLIngestSource("https://example.org/audio.wav"),
+            identity=_identity(),
+            options={},
+        )

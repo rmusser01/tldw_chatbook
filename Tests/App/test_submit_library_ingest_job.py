@@ -940,7 +940,17 @@ def test_folder_siblings_reuse_one_real_verified_snapshot(
     assert first["local_source"] is second["local_source"]
 
 
-def test_library_submission_forwards_exact_dependency_refs_to_coordinator() -> None:
+@pytest.mark.parametrize(
+    "source_path",
+    [
+        "/tmp/audio.wav",
+        "https://www.youtube.com/watch?v=demo&next=https://example.org/a%2Fb",
+        "http://example.org/audio/path.wav?literal=a/b",
+    ],
+)
+def test_library_submission_forwards_exact_dependency_refs_to_coordinator(
+    source_path,
+) -> None:
     app = _minimal_stt_app()
     dependency_refs = (("silero-vad", "rev", "onnx"),)
     dispatch = {
@@ -962,12 +972,18 @@ def test_library_submission_forwards_exact_dependency_refs_to_coordinator() -> N
     app._ensure_local_stt_dispatch_coordinator = lambda: _Coordinator()  # type: ignore[method-assign]
     app._marshal_local_stt_call = lambda callback, *args: callback(*args)  # type: ignore[method-assign]
     app._on_ingest_local_stt_submitted = lambda *_args: None  # type: ignore[method-assign]
-    job = _parakeet_job(job_id="job-1")
+    from dataclasses import replace
+
+    job = replace(_parakeet_job(job_id="job-1"), source_path=source_path)
     app._ingest_local_stt_jobs[job.job_id] = (0, "job-1-attempt-1")
 
     app._dispatch_local_stt_job(job, {}, "job-1-attempt-1")
 
     assert calls[0]["managed_dependency_refs"] == dependency_refs
+    if source_path.startswith(("http://", "https://")):
+        assert getattr(calls[0]["source"], "url", None) == source_path
+    else:
+        assert calls[0]["source"].path == Path(source_path)
 
 
 def test_parakeet_submission_registers_source_listener_before_dispatch_thread() -> None:
@@ -2094,7 +2110,7 @@ class TestIngestJobOptions:
     def test_retry_without_failure_provenance_omits_retry_of_job_id(
         self,
     ) -> None:
-        """(task-35080) A retry with no stored attempt provenance pairs None.
+        """(TASK-38207) A retry with no stored attempt provenance pairs None.
 
         ``retry_of_job_id`` taken from the job alone would reach the worker
         without ``retry_of_attempt_id``; STT provenance validation rejects

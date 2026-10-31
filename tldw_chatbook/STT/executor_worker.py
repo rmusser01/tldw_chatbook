@@ -27,6 +27,7 @@ from .executor import (
     ExecutorResident,
     ExecutorResult,
     LocalSourceChangedError,
+    URLIngestSource,
     WorkerPhase,
     validate_local_source_snapshot,
 )
@@ -1011,9 +1012,14 @@ def _run_executor_worker(
                         WorkerPhase.TRANSCRIBING,
                     )
                 )
-                if type(request.source) is FileAudioSource:
+                if type(request.source) in (FileAudioSource, URLIngestSource):
+                    source = (
+                        request.source.url
+                        if type(request.source) is URLIngestSource
+                        else request.source.path
+                    )
                     payload = parse_job(
-                        request.source.path,
+                        source,
                         dict(request.options),
                         transcription_runner=resident.provider.runner,
                     )

@@ -330,3 +330,23 @@ own local binary artifacts and is not superseded by this decision.
 - [Community Parakeet v3 INT8 comparison requiring local verification](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
 - [NVIDIA Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)
 - [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+
+
+## Library URL source transport (2026-10-31, TASK-38207)
+
+Library HTTP(S) jobs use an explicit `URLIngestSource` in the local STT executor
+request. Its immutable, repr-hidden URL text is transported unchanged to the
+existing parse pipeline. The source validates an HTTP(S) scheme and authority;
+this is shape validation, never network authorization. The pipeline retains
+source classification, download and egress checks.
+
+`FileAudioSource` remains a strict filesystem Path; buffer sources and the
+provider-facing `TranscriptionRequest` keep their existing contracts. Only the
+Library/executor parse boundary accepts URL ingest sources. Executor generation,
+cancellation, resident model identity and dependency leases are unchanged.
+
+Passing a URL through Path was rejected because POSIX collapses separators and
+Windows also changes separators within the authority/path. Repairing a prefix
+afterward cannot recover exact query/path spelling and can reinterpret a local
+filename as a network source. A parallel downloader was rejected because the
+parse pipeline already owns guarded retrieval.

@@ -337,22 +337,11 @@ def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert all(measured_data not in event for event in progress_events)
 
 
-def test_pathlib_collapsed_url_scheme_is_restored_for_video_processor(
+def test_url_text_is_preserved_for_video_processor(
     monkeypatch,
 ) -> None:
-    """(task-35080) A URL transported as ``Path(url)`` keeps its meaning.
-
-    The local-STT lane hands URL jobs to the worker as
-    ``FileAudioSource(Path(job.source_path))``; ``str(Path(...))`` collapses
-    ``https://`` to ``https:/``. That mangled string misclassifies as an
-    article (``urlparse`` sees no hostname) and the article arm's egress
-    guard rejects it ("Egress blocked (scheme) for <invalid-url>") -- which
-    the STT lane reports as ``inference_failed``. The pipeline must restore
-    the scheme separator before classifying the source.
-    """
-    original_url = "https://www.youtube.com/watch?v=wtTd8PJPMVg"
-    collapsed_source = Path(original_url)
-    assert str(collapsed_source) == "https:/www.youtube.com/watch?v=wtTd8PJPMVg"
+    """TASK-38207: the existing parse boundary keeps an intact URL unchanged."""
+    original_url = "https://www.youtube.com/watch?v=wtTd8PJPMVg&next=https://example.org/a%2Fb"
 
     video_calls: list[Dict[str, Any]] = []
     article_calls: list[str] = []
@@ -401,7 +390,7 @@ def test_pathlib_collapsed_url_scheme_is_restored_for_video_processor(
     )
 
     parse_local_file_for_ingest(
-        collapsed_source,
+        original_url,
         {
             "transcription_provider": "faster-whisper",
             "transcription_model": "base",
