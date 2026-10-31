@@ -153,8 +153,10 @@ def test_an_uncoded_row_never_reads_as_provider_setup():
 # --- AC#2/#5: the Send strip is chosen by the blocker's code ---------------
 
 from tldw_chatbook.Chat.console_display_state import (  # noqa: E402
+    ConsoleBlockedReason,
     build_console_disabled_reason,
     console_setup_blocked_reason,
+    console_setup_blocker,
 )
 from tldw_chatbook.Chat.console_session_settings import (  # noqa: E402
     ConsoleSettingsReadiness,
@@ -213,6 +215,32 @@ STRIP_CASES = [
         "endpoint_not_saved", "save_endpoint", configuration="incomplete",
         configuration_issue="credential_missing", credential="missing"),
      "Send blocked — save the endpoint to continue"),
+    # Review of TASK-33621.11: an HTTP-status or invalid-payload failure is
+    # still blocker endpoint_unreachable, but its recovery is to review the
+    # provider settings -- retrying cannot fix it. The tooltip and a refused
+    # Enter say "Finish provider setup"; the strip read "retry the
+    # connection" because its code defaulted to the blocker.
+    ("unreachable_http_status", lambda: _structured(
+        "endpoint_unreachable", "review_provider_settings",
+        endpoint="unreachable", endpoint_category="http_status"),
+     "Send blocked — finish provider setup to continue"),
+    ("unreachable_invalid_payload", lambda: _structured(
+        "endpoint_unreachable", "review_provider_settings",
+        endpoint="unreachable", endpoint_category="invalid_payload"),
+     "Send blocked — finish provider setup to continue"),
+    ("endpoint_invalid", lambda: _structured(
+        "endpoint_invalid", "configure_endpoint", configuration="incomplete",
+        configuration_issue="endpoint_missing"),
+     "Send blocked — finish provider setup to continue"),
+    ("provider_configuration_invalid", lambda: _structured(
+        "provider_configuration_invalid", "review_provider_settings",
+        configuration="incomplete", configuration_issue="invalid_settings"),
+     "Send blocked — finish provider setup to continue"),
+    ("readiness_unknown", lambda: _structured(
+        "readiness_unknown", "review_provider_settings",
+        configuration="incomplete", configuration_issue="invalid_settings",
+        credential="missing", model="missing"),
+     "Send blocked — finish provider setup to continue"),
 ]
 
 
@@ -223,11 +251,27 @@ STRIP_CASES = [
 )
 def test_each_readiness_blocker_names_its_own_send_strip(build, strip):
     readiness = build()
-    reason = console_setup_blocked_reason(readiness)
+    reason = console_setup_blocker(readiness)
     assert reason, readiness.blocker
     assert _strip(reason) == strip
-    # The blocker's sentence is still what the tooltip and a refused Enter show.
-    assert str(reason).endswith(".")
+    # The sentence -- a plain str, the code beside it -- is what the tooltip
+    # and a refused Enter show.
+    assert type(console_setup_blocked_reason(readiness)) is str
+    assert console_setup_blocked_reason(readiness) == reason.text
+    assert reason.text.endswith(".")
+
+
+def test_a_blocker_is_a_plain_value_that_copies():
+    """Review of TASK-33621.11: the first cut was a ``str`` subclass whose
+    ``__new__`` required a keyword-only code -- copy and pickle raised."""
+    import copy
+    import pickle
+
+    reason = ConsoleBlockedReason("Pick one.", code="model_missing", notice="n")
+    assert copy.deepcopy(reason) == reason
+    assert pickle.loads(pickle.dumps(reason)) == reason
+    assert not isinstance(reason, str)
+    assert not ConsoleBlockedReason()
 
 
 def test_the_strip_never_reads_the_blocker_sentence_s_words():

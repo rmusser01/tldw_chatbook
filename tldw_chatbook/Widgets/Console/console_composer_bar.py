@@ -52,7 +52,9 @@ from textual.widgets import Button, Input, Static
 from tldw_chatbook.Utils.input_validation import escape_markup as escape
 
 from ...Chat.console_display_state import (
+    ConsoleBlockedReason,
     build_console_disabled_reason,
+    console_blocked_reason,
     console_blocker_opens_setup,
 )
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
@@ -823,7 +825,7 @@ class ConsoleComposerBar(Horizontal):
         self._send_label = "Send"
         self._send_blocked = False
         self._dispatch_recovery_blocked = False
-        self._setup_blocked_reason = ""
+        self._setup_blocked_reason = ConsoleBlockedReason()
         #: Last rendered `#console-send-disabled-reason` copy, tracked so a
         #: reason change can re-window the draft at its new width.
         self._send_disabled_reason = ""
@@ -2431,7 +2433,7 @@ class ConsoleComposerBar(Horizontal):
         run_active: bool,
         can_save_chatbook: bool,
         send_blocked: bool = False,
-        setup_blocked_reason: str = "",
+        setup_blocked_reason: str | ConsoleBlockedReason = "",
         ephemeral: bool = False,
         send_label: str = "Send",
         wake_turn_active: bool = False,
@@ -2447,7 +2449,8 @@ class ConsoleComposerBar(Horizontal):
             stop_available: Explicit Stop availability, including pending hooks.
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
-            setup_blocked_reason: Provider/model setup copy when setup blocks Send.
+            setup_blocked_reason: The Send blocker (setup or a staged image),
+                its strip chosen by the code beside the sentence.
             queue_blocked_reason: The prompt queue's own disabled tooltip
                 ("Preparing...", "Queue full"). Kept apart from setup copy
                 (TASK-33625.1 review) so a queue state never masks a real
@@ -2465,7 +2468,7 @@ class ConsoleComposerBar(Horizontal):
         run_active = bool(run_active)
         can_save_chatbook = bool(can_save_chatbook)
         send_blocked = bool(send_blocked)
-        setup_blocked_reason = setup_blocked_reason.strip()
+        setup_blocked_reason = console_blocked_reason(setup_blocked_reason)
         queue_blocked_reason = queue_blocked_reason.strip()
         ephemeral = bool(ephemeral)
         setup_reason_changed = (
@@ -2556,7 +2559,7 @@ class ConsoleComposerBar(Horizontal):
                 "Wait for it to finish."
             )
         elif effective_send_blocked and (setup_blocked_reason or queue_blocked_reason):
-            send_button.tooltip = setup_blocked_reason or queue_blocked_reason
+            send_button.tooltip = setup_blocked_reason.text or queue_blocked_reason
         elif effective_send_blocked:
             send_button.tooltip = (
                 "Wait for the active Console run to finish before sending."
