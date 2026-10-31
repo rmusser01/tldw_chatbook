@@ -2617,6 +2617,13 @@ class ConsoleRuntime:
         self._project_staged_evidence_change()
         return True
 
+    def _clear_staged_evidence_receipt(self, session_id: str) -> None:
+        """A newly admitted turn supersedes the last send's source receipt."""
+        state = self._staged_evidence_state(session_id)
+        if state is not None and state.sent_source_count is not None:
+            state.sent_source_count = None
+            self._project_staged_evidence_change()
+
     def _prune_staged_evidence(self) -> None:
         """Drop closed chats' staged evidence; its owner can never send it."""
         live = {session.id for session in getattr(self._chat_store, "sessions", tuple)()}
@@ -2660,6 +2667,7 @@ class ConsoleRuntime:
             ),
         )
         self._turn_custody[record.turn_id] = record
+        self._clear_staged_evidence_receipt(record.session_id)
         if self._app is not None and self._chat_store is not None:
             session = next(
                 (

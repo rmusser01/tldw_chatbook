@@ -114,7 +114,15 @@ async def _wait_for_replies(screen, pilot, count: int) -> None:
             and message.status == "complete"
             and message.content == "accepted"
         ]
-        if len(replies) >= count and len(_reply_footers(screen)) >= count:
+        if (
+            len(replies) >= count
+            and len(_reply_footers(screen)) >= count
+            # The turn leaves runtime custody after its reply lands; a send
+            # admitted before that is refused as a second turn.
+            and not screen._console_runtime().has_custodied_turns(
+                store.active_session_id
+            )
+        ):
             await pilot.pause()
             await pilot.pause()
             return
@@ -131,14 +139,26 @@ async def _send(screen, pilot, draft: str, replies: int) -> None:
 
     composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
     composer.load_draft(draft)
-    await pilot.pause()
-    screen.query_one("#console-send-message", Button).press()
+    send = screen.query_one("#console-send-message", Button)
+    for _ in range(80):  # Send stays "Sending..." until the last turn settles
+        await pilot.pause(0.05)
+        if not send.disabled:
+            break
+    send.press()
     await _wait_for_replies(screen, pilot, replies)
 
 
 async def _settle(pilot) -> None:
     for _ in range(4):
         await pilot.pause()
+
+
+async def _wait_for_new_chat(store, pilot, previous: str | None) -> None:
+    for _ in range(40):
+        if store.active_session_id not in (None, previous):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError("no new chat became active")
 
 
 async def _open_inspect(screen, pilot) -> None:
@@ -256,10 +276,7 @@ async def test_a_send_in_one_chat_leaves_another_chats_staging_alone(
         await _settle(pilot)
 
         await pilot.press("ctrl+t")
-        for _ in range(40):
-            if store.active_session_id != first_chat:
-                break
-            await pilot.pause(0.05)
+        await _wait_for_new_chat(store, pilot, first_chat)
         # A new tab starts on the app default provider; make it sendable.
         await _select_llamacpp_console(console)
         await _open_inspect(console, pilot)
@@ -275,8 +292,10 @@ async def test_a_send_in_one_chat_leaves_another_chats_staging_alone(
 
 
 @pytest.mark.asyncio
-async def test_staged_evidence_follows_one_turn_and_one_chat(capture) -> None:
-    """Stage -> send: the reply, not the strip, says what the send carried."""
+async def test_a_saved_chats_send_shows_its_staged_sources_on_its_reply(
+    capture,
+) -> None:
+    """Stage -> send in a saved chat: the reply, not the strip, says it."""
     gateway = CapturingGateway()
     host = ConsoleHarness(_console_app(gateway))
     async with host.run_test(size=(200, 56)) as pilot:
@@ -297,6 +316,74 @@ async def test_staged_evidence_follows_one_turn_and_one_chat(capture) -> None:
         assert EVIDENCE in _last_request_text(gateway)
         _assert_nothing_staged(console, sent=2)
         assert _reply_footers(console) == ["Sources (2) · sent with this turn"]
+
+
+@pytest.mark.asyncio
+async def test_staged_evidence_follows_one_turn_and_one_chat(capture) -> None:
+    """Stage -> send -> sourceless send -> new tab -> workspace chat.
+
+    A Temporary chat, because this harness's in-memory database cannot
+    complete a SECOND send in a saved chat ("Local conversation storage is
+    unavailable." on dev too); the saved chat's send is pinned above.
+    """
+    gateway = CapturingGateway()
+    host = ConsoleHarness(_console_app(gateway))
+    async with host.run_test(size=(200, 56)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        store = console._ensure_console_chat_store()
+        saved_chat = store.active_session_id
+        console.action_new_temporary_console_tab()
+        await _wait_for_new_chat(store, pilot, saved_chat)
+        first_chat = store.active_session_id
+        await _select_llamacpp_console(console)
+        await _open_inspect(console, pilot)
+
+        launch = _launch(2)
+        console._retrieval._stage_console_library_rag_launch(launch)
+        await _settle(pilot)
+        _assert_staged(console, 2)
+
+        # The send consumes the evidence: the claim moves onto its reply.
+        await _send(console, pilot, "question", replies=1)
+        assert capture.await_count == 1
+        assert capture.await_args_list[0].args[1] is launch
+        assert EVIDENCE in _last_request_text(gateway)
+        _assert_nothing_staged(console, sent=2)
+        assert _reply_footers(console) == ["Sources (2) · sent with this turn"]
+
+        # A later send with nothing staged claims no evidence anywhere.
+        await _send(console, pilot, "follow up", replies=2)
+        assert capture.await_count == 1
+        assert EVIDENCE not in _last_request_text(gateway)
+        _assert_nothing_staged(console, sent=None)
+        assert _reply_footers(console)[0] == "Sources (2) · sent with this turn"
+        assert "Sources (" not in _reply_footers(console)[1]
+
+        # Evidence staged here stays in this chat ...
+        console._retrieval._stage_console_library_rag_launch(_launch(3))
+        await _settle(pilot)
+        _assert_staged(console, 3)
+
+        # ... a new Ctrl+T tab starts clean ...
+        await pilot.press("ctrl+t")
+        await _wait_for_new_chat(store, pilot, first_chat)
+        new_tab = store.active_session_id
+        await _settle(pilot)
+        _assert_nothing_staged(console, sent=None)
+
+        # ... so does a newly entered workspace chat ...
+        console._workspace._activate_console_session_for_workspace("workspace-u15")
+        await _settle(pilot)
+        assert store.active_session_id not in (first_chat, new_tab)
+        _assert_nothing_staged(console, sent=None)
+
+        # ... and the first chat still has its own staging when it returns.
+        await console._session._activate_native_console_session(first_chat)
+        await _settle(pilot)
+        assert store.active_session_id == first_chat
+        _assert_staged(console, 3)
 
 
 @pytest.mark.asyncio
