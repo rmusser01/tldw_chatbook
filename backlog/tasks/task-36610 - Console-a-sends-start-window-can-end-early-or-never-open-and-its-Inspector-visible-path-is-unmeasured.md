@@ -3,11 +3,11 @@ id: TASK-36610
 title: >-
   Console: a send's start window can end early or never open, and its
   Inspector-visible path is unmeasured
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-24 07:50'
-updated_date: '2026-10-31 08:39'
+updated_date: '2026-10-31 09:10'
 labels:
   - console
   - performance
@@ -35,7 +35,7 @@ The live measurement (2026-10-23, Anthropic claude-haiku-4-5, 160x45, dev 1381e7
 - [x] #1 A send's start ends at its own provider request, not at another session's
 - [x] #2 Queued-prompt dispatches and automatic submissions open a send's start at their acceptance, or measured evidence shows they need not
 - [x] #3 With the Inspector rail open, a send reaches the provider no later than on the base build (Enter to the provider request, live with a real provider, paired and interleaved, at least 30 sends per arm)
-- [x] #4 First sends alone reach the provider no later than on the base build (at least 30 first sends per arm, paired and interleaved, median and paired difference)
+- [ ] #4 First sends alone reach the provider no later than on the base build (at least 30 first sends per arm, paired and interleaved, median and paired difference)
 - [x] #5 Deterministic tests fail on the base build for #1 and #2
 <!-- AC:END -->
 
@@ -53,7 +53,13 @@ The live measurement (2026-10-23, Anthropic claude-haiku-4-5, 160x45, dev 1381e7
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Each Console send now owns its start window, from its own acceptance to its own provider request (3 s at most). Another session's provider request no longer ends it. A queued prompt's dispatch, an agent wake, a goal iteration and an agent's chat start each open one. Live and paired against dev, sends with the Inspector open reach the provider no later (64 pairs: paired median -1.4 ms). First sends show no detectable difference (60 pairs: paired median +15.9 ms, 95% CI -8.0 to +35.5; mean -6.1 ms).
+Each Console send now owns its start window, from its own acceptance to its own provider request (3 s at most). Another session's provider request no longer ends it. A queued prompt's dispatch, an agent wake, a goal iteration and an agent's chat start each open one. Live and paired against dev, sends with the Inspector open reach the provider no later (64 pairs: paired median -1.4 ms). First sends show no detectable difference (60 pairs: paired median +15.9 ms, 95% CI -7.6 to +38.4; mean -6.1 ms), which does not meet AC#4 as written.
+
+**AC#4: open, for the owner's decision (2026-10-31).** AC#4 asks for first sends that reach the provider "no later than on the base build", judged by the median and the paired difference. Both lean the other way: the head's median is 1395.1 ms against 1377.9 ms on the base, and the paired median is +15.9 ms (95% bootstrap -7.6 to +38.4). Only the mean favours the head (-6.1 ms, -56.1 to +26.0). The tick was withdrawn after review, and the task stays In Progress. Running more sets would not settle it on its own: if the true difference is about zero, the interval narrows around zero but still spans it, so "no later" cannot be shown without a margin. The owner can choose one of two ways forward:
+- Accept equivalence within the measured upper bound (about +38 ms on first sends) and reword AC#4 with a dated sign-off.
+- Name a margin and have more interleaved first-send sets run until the paired interval falls inside it.
+
+The mechanism evidence gives no code-path reason for a lean. In a probe set (6 first sends per arm, Inspector collapsed), the window opened about 261 ms after Enter in both arms and closed after the request. Neither arm started an off-loop display read in a send's start (0 of 6 each). UI-loop callback CPU from acceptance to the request was 357 ms on the base against 366 ms on the head. The app's stage log puts the remaining spread in the agent run start, which is worker-thread work this change does not touch. AC#3 stays ticked on the review's reading: its medians and its paired median favour the head, though its interval spans zero too (-17.3 to +18.7).
 
 **Measured first (dev 7536ac3b87, live, probe, Inspector open, 2026-10-30).** The window opened at the first projection after acceptance (~255 ms after Enter) and closed at the first query after the provider request. It started no off-loop display reads in 4 of 4 sends at load 3-6. At load 11-49, every Enter-to-provider time ran past 3 s (5.1-6.4 s). The 3 s limit ended the window first, and the Library-activity and appearance re-reads started inside the send's start. The approved limit is unchanged here; this is recorded as context only.
 
@@ -81,18 +87,17 @@ Each Console send now owns its start window, from its own acceptance to its own 
 |---|---|---|---|---|---|---|
 | A: Inspector open, 8 launches x 4 | 32 | 1077.5 | 1058.2 | +1.8 (-19.5..+30.0) | +66.5 | 15/32 |
 | C: Inspector open, 8 launches x 4 | 32 | 1002.2 | 1032.8 | -8.1 (-34.6..+22.2) | -63.2 | 17/32 |
-| **A+C (AC#3)** | **64** | 1063.6 | 1045.5 | **-1.4 (-17.3..+16.8)** | +1.6 | 32/64 |
+| **A+C (AC#3)** | **64** | 1063.6 | 1045.5 | **-1.4 (-17.3..+18.7)** | +1.6 | 32/64 |
 | B: first sends, Inspector collapsed | 30 | 1391.6 | 1415.7 | +34.0 (-9.4..+59.1) | +16.3 | 12/30 |
 | E: first sends, Inspector collapsed | 30 | 1348.2 | 1387.7 | -0.7 (-12.5..+30.2) | -28.5 | 15/30 |
-| **B+E (AC#4)** | **60** | 1377.9 | 1395.1 | **+15.9 (-8.0..+35.5)** | -6.1 | 27/60 |
-| all first sends (A, B, C, E) | 76 | 1393.6 | 1405.2 | +13.1 (-8.0..+31.3) | -26.8 | 35/76 |
+| **B+E (AC#4)** | **60** | 1377.9 | 1395.1 | **+15.9 (-7.6..+38.4)** | -6.1 | 27/60 |
+| all first sends (A, B, C, E) | 76 | 1393.6 | 1405.2 | +13.1 (-8.0..+31.8) | -26.8 | 35/76 |
 
 All times are ms. Every send's request reached the relay, and every response was 200. Host load1 at Enter was 1.6-9.1.
 - Set A's mean comes from one head launch (R3) whose last two sends took 2.4 and 2.3 s. Every stage in that launch ran about 2.4x slower (provider resolution 184 ms against 68), which points to the host.
 - Set C's mean comes from a 3.35 s dev first send.
-- First sends: B leaned to the head being slower (+34 ms). The independent repeat E did not (-0.7 ms, 15/30). Pooled, the paired median is +15.9 ms and the mean -6.1 ms, with both 95% intervals spanning zero: no detectable difference.
-- A probe set (6 first sends per arm, Inspector collapsed) found no code-path difference to explain a lean. In both arms the window opened ~261 ms after Enter and closed after the request. Neither arm started an off-loop display read in a send's start. UI-loop callback CPU from acceptance to the request was the same (357 against 366 ms).
-- The app's own stage log puts both arms' remaining spread in the agent run start, between the durable commit and the trace reservation. That is worker-thread work this change does not touch.
+- First sends: B leaned to the head being slower (+34 ms). The independent repeat E did not (-0.7 ms, 15/30). Pooled, the paired median is +15.9 ms and the mean -6.1 ms, with both 95% intervals spanning zero: no detectable difference, which is not the "no later" AC#4 asks for. The probe set and the stage log are under "AC#4: open" above.
+- The intervals are the archived report's (a seeded bootstrap, 4000 resamples). An earlier draft of these notes quoted intervals from a different bootstrap run.
 
 **Gates on the rebased head (dev 804dc00231)**, one file per command, compared with a detached dev worktree by test id:
 - `test_console_send_start_window.py`: 7 passed on the head. On dev 804dc00231 it fails 6 of 7, each for the reason it pins. The received-path pin passes on dev, and the limit case's module does not exist there.
@@ -103,5 +108,13 @@ All times are ms. Every send's request reached the relay, and every response was
 - `Tests/UI/test_console_prompt_queue.py` differs by test id only on two shelf cases (`..._fit_terminal[size2]`, `..._keeps_retry_on_screen[size2-False]`). Rerun three times each, dev failed them in 2 of 3 runs and the head in 1 of 3: a timing flake on both.
 - Census checker (1164 entries, floor 1163) and the UI-lane shard and census CI tests pass. ruff is clean on the changed files; `console_chat_start.py` has dev's own F841. `./scripts/preflight.sh` passes.
 
-Evidence: tools/evidence/bd5/P10/ (driver and relay logs, probe captures, REPORT.txt, the kit). The diagnostic launch's requests went through another agent's relay on 8797, which had taken the port; see the new lesson in lessons-live-verification.md.
+**Review follow-ups (2026-10-31)**
+- The chat-start test now also pins that the chat start's own provider request ends its start. Its stream notes a provider entry where the real gateway does, on the agent loop's thread, and reads the window either side: open before, closed after. Before this, making `note_provider_request` a no-op left that test green. Now it fails with `[(True, True)]`.
+- `note_provider_request` now documents that a send's first adapter entry ends its start. That entry can be an auxiliary request (an automatic compaction's summary, a response rule's evaluation). The base build ended the start at the same request. Ending it at the main request instead is TASK-38461.
+- Some send entry points still open no start, the same as on the base: resumed paused preparations, the buddy conversation, the mobile server, and the fleet-wake and goal-run controller fallbacks used when no runtime submitter is bound. These are TASK-38460.
+- Declined: making `send_start_in_progress` read the screen's memoised runtime instead of `_console_chat_store`, which can resolve one. Every caller has already resolved the runtime. Both Library paths call `ensure_store()` before `live_reads()`. The workspace guard returns before the predicate unless the run poll is ticking, and the poll runs only while the screen's controller, a runtime handle, exists. So the predicate is never the first to resolve a runtime, and reading the private memo would add a new coupling.
+- AC#3 pools two head builds: set A ran without the pre-import commit, and set C ran on the final code. The head-side window probe ran only with the Inspector collapsed, so with the Inspector open the head was measured for timing only.
+- The plan commit landed after the first two fix commits. The history was left as it is.
+
+Evidence: kept on the measuring host, outside the repo, at `~/.claude/projects/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/tools/evidence/bd5/P10/` (driver and relay logs, probe captures, REPORT.txt, and the kit that produced them). The diagnostic launch's requests went through another agent's relay on 8797, which had taken the port; see the new lesson in lessons-live-verification.md.
 <!-- SECTION:NOTES:END -->
