@@ -58,6 +58,61 @@ low ratio across unrelated widgets points at a backdrop, not at your change.
 
 **What to do.** Record terminal environment, actual output TTY status, OS dimensions, and settled widget regions separately. A native process alone does not establish a faithful terminal environment. Remove an automation-only dumb-terminal override in the probe; do not change application layout to compensate for it. When automation cannot target Terminal windows, user-operated resize gestures plus native traces still test the real driver; Pilot does not.
 
+## Freeze native ancestor permissions during recovery verification (TASK-37269, 2026-10-28)
+
+**Incident.** A combined Windows recovery/portable run passed 325 cases before
+one source-census refusal and 35 subsequent fixture setup errors. Native mode
+inspection found the managed worktree ancestor had changed from safe metadata
+to shared-writable 0766 during root-file edits; the output/test directories
+remained private. The guard correctly refused the newly unsafe ancestor.
+
+**What to do.** Finish filesystem edits before native verification, qualify the
+entire ancestor chain and keep it stable during the run. Restrict only the
+task-owned worktree/test roots when needed. A changed sandbox write grant is a
+real security precondition failure, not grounds to bypass the guard or count an
+interrupted test run as passing.
+
+## A native build-tree launch does not qualify a packaged executable location (TASK-37205, 2026-10-28)
+
+**Incident.** The modified WezTerm GUI passed a real deep-Unicode Data/socket
+probe from its build directory, but the exact extracted bundle fast-failed
+0xC0000409 before Python startup. Identical payloads at short ASCII and Unicode
+executable paths worked; a 168-character ASCII path failed. Removing only the
+pinned optional ConPTY DLL made that same long path work. Omitting its paired
+OpenConsole host also passed, selecting WezTerm's existing system ConPTY fallback.
+Changing Lua renderer, child command or Data root did not resolve the failure.
+Evidence: output/wezterm-build/packaging-crash/ location and ConPTY A/B records.
+
+**What to do.** Exercise the exact shipped launcher and executable location, in
+addition to the data location. Keep native helpers in the A/B matrix. A successful
+build-tree process and byte-identical packaged binaries cannot establish that a
+native helper tolerates the final extraction path.
+
+The subsequent actual relocation GUI held an NVIDIA GLCache file open beneath
+Data/home/AppData/Local, and the conservative source reader refused its read.
+The layout census already excluded that volatile subtree, but acquisition still
+read it. Applying the same exact nested transient roots at acquisition fixed the
+boundary mismatch. New checks prove cache contents are never read/copied while
+ordinary siblings remain visible and a junction at the excluded root refuses.
+
+## A bundled-runtime path probe does not establish portable relocation (TASK-37205, 2026-10-28)
+
+**Incident.** The Windows WezTerm spike loaded its installed wheel, found all 93
+migrations and persisted a real Chatbook note with every default application path
+under its private Data directory. Copying the closed bundle to a path containing
+spaces and Unicode then refused startup with `recovery_scope_uncertain`:
+recovery-bootstrap ancestry deliberately pins absolute paths and native file
+identities. In the live terminal, WezTerm also published its IPC socket under the
+real Windows user's `.local/share/wezterm` despite process-local HOME/USERPROFILE
+overrides; its Rust known-folder API does not follow those environment variables.
+
+**What to do.** Test the installed terminal's actual process environment and pane,
+then reopen real application data after relocation before claiming portability.
+Keep the recovery refusal intact: a launcher must not delete/rewrite identity
+receipts to make a copied profile start. Track application data and terminal
+runtime artifacts separately in evidence, and state both limitations explicitly.
+The spike uses a location marker to explain the refusal before opening moved data.
+
 ## On a loaded host, one blocking read left on the UI loop still costs 100+ ms: move it, do not just count it (TASK-33620.15.1.6, 2026-10-27)
 
 **Incident.** Each Console Environment refresh made two or three Change
@@ -4807,3 +4862,31 @@ stale ready response; holding it across Canvas disable reproduced HTTP 500.
 the actual finite capacity and hold in-flight operations across that retirement.
 Free unreachable session/shell/capability state, and revalidate the captured owner
 and runtime after awaits before publishing a replacement resource.
+
+## Native terminal portability needs real discovery and path tests (TASK-37205, 2026-10-28)
+
+**Incident.** The bundled Windows WezTerm ignored HOME for its known-folder
+roots. Explicit roots then exposed AF_UNIX's 108-byte address limit, a global
+desktop discovery mapping, and `--always-new-process`/explicit config disabling
+discovery publication. A real GUI plus matching CLI with `--no-auto-start`
+revealed each caller seam. A 158-byte absolute socket path failed while its
+35-byte Data-relative address completed a byte round trip. Host-directory
+snapshots before/during/after and a real pane query established containment.
+
+The native OpenSSL build also failed on a long generated object path. A read-only
+8.3 spelling of the same owned build tree fixed it. A narrower Cargo test feature
+graph rebuilt native dependencies even with `--release`; exact-source helper
+tests plus the full compiled caller graph and real GUI/CLI supplied focused proof.
+Do not infer terminal portability from environment strings or a successful build.
+
+## Recovery validators must retain pure import boundaries (TASK-37205, 2026-10-28)
+
+**Incident.** Detached owner discovery imported normal config and retained a
+startup lease, so same-process publication correctly timed out. An exiting
+validation worker retired that lease without bypassing admission. Actual native
+recovery then exposed `goal_models -> agent_models -> Chat.provider_continuation`
+executing Chat's eager server-service exports and importing config inside the
+recovery fence. Lazy existing Chat exports fixed the pure-model boundary; the
+same staged operation then committed, reopened its real note and retained all
+80 activation requirements. A later move with its old folder absent also passed.
+Never clear leases or ancestry to hide a runtime import crossing recovery.
