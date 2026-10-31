@@ -171,6 +171,24 @@ def test_nested_guidance_precedes_complete_source_pages(
     )
 
 
+def test_refusal_projection_keeps_only_a_code_shaped_reason(dispatch_case):
+    """TASK-37653: every durable refusal read "review_refused", hiding its cause."""
+    from tldw_chatbook.Agents.agent_models import ToolCall, ToolResult
+
+    provider = dispatch_case.provider
+    call = ToolCall("code_review_read", {"view": "report"}, "call")
+    for audience in ("display", "log", "continuation", "cycle"):
+        for error, label in (
+            ("invalid_report_reference", "invalid_report_reference"),
+            ("Deferred because project instructions were loaded", "review_refused"),
+            ("hook: /private/secret refused", "review_refused"),
+        ):
+            projection = provider.project_tool_record(
+                audience, call, ToolResult(ok=False, error=error)
+            )
+            assert projection.error == label
+
+
 def test_cycle_projection_preserves_call_identity_without_bodies(dispatch_case):
     from tldw_chatbook.Agents.agent_models import ToolCall
 

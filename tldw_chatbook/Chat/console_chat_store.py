@@ -384,7 +384,8 @@ def _ephemeral_promotion_global_lifecycle(
 def _fork_continuation_event_transition(
     method: Callable[..., Any],
 ) -> Callable[..., Any]:
-    """Enter the owner session transition for a continuation event."""
+    """Hold the owner's generation lock: owner-loop Stop/fail terminal writes
+    must not interleave with this worker-thread version check (TASK-37653)."""
 
     @wraps(method)
     def transitioned(
@@ -394,10 +395,9 @@ def _fork_continuation_event_transition(
         **kwargs: Any,
     ) -> Any:
         owner_id = event.context.owner_message_id
-        session_id = self._message_session_index.get(owner_id) if owner_id else None
-        if session_id is None:
+        if owner_id not in self._message_session_index:
             return method(self, event, *args, **kwargs)
-        with self._fork_source_transition(session_id):
+        with self._generation_owner_scope(owner_id):
             return method(self, event, *args, **kwargs)
 
     return transitioned

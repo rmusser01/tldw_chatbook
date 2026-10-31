@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -68,6 +69,8 @@ _ROLE_GUIDANCE = {
         "arguments (dispositions, empty records, same ID, current revision); accepted decisions remain unchanged."
     ),
 }
+# Refusal reasons are closed snake_case codes; anything else may carry text.
+_REFUSAL_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _ROLE_READ_VIEWS = {
     "primary": {"source", "report", "index", "summary"},
     "reviewer": {"source"},
@@ -305,15 +308,21 @@ class CodeReviewToolProvider:
     def path_targets(self, tool_id: str, args: Mapping[str, Any]):
         if tool_id != "code_review:code_review_read":
             return ()
-        parsed = ReadArguments.model_validate(dict(args))
-        if parsed.view != "source":
+        # A refused read touches no path; raising here made the instruction
+        # ledger defer the batch as "outside scope" and delay the refusal a
+        # round (TASK-37653). invoke() refuses the same arguments.
+        try:
+            parsed = ReadArguments.model_validate(dict(args))
+            if parsed.view != "source":
+                return ()
+            return self.service.source_instruction_targets(
+                parsed.review_id,
+                document_ref=parsed.document_ref,
+                cursor=parsed.cursor,
+                source_query=parsed.source_query,
+            )
+        except (ReviewRefused, ValidationError):
             return ()
-        return self.service.source_instruction_targets(
-            parsed.review_id,
-            document_ref=parsed.document_ref,
-            cursor=parsed.cursor,
-            source_query=parsed.source_query,
-        )
 
     def project_tool_record(self, audience, call, result):
         arguments = {"schema_version": 1, "tool_name": call.name}
@@ -327,6 +336,10 @@ class CodeReviewToolProvider:
             content=""
             if result is None
             else f'{{"schema_version":1,"size_chars":{len(result.content)},"ok":{str(result.ok).lower()}}}',
-            error="" if result is None or result.ok else "review_refused",
+            error=""
+            if result is None or result.ok
+            else result.error
+            if _REFUSAL_CODE.fullmatch(result.error or "")
+            else "review_refused",
             ok=None if result is None else result.ok,
         )

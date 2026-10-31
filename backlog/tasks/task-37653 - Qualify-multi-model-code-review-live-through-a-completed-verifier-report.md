@@ -1,7 +1,7 @@
 ---
 id: TASK-37653
 title: Qualify multi-model code review live through a completed verifier report
-status: To Do
+status: In Progress
 created_date: 2026-10-30 03:54
 labels:
 - agents
@@ -22,16 +22,39 @@ TASK-35582 merged the multi-model code review recipe on offline and scripted evi
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The macos-final60 review_refused report reads and the continuation-persistence error are traced to an internal cause or reproduced offline, and any product defect found is fixed with a regression test.
+- [x] #1 The macos-final60 review_refused report reads and the continuation-persistence error are traced to an internal cause or reproduced offline, and any product defect found is fixed with a regression test.
 - [ ] #2 A bounded real Console/provider qualification uses two reviewer destinations and a fresh verifier, including a pre-authorized request under the default two-child ceiling, seeded defect/false positive/duplicate, failed reviewer, truncation, source drift, small-context and storage-overflow controls; live-model evidence is distinguished from scripted controls.
 - [ ] #3 The live run seals the verifier report and produces a unified report that expands every original finding exactly once.
 - [ ] #4 The owner approves the live request/child budget before the run, and actual spend is recorded with the evidence.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+AC#1 (offline; AC#2-#4 need an owner-budgeted live run):
+1. Rebuild the macos-final60 primary timeline from the retained packet (`runs.db` steps, `chat.db` continuation/sync rows, runner deadline code), read from scratch copies only.
+2. Trace every path that fails a primary `code_review_read` before or after dispatch, and every path that fails continuation persistence, and keep only those consistent with the timeline.
+3. Reproduce the consistent paths offline (real Console composition over fake physical HTTP; real instruction ledger with the real review provider).
+4. Fix each product defect at its root with a RED->GREEN regression test; run the affected suites and preflight.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+**AC#1 (2026-10-31, branch claude/burn-37653 off dev 94a8a85f03).** Timeline rebuilt read-only from scratch copies of the retained packet (`/private/tmp/task35582-macos-final60/attempt-f_yrr5n4`: `runs.db` steps, `chat.db` continuation/sync/semantic-revision rows, `runner.py`). No live calls. Four findings: three defects fixed, one by design.
 
+1. **Terminal "Provider continuation could not be persisted" = a cross-thread race (defect, fixed).** The deadline watchdog's `stop_active_run` fired at ~02:54:43.9 (it starts with `submit_draft`; 600 s later). The owner row shows `ToolCallExecuting` for `1d0e_0` committed at .760 (v42, checkpoint rev 40), then a non-semantic write at .922 (v43: no content/state/continuation change, no semantic revision) -- the Stop's terminal write -- then `tool_failed` at .929 and the error at .942; the checkpoint never left rev 40. `ConsoleChatStore.persist_provider_continuation_event` (agent worker) did not take the owner's generation lock that `mark_message_stopped`/`persist_selected_generation` (owner loop) hold, so the worker could read the durable version after the Stop's commit but before the Stop published the in-memory `provider_continuation_message_version`: `"Continuation version conflict; reload and retry."`, which `agent_runtime.persist_continuation` collapses into the generic error. A plain sequential Stop mid-tool persisted cleanly in every probe (single/multi-round, capture on/off, with the fence's status message) -- only the interleaving fails. Fix: the event decorator now holds `_generation_owner_scope(owner)` (an RLock already used by every other generation mutator). Regression `Tests/Chat/test_console_stop_mid_tool_continuation.py` (real Console controller/bridge/store over fake physical HTTP, custom-hosted chat_completions like the live primary) pauses the Stop between its commit and its version publication: RED `('error', ['Provider continuation could not be persisted; ...'])` with `Continuation version conflict`; GREEN `cancelled`, no error step.
+2. **The round-9 pair (`call_e61b..._0/_1`) was never a review refusal (defect, fixed).** No `tool_proposed` event exists for it; the only runtime path that fails calls before proposal is the project-instruction deferral (`agent_runtime.py` `retry_with_context` branch), which writes the fixed "Deferred because project instructions were loaded" result; the next `ToolBatchReady` re-projection relabels it `review_refused`. With no AGENTS.md in the source and the root already resolved by the earlier git tools, the only trigger left is `CodeReviewToolProvider.path_targets` raising (refused arguments/reference), which the ledger maps to an `outside_instruction_scope` warning -- deferring the batch and delivering the real refusal a round later (round 10, `a09d`, the first individually traced failure). That cost ~55 s of the 600 s budget. The earlier v1-final60 deferral of four `code_review_read` calls (instruction-deferral-checkpoint.md) fits the same path; its arguments were not retained either. Fix: `path_targets` returns `()` for arguments it refuses (`invoke` refuses the same arguments and touches no path). RED: the ledger returned `retry_with_context` for a forged `document_ref`; GREEN: `proceed`, and the read returns `invalid_source_reference` in the same round. `test_public_authority_failures_do_not_produce_paths` now asserts `()` instead of a raise (same intent: no paths; invoke still refuses).
+3. **Generic durable label (diagnostic defect, fixed).** `CodeReviewToolProvider.project_tool_record` mapped every failure to `review_refused`. It now keeps a refusal that is a snake_case code (`[a-z][a-z0-9_]{0,63}`, the closed ReviewRefused vocabulary, e.g. `invalid_report_reference`, `stage_grant_unavailable`); any other text (verdicts, hook messages, the deferral sentence) still projects as `review_refused`, so no body or path can leak. Regression in `Tests/Agents/test_code_review_isolation.py`.
+4. **`1d0e_0`'s failure is by design**: `_signal_stop` fences the review session before marking the run stopped, so the in-flight read refused (the final pages all refuse `stage_grant_unavailable`).
+
+**Unproved.** Round 9/10 arguments are omitted in the evidence, so their exact refusal code is inferred, not observed; the race is reproduced in its commit-before-publication order -- the read-then-commit order (optimistic-lock failure) is closed by the same lock but was not separately reproduced.
+
+**For AC#2's live run.** Durable refusals now carry their code (runs.db tool_result, transcript `ERROR: <code>`, continuation results); a genuine instruction deferral still shows as a failed call with no `tool_proposed` event and a `review_refused` continuation result. A Stop mid-tool should now end `cancelled`; if "could not be persisted" recurs, it is a new cause -- have the runner wrap `persist_provider_continuation_event` (as the regression does) to keep the content-free exception text. V1 can only launch in a later automatic turn (default two-child ceiling, ADR-281 item 11), so the primary must end its first turn; in macos-final60 it kept reading reports for six rounds at 40-55 s each until the deadline, which is why no wake/reservation exists. Size the wall deadline for that turn boundary plus the verifier stage.
+
+**Verification.** The three new regressions (plus the updated authority-failure test) are RED on the base product files and GREEN with the fixes (69 passed across the three files). Affected suites with the fixes: 26 review files 800 passed / 8 failed; 17 continuation/instruction files 507 passed / 71 failed. The same 39 failing test functions (79 cases) fail identically with the base product files swapped back in -- local environment and dev drift (`RecoveryRequired: raw_source_selection_changed`, "Hooks unavailable", semantic-mutation inventory rows for untouched modules, queued-custody), not this change. `test_module_size_ratchet.py`: 8 pre-existing failures, none in a touched file. `scripts/preflight.sh` passed; ruff clean on the changed code.
+
+Files: `tldw_chatbook/Chat/console_chat_store.py` (decorator; size unchanged at the 22,338 ratchet row), `tldw_chatbook/Agents/code_review_tool_provider.py`, `Tests/Chat/test_console_stop_mid_tool_continuation.py` (new), `Tests/Agents/test_code_review_tool_provider.py`, `Tests/Agents/test_code_review_isolation.py`, `Docs/User_Guide/console/agent-runs-and-tools.md` (refused reads now show their code).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
