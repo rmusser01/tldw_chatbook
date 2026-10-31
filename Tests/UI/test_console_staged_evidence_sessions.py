@@ -411,3 +411,38 @@ async def test_unstage_on_a_strip_with_nothing_staged_hides_it(capture) -> None:
         assert strip.display is False, _strip_text(console)
         assert "Evidence sent with this message" not in _strip_text(console)
         _assert_nothing_staged(console, sent=2)
+
+
+@pytest.mark.asyncio
+async def test_unstage_on_a_stale_strip_redraws_every_staged_surface(
+    capture, monkeypatch
+) -> None:
+    """A release whose redraw never reached the view is healed by Un-stage.
+
+    Before this fix Un-stage with nothing staged resynced only the strip,
+    leaving Inspect's "Sources — next send" tray and "Live work" card on
+    the consumed launch.
+    """
+    gateway = CapturingGateway()
+    host = ConsoleHarness(_console_app(gateway))
+    async with host.run_test(size=(200, 56)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        await _open_inspect(console, pilot)
+        console._retrieval._stage_console_library_rag_launch(_launch(2))
+        await _settle(pilot)
+        hooks = console.console_view_hooks
+        # Lose the release's redraw, as a view away or covered at release.
+        monkeypatch.setattr(
+            console,
+            "console_view_hooks",
+            lambda: {k: v for k, v in hooks().items() if k != "staged_evidence"},
+        )
+        await _send(console, pilot, "question", replies=1)
+        assert console.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display
+
+        console.query_one(UNSTAGE_ID, Button).press()
+        await _settle(pilot)
+
+        _assert_nothing_staged(console, sent=2)
