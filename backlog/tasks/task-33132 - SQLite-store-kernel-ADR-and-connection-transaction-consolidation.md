@@ -51,3 +51,26 @@ Migration 6 (2026-10-19): GuardianDB onto the kernel — the standard BaseDB-pro
 Migration 5 (2026-10-18): ClientNotificationsDB onto the kernel (connection/transaction/close + held-connection file branch; task-32801.5 BaseException rollback upgrade over its old except-Exception). Store deltas preserved as overrides: ensure-schema lock, dual-owner _open_connection, shared-connection :memory: policy (ADR-228 per-store clause). One migration bug caught by the battery: the preserved super()._get_connection() resolved to the KERNEL under the new MRO, recursing through _open_connection — fixed with the explicit BaseDB._get_connection(self) provenance pattern; a reminder that preserved code needs re-reading against the new MRO, not just moving. EventStateRepository classified as an ADR-228 exception (dict-keyed cross-thread close; shared memory branch). Battery: full Tests/Notifications/ suite 101/101, matching pristine-dev baseline exactly.
 
 Review round 1 (yes-verdict): 174 green across Notifications + Subscriptions/test_client_notifications_db.py + DB suites (the store's connection-machinery batteries live outside Tests/Notifications/ — cite those per migration going forward). The recursion fix is doubly load-bearing: BaseDB._get_connection also preserves participants provenance (notifications.client → db.base mapping fails closed otherwise). Stale noqa dropped; the store liveness constant kept (documented redundancy).
+
+### Migration 6 backlog repair plan (2026-10-31)
+
+ADR required: no new ADR
+ADR path: backlog/decisions/228-sqlite-store-kernel.md
+Reason: mechanical integration of the existing Guardian kernel migration and reconciliation of its removed diagnostic; no new database policy.
+
+1. Rebase the two reviewed migration commits onto current dev, preserving BaseDB provenance, WAL retry, schema decorators and participant retirement.
+2. Reproduce the diagnostic inventory failure; review the removed Guardian close diagnostic against the inherited kernel close behavior, then regenerate the inventory without changing guard thresholds.
+3. Run the targeted kernel, Guardian database/finite-worker, backup owner/activation and provenance checks; independently review the complete rebased diff before publishing.
+
+4. Preserve Guardian raw connection admission rechecks before/after PRAGMA setup; independent review found the kernel migration removed them. Pin allocation/setup races through both raw getters with failing-then-passing tests.
+
+
+### Migration 6 implementation notes (2026-10-31 backlog repair)
+
+Rebased PR #3172 onto dev d999e7f4a9. Independent review found that the kernel migration lost Guardian raw-getter admission rechecks around native setup; restored those checks in Guardian configuration, preserving the inherited exception cleanup. Four allocation/setup race cases failed before the repair and pass after it; all four also pass on pristine dev. This implements the existing ADR-228 contract, with no new schema or admission policy.
+
+Reviewed the sole removed diagnostic (`Guardian native close failed`): inherited kernel close retains the retryable cache on failure without emitting that per-store debug message. Regenerated the inventory (Guardian 2 to 1 calls; total TASK-494 7769 to 7768), with no sink changes, and verified the complete rebuild.
+
+Validation: 51 kernel/Guardian/finite-worker/backup-owner tests pass; two relevant private-SQLite inventory contracts pass; scoped ruff F401/F821, changed-code formatting, and diff whitespace checks pass. Independent re-review found no remaining blockers. Broader local checks retain 24 failures also reproduced on pristine dev: seven backup activation credential-processing failures, sixteen existing owner/privacy tests (Windows path behavior and stale RAG connection seams), and one raw-connection census entry for app_service_wiring. These are recorded as baseline limitations, not reported as passing. Current-head hosted CI and Qodo review remain required before arming this PR.
+
+Updated Guardian configuration and its race tests, diagnostic inventory, database architecture reference, and the testing-evidence lesson. The parent fleet-migration task remains In Progress.

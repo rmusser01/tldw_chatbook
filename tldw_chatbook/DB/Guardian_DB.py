@@ -23,6 +23,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import _core_access
+
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
@@ -225,10 +227,12 @@ class GuardianDB(SQLiteStoreKernel, BaseDB):
         autocommit. WAL goes through the retry helper so a concurrent
         opener briefly holding the file cannot fail the first conversion.
         """
+        _core_access(self)
         conn.execute("PRAGMA foreign_keys = ON")
         self._enable_wal(conn)
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.isolation_level = None
+        _core_access(self)
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
