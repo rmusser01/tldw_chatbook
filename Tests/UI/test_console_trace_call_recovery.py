@@ -12,6 +12,7 @@ from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
+from tldw_chatbook.Chat.console_trace_call_recovery import TraceCallProviderContact
 from tldw_chatbook.UI.Console_Modules.trace_call_recovery import (
     TraceCallRecoveryCallout,
     TraceCallRecoveryState,
@@ -51,7 +52,11 @@ class _RecoveryApp(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         yield TraceCallRecoveryCallout(
-            state=TraceCallRecoveryState("preparation-1"),
+            # TASK-33621.5 AC#2: the controller records whether the send
+            # reached the provider; this card's send never crossed dispatch.
+            state=TraceCallRecoveryState(
+                "preparation-1", provider_contact=TraceCallProviderContact("no")
+            ),
             on_action=lambda action, preparation_id: (
                 dispatch_trace_call_recovery_action(
                     self.controller, action, preparation_id

@@ -479,6 +479,7 @@ CONSOLE_DISPATCH_DUPLICATE_WARNING = (
     "Retry anyway may send a duplicate request because delivery status is unknown."
 )
 CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+CONSOLE_DISPATCH_UNKNOWN_COPY = "Response delivery status is unknown."
 #: Shared kind for chat-creation registration and Close consequences.
 CONSOLE_PENDING_CHAT_CREATE_KIND = "chat_create"
 
@@ -714,7 +715,9 @@ def console_dispatch_recovery_from_checkpoint(
         assistant_message_id=checkpoint.assistant_message_id,
         conversation_id=checkpoint.conversation_id,
         visible_copy=(
-            "Response delivery status is unknown on the source device."
+            # TASK-33621.6 AC#3: this owner is this device's own send; "on
+            # the source device" is the imported (REMOTE_*) owner's copy.
+            CONSOLE_DISPATCH_UNKNOWN_COPY
             if started
             else "Response accepted; waiting for dispatch."
         ),

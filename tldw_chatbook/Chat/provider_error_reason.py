@@ -241,3 +241,55 @@ def attach_provider_reason(
         except Exception:  # noqa: BLE001 -- slotted exception types
             pass
     return exc
+
+
+#: Generic provider failures whose HTTP status has a plainer meaning than
+#: "provider unavailable" (TASK-33621.5). 502/503 keep that default.
+PROVIDER_STATUS_CATEGORIES = {
+    408: "request timed out",
+    500: "internal server error",
+    504: "gateway timed out",
+}
+
+
+def provider_error_category(exc: BaseException) -> str:
+    """Name what one provider failure means, without any of its content.
+
+    Args:
+        exc: Exception raised by the provider adapter.
+
+    Returns:
+        A short lower-case category, e.g. "rate limit exceeded".
+    """
+    from tldw_chatbook.Chat.Chat_Deps import (
+        ChatAuthenticationError,
+        ChatBadRequestError,
+        ChatConfigurationError,
+        ChatProviderError,
+        ChatRateLimitError,
+    )
+
+    category = "unexpected provider error"
+    if isinstance(exc, ChatAuthenticationError):
+        category = "authentication failed"
+    elif isinstance(exc, ChatRateLimitError):
+        category = "rate limit exceeded"
+    elif isinstance(exc, ChatBadRequestError):
+        category = "bad request"
+    elif isinstance(exc, ChatConfigurationError):
+        category = "configuration error"
+    elif isinstance(exc, ChatProviderError):
+        # TASK-33621.5 AC#1: a status with its own meaning says it; a 504
+        # read "provider unavailable" although the gateway timed out.
+        category = PROVIDER_STATUS_CATEGORIES.get(
+            getattr(exc, "status_code", None), "provider unavailable"
+        )
+    if getattr(exc, "status_code", None) == 404 and not isinstance(
+        exc, (ChatAuthenticationError, ChatRateLimitError)
+    ):
+        # TASK-34100.5 AC#4: a 404 is the model, whichever class carried it
+        # (live: Gemini's retired-model 404 arrived as a provider error).
+        category = "model or endpoint not found"
+    if is_context_overflow_error(exc):
+        category = CONTEXT_OVERFLOW_CATEGORY  # review round 2, V2-F3
+    return category

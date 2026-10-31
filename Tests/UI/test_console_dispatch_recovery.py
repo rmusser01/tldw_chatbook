@@ -85,7 +85,7 @@ def _state(*, started: bool = False, in_flight: bool = False, remote: bool = Fal
         assistant_message_id="assistant-1",
         conversation_id="conversation-1",
         visible_copy=(
-            "Response delivery status is unknown on the source device."
+            "Response delivery status is unknown."
             if started
             else "Response accepted; waiting for dispatch."
         ),
@@ -123,9 +123,7 @@ def test_dispatch_started_projects_literal_duplicate_warning() -> None:
 
     presentation = module.derive_dispatch_recovery_presentation(_state(started=True))
 
-    assert presentation.visible_copy == (
-        "Response delivery status is unknown on the source device."
-    )
+    assert presentation.visible_copy == "Response delivery status is unknown."
     assert presentation.warning == (
         "Retry anyway may send a duplicate request because delivery status is unknown."
     )
@@ -148,6 +146,8 @@ def test_in_flight_state_disables_repeated_actions_idempotently(started: bool) -
     assert {action.disabled_reason for action in first.actions} == {
         "Recovery action is already in progress."
     }
+    # TASK-33621.6 AC#4: the claimed action is visibly running.
+    assert first.warning == module.DISPATCH_RECOVERY_BUSY_COPY
 
 
 @pytest.mark.parametrize("started", [False, True])
@@ -174,9 +174,7 @@ def test_widget_constructs_dynamic_copy_with_markup_disabled() -> None:
 
     assert len(dynamic) == 2
     assert all(item._render_markup is False for item in dynamic)
-    assert str(dynamic[0].render()) == (
-        "Response delivery status is unknown on the source device."
-    )
+    assert str(dynamic[0].render()) == "Response delivery status is unknown."
     assert str(dynamic[1].render()) == (
         "Retry anyway may send a duplicate request because delivery status is unknown."
     )
@@ -264,3 +262,89 @@ def test_unreconstructable_reason_is_model_owned_and_markup_neutral() -> None:
 
     assert presentation.actions[0].disabled_reason == reason
     assert presentation.markup is False
+
+
+@pytest.mark.asyncio
+async def test_retry_anyway_is_busy_at_once_until_its_outcome_arrives() -> None:
+    """TASK-33621.6 AC#4: the row stayed byte-identical for 4.2 s.
+
+    Pressing Retry anyway now disables both buttons and says it is retrying
+    before the controller has claimed the owner; finishing restores them.
+    """
+    from textual.app import App
+    from textual.widgets import Button
+
+    module = _ui_module()
+    intents: list[tuple] = []
+
+    class _Host(App):
+        def compose(self):
+            yield module.ConsoleDispatchRecoveryRegion(
+                _state(started=True),
+                session_id="session-1",
+                on_action=lambda *intent: intents.append(intent),
+            )
+
+    host = _Host()
+    async with host.run_test(size=(100, 12)) as pilot:
+        region = host.query_one(module.ConsoleDispatchRecoveryRegion)
+        retry = region.query_one("#console-dispatch-recovery-retry_anyway", Button)
+        discard = region.query_one("#console-dispatch-recovery-discard", Button)
+        warning = region.query_one("#console-dispatch-recovery-warning", Static)
+        assert not retry.disabled and not discard.disabled
+
+        retry.press()
+        await pilot.pause()
+
+        assert [intent[2] for intent in intents] == ["retry_anyway"]
+        assert retry.disabled and discard.disabled
+        assert str(warning.render()) == (
+            "Retrying… actions are disabled until it finishes."
+        )
+
+        intents[0][3]()  # the outcome arrived
+        await pilot.pause()
+        assert not retry.disabled and not discard.disabled
+        assert str(warning.render()) == (
+            "Retry anyway may send a duplicate request because delivery status is unknown."
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_new_equal_snapshot_releases_the_busy_state_it_drops() -> None:
+    """Review follow-up: a sync with an unchanged presentation dropped the
+    pending intent but left 'Discarding…' and both buttons disabled, and the
+    stale completion could no longer restore them."""
+    from textual.app import App
+    from textual.widgets import Button
+
+    module = _ui_module()
+    intents: list[tuple] = []
+
+    class _Host(App):
+        def compose(self):
+            yield module.ConsoleDispatchRecoveryRegion(
+                _state(started=True),
+                session_id="session-1",
+                on_action=lambda *intent: intents.append(intent),
+            )
+
+    host = _Host()
+    async with host.run_test(size=(100, 12)) as pilot:
+        region = host.query_one(module.ConsoleDispatchRecoveryRegion)
+        retry = region.query_one("#console-dispatch-recovery-retry_anyway", Button)
+        discard = region.query_one("#console-dispatch-recovery-discard", Button)
+        warning = region.query_one("#console-dispatch-recovery-warning", Static)
+
+        discard.press()
+        await pilot.pause()
+        assert str(warning.render()) == "Discarding…"
+
+        assert region.sync_recovery("session-1", _state(started=True)) is False
+        intents[0][3]()  # the stale completion is ignored
+        await pilot.pause()
+
+        assert not retry.disabled and not discard.disabled
+        assert str(warning.render()) == (
+            "Retry anyway may send a duplicate request because delivery status is unknown."
+        )
