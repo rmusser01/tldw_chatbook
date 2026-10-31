@@ -599,7 +599,9 @@ _BUDGETS: dict[str, int] = {
     # under one revision fence, and a chat switch redraws the view's copy.
     # 6748 -> 6752 (+4): a release, or a view reattach, redraws it too.
     # 6752 -> 6760 (+8): a newly admitted turn clears the last receipt.
-    "tldw_chatbook/Chat/console_runtime.py": 6760,
+    # 6760 -> 6770 (+10): a chat switch or reattach redraws only when some
+    # chat shows evidence (boot redraws crashed the Inspect card swap).
+    "tldw_chatbook/Chat/console_runtime.py": 6770,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,

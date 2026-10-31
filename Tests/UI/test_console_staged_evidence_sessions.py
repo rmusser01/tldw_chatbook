@@ -238,6 +238,31 @@ def test_runtime_keeps_staged_evidence_and_its_receipt_per_chat() -> None:
     )
 
 
+def test_runtime_redraws_on_a_chat_switch_only_when_evidence_is_shown() -> None:
+    """Boot creates and activates chats while the Console is still mounting.
+
+    A redraw posted then reached the Inspect card swap before its viewport
+    was mounted (MountError: the UI-ready census boot crashed). With nothing
+    staged or received in any chat a switch has nothing to redraw.
+    """
+    store = ConsoleChatStore()
+    runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+    runtime.set_chat_store(store)
+    posted: list[object] = []
+    runtime.view = SimpleNamespace(
+        console_view_hooks=lambda: {"staged_evidence": lambda: True},
+        call_later=posted.append,
+    )
+
+    store.create_session(title="Chat 1")
+    store.create_session(title="Chat 2")
+    assert posted == []
+
+    runtime.stage_console_staged_evidence(_launch(1))
+    store.create_session(title="Chat 3")
+    assert len(posted) == 1
+
+
 @pytest.fixture
 def capture(monkeypatch) -> AsyncMock:
     """Fake only the Library lookup behind the runtime's frozen capture."""

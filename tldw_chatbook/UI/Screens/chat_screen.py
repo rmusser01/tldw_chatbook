@@ -14527,6 +14527,8 @@ class ChatScreen(BaseAppScreen):
                 )
             except QueryError:
                 return
+            if not local_section.viewport.is_attached:
+                return  # Still mounting: compose built the current card.
             for selector in (
                 f"#{PENDING_LAUNCH_CARD_ID}",
                 f"#{SOURCE_READINESS_CARD_ID}",
