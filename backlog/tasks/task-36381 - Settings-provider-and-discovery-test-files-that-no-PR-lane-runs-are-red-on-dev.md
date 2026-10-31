@@ -115,4 +115,6 @@ The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8
 
 **Re-sync 2026-10-31 onto dev 7536ac3b87.** The only conflict was the census tail and floor, where dev's TASK-33622.6 appended five nodes and TASK-33621.51 two files. Dev's census was kept, this task's block re-appended after dev's last entry, and `MINIMUM_FILES` again equals the entry count. The range-diff shows no other change. Preflight and the census tests in `Tests/CI` pass.
 
+**Re-sync 2026-10-31 onto dev 804dc00231.** The only conflict was the lessons file, where dev's TASK-36389 lesson took the same spot. Both were kept, dev's first, and this task's two lessons are unchanged. Apart from the lessons file, the diff is identical to before. `settings_screen.py`'s module-ratchet row still passes; the same 8 other module rows fail on dev 7536ac3b87 too.
+
 **Files.** `tldw_chatbook/UI/Screens/settings_screen.py` (TOOLS guidance), `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_settings_model_discovery_journeys.py`, `Tests/UI/test_settings_endpoint_probe.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/app_factory.py` (docstring), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
