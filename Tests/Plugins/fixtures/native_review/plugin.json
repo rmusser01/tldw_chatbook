@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "native-review",
+  "version": "1.0.0",
+  "description": "A controlled review checklist for plugin qualification",
+  "extensions": {"io.github.rmusser01.chatbook": {"version": 1}}
+}

@@ -1189,7 +1189,7 @@ SmartContentTree Tree > .selected-node {
 #setup-voice-preset.-stacked {
     layout: grid;
     grid-size: 3 2;
-    grid-columns: 21fr 14fr 11fr;
+    grid-columns: $ds-setup-voice-wide-share $ds-setup-voice-medium-share $ds-setup-voice-narrow-share;
     grid-rows: $ds-size-1;
     height: $ds-size-4;
     min-height: $ds-size-4;

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import os
 import tomllib
+from pathlib import Path
 
 import httpx
 import pytest
-import toml
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Image_Generation.config import _NON_SECRET, _SECRETS
 from tldw_chatbook.UI.Screens import settings_image_gen_defaults as sigd
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
@@ -633,22 +634,22 @@ def test_load_user_table_malformed_toml_returns_empty_without_raising(
 # --- SettingsConfigAdapter.delete_values ------------------------------------------
 
 
-def test_adapter_delete_values(tmp_path, monkeypatch):
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
-        toml.dumps(
-            {
-                "image_generation": {
-                    "openrouter": {
-                        "default_model": "old-model",
-                        "base_url": "http://example",
-                    },
-                }
+@pytest.mark.asyncio
+@private_profile_test
+def test_adapter_delete_values(request, tmp_path, monkeypatch):
+    from tldw_chatbook import config
+
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert config.save_settings_to_cli_config(
+        {
+            "image_generation": {
+                "openrouter": {
+                    "default_model": "old-model",
+                    "base_url": "http://example",
+                },
             }
-        ),
-        encoding="utf-8",
+        }
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
     assert SettingsConfigAdapter().delete_values(
         "image_generation.openrouter", ["default_model"]

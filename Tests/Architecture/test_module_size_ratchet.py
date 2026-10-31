@@ -63,7 +63,19 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> max line count. LOWER these when a module shrinks. Never raise
 #: them to silence a failure — see the module docstring.
+# 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
+# pins changed owners at measured sizes without extra size-only moves.
 _BUDGETS: dict[str, int] = {
+    # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
+    "tldw_chatbook/Utils/app_shutdown.py": 776,
+    "tldw_chatbook/Chat/console_display_state.py": 2873,
+    "tldw_chatbook/Widgets/Console/console_selection.py": 379,
+    "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1458,
+    "tldw_chatbook/tldw_api/exceptions.py": 139,
+    "tldw_chatbook/tldw_api/utils.py": 175,
+    "tldw_chatbook/UI/LLM_Management/vllm_setup_view.py": 1861,
+    "tldw_chatbook/UI/Console_Modules/character_avatar_layout.py": 244,
     # TASK-33011 decomposition: lowered as each extraction PR lands
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
     # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; task-33081 on dev
@@ -86,7 +98,7 @@ _BUDGETS: dict[str, int] = {
     # ``_notes_sync_runtime_lazy_start_task`` slot beside the start-task
     # slot, so the Library's bounded settle wait can tell the task it
     # scheduled from boot's own (M-1).
-    "tldw_chatbook/app.py": 5712,
+    "tldw_chatbook/app.py": 5704,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -116,7 +128,7 @@ _BUDGETS: dict[str, int] = {
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
-    "tldw_chatbook/app_lifecycle.py": 2134,
+    "tldw_chatbook/app_lifecycle.py": 2135,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -149,11 +161,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29030,
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29036,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29016,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -366,7 +377,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-36361: staged completion delegates to the same-owner helper (-45).
     # TASK-36387: five badge branches read the category list's table (-3).
     # TASK-36388: the context-window suppress queue nothing wrote goes (-13).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35602,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35592,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -431,7 +442,7 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8545,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -471,7 +482,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
     # Its review: 6,162; a named custom endpoint's listing gets its own note.
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6162,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6818,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
@@ -486,7 +497,7 @@ _BUDGETS: dict[str, int] = {
     # `_request(...)` -> `Model.model_validate` shape, so the honest
     # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
     # the precedent already in the package.
-    "tldw_chatbook/tldw_api/client.py": 16687,
+    "tldw_chatbook/tldw_api/client.py": 16678,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14283,
@@ -544,8 +555,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-33008 (Phase 8): 1,012 -> 994; its review's fixes -> 997.
     # TASK-35578: 990; the subtitle moved to first_run_model_discovery.
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 990,
-    "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
-    "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
+    "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
+    "tldw_chatbook/UI/Screens/change_review_screen.py": 4930,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
     # 4,000+ lines that had no row in any of the three size ratchets, each
     # pinned at its measured size on dev 2b296e60b3. The review filed 40
@@ -564,9 +575,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
     "tldw_chatbook/config.py": 12233,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 11604,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 11703,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9570,
+    "tldw_chatbook/Agents/agent_service.py": 9582,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
@@ -592,12 +603,12 @@ _BUDGETS: dict[str, int] = {
     # docstring says so.
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    "tldw_chatbook/Chat/console_runtime.py": 6751,
     "tldw_chatbook/Chat/console_trace_service.py": 6662,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
-    "tldw_chatbook/Agents/local_tool_provider.py": 5738,
+    "tldw_chatbook/Agents/local_tool_provider.py": 5750,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5176,

@@ -11805,3 +11805,27 @@ async def test_non_default_tool_policy_profile_shows_console_context_hint(tmp_pa
         text = str(hint.renderable)
         assert "Console" in text
         assert "Ask" in text
+
+
+@pytest.mark.asyncio
+async def test_owned_profile_cannot_use_independent_lifecycle_but_standalone_can():
+    app = LifecycleApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        record = dict(workbench._catalog_records.get("docs") or {})
+        workbench._catalog_records["docs"] = {
+            **record,
+            "plugin_owner": {
+                "installation_id": "exact-install",
+                "component_id": "mcp:docs",
+            },
+        }
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await pilot.pause()
+        assert ("connect", "docs") not in app.unified_mcp_service.lifecycle_calls
+        assert "local:docs" not in workbench._in_flight
+        workbench._catalog_records["docs"] = record
+        workbench._start_lifecycle("local:docs", "docs", "connect")
+        await app.workers.wait_for_complete()
+        assert ("connect", "docs") in app.unified_mcp_service.lifecycle_calls

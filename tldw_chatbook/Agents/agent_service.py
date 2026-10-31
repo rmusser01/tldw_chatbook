@@ -7133,7 +7133,19 @@ class AgentService:
                 base_url=child_base_url,
                 sampling_params=child_sampling_params,
             )
-            seed = [*plugin_instructions, *(dict(m) for m in retained.messages)]
+            # Re-project the current preset once, retaining unrelated context.
+            origins = {row["content"].checked_origins() for row in plugin_instructions}
+            seed = [
+                *plugin_instructions,
+                *(
+                    dict(message)
+                    for message in retained.messages
+                    if not (
+                        isinstance(message.get("content"), PluginContextText)
+                        and message["content"].checked_origins() in origins
+                    )
+                ),
+            ]
             retained_steering = retained.steering_with_causes or tuple(
                 (source, text, None) for source, text in retained.steering
             )
