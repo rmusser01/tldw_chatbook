@@ -32,8 +32,10 @@ writing them into your chat database.
   Once rendering has started, MiniMax refuses: the task runs to the end
   on MiniMax's side and may still be billed, although the video is not
   shown here ("…refused to cancel. The remote task keeps running and may
-  still be billed"). If MiniMax cannot be reached to confirm, the row
-  says the task may keep running and may still be billed. The Console
+  still be billed"). If MiniMax cannot be reached, or answers with
+  anything other than a confirmed cancel or that refusal, the row says
+  MiniMax did not confirm the cancel, so the task may keep running and
+  may still be billed. The Console
   cannot see when rendering starts (MiniMax reports both stages as
   running), so treat a confirmed MiniMax generation as one you may pay
   for.
