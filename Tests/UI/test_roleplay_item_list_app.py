@@ -1264,7 +1264,8 @@ async def test_ctrl_n_is_inert_on_server_characters(mock_app_instance):
             await pilot.pause()
         assert not screen._new_chooser_open
         assert not any(
-            stacked.query(f"#{CHOOSER_OPTIONS_ID}") for stacked in pilot.app.screen_stack
+            stacked.query(f"#{CHOOSER_OPTIONS_ID}")
+            for stacked in pilot.app.screen_stack
         )
         assert pilot.app.screen is screen and screen._edit_mode != "create"
         assert not _editor_shown(screen, "characters")
@@ -5073,8 +5074,10 @@ async def test_a_sort_or_tag_change_keeps_the_landed_also_in_targets(
         await pilot.press("s")
         await wait_until(
             pilot,
-            lambda: screen.state.sort_key != sort_before
-            and not screen._search_rows_pending(screen._list_fence()),
+            lambda: (
+                screen.state.sort_key != sort_before
+                and not screen._search_rows_pending(screen._list_fence())
+            ),
             what="the sort's reload",
         )
         await settle(pilot)
@@ -5121,8 +5124,10 @@ async def test_a_sort_during_the_counts_neither_cancels_nor_restarts_them(
             await pilot.press("s")
             await wait_until(
                 pilot,
-                lambda: screen.state.sort_key != sort_before
-                and not screen._search_rows_pending(screen._list_fence()),
+                lambda: (
+                    screen.state.sort_key != sort_before
+                    and not screen._search_rows_pending(screen._list_fence())
+                ),
                 what="the sort's reload",
             )
             for _ in range(5):

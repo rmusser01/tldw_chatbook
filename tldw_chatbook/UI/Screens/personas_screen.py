@@ -17256,9 +17256,9 @@ class PersonasScreen(BaseAppScreen):
             return
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
-            if (
-                self.state.search_query or self.state.tag_filter
-            ) and self.query_one(PersonasLibraryPane).no_match_showing():
+            if (self.state.search_query or self.state.tag_filter) and self.query_one(
+                PersonasLibraryPane
+            ).no_match_showing():
                 # Owner decision D9 (2026-10-29): while nothing matches, rung 8
                 # runs before the focus move, as the hint "esc clears the
                 # search" says. Otherwise focus moves to the list, as on dev.
