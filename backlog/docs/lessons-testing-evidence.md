@@ -60,6 +60,44 @@ and 3 failed, the same 3 ids on dev. No failure appeared only on the branch.
 with `raw_source_selection_changed`, run it with that probe plugin on both trees
 and compare failing ids. Delete the plugin before committing. This is a local
 measurement aid, not a fix: the suite still fails in a lane that runs it plain.
+## A stripped painted form passed a gutter mutation (TASK-33910.4 B2b Task 12, 2026-10-29)
+
+**Incident.** The B2b re-pin of the "no active marker" check read what the row
+paints through the harness's stripped form, `item_at(...).lines`. Under mutation
+M12-B, which moved the `●` marker into the row's gutter, that check stayed green:
+`lines` strips the gutter before the test sees it. Only the whole painted prompt
+(`row.painted`, gutter included) turned the test red; the earlier form could not
+fail for the one place the marker could hide.
+
+**What to do.** When a test's claim is "what the row paints", assert the whole
+painted cells, not a convenience view that strips chrome, gutters or styles. Then
+move the thing under test into the stripped part once and watch the test go red;
+a check that cannot fail there is not pinning what it says.
+
+## A label census misses renamed labels (TASK-33910.4 B2b Task 7, 2026-10-29)
+
+**Incident.** B2b's consumer census of the old toolbar was keyed on widget ids,
+so it found every id consumer. `test_personas_workbench_exposes_approved_three_column_ia`
+asserted the button's *label*, "New", which the id census never listed; B2b
+renamed it to "+ New" and that test went red only when the whole file ran on
+head.
+
+**What to do.** A census of consumers covers every seam the change moves: ids,
+labels, tooltips, placeholders and copy strings. Grep the old literal text as
+well as the old id, and run the whole consumer file on head before calling the
+re-pin complete.
+
+## ENOSPC from other sessions looks like test failures (TASK-33910.4 B2b Task 10, 2026-10-29)
+
+**Incident.** During B2b Task 10's paired run the disk hit 0 bytes free because
+of other sessions' basetemps and logs. All six head-only failures were
+"No space left on device" from SQLite and the junit writer, not from the
+change; they vanished on the re-run once space was back. Time went into
+reading them as regressions first.
+
+**What to do.** Before diagnosing a head-only failure, check `df` and grep the
+run's logs for "No space left". A run hit by ENOSPC is re-run, never counted:
+delete your own finished basetemps, then run the pair again.
 
 ## "Kept, not restarted" needs identity, not outputs (TASK-33626.1 review, 2026-10-29)
 

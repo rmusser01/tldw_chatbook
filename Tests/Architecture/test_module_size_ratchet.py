@@ -181,7 +181,39 @@ _BUDGETS: dict[str, int] = {
     # TASK-36932 moves the bounded Lore save operation beside existing completions.
     # Rebased onto dev386 with the search/Save publication correction:
     # 16,870 combined, still 13 below current dev's 16,883 ceiling.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16859,
+    # Roleplay frame B2b (TASK-33910.4), each line one commit that grows it:
+    # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
+    # T1, the Inspector's interim Duplicate: +10 (dev's 16,859 -> 16,869).
+    # T2, the New chooser's worker, routing and own reentrancy flag: +90
+    # (16,869 -> 16,959).
+    # T2 fix round 1, the chooser holds its slot until its create ends: +3
+    # (16,959 -> 16,962).
+    # T4, the one Import picker (its worker, router and "Import as:" replace
+    # four pickers; "Import as:" opens on the sniff's pick, owner decision D8;
+    # an unreadable profile folder refuses only a Buddy pick): +37
+    # (16,962 -> 16,999).
+    # T5, the guarded import landing (_land_import, the intent serial and its
+    # bumps, the literal landing toasts): +122 (16,999 -> 17,121).
+    # T5 fix round 1, the landing decides again after its own awaits, and a
+    # typed search, sort cycle or tag pick is a newer intent: +26
+    # (17,121 -> 17,147).
+    # T7, the one-row toolbar: the screen hands the pane sort keys and a tag
+    # on/off instead of label text: -10, lowered to the measurement
+    # (17,147 -> 17,137).
+    # T9, search-aware empty, no-match, loading and failure states (the
+    # recovery row's Retry, Escape's rung 8 and its import-intent bump, the
+    # centre's no-match wording): +76 (17,137 -> 17,213).
+    # T10, Also in (the counts worker, its fence, the per-kind counts and the
+    # switch that carries the query): +142 (17,213 -> 17,355).
+    # T10 fix round 1, the counts stop with the visit and count again on its
+    # return, and a search change (typed or Escape's clear) stops them and
+    # hides the targets counted for the old query: +40 (17,355 -> 17,395),
+    # applied 2026-10-29.
+    # Roleplay frame B2b: owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: B2b changes it by +646 lines (16,859 -> 17,505).
+    # The row rises to the measurement, never squeezed code; applied
+    # 2026-10-30 after the final fix wave (B2b rows).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17505,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -204,7 +236,24 @@ _BUDGETS: dict[str, int] = {
     # reason (owe_first, landing_owed, take_first); +29 (1,116 -> 1,145).
     # Its fix round 1 (same day) adds landed_elsewhere (a landing owed on a
     # superseded non-character list is dropped); +16 (1,145 -> 1,161).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 855,
+    # Roleplay frame B2b (TASK-33910.4), each line one commit that grows it:
+    # owner decision (expand limits, never contort code), TASK-33910.4, 2026-10-26.
+    # T2, the New chooser's rows (NewChoice, new_chooser_options): +113
+    # (855 -> 968).
+    # T5, where an import lands (MODE_FOR_KIND, import_landing,
+    # import_landed_toast; ListWindowState.moves lives in
+    # roleplay_list_window_state.py since dev's ed82096930): +51 (968 -> 1,019).
+    # T7, the one-row toolbar's fit (fit_items_toolbar, its labels, sort
+    # labels and the search placeholder): +147 (1,019 -> 1,166).
+    # T9, the empty, no-match and loading copy (no_match_view, empty_kind_text,
+    # loading_text): +71 (1,166 -> 1,237).
+    # T10, the Also in targets (AlsoInTarget, the counts in no_match_view):
+    # +48 (1,237 -> 1,285).
+    # Roleplay frame B2b: owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: B2b changes it by +463 lines (855 -> 1,318).
+    # The row rises to the measurement, never squeezed code; applied
+    # 2026-10-30 after the final fix wave (B2b rows).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1318,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
@@ -219,7 +268,30 @@ _BUDGETS: dict[str, int] = {
     # inert while the first-match landing is owed, and the pane takes the
     # landing (land_on_first); +12 (1,295 -> 1,307). Fix round 1 (same day)
     # deletes the unused focus_first_result helper: -8 (1,307 -> 1,299).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1297,
+    # Roleplay frame B2b (TASK-33910.4): Duplicate (T1), New Actor Pack (T2)
+    # and Import Actor Pack (T4) leave the toolbar; T4 lowers the row to the
+    # measurement (1,297 -> 1,246).
+    # T5 fix round 1, End is a newer move before the window it owes: +3
+    # (1,246 -> 1,249); owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26.
+    # T7, the one-row toolbar (the fit applier, the title-row Import, the
+    # sort-key and tag-state setters, the harness fallback CSS) replaces the
+    # stacking trigger, owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: +24 (1,249 -> 1,273).
+    # T9, the no-match block composed once, the delayed loading line and the
+    # recovery row's Retry (spec 1.5.4), same decision: +115 (1,273 -> 1,388).
+    # T10, the Also in targets composed once, Enter and Down on an empty list
+    # reaching them, same decision: +103 (1,388 -> 1,491).
+    # T10 fix round 1, the targets hide when the search moves on and the pane
+    # says whether its no-match message still owes its counts, same decision:
+    # +24 (1,491 -> 1,515), applied 2026-10-29.
+    # Roleplay frame B2b: owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: B2b changes it by +281 lines (1,297 -> 1,578).
+    # The row rises to the measurement, never squeezed code; applied
+    # 2026-10-30 after the final fix wave (1,573), then +5 the same day for
+    # the wave's residual (a failed Retry refocuses only if the focus is
+    # still where the blank left it) (B2b rows).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1578,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

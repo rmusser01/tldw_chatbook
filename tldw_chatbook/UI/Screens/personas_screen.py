@@ -257,8 +257,8 @@ from ...Widgets.Persona_Widgets.personas_library_pane import (
     option_id_for,
 )
 from ...Widgets.Persona_Widgets.personas_messages import (
-    ActorPackImportRequested,
     ActorPackExportRequested,
+    AlsoInRequested,
     PersonaActionRequested,
     PersonaBuddyActionRequested,
     PersonaEntitySelected,
@@ -478,9 +478,12 @@ _CHARACTERS_EMPTY_GUIDANCE = (
 #: No-selection copy when the library HAS characters (F-035): the next
 #: action is picking one, not creating one.
 _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it here."
+#: The items list's recovery copy when a character read fails (spec 1.5.4,
+#: with Retry; frame slice B2b). Dev showed "No characters yet" there.
+_CHARACTERS_LOAD_FAILED = "Characters could not be loaded."
 #: F-037: reason shown on local-only actions (card Edit, inspector
 #: export/delete) while browsing server-owned characters.
-_SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
+_SERVER_READ_ONLY_TOOLTIP = frame_state.SERVER_CHARACTERS_READ_ONLY
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Debounce for the inspector's conversations search (F14): the same 0.2 s
 #: window as the library search above, so a typing burst runs one Keyword
@@ -494,15 +497,11 @@ PERSONAS_LIBRARY_PAGE_SIZE = 200
 _SERVER_CHARACTER_SEARCH_MAX_RESULTS = 100
 #: Every window fetch runs in this exclusive worker group (spec 1.5.6).
 _LIST_WINDOW_GROUP = "roleplay-list-window"
+#: The other kinds' counts for a search the current kind found nothing for
+#: run in this exclusive worker group (frame slice B2b, spec 1.5.4). It is
+#: never a "rows pending" group: Enter in the search box never waits on it.
+_ALSO_IN_GROUP = "roleplay-also-in"
 _MAX_CHARACTER_ID = (1 << 63) - 1
-#: Display labels for the library sort keys (shared by the character sort cycle
-#: and the persona render path).
-_LIBRARY_SORT_LABELS: dict[str, str] = {
-    "relevance": "Relevance",
-    "name_asc": "Name",
-    "modified_desc": "Recent edit",
-    "created_desc": "Recent add",
-}
 PERSONAS_DICTIONARY_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 PERSONAS_WORLDBOOK_IMPORT_MAX_BYTES = 10 * 1024 * 1024
 # TASK-32806.6: the two importers above cap at 10 MB before reading;
@@ -580,37 +579,49 @@ def _whole_count(value: Any) -> int | None:
         return None
 
 
-def _character_import_filters() -> Any:
-    """Build the file-picker filters for the Character Cards import dialog.
+#: The one Import picker's title (frame slice B2b, spec 1.4.6): every format it
+#: takes, in words. Never "[": the shared picker's border title parses markup
+#: (TASK-34401, open; "[/]" raises MarkupError on dev).
+ROLEPLAY_IMPORT_TITLE = (
+    "Import a card (PNG, WebP, JSON, Markdown), lore book, chat dictionary, "
+    "Actor Pack or Buddy"
+)
+#: The default filter's formats: every Roleplay format but Markdown.
+_ROLEPLAY_IMPORT_SUFFIXES = (
+    ".png",
+    ".webp",
+    ".json",
+    ".tldw-actor-pack",
+    ".tldw-persona-vpack",
+)
+#: "Import as:" row words for the kinds a JSON or Markdown file can be.
+_IMPORT_AS_LABELS = {
+    "character": "Character card",
+    "lore": "Lore book",
+    "dictionary": "Chat dictionary",
+}
 
-    Module-level (rather than inline in ``_import_dialog_worker``) so the
-    primary "Character Cards" tester can be unit-tested without mounting the
-    screen. ``import_and_save_character_from_file`` only extracts embedded
-    card JSON from ``.png``/``.webp`` images and reads ``.json``/``.md`` as
-    text (task-431 AC#1): the broad "Character Cards" default matches the
-    image formats plus JSON, but deliberately excludes Markdown so a plain
-    docs folder doesn't read as a folder of character cards. Markdown import
-    stays available via its own dedicated sub-filter.
+
+def _roleplay_import_filters() -> Any:
+    """Build the one Import picker's filters (frame slice B2b, owner decision D3).
+
+    Module-level so the default tester can be unit-tested without mounting
+    the screen. "Roleplay files" (the default) lists card images, JSON and
+    both pack formats, and deliberately leaves Markdown out (task-431 AC#1):
+    a plain docs folder must not read as a folder of character cards.
+    Markdown and All Files stay available as sub-filters; the sniff decides
+    what a picked file is. On dev Characters, Lore, Dictionaries and Actor
+    Packs each had a picker with its own filters (Dictionaries' default held
+    Markdown, which "Roleplay files" does not).
     """
     from ...Widgets.enhanced_file_picker import Filters
 
     return Filters(
         (
-            "Character Cards",
-            lambda p: (
-                p.suffix.lower() in (".json", ".png", ".webp", ".tldw-persona-vpack")
-            ),
+            "Roleplay files",
+            lambda p: p.suffix.lower() in _ROLEPLAY_IMPORT_SUFFIXES,
         ),
-        ("Buddy Packs", lambda p: p.suffix.lower() == ".tldw-persona-vpack"),
-        ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-        (
-            "Card Images (PNG/WebP)",
-            lambda p: p.suffix.lower() in (".png", ".webp"),
-        ),
-        (
-            "Markdown Files",
-            lambda p: p.suffix.lower() in (".md", ".markdown"),
-        ),
+        ("Markdown", lambda p: p.suffix.lower() in (".md", ".markdown")),
         ("All Files", lambda p: True),
     )
 
@@ -1332,6 +1343,17 @@ class PersonasScreen(BaseAppScreen):
         # set_result on a cancelled future (InvalidStateError on Textual
         # 8.2.7), so a second request is ignored instead.
         self._io_dialog_active: bool = False
+        # The one Import picker's worker is running (frame slice B2b): a
+        # second Import says an import is in progress.
+        self._roleplay_import_running: bool = False
+        # The list the running Also in count was started for (``_start_also_in``).
+        self._also_in_fence: frame_state.ListFence | None = None
+        # The New chooser is open (frame slice B2b).
+        self._new_chooser_open: bool = False
+        # Bumped by every guarded transition, kind switch, create and item
+        # load; with the list's cursor moves it says whether a newer intent
+        # arrived since an import's picker opened (frame slice B2b).
+        self._import_intent: int = 0
         # Same refuse-reentry idiom for the delete confirmation dialog.
         self._delete_dialog_active: bool = False
         self._character_editor_generation: int = 0
@@ -2347,16 +2369,19 @@ class PersonasScreen(BaseAppScreen):
         """The visit-lifecycle leave hook (spec 4.11), with B2a's first duties.
 
         Clears the marks of every kind (they are never saved, R16), cancels
-        the window worker and stops the search debounce. The window state's
-        leave fences a window whose read is still running in its thread and
-        forgets the owed End or load-through; a list whose replace had not
-        landed and painted reloads on the return (TASK-33910.34). Runs on
-        unmount and on a suspend that leaves Roleplay, and is safe to run
-        twice. Later slices extend it: B5b-2 closes More actions, B7 ends the
-        work session and flushes the pane preferences.
+        the window worker and the ``Also in:`` counts (frame slice B2b, so no
+        read or server call runs on) and stops the search debounce. The
+        window state's leave fences a window whose read is still running in
+        its thread and forgets the owed End or load-through; a list whose
+        replace had not landed and painted reloads on the return
+        (TASK-33910.34). Runs on unmount and on a suspend that leaves
+        Roleplay, and is safe to run twice. Later slices extend it: B5b-2
+        closes More actions, B7 ends the work session and flushes the pane
+        preferences.
         """
         self._window_state.leave(self._list_fence())
         self.workers.cancel_group(self, _LIST_WINDOW_GROUP)
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
         self._cancel_search_debounce()
         self._marked_rows = ()
         try:
@@ -2370,9 +2395,11 @@ class PersonasScreen(BaseAppScreen):
 
         A modal pop also delivers ``ScreenResume``, but only a real leave sets
         the flag. No ``super()``: the dispatcher calls every handler along the
-        MRO (TASK-31418).
+        MRO (TASK-31418). ``Also in:`` counts the leave cut short count again.
         """
-        if not self._window_state.returned():
+        reload = self._window_state.returned()
+        self._resume_also_in()
+        if not reload:
             return
         if self.state.active_mode == "characters" and self.is_attached:
             await self.refresh_character_library_list(None)
@@ -2656,12 +2683,11 @@ class PersonasScreen(BaseAppScreen):
         that was silently remapped to name_asc (task-463 #4).
         """
         base = [
-            ("name_asc", _LIBRARY_SORT_LABELS["name_asc"]),
-            ("modified_desc", _LIBRARY_SORT_LABELS["modified_desc"]),
-            ("created_desc", _LIBRARY_SORT_LABELS["created_desc"]),
+            (key, frame_state.sort_label(key))
+            for key in ("name_asc", "modified_desc", "created_desc")
         ]
         if self.state.search_query and self.state.active_mode == "characters":
-            return [("relevance", _LIBRARY_SORT_LABELS["relevance"]), *base]
+            return [("relevance", frame_state.sort_label("relevance")), *base]
         return base
 
     def _fts_match_query(self) -> str | None:
@@ -3644,10 +3670,11 @@ class PersonasScreen(BaseAppScreen):
             and not self._local_character_actions_allowed()
         )
         try:
+            # Import stays offered (frame slice B2b, OQ14): a picked card is
+            # refused by name, a lore book or chat dictionary goes to the
+            # local store. Dev disabled it here.
             for selector in (
                 "#personas-library-new",
-                "#personas-library-import",
-                "#personas-library-duplicate",
                 "#personas-library-tag",
             ):
                 self.query_one(selector, Button).disabled = server_characters
@@ -3673,6 +3700,7 @@ class PersonasScreen(BaseAppScreen):
                 for selector in (
                     "#personas-export-json",
                     "#personas-export-png",
+                    "#personas-duplicate",
                     "#personas-delete",
                 ):
                     # F-037: server browsing force-disables these local-only
@@ -3847,6 +3875,201 @@ class PersonasScreen(BaseAppScreen):
             and not self._window_state.rows_current(fence)
         )
 
+    # ---- Also in: the other kinds' counts (frame slice B2b, spec 1.5.4) ----
+
+    def _start_also_in(self, fence: frame_state.ListFence) -> None:
+        """The current kind found nothing for ``fence``'s query: count the other kinds.
+
+        One count per kind, off the event loop, only for an empty result; the
+        renders that call this sit behind the search debounce already. A
+        count still running for the same query (a sort or tag change
+        re-rendered the empty list) is left to land: the other kinds' counts
+        depend on the query alone (until B2b's final fix wave it was
+        cancelled and counted again).
+        """
+        if not fence.query or not self.is_running:
+            return
+        running = self._also_in_fence
+        if (
+            running is not None
+            and self._also_in_same_query(running, fence)
+            and any(
+                worker.node is self
+                and worker.group == _ALSO_IN_GROUP
+                and not worker.is_finished
+                for worker in self.workers
+            )
+        ):
+            return
+        self._also_in_fence = fence
+        self.run_worker(
+            self._also_in_worker(fence),
+            group=_ALSO_IN_GROUP,
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    @staticmethod
+    def _also_in_same_query(a: frame_state.ListFence, b: frame_state.ListFence) -> bool:
+        """Whether two lists ask the other kinds the same question (the sort,
+        tag and generation do not change their counts)."""
+        return (
+            a.mode == b.mode
+            and a.query == b.query
+            and a.runtime_source == b.runtime_source
+            and a.server_id == b.server_id
+        )
+
+    def _resume_also_in(self) -> None:
+        """A return finds the no-match message with no counts over it: count again.
+
+        The leave cancelled the counts, and rows that stayed are not read
+        again, so no render restarts them. A modal pop with the counts still
+        running leaves them alone.
+        """
+        if any(
+            worker.node is self
+            and worker.group == _ALSO_IN_GROUP
+            and not worker.is_finished
+            for worker in self.workers
+        ):
+            return
+        try:
+            library = self.query_one(PersonasLibraryPane)
+        except QueryError:
+            return
+        if library.also_in_owed(self.state.search_query):
+            self._start_also_in(self._list_fence())
+
+    def _stop_also_in(self) -> None:
+        """The search moved on: stop the counts and hide the old query's targets.
+
+        A target that stayed shown could switch kind with a query it was not
+        counted for while the newer one debounces (by a click, or Down then
+        Enter on the empty list).
+        """
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
+        try:
+            self.query_one(PersonasLibraryPane).hide_also_in()
+        except QueryError:
+            pass
+
+    async def _also_in_worker(self, fence: frame_state.ListFence) -> None:
+        """Count each other kind's matches; a count that fails is left out."""
+        current = frame_state.KIND_FOR_MODE.get(fence.mode)
+        counts: dict[str, int] = {}
+        failed: set[str] = set()
+        capped: set[str] = set()
+        for kind in frame_state.ALSO_IN_ORDER:
+            if kind == current:
+                continue
+            try:
+                counts[kind], is_capped = await self._count_kind_matches(kind, fence)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.opt(exception=True).debug("An Also in count failed.")
+                failed.add(kind)
+            else:
+                if is_capped:
+                    capped.add(kind)
+        self._apply_also_in(fence, counts, failed, capped)
+
+    def _apply_also_in(
+        self,
+        fence: frame_state.ListFence,
+        counts: dict[str, int],
+        failed: set[str],
+        capped: set[str] = frozenset(),
+    ) -> None:
+        """Show the counts only on the list they were counted for (spec 1.5.6's fence).
+
+        The question is the same across a sort or tag change, so the fence is
+        matched on the kind, source and query alone (``_also_in_same_query``).
+        """
+        if not self._also_in_same_query(fence, self._list_fence()):
+            return
+        try:
+            self.query_one(PersonasLibraryPane).show_also_in(counts, failed, capped)
+        except QueryError:
+            pass
+
+    async def _count_kind_matches(
+        self, kind: str, fence: frame_state.ListFence
+    ) -> tuple[int, bool]:
+        """How many of ``kind`` the query matches, with that kind's own search.
+
+        Characters count with the list's FTS prefix expression (the database
+        method, not the wrapper that answers 0 on an error); the server
+        source asks its search once, as its list does. Personas page the
+        service as their list does; lore books and chat dictionaries filter
+        names as theirs do. Raises when a kind cannot be read.
+
+        Returns:
+            The count, and whether it is a lower bound: the server search
+            answers at most ``_SERVER_CHARACTER_SEARCH_MAX_RESULTS`` rows and,
+            with no total, a full page may hide more (its list says ``100+``;
+            the cap exists on dev).
+        """
+        query = fence.query.strip()
+        needle = query.lower()
+        if kind == "character" and fence.runtime_source == "server":
+            service = getattr(
+                self.app_instance, "character_persona_scope_service", None
+            )
+            response = await service.search_characters(
+                query, mode="server", limit=_SERVER_CHARACTER_SEARCH_MAX_RESULTS
+            )
+            rows, total = self._server_character_rows(response)
+            if total is not None:
+                return total, False
+            return len(rows), len(rows) >= _SERVER_CHARACTER_SEARCH_MAX_RESULTS
+        if kind == "character":
+            db = self._character_db()
+            if db is None:
+                raise RuntimeError("No character database.")
+            count = await asyncio.to_thread(
+                db.count_character_cards, search_term=quote_fts5_prefix(query)
+            )
+            return count, False
+        if kind == "persona":
+            records = await self.persona_handler.list_all_persona_profiles()
+            matched = page_persona_profiles(
+                records,
+                search_term=query,
+                sort_key="name_asc",
+                offset=0,
+                page_size=max(1, len(records)),
+            )[1]
+            return matched, False
+        if kind == "dictionary":
+            service = self._dictionary_scope_service()
+            response = await service.list_dictionaries(
+                mode="local", include_inactive=True
+            )
+            names = [r.get("name", "") for r in response.get("dictionaries") or []]
+        else:
+            manager = self._lore_manager()
+            if manager is None:
+                raise RuntimeError("No lore database.")
+            books = await asyncio.to_thread(manager.list_world_books, True)
+            names = [book.get("name", "") for book in books]
+        return sum(1 for name in names if needle in str(name).lower()), False
+
+    @on(AlsoInRequested)
+    async def _handle_also_in(self, message: AlsoInRequested) -> None:
+        """An ``Also in:`` target: that kind's list with the search applied.
+
+        It is a kind switch, so it goes through the unsaved guard; the
+        first-match landing is owed inside the switch, so Stay owes nothing.
+        """
+        message.stop()
+        mode = frame_state.MODE_FOR_KIND.get(message.kind)
+        query = self.state.search_query
+        if mode is None or not query or mode == self.state.active_mode:
+            return
+        await self._run_guarded(lambda: self._apply_mode(mode, carry_query=query))
+
     async def _list_window(self, request: frame_state.ListWindowRequest) -> None:
         """One window run: fetch until the request is met, fence, apply once."""
         fence = request.fence
@@ -3858,6 +4081,10 @@ class PersonasScreen(BaseAppScreen):
         db = self._character_db()
         if db is None:
             self._window_read_failed(fence)
+            if request.replace:
+                await self._apply_character_window(
+                    request, [], total=0, more=False, failed=True
+                )
             return
         term = fence.query.strip()
         search = quote_fts5_prefix(term) if term else None
@@ -3949,16 +4176,19 @@ class PersonasScreen(BaseAppScreen):
             await self._apply_character_window(
                 request, [], total=0, more=False, blank=True
             )
-        if fence.server_id is None:
-            self._window_read_failed(fence)
-            return
         service = getattr(self.app_instance, "character_persona_scope_service", None)
         query = fence.query
         load = getattr(
             service, "search_characters" if query else "list_characters", None
         )
-        if not callable(load):
+        if fence.server_id is None or not callable(load):
+            # The blank above shows "Loading characters…" once slow: a read
+            # that cannot start says so instead (dev showed "No characters yet").
             self._window_read_failed(fence)
+            if request.replace:
+                await self._apply_character_window(
+                    request, [], total=0, more=False, failed=True
+                )
             return
         size = _SERVER_CHARACTER_SEARCH_MAX_RESULTS
         records: list[dict] = []
@@ -4074,19 +4304,30 @@ class PersonasScreen(BaseAppScreen):
             filtered = fence.runtime_source != "server" and bool(
                 fence.query or fence.tag
             )
-            if request.replace:
+            if request.replace and blank:
+                # A reload of another source reads: nothing of the old list
+                # stays up, and "Loading characters…" shows if it is slow.
+                await library.show_loading()
+            elif request.replace:
                 with window.painting():
-                    await library.update_rows(
+                    no_match = await library.update_rows(
                         rows,
                         total=(self._character_unfiltered_total or total)
                         if filtered
                         else total,
-                        noun="characters",
                         filtered=filtered,
                         matched=total,
                         title=self._character_title(),
+                        recovery_copy=_CHARACTERS_LOAD_FAILED if failed else None,
                         anchor=request.anchor,
+                        query=fence.query,
+                        tag=fence.tag,
                     )
+                if no_match:
+                    self._start_also_in(fence)
+                # On dev the centre kept "Pick a character…" over a search
+                # that listed nothing (TASK-33788 AC#4).
+                self._refresh_characters_empty_guidance()
                 if not self._list_fence_is_current(fence):
                     # The fence moved while the rows painted (a mode, query,
                     # sort, tag or source change): the screen keeps none of
@@ -4103,12 +4344,13 @@ class PersonasScreen(BaseAppScreen):
                 library.set_title(self._character_title(), total=self._character_total)
             library.item_list.set_more_available(more)
             if fence.runtime_source == "server":
-                library.set_sort_label("Sort: Server order")
-                library.set_tag_label("Tag: All")
+                library.set_sort_label(frame_state.SERVER_SORT_KEY)
+                library.set_tag_active(False)
             else:
-                labels = dict(self._character_sort_cycle())
-                library.set_sort_label(f"Sort: {labels.get(fence.sort_key, 'Name')}")
-                library.set_tag_label(f"Tag: {fence.tag}" if fence.tag else "Tag: All")
+                cycle = dict(self._character_sort_cycle())
+                key = fence.sort_key if fence.sort_key in cycle else "name_asc"
+                library.set_sort_label(key)
+                library.set_tag_active(bool(fence.tag))
             selected = self.state.selected_entity_id
             if (
                 request.replace
@@ -4253,10 +4495,9 @@ class PersonasScreen(BaseAppScreen):
             recovery_state = self._profile_lookup_recovery_state
             filtered = bool(self.state.search_query)
             total = len(self._profiles)
-            await library.update_rows(
+            no_match = await library.update_rows(
                 rows,
                 total=total,
-                noun="personas",
                 filtered=filtered,
                 matched=matched,
                 title=frame_state.items_border_title(
@@ -4273,12 +4514,13 @@ class PersonasScreen(BaseAppScreen):
                     if recovery_state is not None
                     else "personas-library-recovery"
                 ),
+                query=self.state.search_query,
             )
+            if no_match:
+                self._start_also_in(self._list_fence())
             library.item_list.set_more_available(False)
             if recovery_state is None:
-                library.set_sort_label(
-                    f"Sort: {_LIBRARY_SORT_LABELS.get(sort_key, 'Name')}"
-                )
+                library.set_sort_label(sort_key)
             if (
                 self.state.selected_entity_kind == "persona"
                 and self.state.selected_entity_id
@@ -4293,6 +4535,11 @@ class PersonasScreen(BaseAppScreen):
         # Search does not change selection or center pane — no unsaved guard needed.
         previous_query = self.state.search_query
         self.state.search_query = message.query.strip()
+        if self.state.search_query != previous_query:
+            # The user's own search is a newer intent than an import in
+            # flight (frame slice B2b). A programmatic clear (a kind switch,
+            # an import's landing) sets the state first, so it never bumps.
+            self._bump_import_intent()
         now_searching = bool(self.state.search_query)
         was_searching = bool(previous_query)
         if (
@@ -4308,6 +4555,7 @@ class PersonasScreen(BaseAppScreen):
             self.state.sort_key = "name_asc"
         # A changed search reloads from row 0 and (for characters) recounts.
         self._count_cache_key = None
+        self._stop_also_in()
         self._cancel_search_debounce()
         query = self.state.search_query
         mode = self.state.active_mode
@@ -4344,6 +4592,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def _cycle_sort(self) -> None:
         """Move ``sort_key`` to the next option and reload from row 0."""
+        self._bump_import_intent()  # the user's sort: a newer intent (B2b)
         cycle = [key for key, _ in self._character_sort_cycle()]
         current = self.state.sort_key if self.state.sort_key in cycle else cycle[0]
         self.state.sort_key = cycle[(cycle.index(current) + 1) % len(cycle)]
@@ -4388,6 +4637,7 @@ class PersonasScreen(BaseAppScreen):
 
     async def _apply_tag_filter(self, tag: str | None) -> None:
         """Set the characters tag filter and reload (and recount) from row 0."""
+        self._bump_import_intent()  # the user's tag pick: a newer intent (B2b)
         self.state.tag_filter = tag
         self._count_cache_key = None  # (search, tag) changed → recount
         await self._reload_character_page()
@@ -4549,9 +4799,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.warning("Could not list chat dictionaries.")
                 records = []
-                recovery_copy = (
-                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
-                )
+                recovery_copy = "Dictionaries could not be loaded."
 
         needle = expected_query.lower()
         visible = (
@@ -4573,10 +4821,9 @@ class PersonasScreen(BaseAppScreen):
             if recovery_copy is None:
                 self._dictionaries_cache = records
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(
+            no_match = await library.update_rows(
                 rows,
                 total=len(records),
-                noun="dictionaries",
                 filtered=bool(needle),
                 matched=len(visible),
                 title=frame_state.items_border_title(
@@ -4587,7 +4834,10 @@ class PersonasScreen(BaseAppScreen):
                     failed=recovery_copy is not None,
                 ),
                 recovery_copy=recovery_copy,
+                query=expected_query,
             )
+            if no_match:
+                self._start_also_in(self._list_fence())
             library.item_list.set_more_available(False)
             from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence, request_generation)
@@ -4653,9 +4903,7 @@ class PersonasScreen(BaseAppScreen):
             except Exception:
                 logger.opt(exception=True).warning("Could not list lore books.")
                 records = []
-                recovery_copy = (
-                    "Lore books could not be loaded.\nSwitch modes and back to retry."
-                )
+                recovery_copy = "Lore books could not be loaded."
 
         needle = expected_query.lower()
         visible = (
@@ -4677,10 +4925,9 @@ class PersonasScreen(BaseAppScreen):
             if recovery_copy is None:
                 self._lore_books_cache = records
             library = self.query_one(PersonasLibraryPane)
-            await library.update_rows(
+            no_match = await library.update_rows(
                 rows,
                 total=len(records),
-                noun="lore books",
                 filtered=bool(needle),
                 matched=len(visible),
                 title=frame_state.items_border_title(
@@ -4691,7 +4938,10 @@ class PersonasScreen(BaseAppScreen):
                     failed=recovery_copy is not None,
                 ),
                 recovery_copy=recovery_copy,
+                query=expected_query,
             )
+            if no_match:
+                self._start_also_in(self._list_fence())
             library.item_list.set_more_available(False)
             from ..Persona_Modules import persona_search_completion
             persona_search_completion.publish_first_match(self, library, fence, request_generation)
@@ -4738,10 +4988,20 @@ class PersonasScreen(BaseAppScreen):
             self._compact_active_pane = "inspector"
         self._sync_personas_rails()
 
-    async def _apply_mode(self, mode: str) -> None:
+    async def _apply_mode(self, mode: str, *, carry_query: str | None = None) -> None:
+        """Switch the workbench to ``mode`` (its list unfiltered, or searched).
+
+        Args:
+            mode: The workbench mode.
+            carry_query: ``Also in:``'s switch (spec 1.5.4): the new kind's
+                list is searched for this, and the cursor lands on its first
+                match. A plain switch clears the search (on dev, always).
+        """
+        self._bump_import_intent()
         self._advance_persona_buddy_session()
         if mode != "characters":
             self._clear_character_tts_profile_suggestion()
+        self.workers.cancel_group(self, _ALSO_IN_GROUP)
         self._cancel_search_debounce()
         self._selected_server_character = None
         # switch_mode resets sort_key/tag_filter for a fresh list.
@@ -4749,15 +5009,19 @@ class PersonasScreen(BaseAppScreen):
         self._invalidate_character_tts_controls()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
         # switch_mode does not reset search_query; clear it explicitly and
-        # reset the Input widget so the library starts unfiltered in the new mode.
-        self.state.search_query = ""
+        # reset the Input widget so the library starts unfiltered in the new
+        # mode. A carried query stays in the box as typed.
+        self.state.search_query = carry_query or ""
+        if carry_query and mode == "characters":
+            self.state.sort_key = "relevance"  # as a first typed key sets it
         # The (search, tag) pair changed, so the character count must be
         # recomputed the next time the characters page loads.
         self._count_cache_key = None
-        try:
-            self.query_one("#personas-library-search", Input).value = ""
-        except Exception:
-            pass
+        if carry_query is None:
+            try:
+                self.query_one("#personas-library-search", Input).value = ""
+            except Exception:
+                pass
         self._edit_mode = "view"
         for chip_mode in MODE_CHIP_ORDER:
             self.query_one(f"#personas-mode-{chip_mode}", Button).set_class(
@@ -4766,6 +5030,9 @@ class PersonasScreen(BaseAppScreen):
         self._update_purpose_line()
         library = self.query_one(PersonasLibraryPane)
         library.set_mode(mode)
+        if carry_query:
+            # After set_mode, whose kind switch forgets any owed move.
+            self._window_state.owe_first(self._list_fence())
         self._sync_local_character_actions()
         is_dictionaries = mode == "dictionaries"
         is_lore = mode == "lore"
@@ -4778,6 +5045,10 @@ class PersonasScreen(BaseAppScreen):
         lore_tryit.display = is_lore
         if is_lore:
             lore_tryit.set_ready(False, "Select a lore book to preview injections.")
+        if mode in MODE_CHIP_ORDER:
+            # Spec 1.5.4 "Loading": the old kind's rows go now; the new
+            # kind's read below (or the personas worker) ends the wait.
+            await library.show_loading()
         # The character dictionaries/world-books panels are only meaningful
         # in Characters mode; they are not one of the exclusive
         # _CENTER_VIEW_IDS pages (they sit alongside the character card
@@ -4800,24 +5071,13 @@ class PersonasScreen(BaseAppScreen):
             self._show_center(None)
         elif mode == "personas":
             self._profile_lookup_recovery_state = None
-            async with self._render_lock:
-                if self._library_render_snapshot_is_current(
-                    expected_query="",
-                    expected_mode=mode,
-                ):
-                    await library.update_rows(
-                        (),
-                        total=0,
-                        noun="personas",
-                        title=frame_state.items_border_title("persona", total=None),
-                    )
             self._show_center(None)
             self._refresh_profile_rows_worker()
         elif mode == "dictionaries":
-            await self._render_dictionary_rows()
+            await self._render_dictionary_rows(self.state.search_query)
             self._show_center(None)
         elif mode == "lore":
-            await self._render_lore_rows()
+            await self._render_lore_rows(self.state.search_query)
             self._show_center(None)
         else:
             async with self._render_lock:
@@ -4825,12 +5085,7 @@ class PersonasScreen(BaseAppScreen):
                     expected_query="",
                     expected_mode=mode,
                 ):
-                    await library.update_rows(
-                        (),
-                        total=0,
-                        noun=MODE_LABELS.get(mode, mode).lower(),
-                        title="",
-                    )
+                    await library.update_rows((), total=0, title="")
             self.query_one("#personas-mode-placeholder", Static).update(
                 self._mode_placeholder_text(mode)
             )
@@ -5257,49 +5512,13 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._io_dialog_active = False
 
-    @on(ActorPackImportRequested)
-    async def _handle_actor_pack_import(
-        self, message: ActorPackImportRequested
+    async def _import_actor_pack_from_path(
+        self, selected: Path | str, controller: object, importer: object
     ) -> None:
-        """Open the dedicated review-first Actor Pack import flow."""
-
-        message.stop()
-        if self._io_dialog_active or self._actor_pack_import_operation is not None:
-            return
-        controller = getattr(self.app_instance, "actor_pack_import_controller", None)
-        importer = getattr(self.app_instance, "actor_pack_import_service", None)
-        if controller is None or importer is None:
-            self._notify("Actor Pack import is unavailable.", "error")
-            return
-        self._io_dialog_active = True
-        self.run_worker(
-            self._actor_pack_import_dialog_worker(controller, importer),
-            group="personas-io",
-        )
-
-    async def _actor_pack_import_dialog_worker(
-        self, controller: object, importer: object
-    ) -> None:
-        """Pick, inspect, review, confirm, and activate without retaining paths."""
-
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
+        """Inspect, review, confirm, and activate one picked pack without retaining paths."""
 
         review: ActorPackImportReview | None = None
         try:
-            selected = await self.app.push_screen_wait(
-                EnhancedFileOpen(
-                    title="Import Actor Pack",
-                    filters=Filters(
-                        (
-                            "Actor Packs",
-                            lambda path: path.suffix.lower() == ".tldw-actor-pack",
-                        ),
-                    ),
-                    context="actor_pack_import",
-                )
-            )
-            if not selected:
-                return
             archive_path = Path(selected).resolve()
             while True:
                 request = controller.create_request(archive_path)
@@ -5597,6 +5816,7 @@ class PersonasScreen(BaseAppScreen):
     async def _select_character(
         self, entity_id: str, entity_name: str, *, restore_preview: dict | None = None
     ) -> None:
+        self._bump_import_intent()
         self._console_changed_character_ids.discard(str(entity_id))
         self.conversations.close_conversation_preview()
         if self.size.width <= 60:
@@ -5682,6 +5902,7 @@ class PersonasScreen(BaseAppScreen):
         )
 
     async def _select_profile(self, entity_id: str, entity_name: str) -> None:
+        self._bump_import_intent()
         session_generation = self._advance_persona_buddy_session()
         source = self.persona_handler.current_mode()
         scope_service = getattr(
@@ -5749,6 +5970,7 @@ class PersonasScreen(BaseAppScreen):
         raise_on_mount_failure: bool = False,
     ) -> None:
         """Load one dictionary into the center detail; inspector shows the selection."""
+        self._bump_import_intent()
         self._advance_persona_buddy_session()
         service = self._dictionary_scope_service()
         if service is None:
@@ -5832,6 +6054,7 @@ class PersonasScreen(BaseAppScreen):
         *,
         raise_on_mount_failure: bool = False,
     ) -> None:
+        self._bump_import_intent()
         self._advance_persona_buddy_session()
         """Load one lore/world book into the center detail; inspector shows the selection."""
         manager = self._lore_manager()
@@ -7840,7 +8063,9 @@ class PersonasScreen(BaseAppScreen):
     @on(PersonaActionRequested)
     async def _handle_action_requested(self, message: PersonaActionRequested) -> None:
         message.stop()
-        if message.action == "create":
+        if message.action == "new":
+            self._open_new_chooser()
+        elif message.action == "create":
             if self.state.active_mode == "characters":
                 if not self._local_character_actions_allowed():
                     return
@@ -7852,17 +8077,10 @@ class PersonasScreen(BaseAppScreen):
             elif self.state.active_mode == "lore":
                 await self._run_guarded(self._begin_create_lore)
             # Creation in the remaining modes is wired in follow-up tasks.
-        elif message.action == "create_actor_pack":
-            await self._run_guarded(self._begin_create_actor_pack)
+            # "From a portrait" is the New chooser's (_run_new_choice); dev's
+            # separate New Actor Pack action left with its toolbar button.
         elif message.action == "import":
-            if self.state.active_mode == "characters":
-                if not self._local_character_actions_allowed():
-                    return
-                await self._run_guarded(self._open_import_dialog)
-            elif self.state.active_mode == "dictionaries":
-                await self._run_guarded(self._open_dictionary_import_dialog)
-            elif self.state.active_mode == "lore":
-                await self._run_guarded(self._open_lore_import_dialog)
+            self._open_roleplay_import()
         elif message.action == "duplicate":
             if self.state.active_mode == "characters":
                 if not self._local_character_actions_allowed():
@@ -7884,9 +8102,154 @@ class PersonasScreen(BaseAppScreen):
                 await self._run_guarded(self._begin_delete_marked)
         elif message.action == "export_marked":
             self._begin_export_marked()
+        elif message.action == "retry":
+            await self._retry_items_list()
         # The open item's Delete is the Inspector's "#personas-delete"
         # (_begin_delete_selection / _delete_entity). The rest are wired in
         # follow-up tasks.
+
+    async def _retry_items_list(self) -> None:
+        """The recovery row's Retry (spec 1.5.4): read the active kind's list again.
+
+        Dev had no Retry: its copy said "Switch modes and back to retry".
+        """
+        mode = self.state.active_mode
+        if mode == "characters":
+            self._count_cache_key = None
+            self._character_unfiltered_total = None
+            await self._reload_character_page()
+        elif mode == "personas":
+            self._refresh_profile_rows_worker()
+        elif mode == "dictionaries":
+            await self._render_dictionary_rows(self.state.search_query)
+        elif mode == "lore":
+            await self._render_lore_rows(self.state.search_query)
+
+    def _open_new_chooser(self) -> None:
+        """``+ New`` and Ctrl+N open the one New chooser (frame slice B2b, spec 1.4.6).
+
+        On dev both created a blank item of the current kind at once, and New
+        Actor Pack was a second toolbar button. Server Characters keeps dev's
+        rule: New is disabled there and Ctrl+N does nothing. The chooser has
+        its own reentrancy flag: a durable character import holds the file
+        dialog slot until it ends, and dev's Ctrl+N created during one. The
+        one Import picker's own run (its picker, the sniff, "Import as:", a
+        lore or dictionary import) refuses it instead, so the chooser never
+        stacks on "Import X as:" (new with B2b, closed in its final fix wave).
+        """
+        if (
+            (
+                self.state.active_mode == "characters"
+                and not self._local_character_actions_allowed()
+            )
+            or self._new_chooser_open
+            or self._roleplay_import_running
+        ):
+            return
+        self._new_chooser_open = True
+        self.run_worker(
+            self._new_chooser_worker(), group="personas-io", exit_on_error=False
+        )
+
+    async def _new_chooser_worker(self) -> None:
+        """Ask which create variant, then start it (the guard asks after the pick)."""
+        # Lazy: the modal is not on the Roleplay route's pre-import path.
+        from ...Widgets.Persona_Widgets.roleplay_choice_modal import (
+            ChoiceOption,
+            RoleplayChoiceModal,
+        )
+
+        choices = frame_state.new_chooser_options(
+            self.state.active_mode,
+            local_characters=self._local_character_actions_allowed(),
+            local_runtime=self.persona_handler.current_mode() == "local",
+        )
+        # The slot is held until the picked create ends, so a Ctrl+N during it
+        # is ignored (dev awaited the clean create inline, which queued it);
+        # the dirty path returns once the guard's own worker starts.
+        try:
+            picked = await self.app.push_screen_wait(
+                RoleplayChoiceModal(
+                    "New",
+                    [
+                        ChoiceOption(c.choice_id, c.label, c.hint, c.enabled, c.reason)
+                        for c in choices
+                    ],
+                    preselect=next(c.choice_id for c in choices if c.preselected),
+                )
+            )
+            choice = next((c for c in choices if c.choice_id == picked), None)
+            if choice is None or not choice.enabled:
+                return
+            # The rows were computed before the modal opened: a runtime that
+            # went server meanwhile left "Character · Blank" pickable, and the
+            # create then silently did nothing (new with B2b, closed in its
+            # final fix wave). Re-check the variant now and say why.
+            current = next(
+                c
+                for c in frame_state.new_chooser_options(
+                    self.state.active_mode,
+                    local_characters=self._local_character_actions_allowed(),
+                    local_runtime=self.persona_handler.current_mode() == "local",
+                )
+                if c.choice_id == choice.choice_id
+            )
+            if not current.enabled:
+                self._notify(current.reason or "", "warning")
+                return
+            try:
+                await self._run_new_choice(choice)
+            except Exception as exc:
+                # The worker runs with exit_on_error=False, so a create that
+                # raised showed nothing (new with B2b: on dev the create ran
+                # inline and Textual surfaced the error). The category only:
+                # the message may carry a user's text.
+                logger.warning(
+                    "Starting a new {} failed (category={}).",
+                    choice.choice_id,
+                    type(exc).__name__,
+                )
+                noun = frame_state.ITEM_KINDS[frame_state.KIND_FOR_MODE[choice.mode]][0]
+                self._notify(f"Could not start a new {noun}.", "error")
+        finally:
+            self._new_chooser_open = False
+
+    async def _run_new_choice(self, choice: frame_state.NewChoice) -> None:
+        """Start ``choice`` in its own kind, through one unsaved guard.
+
+        A variant of another kind switches kind first, inside the same guarded
+        continuation, so a dirty draft is asked about once for both.
+        """
+        begin = {
+            "character:blank": self._begin_create_character,
+            "character:concept": self._begin_create_character_from_concept,
+            "character:portrait": self._begin_create_actor_pack,
+            "persona:blank": self._begin_create_profile,
+            "persona:portrait": self._begin_create_actor_pack,
+            "lore": self._begin_create_lore,
+            "dictionary": self._begin_create_dictionary,
+        }[choice.choice_id]
+
+        async def continuation() -> None:
+            if self.state.active_mode != choice.mode:
+                await self._apply_mode(choice.mode)
+            await begin()
+
+        await self._run_guarded(continuation)
+
+    async def _begin_create_character_from_concept(self) -> None:
+        """New › Character · From a concept: a blank draft, concept row focused.
+
+        The same row the editor's "Generate whole character…" opens; focused
+        after ``_begin_create_character``'s own name focus (both run after
+        the next refresh, in order).
+        """
+        await self._begin_create_character()
+        if self._edit_mode != "create":
+            return
+        editor = await self._ensure_center_view("character-editor")
+        if isinstance(editor, PersonasCharacterEditorWidget):
+            self.call_after_refresh(editor.set_concept_row_visible, True)
 
     async def _begin_create_character(self, *, actor_pack: bool = False) -> None:
         if not self._local_character_actions_allowed():
@@ -14166,35 +14529,63 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._io_dialog_active = False
 
-    async def _open_import_dialog(self) -> None:
-        """Continuation for the guarded import action: launch the dialog worker."""
-        if not self._local_character_actions_allowed():
+    def _open_roleplay_import(self) -> None:
+        """Import in any kind opens the one Import picker (frame slice B2b, spec 1.4.6).
+
+        Unguarded (owner decision D1, 2026-10-26): a dirty draft stays open
+        and the import lands beside it. On dev Import asked the unsaved guard
+        before its picker, each kind opened a picker of its own, Personas had
+        none, and a press during a lore or dictionary import was ignored
+        without a word; B2b changes all four.
+        """
+        if self._import_in_progress():
+            self._notify("An import is already in progress.", "information")
             return
-        if self._active_character_import_worker() is not None:
-            self._notify("A character import is already in progress.", "information")
-            return
-        if self._io_dialog_active:
-            logger.debug(
-                "Import/export dialog already active; ignoring import request."
-            )
+        if self._io_dialog_active or self._new_chooser_open:
+            # The New chooser holds its own slot: an import request that
+            # arrives while it is open would stack the picker on it (new
+            # with B2b, closed in its final fix wave).
+            logger.debug("A dialog is already open; ignoring the import request.")
             return
         self._io_dialog_active = True
-        self.run_worker(self._import_dialog_worker(), group="personas-io")
+        self._roleplay_import_running = True
+        self.run_worker(self._roleplay_import_worker(), group="personas-io")
 
-    async def _import_dialog_worker(self) -> None:
-        # Same dialog family as the legacy CCP import route
-        # (ccp_character_handler.handle_import).
+    def _import_in_progress(self) -> bool:
+        """Whether an import holds the one picker: its worker, a durable
+        character import, or an Actor Pack inspection or activation."""
+        return bool(
+            self._roleplay_import_running
+            or self._active_character_import_worker() is not None
+            or self._actor_pack_import_operation is not None
+        )
+
+    async def _roleplay_import_worker(self) -> None:
+        """Pick one file in the one Import picker, then route it to its kind."""
         from ...Widgets.enhanced_file_picker import EnhancedFileOpen
         from ..Persona_Modules.buddy_conversion import capture_buddy_import_guard
 
         durable_import_started = False
         try:
-            if not self._local_character_actions_allowed():
-                return
-            buddy_import_guard = capture_buddy_import_guard(self)
+            buddy_import_guard: Callable[[], bool] | None
+            try:
+                # Pinned before the picker opens, as on dev's Characters picker.
+                buddy_import_guard = capture_buddy_import_guard(self)
+            except (ValueError, OSError, RuntimeError) as exc:
+                # The profile folder cannot be read. On dev this escaped the
+                # Characters picker's worker and closed the app; the one picker
+                # serves every kind, so only a Buddy pick is refused (B2b).
+                logger.warning(
+                    "Buddy import destination unavailable (category={}).",
+                    type(exc).__name__,
+                )
+                buddy_import_guard = None
+            intent = self._import_intent_now()
             picker = EnhancedFileOpen(
-                title="Import Character Card or Buddy",
-                filters=_character_import_filters(),
+                title=ROLEPLAY_IMPORT_TITLE,
+                filters=_roleplay_import_filters(),
+                # One remembered folder for every kind (OQ3 iv): Characters'
+                # (dev kept four; lore, dictionary and Actor Pack's go unused).
                 context="character_import",
             )
             try:
@@ -14204,35 +14595,258 @@ class PersonasScreen(BaseAppScreen):
                     "Could not show the import file dialog."
                 )
                 return
-            if file_path:
-                if not self._local_character_actions_allowed():
-                    return
-                if self._active_character_import_worker() is not None:
-                    self._notify(
-                        "A character import is already in progress.", "information"
-                    )
-                    return
-                if Path(file_path).suffix.lower() == ".tldw-persona-vpack":
-                    from ..Persona_Modules.buddy_conversion import (
-                        review_buddy_character,
-                    )
-
-                    if not buddy_import_guard():
-                        self._notify(
-                            "Destination changed. Start a fresh Buddy import.",
-                            "warning",
-                        )
-                        return
-                    await review_buddy_character(
-                        self, archive=True, archive_path=Path(file_path)
-                    )
-                    return
-                durable_import_started = (
-                    self._start_character_import(str(file_path)) is not None
+            if not file_path:
+                return
+            try:
+                durable_import_started = await self._route_roleplay_import(
+                    Path(file_path), buddy_import_guard, intent
                 )
+            except Exception as exc:
+                logger.opt(exception=True).error(
+                    "Unexpected error in the Roleplay import worker."
+                )
+                self._notify(f"Import failed: {exc}", "error")
         finally:
+            self._roleplay_import_running = False
             if not durable_import_started:
                 self._io_dialog_active = False
+
+    async def _route_roleplay_import(
+        self,
+        path: Path,
+        buddy_import_guard: Callable[[], bool] | None,
+        intent: tuple[int, int],
+    ) -> bool:
+        """Sniff ``path`` and hand it to its kind's importer (spec 1.4.6).
+
+        Args:
+            path: The picked file.
+            buddy_import_guard: The Buddy destination pinned when the picker
+                opened, or None when it could not be captured.
+            intent: ``_import_intent_now()`` when the picker opened.
+
+        Returns:
+            True when a durable character import took over the dialog slot
+            (it releases the slot when it ends).
+        """
+        # Lazy: not on the Roleplay route's pre-import path (spec 5.10).
+        from ..Persona_Modules.roleplay_import_sniff import sniff_import_file
+
+        name = path.name
+        try:
+            sniffed = await asyncio.to_thread(
+                sniff_import_file, path, max_bytes=PERSONAS_CHARACTER_IMPORT_MAX_BYTES
+            )
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "Import file refused before the sniff (category={}).",
+                type(exc).__name__,
+            )
+            self._notify(f"{name} could not be imported: {exc}", "error")
+            return False
+        if sniffed.verdict == "too_large":
+            # Dev's character path said only "verify the file and retry".
+            self._notify(
+                f"{name} is larger than "
+                f"{PERSONAS_CHARACTER_IMPORT_MAX_BYTES // (1024 * 1024)} MB; "
+                "nothing was imported.",
+                "error",
+            )
+            return False
+        if sniffed.verdict == "not_roleplay":
+            self._notify(
+                f"{name} is not a Roleplay file; nothing was imported.", "error"
+            )
+            return False
+        if sniffed.verdict == "ask":
+            kind = await self._ask_import_kind(name, sniffed.kinds, sniffed.preselect)
+            if kind is None:
+                return False
+        else:
+            kind = sniffed.kinds[0]
+        if (
+            kind in ("character", "buddy")
+            and not self._local_character_actions_allowed()
+        ):
+            # Both land as a local character; the list shows the server's.
+            self._notify(
+                f"{frame_state.SERVER_CHARACTERS_READ_ONLY} {name} was not imported.",
+                "warning",
+            )
+            return False
+        if kind == "character":
+            return self._start_character_import(str(path), intent=intent) is not None
+        if kind == "lore":
+            await self._import_world_book_from_path(str(path), intent=intent)
+        elif kind == "dictionary":
+            await self._import_dictionary_from_path(str(path), intent=intent)
+        elif kind == "actor_pack":
+            controller = getattr(
+                self.app_instance, "actor_pack_import_controller", None
+            )
+            importer = getattr(self.app_instance, "actor_pack_import_service", None)
+            if controller is None or importer is None:
+                self._notify("Actor Pack import is unavailable.", "error")
+                return False
+            await self._import_actor_pack_from_path(path, controller, importer)
+        elif kind == "buddy":
+            from ..Persona_Modules.buddy_conversion import review_buddy_character
+
+            if buddy_import_guard is None:
+                self._notify("Buddy source or destination is unavailable.", "error")
+                return False
+            if not buddy_import_guard():
+                self._notify(
+                    "Destination changed. Start a fresh Buddy import.", "warning"
+                )
+                return False
+            await review_buddy_character(self, archive=True, archive_path=path)
+        return False
+
+    async def _ask_import_kind(
+        self, name: str, kinds: tuple[str, ...], preferred: str | None = None
+    ) -> str | None:
+        """Ask "Import as:" for a file that fits more than one kind (spec 1.4.6).
+
+        Args:
+            name: The file name the title quotes.
+            kinds: The candidate kinds, in row order.
+            preferred: The row to open on when it is enabled (the sniff's
+                ``preselect``, owner decision D8); else the first enabled row.
+
+        Returns:
+            The picked kind, or None (Escape).
+        """
+        from ...Widgets.Persona_Widgets.roleplay_choice_modal import (
+            ChoiceOption,
+            RoleplayChoiceModal,
+        )
+
+        local = self._local_character_actions_allowed()
+        options = [
+            ChoiceOption(
+                kind,
+                _IMPORT_AS_LABELS[kind],
+                None,
+                enabled=kind != "character" or local,
+                reason=(
+                    None
+                    if kind != "character" or local
+                    else frame_state.SERVER_CHARACTERS_READ_ONLY
+                ),
+            )
+            for kind in kinds
+        ]
+        enabled = [option.id for option in options if option.enabled]
+        if not enabled:
+            return None
+        preselect = preferred if preferred in enabled else enabled[0]
+        picked = await self.app.push_screen_wait(
+            RoleplayChoiceModal(f"Import {name} as:", options, preselect=preselect)
+        )
+        return picked if picked in _IMPORT_AS_LABELS else None
+
+    def _bump_import_intent(self) -> None:
+        """A newer user intent: an import in flight no longer auto-selects."""
+        self._import_intent += 1
+
+    def _import_intent_now(self) -> tuple[int, int]:
+        """The user's intent so far: screen transitions and list cursor moves."""
+        return self._import_intent, self._window_state.moves
+
+    def _import_presentation_is_current(self, kind: str) -> bool:
+        """Whether the screen still shows, so a landing may select (any kind)."""
+        return bool(
+            not self._closed
+            and self._parent is not None
+            and self.is_attached
+            and self.app.screen is self
+            and (kind != "character" or self._local_character_actions_allowed())
+        )
+
+    async def _land_import(
+        self, kind: str, item_id: str, name: str, intent: tuple[int, int]
+    ) -> bool:
+        """Select an import where it landed, when nothing is lost (spec 1.4.6).
+
+        Auto-select runs only when every Roleplay draft is clean (R24's
+        aggregate, broader than ``_run_guarded``'s test: it also counts
+        in-flight saves and staged attachments), no newer intent arrived since
+        the picker opened, and the screen still shows; a clean import of
+        another kind switches to that kind first. It decides again after its
+        own awaits (that switch, or the list refresh) and before it selects.
+        Otherwise the caller's literal toast names where it went. On dev a
+        character import auto-selected whenever Characters showed (a draft
+        started during the import was replaced from view, survey PROBE2),
+        lore and dictionary imports whenever their kind showed, and a
+        character import that landed after a kind switch said nothing
+        (PROBE3).
+
+        Args:
+            kind: ``character``, ``lore`` or ``dictionary``.
+            item_id: The imported item's id.
+            name: Its name.
+            intent: ``_import_intent_now()`` when the picker opened.
+
+        Returns:
+            True when the item was selected.
+        """
+
+        def landing(expected: tuple[int, int]) -> str:
+            return frame_state.import_landing(
+                clean=self._aggregate_roleplay_draft_snapshot().is_clean,
+                intent_current=self._import_intent_now() == expected,
+                presentation_current=self._import_presentation_is_current(kind),
+            )
+
+        if landing(intent) != "select":
+            return False
+        mode = frame_state.MODE_FOR_KIND[kind]
+        selected = False
+
+        async def select() -> None:
+            nonlocal selected
+            # _run_guarded bumped the intent once for this transition; only
+            # a newer one may stop the select below.
+            expected = self._import_intent_now()
+            if self.state.active_mode != mode:
+                # Clean, so no draft is asked about; the new kind's list
+                # starts unfiltered.
+                await self._apply_mode(mode)
+                # _apply_mode bumps it once more, at its head.
+                expected = (expected[0] + 1, expected[1])
+            else:
+                # Clear an active search so the imported row is in the list.
+                self._cancel_search_debounce()
+                self.state.search_query = ""
+                try:
+                    self.query_one("#personas-library-search", Input).value = ""
+                except Exception:
+                    pass
+                if kind == "character":
+                    if self.state.sort_key == "relevance":
+                        self.state.sort_key = "name_asc"
+                    await self.character_handler.refresh_character_list()
+                elif kind == "lore":
+                    await self._render_lore_rows(query="")
+                else:
+                    await self._render_dictionary_rows(query="")
+            # A draft started, a row picked or the screen left while the
+            # switch or the refresh awaited wins: the caller toasts instead.
+            # On dev the character landing re-checked only that Characters
+            # still showed (a draft started during its refresh was replaced).
+            if landing(expected) != "select":
+                return
+            if kind == "character":
+                await self._select_character(item_id, name)
+            elif kind == "lore":
+                await self._select_lore_entry(item_id, name)
+            else:
+                await self._select_dictionary(item_id, name)
+            selected = True
+
+        await self._run_guarded(select)
+        return selected
 
     def _active_character_import_worker(self) -> Worker[None] | None:
         """Return the active app-owned character import, if any."""
@@ -14245,7 +14859,9 @@ class PersonasScreen(BaseAppScreen):
                 return worker
         return None
 
-    def _start_character_import(self, path: str) -> Worker[None] | None:
+    def _start_character_import(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> Worker[None] | None:
         """Launch one durable character import owned by the application.
 
         The worker carries the path in its coroutine; no domain payload or
@@ -14259,22 +14875,33 @@ class PersonasScreen(BaseAppScreen):
         if active_worker is not None:
             return active_worker
         return self.app_instance.run_worker(
-            self._run_durable_character_import(path),
+            self._run_durable_character_import(path, intent),
             group=_PERSONAS_CHARACTER_IMPORT_WORKER_GROUP,
         )
 
-    async def _run_durable_character_import(self, path: str) -> None:
+    async def _run_durable_character_import(
+        self, path: str, intent: tuple[int, int] | None = None
+    ) -> None:
         """Complete a character import and release the initiating dialog slot."""
         try:
             if not self._local_character_actions_allowed():
                 return
-            await self._import_character_from_path(path)
+            await self._import_character_from_path(path, intent=intent)
         finally:
             self._io_dialog_active = False
 
-    async def _import_character_from_path(self, path: str) -> None:
-        """Preflight one immutable card source, persist it, then apply TTS."""
+    async def _import_character_from_path(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> None:
+        """Preflight one immutable card source, persist it, then apply TTS.
 
+        Args:
+            path: The card file.
+            intent: ``_import_intent_now()`` when its picker opened; None
+                means now (a caller with no picker).
+        """
+        if intent is None:
+            intent = self._import_intent_now()
         if not self._local_character_actions_allowed():
             return
         file_type = Path(path).suffix.lower()
@@ -14381,24 +15008,6 @@ class PersonasScreen(BaseAppScreen):
                 voice_result = "cancelled"
 
         imported_id = str(outcome.character_id)
-        if not self._character_import_presentation_is_current():
-            return
-        # Clear any active search (state + Input, as _apply_mode does) so the
-        # imported character is in the refreshed list; selecting it loads
-        # through to its row wherever it sorts (spec 1.5.6 "Load-through").
-        self._cancel_search_debounce()
-        self.state.search_query = ""
-        if self.state.sort_key == "relevance":
-            self.state.sort_key = "name_asc"
-        try:
-            self.query_one("#personas-library-search", Input).value = ""
-        except Exception:
-            pass
-        await self.character_handler.refresh_character_list()
-        if not self._character_import_presentation_is_current():
-            # The user left Characters mode while the import ran; the list is
-            # refreshed but selection/center pane belong to the new mode.
-            return
         # Resolve the display name by id (the page cache may not hold this row).
         loaded = None
         try:
@@ -14410,13 +15019,11 @@ class PersonasScreen(BaseAppScreen):
                 "Could not resolve imported character name by id (category={}).",
                 type(error).__name__,
             )
-        if not self._character_import_presentation_is_current():
-            return
         name = str((loaded or {}).get("name") or "Imported character")
-        await self._select_character(imported_id, name)
-        # The selection changed outside _run_guarded; refresh the footer hints
-        # (attach is now available) and the header state.
-        self._sync_title_and_console_actions()
+        # Selected (and its search cleared, so it is in the list; it loads
+        # through to its row wherever it sorts, spec 1.5.6) only when nothing
+        # is lost; otherwise the toast says where it went (frame slice B2b).
+        selected = await self._land_import("character", imported_id, name, intent)
         # task-445: import swaps in the card view and inspector at the same
         # moment this notification appears, so the default 5s toast reads as
         # a flash against a screen that just changed everywhere else. Linger
@@ -14428,6 +15035,7 @@ class PersonasScreen(BaseAppScreen):
             imported_id,
             voice_result=voice_result,
             attachment_warning=inspection.warning_code,
+            landed=None if selected else name,
         )
 
     def _character_import_presentation_is_current(self) -> bool:
@@ -14511,15 +15119,25 @@ class PersonasScreen(BaseAppScreen):
         *,
         voice_result: str,
         attachment_warning: str | None,
+        landed: str | None = None,
     ) -> None:
+        """Say how a character import went.
+
+        Args:
+            outcome: The importer's outcome.
+            imported_id: The character's id.
+            voice_result: How its portable voice profile went.
+            attachment_warning: Set when the card's voice attachment was skipped.
+            landed: The character's name when it was not selected (frame slice
+                B2b): the toast then names where it went instead.
+        """
         if outcome.created:
-            lore_note = await self._imported_lorebook_note(imported_id)
-            message = f"Character imported.{lore_note}"
+            # " Lorebook 'X' attached (N entries)." or "".
+            note = await self._imported_lorebook_note(imported_id)
+            message = f"Character imported.{note}"
         else:
-            message = (
-                "Character already existed; selected it. "
-                "Re-importing does not update an existing character."
-            )
+            note = " Re-importing does not update an existing character."
+            message = f"Character already existed; selected it.{note}"
         # Reachable only when the observed profile is genuinely "unavailable"
         # (task-2450 amendment): an "unverified" legacy-provider profile now
         # auto-applies instead of landing here, so this copy never needs to
@@ -14552,6 +15170,18 @@ class PersonasScreen(BaseAppScreen):
             if attachment_warning is not None
             else ""
         )
+        if landed is not None:
+            # Not selected: say where it went (R33), then the same notes.
+            tail = f"{note}{voice_copy}{warning_copy}"
+            head = frame_state.import_landed_toast(
+                landed, "character", existed=not outcome.created
+            )
+            self._notify(
+                f"{head}.{tail}" if tail else head,
+                "information" if voice_result != "failed" else "warning",
+                timeout=6.0,
+            )
+            return
         self._notify(
             f"{message}{voice_copy}{warning_copy}",
             "information" if voice_result != "failed" else "warning",
@@ -14579,52 +15209,18 @@ class PersonasScreen(BaseAppScreen):
             return ""
         return format_imported_lorebook_note(ext.get("character_world_books"))
 
-    async def _open_lore_import_dialog(self) -> None:
-        """Continuation for the guarded lore-import action."""
-        if self._io_dialog_active:
-            logger.debug(
-                "Import/export dialog already active; ignoring import request."
-            )
-            return
-        self._io_dialog_active = True
-        self.run_worker(self._lore_import_dialog_worker(), group="personas-io")
-
-    async def _lore_import_dialog_worker(self) -> None:
-        """Show the import file picker and hand the chosen path off to import."""
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
-
-        try:
-            picker = EnhancedFileOpen(
-                title="Import World Book",
-                filters=Filters(
-                    ("World books (JSON)", lambda p: p.suffix.lower() == ".json"),
-                    ("All Files", lambda p: True),
-                ),
-                context="lore_import",
-            )
-            try:
-                file_path = await self.app.push_screen_wait(picker)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not show the world-book import dialog."
-                )
-                return
-            if file_path:
-                await self._import_world_book_from_path(str(file_path))
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Unexpected error in the world-book import worker."
-            )
-            self._notify(f"Import failed: {exc}", "error")
-        finally:
-            self._io_dialog_active = False
-
-    async def _import_world_book_from_path(self, path: str) -> None:
+    async def _import_world_book_from_path(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> None:
         """Validate + normalize a world-book file and import it; rename on clash.
 
         Args:
             path: Filesystem path to the ``.json`` file chosen via the picker.
+            intent: ``_import_intent_now()`` when its picker opened; None
+                means now (a caller with no picker).
         """
+        if intent is None:
+            intent = self._import_intent_now()
         manager = self._lore_manager()
         if manager is None:
             self._notify(
@@ -14681,69 +15277,32 @@ class PersonasScreen(BaseAppScreen):
             logger.opt(exception=True).warning(f"World-book import failed for {path}.")
             self._notify(f"Import failed: {exc}", "error")
             return
-        if self.state.active_mode != "lore":
-            self._notify(f"Imported '{name}' — open Lore to see it.", "information")
-            return
-        await self._render_lore_rows(query=self.state.search_query)
-        await self._select_lore_entry(str(new_id), name)
-        suffix = " Renamed to avoid a name clash." if name != base else ""
-        self._notify(f"Imported '{name}'.{suffix}", "information")
+        # Selected only when nothing is lost (frame slice B2b, spec 1.4.6); on
+        # dev it was selected whenever Lore showed, else "open Lore to see it".
+        # Where it went is named only when it was NOT selected (R33), as the
+        # character path does; the rename note follows either copy.
+        selected = await self._land_import("lore", str(new_id), name, intent)
+        note = "Renamed to avoid a name clash." if name != base else ""
+        if selected:
+            toast = f"{frame_state.imported_toast(name)} {note}".rstrip()
+        else:
+            landed = frame_state.import_landed_toast(name, "lore")
+            toast = f"{landed}. {note}" if note else landed
+        self._notify(toast, "information")
 
-    async def _open_dictionary_import_dialog(self) -> None:
-        """Continuation for the guarded dictionaries-import action."""
-        if self._io_dialog_active:
-            logger.debug(
-                "Import/export dialog already active; ignoring import request."
-            )
-            return
-        self._io_dialog_active = True
-        self.run_worker(self._dictionary_import_dialog_worker(), group="personas-io")
-
-    async def _dictionary_import_dialog_worker(self) -> None:
-        """Show the import file picker and hand the chosen path off to import."""
-        from ...Widgets.enhanced_file_picker import EnhancedFileOpen, Filters
-
-        try:
-            picker = EnhancedFileOpen(
-                title="Import Dictionary",
-                filters=Filters(
-                    (
-                        "Dictionaries",
-                        lambda p: p.suffix.lower() in (".json", ".md", ".markdown"),
-                    ),
-                    ("JSON Files", lambda p: p.suffix.lower() == ".json"),
-                    (
-                        "Markdown Files",
-                        lambda p: p.suffix.lower() in (".md", ".markdown"),
-                    ),
-                    ("All Files", lambda p: True),
-                ),
-                context="dictionary_import",
-            )
-            try:
-                file_path = await self.app.push_screen_wait(picker)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Could not show the dictionary import dialog."
-                )
-                return
-            if file_path:
-                await self._import_dictionary_from_path(str(file_path))
-        except Exception as exc:
-            logger.opt(exception=True).error(
-                "Unexpected error in the dictionary import worker."
-            )
-            self._notify(f"Import failed: {exc}", "error")
-        finally:
-            self._io_dialog_active = False
-
-    async def _import_dictionary_from_path(self, path: str) -> None:
+    async def _import_dictionary_from_path(
+        self, path: str, *, intent: tuple[int, int] | None = None
+    ) -> None:
         """Import a dictionary file; on a name conflict, auto-rename and retry.
 
         Args:
             path: Filesystem path to the ``.json`` or ``.md``/``.markdown``
                 file to import, as chosen via the file picker.
+            intent: ``_import_intent_now()`` when its picker opened; None
+                means now (a caller with no picker).
         """
+        if intent is None:
+            intent = self._import_intent_now()
         service = self._dictionary_scope_service()
         if service is None:
             self._notify("Dictionaries service is not configured.", "error")
@@ -14838,16 +15397,19 @@ class PersonasScreen(BaseAppScreen):
                 "Import succeeded, but the dictionary could not be reloaded.", "warning"
             )
             return
-        if self.state.active_mode != "dictionaries":
-            # The user navigated away while the import ran; don't yank them back.
-            self._notify(
-                f"Imported '{record.get('name') or ''}' — open Dictionaries to see it.",
-                "information",
-            )
-            return
-        await self._render_dictionary_rows(query=self.state.search_query)
-        await self._select_dictionary(
-            str(record.get("id")), str(record.get("name") or "")
+        # Selected only when nothing is lost (frame slice B2b, spec 1.4.6); on
+        # dev it was selected whenever Dictionaries showed, with no toast.
+        # Where it went is named only when it was NOT selected (R33), as the
+        # character path does; the rename note above stays its own toast.
+        name = str(record.get("name") or "")
+        selected = await self._land_import(
+            "dictionary", str(record.get("id")), name, intent
+        )
+        self._notify(
+            frame_state.imported_toast(name)
+            if selected
+            else frame_state.import_landed_toast(name, "dictionary"),
+            "information",
         )
 
     @on(Button.Pressed, "#personas-export-json")
@@ -15209,7 +15771,17 @@ class PersonasScreen(BaseAppScreen):
         )
         validated.write_text(content, encoding="utf-8")
 
-    # ===== Delete =====
+    # ===== Duplicate and Delete =====
+
+    @on(Button.Pressed, "#personas-duplicate")
+    def _handle_duplicate_pressed(self, event: Button.Pressed) -> None:
+        """Copy the open item (frame slice B2b, spec 5.3, interim until B5b-2).
+
+        The Inspector's Duplicate replaces dev's library-toolbar button and
+        takes the same route: the ``"duplicate"`` action, guarded per kind.
+        """
+        event.stop()
+        self.post_message(PersonaActionRequested(action="duplicate"))
 
     @on(Button.Pressed, "#personas-delete")
     async def _handle_delete_pressed(self, event: Button.Pressed) -> None:
@@ -16347,9 +16919,29 @@ class PersonasScreen(BaseAppScreen):
         Returns:
             Guidance copy for the current library state.
         """
+        if (self.state.search_query or self.state.tag_filter) and not (
+            self._character_total
+        ):
+            # A search that shows nothing (spec 1.5.4, TASK-33788 AC#4): the
+            # kind's line without "pick one on the left", unless the kind
+            # holds nothing at all. Dev read the filtered total here.
+            if self._character_unfiltered_total == 0:
+                return _CHARACTERS_EMPTY_GUIDANCE
+            return frame_state.mode_descriptor("characters")
         if self._character_total > 0:
             return _CHARACTERS_EMPTY_PICKER_GUIDANCE
         return _CHARACTERS_EMPTY_GUIDANCE
+
+    def _refresh_characters_empty_guidance(self) -> None:
+        """Re-word the no-selection centre once the character list changed."""
+        if not self._should_show_characters_empty_guidance():
+            return
+        try:
+            empty = self.query_one("#personas-characters-empty", Static)
+        except QueryError:
+            return
+        if empty.display:
+            empty.update(self._characters_empty_guidance_text())
 
     def _show_center(self, visible_id: str | None) -> None:
         """Show one center-area view (or none); tolerate missing nodes."""
@@ -16503,6 +17095,9 @@ class PersonasScreen(BaseAppScreen):
             or self._persona_visual_has_unsaved_authoring()
         ):
             await self._drain_actor_pack_creation()
+            # Every create, load, kind switch and delete runs here: a newer
+            # intent than an import in flight (frame slice B2b).
+            self._bump_import_intent()
             await continuation()
             # Guarded continuations are exactly the transitions that change
             # edit mode / selection, so the footer hints refresh here.
@@ -16524,6 +17119,7 @@ class PersonasScreen(BaseAppScreen):
             await self._drain_persona_shared_visual_identity_authoring()
             await self._drain_persona_visual_authoring()
             await self._drain_actor_pack_creation()
+            self._bump_import_intent()
             await continuation()
             self._sync_title_and_console_actions()
         finally:
@@ -16581,8 +17177,8 @@ class PersonasScreen(BaseAppScreen):
     # ===== Key bindings =====
 
     def action_personas_new(self) -> None:
-        """Ctrl+N: same code path as the library New button."""
-        self.post_message(PersonaActionRequested(action="create"))
+        """Ctrl+N: same code path as the library New button (the New chooser)."""
+        self.post_message(PersonaActionRequested(action="new"))
 
     def action_personas_search(self) -> None:
         """Ctrl+F: focus the library search input."""
@@ -16630,7 +17226,8 @@ class PersonasScreen(BaseAppScreen):
         Editor open -> the SAME cancel path as the Cancel button (the posted
         cancel message routes through the unsaved guard; never bypassed).
         Transcript open -> back to the card, focus the conversations list.
-        Search focused -> move focus to the library list.
+        Search focused -> clear the search while nothing matches (D9), else
+        move focus to the library list.
         Items list or its marks bar focused -> clear this kind's marks (spec
         1.5.5, Q-2); from any other focus Escape leaves the marks alone.
         """
@@ -16659,21 +17256,70 @@ class PersonasScreen(BaseAppScreen):
             return
         focused = self.app.focused
         if focused is not None and focused.id == "personas-library-search":
+            if (self.state.search_query or self.state.tag_filter) and self.query_one(
+                PersonasLibraryPane
+            ).no_match_showing():
+                # Owner decision D9 (2026-10-29): while nothing matches, rung 8
+                # runs before the focus move, as the hint "esc clears the
+                # search" says. Otherwise focus moves to the list, as on dev.
+                # The state check: the message stays up until the cleared
+                # read lands, and a second Escape then ran the rung again
+                # (new with B2b's rung, closed in its final fix wave).
+                self._clear_search_and_tag()
+                return
             self._focus_library_list(force=True)
             return
         # Frame slice B2a: the marks bar's "Clear esc" (spec 1.5.5). It sits
         # below every context above, where B3's Escape ladder puts it, and
-        # acts only with focus on the list or in its marks bar.
+        # acts only with focus on the list, in its marks bar or its no-match
+        # block, or on the recovery row's Retry (B2b: a failed search's way
+        # out is the same "esc clears the search"; dev had no Retry).
         try:
             library = self.query_one(PersonasLibraryPane)
         except QueryError:
             return
         if focused is None or not (
             focused is library.item_list
-            or any(node.id == "personas-library-marks" for node in focused.ancestors)
+            or focused.id == "personas-library-retry"
+            or any(
+                node.id in ("personas-library-marks", "personas-library-nomatch")
+                for node in focused.ancestors
+            )
         ):
             return
+        if self.state.search_query or self.state.tag_filter:
+            # Spec 4.5 rung 8 (owner decision D4, ahead of frame slice B3):
+            # the search and its tag go together, before the marks; the
+            # selection and the marks stay. Dev cleared only the marks here.
+            self._clear_search_and_tag()
+            return
         library.clear_marks()
+
+    def _clear_search_and_tag(self) -> None:
+        """Escape's rung 8: the search box and the tag cleared, the list read again.
+
+        The read starts at once in its worker (``_start_debounced_search_render``
+        is the step the 0.2 s debounce timer would reach; no timer is armed).
+        """
+        # The user's own clear is a newer intent than an import in flight,
+        # like a typed search (B2b Task 5); the prevented Input.Changed below
+        # would otherwise skip _handle_search_changed's bump.
+        self._bump_import_intent()
+        self._stop_also_in()
+        self._cancel_search_debounce()
+        self.state.search_query = ""
+        self.state.tag_filter = None
+        if self.state.sort_key == "relevance":
+            self.state.sort_key = "name_asc"
+        self._count_cache_key = None
+        try:
+            search = self.query_one("#personas-library-search", Input)
+        except QueryError:
+            return
+        # No Input.Changed: its handler would arm a second, debounced read.
+        with search.prevent(Input.Changed):
+            search.value = ""
+        self._start_debounced_search_render(query="", mode=self.state.active_mode)
 
     async def action_personas_mode(self, mode: str) -> None:
         """Single-letter mode keys (c/p/d/l): same guarded path as the mode chips."""

@@ -73,6 +73,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "LibraryNoteFolderNameDialog": "inventory #84: tiny name dialog",
     "ConsoleWorkspaceRenameModal": "inventory #85: tiny rename dialog",
     "TagFilterPicker": "inventory #86: tiny tag list",
+    "RoleplayChoiceModal": "Roleplay B2b (TASK-33910.4): a 7-row choice list, 50 cells wide",
     # -- inventory section B (special surfaces) + rollout exclusions --------
     "ConsoleModelPopover": "Switch model: fixed 140-column width token (TASK-33004.4)",
     "ConsoleSettingsModal": "Chat settings: fixed 176x22 width/height tokens (TASK-33006.1)",

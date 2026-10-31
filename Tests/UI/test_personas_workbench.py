@@ -33,6 +33,7 @@ from Tests.UI.roleplay_frame_harness import (
     item_at,
     list_state,
     select_roleplay_item,
+    start_new,
     visible_item_ids,
 )
 from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
@@ -317,19 +318,25 @@ def _shared_pane_publication(screen) -> dict[str, object]:
         "mode": screen.state.active_mode,
         "rows": rendered_rows,
         "count": str(screen.query_one("#personas-library-pane").border_title),
-        "sort": str(
-            screen.query_one(
-                "#personas-library-sort",
-                Button,
-            ).label
-        ),
-        "tag": str(
-            screen.query_one(
-                "#personas-library-tag",
-                Button,
-            ).label
-        ),
+        # Frame slice B2b: the pane gets a sort key and a tag on/off, and the
+        # tooltips say what was published whatever the labels' fit (dev
+        # stamped "Sort: ..."/"Tag: ..." label text).
+        "sort": str(screen.query_one("#personas-library-sort", Button).tooltip),
+        "tag": str(screen.query_one("#personas-library-tag", Button).tooltip),
     }
+
+
+#: The tooltips ``_stamp_owner_labels`` publishes. The stale character renders
+#: in these tests publish ``modified_desc`` and an active tag instead.
+_OWNER_SORT = "Sort: Recent add. Click to change the order. (s)"
+_OWNER_TAG = "Filter characters by tag."
+
+
+def _stamp_owner_labels(library) -> tuple[str, str]:
+    """Publish an owner's sort and tag state that no stale render publishes."""
+    library.set_sort_label("created_desc")
+    library.set_tag_active(False)
+    return _OWNER_SORT, _OWNER_TAG
 
 
 def _observe_shared_mode_render(
@@ -344,17 +351,14 @@ def _observe_shared_mode_render(
         "_render_dictionary_rows" if mode == "dictionaries" else "_render_lore_rows"
     )
     original_render = getattr(screen, method_name)
-    owner_sort = f"Sort: {mode} owner"
-    owner_tag = f"Tag: {mode} owner"
 
     async def observed_render(*args, **kwargs):
         started.set()
         await original_render(*args, **kwargs)
-        library.set_sort_label(owner_sort)
-        library.set_tag_label(owner_tag)
+        _stamp_owner_labels(library)
 
     monkeypatch.setattr(screen, method_name, observed_render)
-    return owner_sort, owner_tag
+    return _OWNER_SORT, _OWNER_TAG
 
 
 def _right_edge(widget) -> int:
@@ -922,7 +926,7 @@ class TestCharacterSelectionAndEdit:
             )
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             assert screen._edit_mode == "create"
             editor = screen.query_one("#ccp-character-editor-view")
@@ -950,7 +954,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
             assert screen.query_one("#ccp-character-editor-view").display is True
@@ -984,7 +988,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1017,7 +1021,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1128,7 +1132,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1184,7 +1188,7 @@ class TestCharacterSelectionAndEdit:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
                 CharacterSaveRequested,
@@ -1305,7 +1309,7 @@ class TestPersonasMode:
             assert screen.query_one("#personas-service-error", Static)
             assert not visible_item_ids(screen)
 
-    async def test_personas_mode_empty_state_copy_unchanged(
+    async def test_personas_mode_empty_state_copy_offers_new_and_import(
         self, mock_app_instance, stub_characters, stub_scope_service
     ):
         stub_scope_service.list_persona_profiles.return_value = {
@@ -1318,7 +1322,12 @@ class TestPersonasMode:
             screen = await self._enter_personas_mode(pilot)
 
             empty = screen.query_one("#personas-library-empty", Static)
-            assert str(empty.renderable) == "No personas yet - use New to add one."
+            # Frame slice B2b: Import is offered in Personas too (an Actor
+            # Pack can be a persona); dev said "use New".
+            assert (
+                str(empty.renderable)
+                == "No personas yet - use New or Import to add one."
+            )
             assert not list(screen.query("#personas-service-error"))
 
     async def test_profile_selection_shows_card(
@@ -1343,7 +1352,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             assert screen._edit_mode == "create"
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
@@ -1372,7 +1381,7 @@ class TestPersonasMode:
             stub_scope_service.list_persona_profiles.side_effect = RuntimeError(
                 "scope offline"
             )
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
@@ -1497,7 +1506,7 @@ class TestPersonasMode:
         )
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             await pilot.pause()
@@ -1516,7 +1525,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(
                 PersonaProfileSaveRequested(
@@ -1547,7 +1556,7 @@ class TestPersonasMode:
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(
                 PersonaProfileSaveRequested(
@@ -1626,7 +1635,7 @@ class TestPersonasMode:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await self._enter_personas_mode(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
             screen.post_message(PersonaProfileSaveRequested({"name": "Mentor"}))
@@ -2164,7 +2173,9 @@ class TestImportExport:
 
                 return _noop()
 
-            screen._import_dialog_worker = counting_worker
+            # Frame slice B2b: the one Import picker's worker (dev opened
+            # Characters' own picker here).
+            screen._roleplay_import_worker = counting_worker
             screen._io_dialog_active = True
             screen.post_message(PersonaActionRequested(action="import"))
             await pilot.pause()
@@ -2394,14 +2405,14 @@ class TestImportExport:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            # Duplicate now applies to characters (task-443) - the library
-            # rail button must be visible in the default characters mode.
-            assert screen.query_one("#personas-library-duplicate", Button).display
             await select_roleplay_item(
                 pilot, pilot.app.screen, "character:1", via="click"
             )
             await pilot.pause()
-            await pilot.click("#personas-library-duplicate")
+            # Duplicate applies to characters (task-443); frame slice B2b
+            # (spec 5.3) moved it from the library toolbar to the Inspector.
+            assert screen.query_one("#personas-duplicate", Button).display
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -2439,7 +2450,7 @@ class TestImportExport:
                 pilot, pilot.app.screen, "character:1", via="click"
             )
             await pilot.pause()
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -2459,7 +2470,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             await screen._stage_character_avatar_from_path(str(avatar))
@@ -2488,7 +2499,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             await screen._stage_character_avatar_from_path(str(bad))
@@ -2513,7 +2524,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             await screen._stage_character_avatar_from_path(str(avatar))
@@ -2535,7 +2546,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             async def fake_to_thread(function: Any, path: str) -> bytes:
@@ -2582,7 +2593,7 @@ class TestImportExport:
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         if mode == "create":
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
         else:
             await select_roleplay_item(
@@ -2652,7 +2663,7 @@ class TestImportExport:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
 
             def worker():
@@ -3636,30 +3647,10 @@ class TestImportExport:
                 for message, severity in notifications
             )
 
-    async def test_import_requires_characters_mode(
-        self, mock_app_instance, stub_characters, stub_scope_service, monkeypatch
-    ):
-        import_card = Mock()
-        monkeypatch.setattr(
-            character_handler_module,
-            "import_character_card_with_outcome",
-            import_card,
-        )
-        app = PersonasTestApp(mock_app_instance)
-        notifications = self._capture_notifications(app)
-        async with app.run_test() as pilot:
-            screen = await _mounted(pilot)
-            await pilot.pause()
-            await pilot.click("#personas-mode-personas")
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            screen.post_message(PersonaActionRequested(action="import"))
-            await pilot.pause()
-            await app.workers.wait_for_complete()
-            await pilot.pause()
-            import_card.assert_not_called()
-            assert not any(severity == "error" for _, severity in notifications)
+    # Frame slice B2b: dev's test_import_requires_characters_mode pinned
+    # "Import does nothing in Personas"; the one Import picker opens in every
+    # kind, pinned by test_roleplay_import_app.py's
+    # test_import_is_offered_in_every_kind.
 
 
 class _FtsStubDB:
@@ -8622,14 +8613,16 @@ class TestServerCharacterSourceIsolation:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
+            # Import stays offered while browsing server characters (frame
+            # slice B2b, OQ14): a card is refused when picked, a lore book or
+            # a chat dictionary goes to the local store.
             for control_id in (
                 "#personas-library-new",
-                "#personas-library-import",
-                "#personas-library-duplicate",
                 "#personas-library-tag",
                 "#personas-card-edit-character",
                 "#personas-export-json",
                 "#personas-export-png",
+                "#personas-duplicate",
                 "#personas-delete",
             ):
                 control = screen.query_one(control_id, Button)
@@ -8661,6 +8654,7 @@ class TestServerCharacterSourceIsolation:
                 "#personas-card-edit-character",
                 "#personas-export-json",
                 "#personas-export-png",
+                "#personas-duplicate",
                 "#personas-delete",
             ):
                 control = screen.query_one(control_id, Button)
@@ -8759,29 +8753,28 @@ class TestServerCharacterSourceIsolation:
             await pilot.pause()
 
             begin_create_impl = screen._begin_create_character
-            open_import_impl = screen._open_import_dialog
             duplicate_impl = screen._duplicate_selected_character
             begin_create = AsyncMock()
-            open_import = AsyncMock()
             duplicate = AsyncMock()
             screen._begin_create_character = begin_create
-            screen._open_import_dialog = open_import
             screen._duplicate_selected_character = duplicate
-            for action in ("create", "import", "duplicate"):
+            # Frame slice B2b (OQ14): Import is no longer refused here; the
+            # one picker opens and a picked card is refused (pinned by
+            # test_roleplay_import_app.py). The card import seam itself
+            # still fails closed (below).
+            for action in ("create", "duplicate"):
                 await screen._handle_action_requested(
                     PersonaActionRequested(action=action)
                 )
             begin_create.assert_not_awaited()
-            open_import.assert_not_awaited()
             duplicate.assert_not_awaited()
             screen._begin_create_character = begin_create_impl
-            screen._open_import_dialog = open_import_impl
             screen._duplicate_selected_character = duplicate_impl
 
             run_worker = Mock()
             screen.run_worker = run_worker
             await begin_create_impl()
-            await open_import_impl()
+            assert screen._start_character_import("/tmp/remote-card.json") is None
             await duplicate_impl()
             assert screen._edit_mode == "view"
             run_worker.assert_not_called()
@@ -9116,13 +9109,14 @@ class TestServerCharacterSourceIsolation:
             assert "· 0" in str(
                 screen.query_one("#personas-purpose", Static).renderable
             )
+            # B2b: the button names the sort ("Name"; dev "Sort: Name") and no
+            # tag is on (dev's label "Tag: All").
             assert (
-                str(screen.query_one("#personas-library-sort", Button).label)
-                == "Sort: Name"
+                str(screen.query_one("#personas-library-sort", Button).label) == "Name"
             )
             assert (
-                str(screen.query_one("#personas-library-tag", Button).label)
-                == "Tag: All"
+                str(screen.query_one("#personas-library-tag", Button).tooltip)
+                == "Filter characters by tag."
             )
 
     @pytest.mark.parametrize(
@@ -9431,7 +9425,7 @@ class TestServerCharacterSourceIsolation:
                     initial_character_published.set()
                     await release_initial_character.wait()
                     return
-                if not rows and kwargs.get("noun") == "characters":
+                if not rows and str(kwargs.get("title", "")).startswith("Characters"):
                     cleanup_writer_entered.set()
                     await release_cleanup_writer.wait()
                 await original_update_rows(rows, **kwargs)
@@ -9614,10 +9608,7 @@ class TestServerCharacterSourceIsolation:
                 # A mode with no items list leaves the title blank (B2a).
                 expected_count = ""
 
-            owner_sort = f"Sort: {expected_mode} current owner"
-            owner_tag = f"Tag: {expected_mode} current owner"
-            library.set_sort_label(owner_sort)
-            library.set_tag_label(owner_tag)
+            owner_sort, owner_tag = _stamp_owner_labels(library)
             await pilot.pause()
             current_publication = _shared_pane_publication(screen)
 
@@ -9992,11 +9983,12 @@ class TestServerCharacterSourceIsolation:
                     else "Lore books (?)"
                 )
                 expected_cache = prior_cache
+                # Frame slice B2b: the recovery row has Retry (spec 1.5.4);
+                # dev's copy added "Switch modes and back to retry."
                 expected_recovery = (
-                    "Dictionaries could not be loaded.\nSwitch modes and back to retry."
+                    "Dictionaries could not be loaded."
                     if valid_mode == "dictionaries"
-                    else "Lore books could not be loaded.\n"
-                    "Switch modes and back to retry."
+                    else "Lore books could not be loaded."
                 )
 
             assert (
@@ -10341,6 +10333,35 @@ class ReadinessMapPreviewGateway(_FakePreviewGateway):
 
 class TestPreviewIntegration:
     """Ephemeral preview-conversation pane wiring on the screen (Task 13)."""
+
+    async def test_preview_pane_anchors_top_of_center_canvas(
+        self, mock_app_instance, stub_characters
+    ):
+        """F-039: the preview affordance is attached to the canvas it previews -
+        the toggle sits immediately above the center detail stack, not stranded
+        at the bottom of the work area. (Moved verbatim from the deleted
+        test_personas_library_toolbar_layout.py, frame slice B2b.)"""
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(170, 50)) as pilot:
+            screen = await _mounted(pilot)
+            work_area = screen.query_one("#personas-work-area")
+            preview = screen.query_one("#personas-preview-pane")
+            stack = screen.query_one("#personas-detail-stack")
+            # Inside the center column...
+            assert preview.region.x >= work_area.region.x
+            assert preview.region.x + preview.region.width <= (
+                work_area.region.x + work_area.region.width
+            )
+            # ...and flush against the top of the detail stack (adjacent edges).
+            assert preview.region.y + preview.region.height == stack.region.y
+            # The toggle reads as an expand/collapse section header, and
+            # (task-2234) its label states the payoff, not the feature name.
+            toggle = screen.query_one("#personas-preview-toggle", Button)
+            assert str(toggle.label) == "▸ Try a test chat (nothing saved)"
+            await pilot.click("#personas-preview-toggle")
+            await pilot.pause()
+            assert str(toggle.label) == "▾ Try a test chat (nothing saved)"
+            assert screen.query_one("#personas-preview-body").display is True
 
     @pytest.fixture
     def stub_conversations(self, monkeypatch):
@@ -12256,7 +12277,11 @@ class TestPersonaHumanIdentityRemoval:
                     list(screen.query("#personas-active-profile-summary"))
                 ),
                 "set/clear button": bool(list(screen.query("#personas-set-my-name"))),
-                "active marker": "●" in row.name,
+                # The painted prompt, gutter included, in both glyph forms
+                # (frame slice B2b): B2a read the row's data (``row.name``),
+                # which a marker the list paints never reaches, so the check
+                # could not fail.
+                "active marker": any(marker in row.painted for marker in ("●", "[*]")),
                 "pointer toggle handler": hasattr(
                     PersonasScreen, "_handle_set_my_name"
                 ),
@@ -12745,7 +12770,7 @@ class TestKeyboardInteraction:
     async def _open_create_editor(self, pilot):
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.press("ctrl+n")
+        await start_new(pilot, via="ctrl+n")
         await pilot.pause()
         assert screen._edit_mode == "create"
         return screen
@@ -12870,7 +12895,7 @@ class TestKeyboardInteraction:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             screen.query_one("#personas-char-editor-name", Input).value = "Avatar Hero"
             await screen._stage_character_avatar_from_path(str(avatar))
@@ -12921,7 +12946,7 @@ class TestKeyboardInteraction:
                 return next(a for a in context.actions if a.label == "save")
 
             assert _save_action(screen._shortcut_context()).available is False
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             assert screen._edit_mode == "create"
             assert _save_action(screen._shortcut_context()).available is True
@@ -13141,7 +13166,7 @@ class TestDirtyTracking:
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
             # Same for a fresh create session (new_character population).
-            await pilot.press("ctrl+n")
+            await start_new(pilot, via="ctrl+n")
             await pilot.pause()
             await pilot.pause()
             assert screen._edit_mode == "create"
@@ -13384,7 +13409,7 @@ class TestImportExportFilters:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             picker = await self._capture_picker(
-                pilot, screen, screen._import_dialog_worker
+                pilot, screen, screen._roleplay_import_worker
             )
             self._assert_filters_callable(picker.filters)
 
@@ -13397,7 +13422,7 @@ class TestImportExportFilters:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             picker = await self._capture_picker(
-                pilot, screen, screen._import_dialog_worker
+                pilot, screen, screen._roleplay_import_worker
             )
             filter_by_name = {
                 name: picker.filters[filter_id]
@@ -13405,47 +13430,47 @@ class TestImportExportFilters:
             }
 
             # Markdown stays importable via its own dedicated sub-filter, but
-            # is NOT part of the broad "Character Cards" default (task-431
-            # AC#1): a plain docs folder full of .md files should not read
-            # as a folder of character cards.
-            assert "Markdown Files" in filter_by_name
-            assert filter_by_name["Character Cards"](Path("character.md")) is False
-            assert (
-                filter_by_name["Character Cards"](Path("character.markdown")) is False
-            )
-            assert filter_by_name["Markdown Files"](Path("character.md")) is True
-            assert filter_by_name["Markdown Files"](Path("character.markdown")) is True
-            assert filter_by_name["Markdown Files"](Path("character.json")) is False
+            # is NOT part of the broad default (task-431 AC#1): a plain docs
+            # folder full of .md files should not read as a folder of
+            # character cards. Frame slice B2b: one picker for every kind,
+            # "Roleplay files" by default (owner decision D3).
+            assert list(filter_by_name) == ["Roleplay files", "Markdown", "All Files"]
+            assert filter_by_name["Roleplay files"](Path("character.md")) is False
+            assert filter_by_name["Roleplay files"](Path("character.markdown")) is False
+            assert filter_by_name["Markdown"](Path("character.md")) is True
+            assert filter_by_name["Markdown"](Path("character.markdown")) is True
+            assert filter_by_name["Markdown"](Path("character.json")) is False
 
     async def test_import_filters_character_cards_accepts_webp_not_md(
         self, mock_app_instance, stub_characters
     ):
-        """task-431 AC#1: primary filter accepts .webp, drops .md as a card."""
+        """task-431 AC#1: the default filter accepts .webp, drops .md as a card.
+
+        Frame slice B2b: it also lists both pack formats (owner decision D3);
+        dev's "Card Images (PNG/WebP)" sub-filter is gone with the one picker.
+        """
         from pathlib import Path
 
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             picker = await self._capture_picker(
-                pilot, screen, screen._import_dialog_worker
+                pilot, screen, screen._roleplay_import_worker
             )
             filter_by_name = {
                 name: picker.filters[filter_id]
                 for name, filter_id in picker.filters.selections
             }
 
-            character_cards = filter_by_name["Character Cards"]
-            assert character_cards(Path("x.webp")) is True
-            assert character_cards(Path("x.png")) is True
-            assert character_cards(Path("x.json")) is True
-            assert character_cards(Path("README.md")) is False
-            assert character_cards(Path("x.markdown")) is False
-
-            assert "Card Images (PNG/WebP)" in filter_by_name
-            card_images = filter_by_name["Card Images (PNG/WebP)"]
-            assert card_images(Path("x.png")) is True
-            assert card_images(Path("x.webp")) is True
-            assert card_images(Path("x.json")) is False
+            roleplay_files = filter_by_name["Roleplay files"]
+            assert roleplay_files(Path("x.webp")) is True
+            assert roleplay_files(Path("x.png")) is True
+            assert roleplay_files(Path("x.json")) is True
+            assert roleplay_files(Path("x.tldw-actor-pack")) is True
+            assert roleplay_files(Path("x.tldw-persona-vpack")) is True
+            assert roleplay_files(Path("README.md")) is False
+            assert roleplay_files(Path("x.markdown")) is False
+            assert roleplay_files(Path("x.txt")) is False
 
     async def test_export_json_filters_are_callable(
         self, mock_app_instance, stub_characters
@@ -13480,7 +13505,7 @@ class TestImportExportFilters:
         async with app.run_test() as pilot:
             screen = await _mounted(pilot)
             await pilot.pause()
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             captured: dict = {}
 
@@ -13511,11 +13536,11 @@ class TestImportExportFilters:
                 assert "image" not in editor.get_character_data()
 
 
-async def test_character_import_filters_helper_accepts_webp_not_md():
+async def test_roleplay_import_filters_helper_accepts_webp_not_md():
     """Unit-level guard on the module-level filter helper itself (task-431 AC#1).
 
-    Exercises ``_character_import_filters`` directly (no screen mount) so the
-    primary "Character Cards" tester's behavior is pinned independently of
+    Exercises ``_roleplay_import_filters`` directly (no screen mount) so the
+    primary "Roleplay files" tester's behavior is pinned independently of
     the dialog-worker integration test in ``TestImportExportFilters``. Marked
     ``async`` (with no ``await``) only to match this module's file-wide
     ``pytestmark = pytest.mark.asyncio`` and avoid its inapplicable-mark
@@ -13523,17 +13548,17 @@ async def test_character_import_filters_helper_accepts_webp_not_md():
     """
     from pathlib import Path
 
-    filters = personas_screen_module._character_import_filters()
+    filters = personas_screen_module._roleplay_import_filters()
     filter_by_name = {
         name: filters[filter_id] for name, filter_id in filters.selections
     }
-    character_cards = filter_by_name["Character Cards"]
+    roleplay_files = filter_by_name["Roleplay files"]
 
-    assert character_cards(Path("x.webp")) is True
-    assert character_cards(Path("x.png")) is True
-    assert character_cards(Path("x.json")) is True
-    assert character_cards(Path("README.md")) is False
-    assert character_cards(Path("x.markdown")) is False
+    assert roleplay_files(Path("x.webp")) is True
+    assert roleplay_files(Path("x.png")) is True
+    assert roleplay_files(Path("x.json")) is True
+    assert roleplay_files(Path("README.md")) is False
+    assert roleplay_files(Path("x.markdown")) is False
 
 
 # --- Roleplay UAT: character rows were identified only by a date ---
@@ -13666,7 +13691,7 @@ async def test_debounced_validation_does_not_erase_a_blocked_save_message(
     async with app.run_test() as pilot:
         screen = await _mounted(pilot)
         await pilot.pause()
-        await pilot.click("#personas-library-new")
+        await start_new(pilot)
         await pilot.pause()
         editor = screen.query_one(PersonasCharacterEditorWidget)
         editor.show_validation(("name: required",))

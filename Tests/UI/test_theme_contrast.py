@@ -928,6 +928,75 @@ def test_roleplay_items_list_focus_edge_and_cursor_clear_contrast(
     assert _ratio(ink.hex, bar.hex) >= AA, (theme.name, ink.hex, bar.hex)
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme() -> (
+    None
+):
+    """Frame slice B2b AC#13 (RP-062), painted under the production
+    stylesheets on every measurable theme: the search box's placeholder at
+    rest, the placeholder with the box focused and the text typed into it
+    each read at 4.5:1 on the fill they paint on. On dev the placeholder was
+    Textual's $text-disabled, under 4.5:1 on all 89 measurable themes (2.12:1
+    on paradise_virtua), and focused nothing painted at all (RP-009, a
+    focused box with no content row)."""
+    from textual.geometry import Region
+    from textual.widgets import Input
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.Widgets.Persona_Widgets.personas_library_pane import (
+        PersonasLibraryPane,
+    )
+
+    class Pane(ConsolidatedCSSApp):
+        def compose(self):
+            # The workbench's own id and class: the panel fill the focused
+            # box's translucent focus fill composites over.
+            yield PersonasLibraryPane(
+                id="personas-library-pane", classes="destination-workbench-pane"
+            )
+
+    app = Pane(css_path=[str(path) for path in APP_STYLESHEETS])
+    shortfalls: list[str] = []
+    async with app.run_test(size=(80, 24)) as pilot:
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        app.query_one(PersonasLibraryPane).styles.width = 35
+        search = app.query_one("#personas-library-search", Input)
+        search.cursor_blink = False  # the caret is skipped, not read mid-blink
+        for theme in MEASURABLE_THEMES:
+            app.theme = theme.name
+            app.set_focus(None)
+            search.value = ""
+            await pilot.pause()
+            box = search.content_region
+            read = {"placeholder at rest": _text_cells(app, box)}
+            app.set_focus(search)
+            await pilot.pause()
+            # The caret paints on the placeholder's first cell.
+            read["placeholder focused"] = _text_cells(
+                app, box, [Region(box.x, box.y, 1, 1)]
+            )
+            search.value = "typed 123"
+            # The caret after the text, on a blank cell: it paints Textual's
+            # own cursor colours, which AC#13 does not cover (a programmatic
+            # value can leave it on the first letter).
+            search.cursor_position = len(search.value)
+            await pilot.pause()
+            read["typed text focused"] = _text_cells(app, box)
+            for what, cells in read.items():
+                if not cells:
+                    shortfalls.append(f"{theme.name}: no {what} painted")
+                for ink, fill in cells:
+                    ratio = _ratio(ink, fill)
+                    if ratio < AA:
+                        shortfalls.append(
+                            f"{theme.name}: {what} {ink} on {fill} is {ratio:.2f}:1"
+                        )
+    assert len(MEASURABLE_THEMES) >= 89
+    assert not shortfalls, f"{len(shortfalls)} shortfalls:\n" + "\n".join(shortfalls)
+
+
 # TASK-36479 (WCAG 1.4.11): every focus edge -- a border or outline set by a
 # `:focus`, `:focus-within` or `.*-focused` rule -- reads at 3:1 against
 # $surface, $panel and the fill its own rule paints over either. The edges

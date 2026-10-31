@@ -27,8 +27,8 @@ PersonaEntityKind = Literal[
     "lore",
 ]
 PersonaAction = Literal[
-    "create",
-    "create_actor_pack",
+    "new",  # frame slice B2b: open the New chooser (+ New, Ctrl+N)
+    "create",  # a blank item of the current kind, at once
     "import",
     "export",
     "duplicate",
@@ -38,14 +38,11 @@ PersonaAction = Literal[
     "save",
     "cancel",
     "refresh",
+    "retry",  # frame slice B2b: read the failed items list again (spec 1.5.4)
 ]
 PersonaBuddyAction = Literal["use", "show", "close", "disable"]
 PersonaBuddySource = Literal["local", "server"]
 ActorPackExportActorKind = Literal["character", "persona"]
-
-
-class ActorPackImportRequested(Message):
-    """Request the dedicated Actor Pack picker without carrying path/content."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +226,18 @@ class PersonaSearchSubmitted(Message):
     """Enter in the library search box (frame slice B2a, spec 1.6's 4-key find)."""
 
 
+class AlsoInRequested(Message):
+    """Enter or a click on an ``Also in:`` target (frame slice B2b, spec 1.5.4).
+
+    The screen switches to ``kind``'s list with the search applied, through
+    the unsaved guard.
+    """
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+
+
 class PersonaSortCycleRequested(Message):
     """The user asked to advance the library sort (screen decides the next key)."""
 
@@ -251,6 +260,7 @@ class PersonaMarksChanged(Message):
 
 __all__ = [
     "ActorPackExportActorKind",
+    "AlsoInRequested",
     "ActorPackExportRequested",
     "PersonaAction",
     "PersonaActionRequested",

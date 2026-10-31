@@ -339,10 +339,11 @@ async def wait_until(
 
 
 def _first_list_item_present(app) -> bool:
-    """Roleplay is up once its list shows a row, or its empty or recovery line."""
+    """Roleplay is up once its list shows a row, or its empty, no-match or recovery line."""
     screen = app.screen
     return isinstance(screen, PersonasScreen) and (
-        bool(visible_item_ids(screen)) or list_state(screen).state != "rows"
+        bool(visible_item_ids(screen))
+        or list_state(screen).state not in ("rows", "loading")
     )
 
 
@@ -352,7 +353,9 @@ class RoleplayItemView:
 
     ``name``, ``state`` and ``meta`` are the row's data (``meta`` is line 2's
     scent, whether or not the density paints it); ``lines`` is what the prompt
-    paints, gutter stripped, trailing blank lines dropped. ``marked`` is the
+    paints, gutter stripped, trailing blank lines dropped. ``painted`` is the
+    whole prompt the ``OptionList`` paints, gutter included (frame slice B2b:
+    a marker in the gutter is invisible to ``lines``). ``marked`` is the
     list's mark state; ``painted_mark`` is what the row paints: the option's
     own prompt shows the resolved ``✓`` (``[x]`` in ASCII mode) in the
     gutter's mark column.
@@ -365,6 +368,7 @@ class RoleplayItemView:
     state: str | None
     meta: str | None
     lines: tuple[str, ...]
+    painted: str
     active: bool
     marked: bool
     painted_mark: bool
@@ -373,7 +377,8 @@ class RoleplayItemView:
 
 @dataclass(frozen=True)
 class RoleplayListState:
-    """``rows``, ``empty`` or ``recovery``, with the rows, the cursor and the status copy."""
+    """``rows``, ``empty``, ``recovery``, ``no_match`` or ``loading``, with the
+    rows, the cursor and the status copy (lines joined by a newline)."""
 
     state: str
     items: tuple[RoleplayItemView, ...]
@@ -419,6 +424,7 @@ def item_at(node, index: int | str) -> RoleplayItemView:
         state=row.state,
         meta=row.meta,
         lines=tuple(painted),
+        painted=shown_text,
         active=item_list.active_id == option_id,
         marked=option_id in item_list.marked_ids(kind),
         painted_mark=painted_mark,
@@ -437,16 +443,50 @@ def highlighted_item_id(node) -> str | None:
 
 
 def list_state(node) -> RoleplayListState:
-    """The list's rows and cursor, and the empty or recovery copy shown beside it."""
+    """The list's rows and cursor, and the copy shown beside it (spec 1.5.4)."""
     item_list = _item_list(node)
     items = tuple(item_at(node, index) for index in range(item_list.option_count))
     status = node.query_one("#personas-library-status")
+    # Queried, not required: a tree without them reads as dev's states.
+    loading = node.query("#personas-library-loading")
     state, text = "rows", None
     if status.display and status.children:
         static = status.children[0]
         text = str(static.render())
         state = "empty" if static.id == "personas-library-empty" else "recovery"
+    elif no_match_lines(node):
+        state, text = "no_match", "\n".join(no_match_lines(node))
+    elif loading and loading.first().display:
+        state, text = "loading", str(loading.first().render())
     return RoleplayListState(state, items, highlighted_item_id(node), text)
+
+
+def no_match_lines(node) -> tuple[str, ...]:
+    """The no-match message's two lines (spec 1.5.4), or () while it is hidden."""
+    blocks = node.query("#personas-library-nomatch")
+    if not blocks or not blocks.first().display:
+        return ()
+    return tuple(
+        str(node.query_one(f"#personas-library-nomatch-{part}").render())
+        for part in ("line", "hint")
+    )
+
+
+def also_in_targets(node) -> tuple[str, ...]:
+    """The ``Also in:`` targets shown under the no-match message, in order:
+    each target's label, then ``Not found in other kinds either.`` if shown."""
+    if not no_match_lines(node):
+        return ()
+    block = node.query_one("#personas-library-nomatch")
+    shown = [
+        str(button.label)
+        for button in block.query(".personas-library-also-in-target")
+        if button.display
+    ]
+    none = block.query("#personas-library-also-in-none")
+    if none and none.first().display:
+        shown.append(str(none.first().render()))
+    return tuple(shown)
 
 
 def painted_option_rows(item_list: RoleplayItemList) -> dict[int, list[int]]:
@@ -525,6 +565,138 @@ async def click_mark_column(pilot: Pilot, node, item_id: str) -> None:
         ),
     )
     await pilot.pause()
+
+
+CHOOSER_OPTIONS_ID = "roleplay-items-chooser-options"
+
+
+async def wait_for_chooser(pilot: Pilot):
+    """Wait until Roleplay's choice modal (New, "Import as:") is open and focused.
+
+    Found by its DOM id, not its class, so a test of dev's behaviour can run
+    on a tree without the modal module (frame slice B2b).
+
+    Returns:
+        The modal's ``OptionList``.
+    """
+
+    def ready() -> bool:
+        focused = pilot.app.focused
+        return focused is not None and focused.id == CHOOSER_OPTIONS_ID
+
+    await wait_until(pilot, ready, what="the choice modal")
+    return pilot.app.focused
+
+
+async def start_new(
+    pilot: Pilot,
+    choice_id: str | None = None,
+    *,
+    via: str = "click",
+    until: Callable[[], bool] | None = None,
+) -> None:
+    """Open the New chooser and pick a variant like a user (frame slice B2b).
+
+    On dev ``+ New`` and Ctrl+N created a blank item of the current kind at
+    once; since B2b they open the New chooser on that kind's Blank, and Enter
+    picks it. Returns once the create has begun, not after Enter plus one
+    pause (the B2b final fix wave; a site asserting ``_edit_mode == "create"``
+    right after the return was a flake before it): the chooser is off the
+    stack and a draft is open, an Actor Pack session exists, another screen
+    (the unsaved guard) is on top, or the chooser's worker has ended (a lore
+    book or chat dictionary created at once, or a create that failed).
+
+    Args:
+        pilot: The running pilot (Roleplay on screen).
+        choice_id: The variant (``"character:portrait"``, ``"lore"``, ...);
+            None picks the preselected Blank.
+        via: ``"click"`` (a real click on ``+ New``), ``"press"``
+            (``Button.press()``) or ``"ctrl+n"``.
+        until: The condition to wait for instead of the default above (a
+            test that holds the create inside its own patch passes its own).
+    """
+    screen = pilot.app.screen
+    if via == "click":
+        await pilot.click("#personas-library-new")
+    elif via == "press":
+        pilot.app.screen.query_one("#personas-library-new").press()
+    elif via == "ctrl+n":
+        await pilot.press("ctrl+n")
+    else:
+        raise ValueError(f"unknown via {via!r}")
+    options = await wait_for_chooser(pilot)
+    if choice_id is not None:
+        target = options.get_option_index(choice_id)
+        for _ in range(options.option_count):
+            if options.highlighted == target:
+                break
+            low = options.highlighted is None or options.highlighted < target
+            await pilot.press("down" if low else "up")
+        assert options.highlighted == target, f"{choice_id} cannot be highlighted"
+    await pilot.press("enter")
+
+    def chooser_closed() -> bool:
+        return not any(
+            stacked.query(f"#{CHOOSER_OPTIONS_ID}")
+            for stacked in pilot.app.screen_stack
+        )
+
+    def create_begun() -> bool:
+        return bool(
+            getattr(screen, "_edit_mode", None) == "create"
+            or getattr(screen, "_actor_pack_session", None) is not None
+            or pilot.app.screen is not screen
+            or not getattr(screen, "_new_chooser_open", False)
+        )
+
+    await wait_until(
+        pilot, lambda: chooser_closed() and (until or create_begun)(), what="the create"
+    )
+    await pilot.pause()
+
+
+def fake_file_picker(
+    monkeypatch: pytest.MonkeyPatch, *picks: Path | str | None
+) -> list[dict[str, Any]]:
+    """Answer the shared file picker with ``picks``, like a user's choices (B2b).
+
+    Roleplay imports ``EnhancedFileOpen`` inside its workers, so patching the
+    module attribute replaces every picker it opens: a modal that dismisses
+    with the next pick (the last one repeats) after its first refresh, as the
+    Buddy review test's ``ChosenArchive`` does. The screen's code after the
+    pick (the sniff, "Import as:", the review dialogs) runs for real.
+
+    Args:
+        monkeypatch: The test's monkeypatch.
+        *picks: What each opened picker returns (None is Cancel).
+
+    Returns:
+        The keyword arguments of every picker constructed, in order (``title``,
+        ``filters``, ``context``, ...).
+    """
+    from textual.screen import ModalScreen
+
+    import tldw_chatbook.Widgets.enhanced_file_picker as picker_module
+
+    opened: list[dict[str, Any]] = []
+    queue = list(picks) or [None]
+
+    class _PickedFile(ModalScreen[object]):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__()
+            opened.append(kwargs)
+            self._pick = queue.pop(0) if len(queue) > 1 else queue[0]
+
+        def on_mount(self) -> None:
+            def pick() -> None:
+                # Not awaited: awaiting dismiss() from this screen's own
+                # message pump raises ScreenError.
+                self.dismiss(self._pick)
+
+            self.call_after_refresh(pick)
+
+    monkeypatch.setattr(picker_module, "EnhancedFileOpen", _PickedFile)
+    return opened
 
 
 @asynccontextmanager
