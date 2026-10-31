@@ -52,7 +52,11 @@ boundary sits at a point the status field cannot show.
 **What to do.** Before writing copy about what a remote cancel does, probe it twice with the
 adapter's exact request: once right after submit and once well into the work. Record the
 status code, the body and the task's final usage, then commit the bodies as test fixtures.
-Log the HTTP status and the vendor's error code, not only the exception class.
+Log the HTTP status and the vendor's error code, not only the exception class. Do not
+classify on the code alone: review caught that 2013 is MiniMax's generic "invalid params"
+code (the recorded body starts "invalid params, …", and a DELETE on an already-cancelled
+task gave the same 400/2013), so "refused because rendering started" now also requires the
+message's "current status" wording, and any other 400 reads as unconfirmed.
 
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
