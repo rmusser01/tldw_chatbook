@@ -1,12 +1,12 @@
 # Notifications
 
-This document describes the client notification subsystem: the single dispatch path (persist + optional toast), the local inbox store and its Watchlists surface, the producer categories, the server parity feed, and the honest state of notification settings.
+This document describes the client notification subsystem: the inbox dispatch path (persist + optional toast), the local inbox store and its Watchlists surface, the producer categories, the server parity feed, and the honest state of notification settings, and the separate opt-in Console desktop channel.
 
 ## Authoritative files
 
 | Concern | File | Key symbols |
 | --- | --- | --- |
-| Dispatch | `Notifications/notification_dispatch_service.py` | `NotificationDispatchService.dispatch` — the single path every producer uses |
+| Dispatch | `Notifications/notification_dispatch_service.py` | `NotificationDispatchService.dispatch` — the shared path inbox producers use |
 | Store | `Notifications/client_notifications_db.py` | `ClientNotificationsDB(BaseDB)` — SQLite inbox; lazy schema on first feature touch; per-thread held connections (file) / one shared connection (`:memory:`) |
 | Service | `Notifications/client_notifications_service.py` | `ClientNotificationsService` — policy-enforced queue reads/updates |
 | Scope | `Notifications/notifications_scope_service.py` | local-vs-server routing; `ServerEventScopeRequiredError` |
@@ -82,3 +82,34 @@ There is **no dedicated notification ADR**. Relevant decisions live inside ADR-0
 2. Toast text concatenates `title: message` and renders `markup=False`; Rich markup in titles is inert in toasts but **live** in Home rail buttons (escaped at build there).
 3. `:memory:` inbox uses one shared connection; file-backed is per-thread — Home's exact-type checks gate the threading, and any test double silently forces inline reads.
 4. Category settings are per-category trios inside one JSON overlay, not rows — `update_settings` rejects unknown keys.
+
+## Console OS notification channel (ADR-282)
+
+`Utils/os_notifications.py` owns the fixed-argv macOS `osascript` / Linux
+`notify-send` dispatcher. Windows and other unsupported platforms skip with a
+debug record. `ChatScreen._notify_console_run_outcome`,
+`_notify_console_run_failure`, and `_park_console_approval` add this channel at
+the existing once-guarded toast boundaries; queue-chain completion stays coalesced.
+No focus detection, retry, or durable event replay is introduced.
+
+Canonical Settings -> Console Behavior persists `[console.os_notifications]`:
+`enabled=false` by default, with `run_finished`, `run_failed`, and `needs_approval`
+independently enabled by default. These preferences are separate from the inbox's
+DB-owned settings above; desktop dispatch creates no inbox record.
+
+Only bounded conversation/workspace display names and a fixed outcome category
+enter the body. AppleScript quoting and Linux XML escaping keep those names
+literal. The child receives PATH and Linux D-Bus/XDG runtime routing variables,
+never the inherited provider-key environment. Nonzero exits and spawn/timeout
+failures return False and log category plus return code/exception type, without
+argv, identity, output, or exception text.
+
+A non-daemon one-shot thread keeps the UI event loop free and retains the
+3-second subprocess wait/kill/reap path through orderly interpreter shutdown.
+Process exit may wait for the remaining invocation; platform process creation
+and forced termination are outside that timeout guarantee. No app/profile
+resource is retained by the callback. A thread-start RuntimeError is logged as
+fixed failure metadata and dropped, preserving the normal in-app toast without
+running the notifier synchronously. See [ADR-282](../../backlog/decisions/282-console-os-notification-dispatch.md)
+for the separation from the inbox and configurable run hooks, platform limits,
+and the shutdown tradeoff.

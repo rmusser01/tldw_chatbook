@@ -224,7 +224,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: are the screen-owned half of the Review reports key: the `u` Binding,
     #: its workbench-shortcut legend entry, the action attribute and the
     #: `wiring` import that supplies it; the presenter lives in wiring.py.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24289, 737),
+    #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    #: Retain the notification hooks and bounded shutdown repair in place;
+    #: pin the measured tree exactly, without reflow/extraction to fit.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24377, 739),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

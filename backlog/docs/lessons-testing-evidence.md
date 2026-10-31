@@ -1,5 +1,24 @@
 # Lessons: what counts as evidence a change works
 
+
+## A daemon thread cannot enforce its subprocess timeout after interpreter exit (PR #3155, 2026-10-31)
+
+**Incident.** The Console OS notifier passed a three-second timeout to
+`subprocess.run` from a daemon thread. Mocked runner tests verified that argument,
+and the helper claimed a quit could strand the child for at most three seconds.
+A real-child probe exited its parent in 0.94 seconds, then observed the child
+still execute after 4.2 seconds. The committed regression imports the real screen
+helper and sender in a fresh interpreter: the daemon version never writes the
+sender's completion result, and its slow child survives to natural exit. Making
+the one-shot thread non-daemon retains the existing timeout/kill/reap owner during
+orderly shutdown; the regression then observes False and the child's early end.
+
+**What to do.** When a timeout is part of a shutdown guarantee, test shutdown of
+its owner with a real slow child. Inspecting a timeout argument proves neither
+that the timer survives teardown nor that the child is reaped. Record the exit
+wait tradeoff; forced termination and uninterruptible process creation remain
+outside this guarantee.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under

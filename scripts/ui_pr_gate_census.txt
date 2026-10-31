@@ -1656,3 +1656,6 @@ Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered
 Tests/UI/test_modal_wide_tier.py::test_every_registered_anchor_has_a_wide_tier_rule
 Tests/UI/test_llamacpp_setup_refresh_gate.py
 Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped
+
+# TASK-18925: verified Console OS-notification Settings persistence journey.
+Tests/UI/test_settings_console_os_notifications_journeys.py
