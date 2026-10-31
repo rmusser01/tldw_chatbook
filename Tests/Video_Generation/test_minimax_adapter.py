@@ -1,9 +1,21 @@
-"""MiniMax-H3 video adapter tests (task-3401.3) -- HTTP layer fully mocked."""
+"""MiniMax-H3 video adapter tests (task-3401.3) -- HTTP layer fully mocked.
 
+The Stop tests at the end (TASK-33621.50) replay MiniMax's own responses,
+recorded live on 2026-10-30, through the real ``fetch_json`` over an httpx
+MockTransport.
+"""
+
+import json
+from pathlib import Path
+import threading
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from loguru import logger
 
+from tldw_chatbook.Image_Generation import http_client as image_http_client
+from tldw_chatbook.Video_Generation import exceptions as video_exceptions
 from tldw_chatbook.Video_Generation.adapters import minimax_video_adapter as mva
 from tldw_chatbook.Video_Generation.adapters.base import ResolvedReferenceAsset
 from tldw_chatbook.Video_Generation.exceptions import (
@@ -11,6 +23,12 @@ from tldw_chatbook.Video_Generation.exceptions import (
     VideoGenerationError,
 )
 from tldw_chatbook.Video_Generation.worker import build_request
+
+RECORDED = json.loads(
+    (
+        Path(__file__).parent / "fixtures" / "minimax_cancel_recorded_2026-10-30.json"
+    ).read_text()
+)
 
 
 def _fake_config(**overrides):
@@ -311,10 +329,9 @@ def test_cancel_event_stops_polling_and_calls_remote_cancel(adapter, http_record
     calls, routes = http_recorder
     routes[("POST", "/v2/video_generation")] = {"task_id": "t5"}
     routes[("GET", "/v2/query/")] = {"task": {"status": "processing"}}
-    routes[("DELETE", "/v2/video_generation/t5")] = {
-        "task_id": "t5",
-        "action": "cancelled",
-    }
+    routes[("DELETE", "/v2/video_generation/t5")] = RECORDED[
+        "cancel_accepted_just_after_submit"
+    ]["body"]
 
     cancel_event.set()  # already cancelled before the first poll iteration
     with pytest.raises(VideoGenerationError, match="cancelled by user"):
@@ -339,7 +356,7 @@ def test_cancel_event_landing_mid_poll(adapter, http_recorder, monkeypatch):
             cancel_event.set()  # user pressed stop while the task was running
             return {"task": {"status": "processing"}}
         if method == "DELETE":
-            return {"task_id": "t6", "action": "cancelled"}
+            return RECORDED["cancel_accepted_while_running_0s"]["body"]
         raise AssertionError(f"unexpected {method} {url}")
 
     # Overlay the ordered fake for poll/delete (re-patches over the recorder).
@@ -380,3 +397,158 @@ def test_remote_cancel_failure_is_swallowed(adapter, http_recorder, monkeypatch)
     monkeypatch.setattr(mva, "fetch_json", submit_ok_delete_fails)
     with pytest.raises(VideoGenerationError, match="cancelled by user"):
         adapter.generate(_request(), cancel_event=cancel_event)
+
+
+# -- Stop against MiniMax's recorded live cancel responses (TASK-33621.50) ----
+#
+# Live on 2026-10-30 (fixture provenance): the adapter's DELETE was accepted
+# ~1 s after submit and right after a poll read status=running (200,
+# action=cancelled, usage stayed empty), and refused 43 s into running (400,
+# bad_request_error, code 2013) -- that task kept running and finished billed
+# for 4 output seconds. The real fetch_json runs below, so a 4xx raises
+# httpx.HTTPStatusError exactly as it did live; only the transport and the
+# DNS-resolving egress check are replaced.
+
+
+class _RecordedMiniMax:
+    """Replay one recorded MiniMax exchange; set the Stop on the first poll."""
+
+    def __init__(self, *, poll: str, delete: "str | Exception") -> None:
+        self.poll = RECORDED[poll]
+        self.delete = delete if isinstance(delete, Exception) else RECORDED[delete]
+        self.task_id = self.poll["body"]["task"]["id"]
+        self.cancel_event = threading.Event()
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(200, json={"task_id": self.task_id})
+        if request.method == "GET":
+            self.cancel_event.set()  # the user presses Stop while it runs
+            return httpx.Response(self.poll["http_status"], json=self.poll["body"])
+        if request.method == "DELETE":
+            if isinstance(self.delete, Exception):
+                raise self.delete
+            return httpx.Response(self.delete["http_status"], json=self.delete["body"])
+        raise AssertionError(f"unscripted {request.method} {request.url}")
+
+    def deletes(self) -> list[httpx.Request]:
+        return [r for r in self.requests if r.method == "DELETE"]
+
+
+@pytest.fixture
+def replay(monkeypatch):
+    """Install a recorded exchange under the real fetch_json."""
+
+    def install(**kwargs) -> _RecordedMiniMax:
+        script = _RecordedMiniMax(**kwargs)
+        monkeypatch.setattr(
+            image_http_client,
+            "create_client",
+            lambda timeout=None, **_kw: httpx.Client(
+                transport=httpx.MockTransport(script), timeout=timeout
+            ),
+        )
+        monkeypatch.setattr(
+            image_http_client, "_validate_egress_or_raise", lambda *_a, **_k: None
+        )
+        return script
+
+    return install
+
+
+@pytest.fixture
+def log_lines():
+    lines: list[tuple[str, str]] = []
+    handler = logger.add(
+        lambda message: lines.append(
+            (message.record["level"].name, message.record["message"])
+        ),
+        level="DEBUG",
+    )
+    yield lines
+    logger.remove(handler)
+
+
+def _stopped(adapter, script) -> VideoGenerationError:
+    with pytest.raises(VideoGenerationError) as caught:
+        adapter.generate(_request(), cancel_event=script.cancel_event)
+    cancelled_type = getattr(video_exceptions, "VideoGenerationCancelled", None)
+    assert cancelled_type is not None and isinstance(caught.value, cancelled_type), (
+        f"Stop raised {type(caught.value).__name__}, not a typed cancellation "
+        "the Console can report as a stop (TASK-33621.45)"
+    )
+    return caught.value
+
+
+def test_stop_sends_the_cancel_minimax_accepted_live_and_logs_success(
+    adapter, replay, log_lines
+):
+    """AC#2 + AC#4: the exact request MiniMax accepted live, and the log says so."""
+    script = replay(
+        poll="poll_running_at_submit", delete="cancel_accepted_while_running_0s"
+    )
+
+    stopped = _stopped(adapter, script)
+
+    assert stopped.remote_cancel == "cancelled"
+    [delete] = script.deletes()
+    recorded = RECORDED["cancel_accepted_while_running_0s"]
+    assert (delete.method, str(delete.url)) == (recorded["method"], recorded["url"])
+    assert delete.headers["authorization"] == "Bearer test-secret-key"
+    assert delete.headers["content-type"] == "application/json"
+    assert "content-type" in RECORDED["cancel_request_headers_sent"]
+    assert delete.content == b""
+    assert any(
+        level == "INFO" and "cancel confirmed" in text for level, text in log_lines
+    ), log_lines
+
+
+def test_stop_after_rendering_starts_reports_minimax_refused_live(
+    adapter, replay, log_lines
+):
+    """AC#1/#3: MiniMax's live 400 (code 2013) is a refusal -- the task keeps
+    running and may be billed -- and the log names the status and code."""
+    script = replay(
+        poll="query_after_refused_cancel", delete="cancel_refused_while_running_43s"
+    )
+
+    stopped = _stopped(adapter, script)
+
+    assert stopped.remote_cancel == "refused"
+    assert len(script.deletes()) == 1
+    warnings = [text for level, text in log_lines if level == "WARNING"]
+    assert any("http_status=400" in t and "error_code=2013" in t for t in warnings), (
+        log_lines
+    )
+    assert all("test-secret-key" not in text for _level, text in log_lines)
+
+
+def test_stop_never_reports_a_cancel_for_a_record_minimax_deleted(
+    adapter, replay, log_lines
+):
+    """DELETE on a task that finished meanwhile deletes its record (live: 200,
+    action=deleted). Nothing was cancelled, so it must not read as cancelled."""
+    script = replay(poll="query_after_refused_cancel", delete="delete_on_succeeded")
+
+    stopped = _stopped(adapter, script)
+
+    assert stopped.remote_cancel == "unconfirmed"
+
+
+def test_stop_with_an_unreachable_cancel_endpoint_is_unconfirmed(
+    adapter, replay, log_lines
+):
+    script = replay(
+        poll="poll_running_at_submit",
+        delete=httpx.ConnectError("connection refused"),
+    )
+
+    stopped = _stopped(adapter, script)
+
+    assert stopped.remote_cancel == "unconfirmed"
+    assert any(
+        level == "WARNING" and "error_type=ConnectError" in text
+        for level, text in log_lines
+    ), log_lines

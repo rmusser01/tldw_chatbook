@@ -728,7 +728,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR3321 integration: preserve1303 dev entries and append8 verified export/Inspector selectors.
 # PR3323 integration: preserve1311 selectors and append4 verified readiness/modal entries.
 # PR3330 integration appends the coded Send strip selector.
-MINIMUM_FILES = 1316
+# PR3333 integration appends the recorded MiniMax Stop outcome file.
+MINIMUM_FILES = 1317
 
 
 def read_census(path: Path) -> list[str]:
