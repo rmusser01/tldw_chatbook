@@ -174,6 +174,42 @@ def test_run_generation_suppresses_hostile_result_property_traceback_details():
     assert "PRIVATE-RESULT-PROPERTY" not in formatted
 
 
+@pytest.mark.parametrize("remote_cancel", ["cancelled", "refused", "unconfirmed", None])
+def test_run_generation_passes_a_stop_through_unchanged(remote_cancel):
+    """The adapter's typed stop reaches the Console as the same object, so the
+    stop row can say what the backend did with the remote task
+    (TASK-33621.45/.50) instead of reporting a failure."""
+    import threading
+
+    from tldw_chatbook.Video_Generation.adapter_registry import get_registry
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+    from tldw_chatbook.Video_Generation.worker import run_generation
+
+    stop = VideoGenerationCancelled("stopped", remote_cancel=remote_cancel)
+    seen_events: list[threading.Event] = []
+
+    class StoppingAdapter:
+        name = "fake"
+        supported_formats = {"mp4"}
+
+        def generate(self, request, *, cancel_event=None):
+            seen_events.append(cancel_event)
+            raise stop
+
+    registry = get_registry()
+    registry._enabled_backends = ["fake"]
+    registry._default_backend = "fake"
+    registry.register_adapter("fake", StoppingAdapter)
+    cancel_event = threading.Event()
+
+    with pytest.raises(VideoGenerationCancelled) as caught:
+        run_generation(_request(), cancel_event=cancel_event)
+
+    assert caught.value is stop
+    assert caught.value.remote_cancel == remote_cancel
+    assert seen_events == [cancel_event]
+
+
 def test_build_request_defaults():
     req = _request()
     assert req.format == "mp4"
