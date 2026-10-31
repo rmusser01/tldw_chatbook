@@ -1,5 +1,52 @@
 # Lessons: verifying against the real thing
 
+## An input's arrival on Textual's driver thread comes after the GIL: time it from the injection (TASK-33620.15.18, 2026-10-30)
+
+**Incident.** A probe stamped each key when Textual's driver thread passed it
+to `process_message`, and timed latency from there to the next frame. For a key
+sent while the first-send warm-up froze the heap, that read 8.3 ms against 7.7 ms
+without the warm-up: no effect. Timed from the moment the driver ran
+`tmux send-keys` (wall clock, mapped through the probe's start record), the same
+keys took 35.3 ms against 12.2 ms. The freeze held the GIL for about 25 ms, and
+the driver thread needs the GIL to parse the bytes, so the stamp itself was late.
+In 2 of 8 launches the late stamp also fell after the window had closed, so the
+key was filed as "outside the window" although it was sent inside it.
+
+**What to do.** Record the injection time in the driver and report injection to
+frame as the latency, with injection to driver-thread arrival as its own column
+(about 4.5 ms through tmux on an idle host). Decide whether an input landed
+inside a window by its injection time, not by the driver thread's stamp.
+
+## A copied app profile is refused at startup: reuse one per arm instead (TASK-33620.15.18, 2026-10-30)
+
+**Incident.** To give every launch the same established profile, a driver copied
+a seeded profile (`cp -R`, then `REUSE=1 launch.sh`) before each launch. Every
+launch exited at once: the tmux pane closed, the probe recorded only imports up
+to `argparse`, and the app's log had nothing new. Run with stderr kept, the app
+printed `Recovery required: recovery_scope_uncertain`. The recovery bootstrap
+pins each profile file by inode (`Backup_Recovery/bootstrap.py`,
+`inode_token`), so a copy reads as a replaced profile.
+
+**What to do.** Do not copy a profile between launches. Seed one profile per arm
+with real launches (record any consent, quit with Ctrl+Q, launch once more), then
+reuse it, and undo what each measured launch leaves behind (a typed key: send
+Backspace and wait for the draft to save before quitting). When a launch's pane
+disappears, rerun its command with stderr captured before changing anything else.
+
+## A walk of CPython's frozen generation costs ten times its micro-benchmark in the live app (TASK-33620.15.18, 2026-10-30)
+
+**Incident.** ADR-198 sized the boot points' bookkeeping walk of the frozen set
+(`gc.get_freeze_count()`) at about 2 ms per 700K objects. A probe that timed each
+call in the running app measured 15-34 ms per walk on an idle host and
+160-290 ms at a load average of about 110, with the GIL held throughout. Every
+boot point walked once or twice, `_ui_ready`'s on the UI loop, and the first-send
+warm-up's walk delayed a key sent during it by 21-41 ms. The frozen set of a
+live app is scattered across a large heap, so each object is a cache miss.
+
+**What to do.** Time collector calls (`get_freeze_count`, `get_objects`,
+`collect`) inside the running app before relying on a micro-benchmark's figure,
+and prefer counts that touch only the unfrozen generations.
+
 ## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
 
 **Incident.** The Library outcome line passed two review rounds: every test read

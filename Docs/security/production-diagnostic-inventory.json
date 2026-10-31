@@ -4223,7 +4223,7 @@
     },
     {
       "call_count": 4,
-      "diagnostic_digest": "3f8c3d8562c03e8e4833",
+      "diagnostic_digest": "42c2f4e7eeab75ee4c57",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/ui_responsiveness.py",
       "reason": "remaining Chatbook production diagnostic owner"

@@ -262,7 +262,11 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    generations it is about to move (`gc.get_objects`, which touches only
    unfrozen objects) and adds that to the baseline. The next budget check
    still walks once. Objects another thread allocates between the count and
-   the freeze go uncounted, the same tolerance the walks had.
+   the freeze go uncounted, the same tolerance the walks had. With a boot
+   freeze down to about 1 ms, the first-send warm-up now freezes after each
+   step that loads modules (54 freezes, 2.8 ms in all): left unfrozen until
+   its last step, those modules made a generation-2 pass due, and a click's
+   navigation ran it on the UI loop in 9 of 10 launches.
 
    So the baseline is now the frozen set's size after the last compaction
    plus what boot points froze since, and the bound above reads against
