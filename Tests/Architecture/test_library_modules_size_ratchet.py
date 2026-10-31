@@ -613,7 +613,8 @@ _BUDGETS: dict[str, int] = {
     # ``handle_library_note_link_back`` and its focus role's selector:
     # 7362 -> 7393 (measured). Fix round 1 (same decision): an editor exit
     # clears ``link_origin`` too (I-1): 7393 -> 7394 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7394,
+    # 2026-10-31 PR3259: exact integration size under the user backlog size-limit waiver.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7423,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
