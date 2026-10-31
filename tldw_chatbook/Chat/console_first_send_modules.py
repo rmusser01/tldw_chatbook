@@ -98,6 +98,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
     "tldw_chatbook.app_served",
+    "textual_serve",
     "tldw_chatbook.Web_Server.served_relay_publisher",
     "tldw_chatbook.Guardian.settings",
     "tldw_chatbook.Agents.local_tool_provider",
@@ -117,12 +118,25 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_stream_persistence",
     "tldw_chatbook.Chat.provider_rate_limits",
     # The run's end: canvas settlement (one UI-loop callback of 157 ms CPU on
-    # a loaded host), remote sessions and citation counts.
-    "tldw_chatbook.Canvas.native_authority",
-    "tldw_chatbook.Canvas.compiler",
-    "tldw_chatbook.Canvas.gateway",
+    # a loaded host), remote sessions and citation counts. Its third-party
+    # packages come first, each after its dependencies, then the canvas
+    # modules leaves first: imported whole, native_authority was one step of
+    # 63-70 ms CPU that a navigation could not park (TASK-33620.15.18).
+    "webencodings",
+    "html5lib",
+    "tinycss2",
+    "multidict",
+    "propcache",
+    "yarl",
+    "frozenlist",
+    "aiosignal",
+    "aiohappyeyeballs",
+    "aiohttp",
     "tldw_chatbook.Canvas.capabilities",
     "tldw_chatbook.Canvas.control_protocol",
+    "tldw_chatbook.Canvas.compiler",
+    "tldw_chatbook.Canvas.gateway",
+    "tldw_chatbook.Canvas.native_authority",
     "tldw_chatbook.Tools.remote_session_registry",
     "tldw_chatbook.Tools.remote_session_worker",
     "tldw_chatbook.UI.Console_Modules.citation_counts",

@@ -158,10 +158,8 @@ print(
 """
 
 
-@pytest.fixture(scope="module")
-def pass_outcome(tmp_path_factory) -> dict:
-    """Run the app's pre-import pass in a fresh interpreter (sys.modules is global)."""
-    tmp_path = tmp_path_factory.mktemp("first_send_pass")
+def _run_isolated(tmp_path: Path, script: str, *args: str) -> subprocess.CompletedProcess:
+    """Run ``script`` in a fresh interpreter with a scratch HOME (sys.modules is global)."""
     home, data, config_dir = (tmp_path / n for n in ("home", "data", "config"))
     for directory in (home, data, config_dir):
         directory.mkdir(mode=0o700)
@@ -176,9 +174,8 @@ def pass_outcome(tmp_path_factory) -> dict:
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_CONFIG_PATH", None)
-    expected = [f"tldw_chatbook.{name}" for name in LIVE_FIRST_SEND_IMPORTS]
     result = subprocess.run(
-        [sys.executable, "-c", _PASS_SCRIPT, json.dumps(expected)],
+        [sys.executable, "-c", script, *args],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -187,8 +184,82 @@ def pass_outcome(tmp_path_factory) -> dict:
         timeout=300,
     )
     assert result.returncode == 0, result.stderr[-4000:]
+    return result
+
+
+@pytest.fixture(scope="module")
+def pass_outcome(tmp_path_factory) -> dict:
+    """Run the app's pre-import pass in a fresh interpreter (sys.modules is global)."""
+    expected = [f"tldw_chatbook.{name}" for name in LIVE_FIRST_SEND_IMPORTS]
+    result = _run_isolated(
+        tmp_path_factory.mktemp("first_send_pass"), _PASS_SCRIPT, json.dumps(expected)
+    )
     line = next(x for x in result.stdout.splitlines() if x.startswith("PASS_JSON:"))
     return json.loads(line[len("PASS_JSON:") :])
+
+
+#: The pass as it runs live: the screen routes, then the warm-up, each
+#: warm-up step recording the third-party packages it loaded (TASK-33620.15.18).
+_STEPS_SCRIPT = """
+import importlib
+import json
+import sys
+
+from loguru import logger
+
+import tldw_chatbook.app as app_module
+import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (the initial route)
+from tldw_chatbook.Chat import console_first_send_modules as warm
+
+cls = app_module.TldwCli
+app = cls.__new__(cls)  # the pass reads only these
+app._shutting_down = False
+app.loguru_logger = logger
+cls._pause_between_preimports = lambda self, gap: None  # pacing: unit-tested
+# The routes run first, as live: whatever they load is resident already.
+app._preimport_screens(app._screen_preimport_route_order())
+stdlib = set(sys.stdlib_module_names)
+
+
+def third_party():
+    # A private top-level module (``_cython_3_2_3``, ``_cffi_backend``) is a
+    # compiled package's own runtime, loaded with it.
+    return {
+        name.split(".")[0]
+        for name, module in list(sys.modules.items())
+        if module is not None
+        and name.split(".")[0] not in stdlib
+        and not name.startswith(("tldw_chatbook", "_"))
+    }
+
+
+steps = []
+
+
+class Recorder:
+    def import_module(self, name, package=None):
+        before = third_party()
+        try:
+            return importlib.import_module(name, package)
+        finally:
+            steps.append([name, sorted(third_party() - before)])
+
+    def __getattr__(self, attr):
+        return getattr(importlib, attr)
+
+
+warm.importlib = Recorder()
+warm.preimport_first_send_modules(app)
+print("STEPS_JSON:" + json.dumps(steps))
+"""
+
+
+@pytest.fixture(scope="module")
+def warm_up_steps(tmp_path_factory) -> list[list]:
+    """``[step, [third-party packages it loaded]]`` for the live pass's warm-up."""
+    result = _run_isolated(tmp_path_factory.mktemp("first_send_steps"), _STEPS_SCRIPT)
+    line = next(x for x in result.stdout.splitlines() if x.startswith("STEPS_JSON:"))
+    return json.loads(line[len("STEPS_JSON:") :])
 
 
 @pytest.mark.integration
@@ -225,6 +296,36 @@ def test_the_idle_pass_parses_the_manifest_source_for_the_first_send(pass_outcom
     assert pass_outcome["manifest_parses"] == 0, (
         f"the first send's manifest read parsed server.py "
         f"{pass_outcome['manifest_parses']} time(s) on the UI loop"
+    )
+
+
+@pytest.mark.integration
+def test_no_warm_up_step_loads_a_third_party_package_it_does_not_name(warm_up_steps):
+    """A navigation waits behind one small step at most (TASK-33620.15.18).
+
+    The warm-up parks before each step while a navigation holds the loop, but
+    a step it has started runs to its end, sharing the GIL with the
+    navigation. Live on origin/dev 7536ac3b87 (160x45, established profiles,
+    an idle host), ``Canvas.native_authority`` was one step of 85-222 ms
+    (63-70 ms CPU): importing it loaded aiohttp, aiodns, html5lib, tinycss2
+    and their dependencies, 121 modules. A Library click landing in it drew
+    Library's first frame 181-216 ms after the click, against 141-165 ms on
+    origin/dev without the warm-up at the same moment (paired median
+    +52 ms, slower in 8 of 8 pairs at all loads). Keys landing in it were
+    not slower.
+
+    So each third-party package a send needs is its own step, after its
+    dependencies: a step loads no third-party package but the one it names.
+    """
+    assert len(warm_up_steps) > 60, "the warm-up recorded no steps"
+    hidden = {
+        step: packages
+        for step, packages in warm_up_steps
+        if set(packages) - {step.split(".")[0]}
+    }
+    assert not hidden, (
+        "these warm-up steps load third-party packages they do not name; list "
+        "each package, after its dependencies, before the step: " + repr(hidden)
     )
 
 
