@@ -149,10 +149,10 @@ cron entry on `dev`.
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
   grown since: the UI lane currently runs 32 shards, with at most 17 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
-  Fast Lane's admission-sensitive half (two jobs since TASK-35575), the Dreams
+  Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests and the Dreams and Guardian boundary contracts are jobs of
   their own (TASK-34916, TASK-34929, TASK-34986), so an ordinary unlabeled,
-  non-GGUF PR now requests 23 test runners in parallel, 24 with perf-guard
+  non-GGUF PR now requests 24 test runners in parallel, 25 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -353,7 +353,7 @@ the earlier passing component timings from final-head qualification.
 
 At that checkpoint the UI lane had 28 shards and 34 eligible test jobs per PR.
 The UI matrix sets `max-parallel: 17`; the six other required application lanes
-therefore retain the existing peak of 23 test runners, or 24 with Perf Guard.
+therefore retain a peak of 24 test runners, or 25 with Perf Guard (23 and 24 before Roleplay frame B2b's third admission lane).
 Eligible job count and peak concurrency are distinct. The existing required
 aggregate waits for all 28 shards; every shard stays serial with the same
 minimal dependencies, 20-minute job cap and 180-second test timeout. No selected
@@ -431,3 +431,14 @@ The [implementation QA](../../Docs/superpowers/qa/2026-10-28-textual-followups-i
 retains source pins, complete-phase timing inputs, selector conservation,
 candidate comparisons, native receipts and Superpowers review. This amendment
 extends the existing gate policy; it adds no required-check owner or dependency.
+
+2026-10-31 (Roleplay frame B2b, TASK-33910.4, owner decision): a third
+admission-sensitive job, `pr-fast-lane-admission-3` ("PR Fast Lane
+(admission-sensitive 3)"), runs B2b's mounted Roleplay suites
+(`test_roleplay_import_app.py`, `test_roleplay_item_list_app.py` and the painted
+search-placeholder contrast test), moved out of lanes 1 and 2, with the same
+install line, 35-min cap and `--timeout=300`; the required check `needs` it and
+fails when it is not `success`. On PR #3334's run 41169081459 lane 2 with these
+suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, 485 s
+serial locally). One more runner per PR: 24 concurrent test runners, 25 with
+perf-guard, 35 eligible test jobs.
