@@ -77,7 +77,10 @@ def _record_dispatch(console) -> list[tuple[str | None, str]]:
     """Record the chat each send is dispatched to, instead of sending it."""
     dispatched: list[tuple[str | None, str]] = []
 
-    async def dispatch(draft, stash=None, *, session_id=None):
+    async def dispatch(draft, stash=None, *, session_id=None, _captured_inputs=None):
+        assert _captured_inputs is not None
+        assert _captured_inputs.session_id == session_id
+        assert _captured_inputs.draft == draft
         dispatched.append((session_id, draft))
         return True
 

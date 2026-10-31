@@ -11,7 +11,7 @@ labels:
 - uat
 priority: high
 dependencies: []
-updated_date: 2026-10-31 17:43
+updated_date: 2026-10-31 20:34
 ---
 
 ## Description
@@ -100,3 +100,9 @@ Review repair plan (2026-10-31): reproduce held hydration through the actual Lib
   54 calls: two re-indented, zero added/removed, no content or privacy change.
   Exact size checks pass at workspace 8766 and controller 29184 lines under the
   existing owner waiver. The existing census node includes all caller parameters.
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Current-dev integration (2026-10-31, base 0d05d27fa1d569f1edebbc2346d43f8c03da9911): preserved current acknowledged-press input capture and every base census entry. Independent integration review found no new production defect, but the old test recorder rejected the current _captured_inputs keyword. All four mounted controls reproduced that exact TypeError. The recorder now accepts the explicit keyword and asserts its captured session and draft equal the dispatched values; no production behavior or original owner/refusal assertion changed. All four mounted cases pass with clean teardown (153.45s), covering rail, Library, Ctrl+K and post-resume delivery. The unchanged current-base product also passed all eight shutdown/provider lifecycle tests and the real mounted background-notification control. No new Ruff findings; diff check passes. All six changed product-file diagnostic owner/sink/path projections match the inventory; current census prefix is unchanged and the four verified nodes make1178 entries. Exact size pins reflect the owner's 2026-10-31 waiver. Hosted CI waiting is waived; final independent review and oldest-first merge sequencing remain required. Native-private evidence receipts: ../test-runtime/current-base-integration-1793478189891008400 and ../test-runtime/resume-recorder-green-1793478564969789600 (JUnit+source manifests). Earlier adjacent exact-base failures remain recorded under TASK-35311; this targeted integration does not claim a full-suite pass.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
