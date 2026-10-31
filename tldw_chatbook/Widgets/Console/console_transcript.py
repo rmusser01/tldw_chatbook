@@ -597,6 +597,14 @@ def _message_status_line(message: ConsoleChatMessage) -> str:
 
 
 def _citation_notice(message: ConsoleChatMessage) -> str:
+    """Return a reply's dim sources and citation lines (TASK-33620.7)."""
+    count = getattr(message, "evidence_source_count", None)
+    sources = f"Sources ({count}) · sent with this turn" if count else ""
+    lines = (sources, _citation_repair_notice(message))
+    return "\n".join(line for line in lines if line)
+
+
+def _citation_repair_notice(message: ConsoleChatMessage) -> str:
     """Return exact content-free citation transition copy for one message."""
     presentation = message.citation_presentation
     if presentation is None:
@@ -8288,6 +8296,7 @@ class ConsoleTranscript(VerticalScroll):
             message.image_mime_type,
             None if message.image_data is None else len(message.image_data),
             message.citation_presentation,
+            getattr(message, "evidence_source_count", None),
             # Load-bearing: the activity line is stamped on a `replace()`
             # copy whose every OTHER field is identical tick to tick, so a
             # token without it would hit this cache and the elapsed figure

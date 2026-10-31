@@ -11175,6 +11175,9 @@ class ConsoleChatController:
                 frozen_pii_ruleset_revision_id=pii_ruleset_revision_id,
                 frozen_next_trace_privacy_revision=next_trace_privacy_revision,
             )
+            self._note_reply_evidence_sources(
+                assistant.id, prepared_continuation, custody_evidence_lease
+            )
             self._release_prepared_evidence(prepared_continuation)
             self._release_evidence_lease(custody_evidence_lease)
             if not custodied_inputs:
@@ -12305,6 +12308,12 @@ class ConsoleChatController:
                 self.store.persist_message_if_needed(audit_id)
 
         def clear_staged_input() -> None:
+            assistant = assistant_holder.get("assistant")
+            self._note_reply_evidence_sources(
+                assistant.id if assistant is not None else commit.assistant_message_id,
+                continuation.prepared,
+                None,
+            )
             self._release_prepared_evidence(continuation.prepared)
             if continuation.prepared is not None:
                 for pending in continuation.prepared.attachments:
@@ -22392,6 +22401,35 @@ class ConsoleChatController:
         self._release_evidence_lease(
             continuation.staged_evidence if continuation is not None else None
         )
+
+    def _note_reply_evidence_sources(
+        self,
+        message_id: str,
+        continuation: _PreparedSendContinuation | None,
+        custody_lease: _PreparedEvidenceLease | None,
+    ) -> None:
+        """Put the staged sources a send carried on its reply (TASK-33620.7).
+
+        Runs just before the leases release, while the captured launch is
+        still attached. Display only: a failure here never costs the send.
+        """
+        from tldw_chatbook.Chat.console_display_state import console_sent_source_count
+
+        prepared = continuation.staged_evidence if continuation is not None else None
+        for lease in (prepared, custody_lease):
+            result = None if lease is None or lease.released else lease.capture_result
+            context = getattr(result, "context", None)
+            if not isinstance(context, str) or not context.strip():
+                continue
+            count = console_sent_source_count(lease.launch, result)
+            try:
+                self.store.set_evidence_source_count(message_id, count or None)
+            except (KeyError, ValueError) as exc:
+                logger.debug(
+                    "Reply source count not shown (exception_type={})",
+                    type(exc).__name__,
+                )
+            return
 
     @staticmethod
     def _release_evidence_lease(lease: _PreparedEvidenceLease | None) -> None:

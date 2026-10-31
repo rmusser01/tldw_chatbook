@@ -2613,6 +2613,8 @@ class ConsoleRuntime:
         self._staged_evidence_revision += 1
         state.revision = self._staged_evidence_revision
         state.sent_source_count = console_sent_source_count(launch, result)
+        # Every production send releases here: redraw the strip and Inspect.
+        self._project_staged_evidence_change()
         return True
 
     def _prune_staged_evidence(self) -> None:
@@ -5641,6 +5643,8 @@ class ConsoleRuntime:
                 remount(store.active_session_id)
         self._rearm_delivery_ui_hook()
         self._project_pending_project_instruction_decisions()
+        # A send may have released its evidence while no view was attached.
+        self._project_staged_evidence_change()
         return True
 
     def attach_view(

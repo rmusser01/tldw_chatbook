@@ -149,11 +149,16 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-30, TASK-33620.7 (same owner rule): 29038 -> 29076 (+38). A
+    # send's captured staged sources are put on its reply ("Sources (N)") at
+    # both acceptance points, before the evidence leases release.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29076,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    # 2026-10-30, TASK-33620.7 (same owner rule): 22338 -> 22348 (+10), the
+    # session-only setter for a reply's staged-source count.
+    "tldw_chatbook/Chat/console_chat_store.py": 22348,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -427,7 +432,11 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
+    # 2026-10-30, TASK-33620.7 (same owner rule): 8380 -> 8389 (+9) for the
+    # reply's dim "Sources (N) · sent with this turn" line. Raised by this
+    # branch's growth only: dev 7536ac3b87 measures 8,848 on its own, and
+    # that overrun is not absorbed here.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8389,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -588,7 +597,8 @@ _BUDGETS: dict[str, int] = {
     # raises the row with a dated comment; never squeeze code to fit):
     # 6686 -> 6748 (+62). Staged evidence and its receipt are kept per chat
     # under one revision fence, and a chat switch redraws the view's copy.
-    "tldw_chatbook/Chat/console_runtime.py": 6748,
+    # 6748 -> 6752 (+4): a release, or a view reattach, redraws it too.
+    "tldw_chatbook/Chat/console_runtime.py": 6752,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,

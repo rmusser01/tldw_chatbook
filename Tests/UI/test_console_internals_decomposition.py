@@ -3630,16 +3630,16 @@ def test_console_inspector_sources_row_remembers_the_last_send():
     assert "sent with the last message · 5 sources" in rows_by_label["Run recipe"].value
 
 
-def test_console_strip_and_inspector_sent_counts_provably_agree():
-    """D1a+D1b agreement: the strip and the Inspector must read the SAME
-    number after a send releases its staged launch -- this fix gives the
-    Inspector the strip's own memory field, not a second, independently
-    derived count that could drift from it again."""
+def test_console_strip_never_repeats_the_receipt_the_inspector_keeps():
+    """TASK-33620.7: after a send releases its staged launch the strip is
+    hidden -- it describes only the NEXT send, and the reply itself says
+    "Sources (N)" -- while the Inspector keeps the one-send receipt. The
+    strip used to say "Evidence sent with this message" and never cleared."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     screen = ChatScreen(app)
     # Simulate the state immediately after `_release_consumed_console_launch`:
-    # the launch is gone, and the one-send memory is armed.
+    # the launch is gone, and the one-send receipt is armed.
     screen._pending_console_launch_context = None
     screen._console_evidence_sent_notice = 5
 
@@ -3647,18 +3647,8 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+    assert strip_state.visible is False
     assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
-    # Change the ONE shared field and both surfaces move together -- proof
-    # they read the same number, not two counts that merely match today.
-    screen._console_evidence_sent_notice = 2
-    strip_state_2 = screen._build_console_staged_evidence_strip_state(None)
-    inspector_state_2 = screen._build_console_inspector_state(None)
-    rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
-    assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
-    assert (
-        rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
-    )
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():

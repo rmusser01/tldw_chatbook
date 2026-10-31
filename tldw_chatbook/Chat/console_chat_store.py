@@ -12359,6 +12359,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         message.citation_presentation = presentation
         return self._snapshot(message)
 
+    def set_evidence_source_count(
+        self, message_id: str, count: int | None
+    ) -> ConsoleChatMessage:
+        """Record how many staged sources a reply's send carried (session-only)."""
+        if count is not None and (type(count) is not int or count < 1):
+            raise ValueError("count must be a positive int or None")
+        message = self._message_or_raise(message_id)
+        message.evidence_source_count = count
+        return self._snapshot(message)
+
     def set_message_feedback(
         self,
         message_id: str,

@@ -33,6 +33,7 @@ from Tests.UI.test_console_native_chat_flow import (
 )
 from Tests.UI.test_console_staged_evidence_strip import (
     STRIP_ID,
+    UNSTAGE_ID,
     _launch,
     _strip_text,
 )
@@ -42,6 +43,9 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_display_state import (
+    build_console_staged_evidence_strip_state,
+)
 from tldw_chatbook.Chat.console_live_work import (
     PENDING_LAUNCH_CARD_ID,
     SOURCE_READINESS_CARD_ID,
@@ -135,6 +139,13 @@ async def _send(screen, pilot, draft: str, replies: int) -> None:
 async def _settle(pilot) -> None:
     for _ in range(4):
         await pilot.pause()
+
+
+async def _open_inspect(screen, pilot) -> None:
+    """Inspect keeps its cards current only while the rail is open."""
+    if not screen._is_console_widget_displayed("console-right-rail"):
+        await screen.action_toggle_console_inspector_rail()
+    await _settle(pilot)
 
 
 def _assert_staged(screen, count: int) -> None:
@@ -238,6 +249,7 @@ async def test_a_send_in_one_chat_leaves_another_chats_staging_alone(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _select_llamacpp_console(console)
+        await _open_inspect(console, pilot)
         store = console._ensure_console_chat_store()
         first_chat = store.active_session_id
         console._retrieval._stage_console_library_rag_launch(_launch(2))
@@ -250,6 +262,7 @@ async def test_a_send_in_one_chat_leaves_another_chats_staging_alone(
             await pilot.pause(0.05)
         # A new tab starts on the app default provider; make it sendable.
         await _select_llamacpp_console(console)
+        await _open_inspect(console, pilot)
         await _settle(pilot)
         await _send(console, pilot, "unrelated", replies=1)
 
@@ -259,3 +272,55 @@ async def test_a_send_in_one_chat_leaves_another_chats_staging_alone(
         await console._session._activate_native_console_session(first_chat)
         await _settle(pilot)
         _assert_staged(console, 2)
+
+
+@pytest.mark.asyncio
+async def test_staged_evidence_follows_one_turn_and_one_chat(capture) -> None:
+    """Stage -> send: the reply, not the strip, says what the send carried."""
+    gateway = CapturingGateway()
+    host = ConsoleHarness(_console_app(gateway))
+    async with host.run_test(size=(200, 56)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        await _open_inspect(console, pilot)
+
+        launch = _launch(2)
+        console._retrieval._stage_console_library_rag_launch(launch)
+        await _settle(pilot)
+        _assert_staged(console, 2)
+
+        # The send consumes the evidence: the claim moves onto its reply.
+        await _send(console, pilot, "question", replies=1)
+        assert capture.await_count == 1
+        assert capture.await_args_list[0].args[1] is launch
+        assert EVIDENCE in _last_request_text(gateway)
+        _assert_nothing_staged(console, sent=2)
+        assert _reply_footers(console) == ["Sources (2) · sent with this turn"]
+
+
+@pytest.mark.asyncio
+async def test_unstage_on_a_strip_with_nothing_staged_hides_it(capture) -> None:
+    """AC#4: a stale strip's Un-stage never becomes a permanent notice."""
+    gateway = CapturingGateway()
+    host = ConsoleHarness(_console_app(gateway))
+    async with host.run_test(size=(200, 56)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        await _open_inspect(console, pilot)
+        console._retrieval._stage_console_library_rag_launch(_launch(2))
+        await _settle(pilot)
+        await _send(console, pilot, "question", replies=1)
+
+        # Whatever left the strip showing a consumed launch, its Un-stage
+        # press is the user's way out of it.
+        strip = console.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        strip.sync_state(build_console_staged_evidence_strip_state(_launch(2)))
+        await _settle(pilot)
+        console.query_one(UNSTAGE_ID, Button).press()
+        await _settle(pilot)
+
+        assert strip.display is False, _strip_text(console)
+        assert "Evidence sent with this message" not in _strip_text(console)
+        _assert_nothing_staged(console, sent=2)
