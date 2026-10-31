@@ -4989,3 +4989,228 @@ async def test_a_target_counted_for_an_older_query_never_switches(
         assert screen.state.active_mode == "characters"
         assert screen.state.search_query == "keplerzz"
         assert also_in_targets(screen) == ()
+
+
+# ---- Also in: the final fix wave (F5, T10a, T10b, T9c) ----
+
+
+def _count_also_in_runs(monkeypatch, screen) -> list[int]:
+    """Count the ``Also in:`` count workers the screen starts."""
+    runs: list[int] = []
+    worker = screen._also_in_worker
+
+    def counted(fence):
+        runs.append(1)
+        return worker(fence)
+
+    monkeypatch.setattr(screen, "_also_in_worker", counted)
+    return runs
+
+
+async def test_a_sort_or_tag_change_keeps_the_landed_also_in_targets(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Final review F5: ``s`` and a tag pick repainted the no-match block
+    without its counts and started a new count, so the targets flickered,
+    although the other kinds' counts depend on the query alone. New with
+    B2b. With the query unchanged the landed targets stay painted and no
+    count starts; the no-match line still follows the tag."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        runs = _count_also_in_runs(monkeypatch, screen)
+        item_list.focus()
+        sort_before = screen.state.sort_key
+        await pilot.press("s")
+        await wait_until(
+            pilot,
+            lambda: screen.state.sort_key != sort_before
+            and not screen._search_rows_pending(screen._list_fence()),
+            what="the sort's reload",
+        )
+        await settle(pilot)
+        assert also_in_targets(screen) == ("Lore books 1 ›",)
+        assert runs == [] and _also_in_workers(pilot.app) == []
+        await screen._apply_tag_filter("noir")
+        await settle(pilot)
+        assert no_match_lines(screen)[0] == (
+            'No characters match "kepler" with the tag "noir".'
+        )
+        assert also_in_targets(screen) == ("Lore books 1 ›",)
+        assert runs == [] and _also_in_workers(pilot.app) == []
+        # A sort that lists rows hides the block as usual; the next no-match
+        # query counts again.
+        await _search_settled(pilot, screen, "zzqx")
+        await _targets(pilot, screen, ("Not found in other kinds either.",))
+        assert runs == [1]
+
+
+async def test_a_sort_during_the_counts_neither_cancels_nor_restarts_them(
+    mock_app_instance, volume_348, monkeypatch
+):
+    """Final review F5, the counts still running: a sort change let the old
+    count run to completion and dropped its result (the fence had moved),
+    while a new worker counted again. New with B2b. Now the running count
+    lands on the sorted list and no second count starts."""
+    _also_in_world(mock_app_instance, volume_348, lore=("Kepler Atlas",))
+    armed, reading, release = _held_lore_count(monkeypatch)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        app = pilot.app
+        screen = app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        runs = _count_also_in_runs(monkeypatch, screen)
+        armed["on"] = True
+        try:
+            await _search_settled(pilot, screen, "kepler", workers=False)
+            await wait_until(pilot, reading.is_set, what="the held lore count")
+            held = _also_in_workers(app)
+            assert len(held) == 1 and runs == [1]
+            item_list.focus()
+            sort_before = screen.state.sort_key
+            await pilot.press("s")
+            await wait_until(
+                pilot,
+                lambda: screen.state.sort_key != sort_before
+                and not screen._search_rows_pending(screen._list_fence()),
+                what="the sort's reload",
+            )
+            for _ in range(5):
+                await pilot.pause()
+            assert _also_in_workers(app) == held and runs == [1]
+        finally:
+            release.set()
+        await _targets(pilot, screen, ("Lore books 1 ›",))
+        assert runs == [1]
+
+
+def _server_world(mock_app_instance, *, remote: list[dict], search: list[dict]):
+    """A server runtime whose character list and search answer as given, with
+    empty persona and dictionary services (every kind counts)."""
+
+    async def list_characters(*, mode, limit, offset):
+        return [dict(record) for record in remote[offset : offset + limit]]
+
+    async def search_characters(query, *, mode, limit):
+        return [dict(record) for record in search[:limit]]
+
+    async def list_persona_profiles(**_kwargs):
+        return {"items": []}
+
+    mock_app_instance.runtime_backend = "server"
+    mock_app_instance.active_server_id = "server-a"
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_characters=list_characters,
+        search_characters=search_characters,
+        list_persona_profiles=list_persona_profiles,
+        get_character=AsyncMock(return_value=dict(remote[0])),
+    )
+    mock_app_instance.chat_dictionary_scope_service = _dictionary_service()
+
+
+async def test_a_server_character_count_at_the_cap_reads_100_plus(
+    mock_app_instance, volume_348
+):
+    """Deferred minor T10a: the server search answers at most 100 rows with
+    no total (the cap exists on dev; its list says ``100+``), and the Also in
+    count showed it as an exact "Characters 100 ›" (new with B2b). A full
+    page with no total now reads "Characters 100+ ›"."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    WorldBookManager(volume_348).create_world_book("Grand Library")
+    remote = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 4)]
+    found = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 101)]
+    _server_world(mock_app_instance, remote=remote, search=found)
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        assert screen.state.runtime_source == "server"
+        await _show_kind(pilot, screen, "lore")
+        await _search_settled(pilot, screen, "remote")
+        await _targets(pilot, screen, ("Characters 100+ ›",))
+
+
+async def test_a_server_search_that_matches_nothing_leaves_the_total_out(
+    mock_app_instance,
+):
+    """Deferred minor T9c: under the server runtime the no-match message leaves
+    "N in total" out (the server's total is unknown), pinned here on the
+    mounted screen; the pure function's case is in test_roleplay_item_list."""
+    remote = [{"id": n, "name": f"Remote {n:03d}"} for n in range(1, 4)]
+    _server_world(mock_app_instance, remote=remote, search=[])
+    async with open_styled_roleplay("mock", mock_app_instance, size=SIZE) as pilot:
+        screen = pilot.app.screen
+        await wait_until(
+            pilot, lambda: len(visible_item_ids(screen)) == 3, what="the server rows"
+        )
+        await _search_settled(pilot, screen, "zz")
+        assert no_match_lines(screen) == (
+            'No characters match "zz".',
+            "esc clears the search",
+        )
+        assert "in total" not in "\n".join(painted_rows(screen))
+
+
+async def test_enter_on_also_in_switches_into_characters_by_relevance(
+    mock_app_instance, volume_348
+):
+    """Deferred minor T10b: a switch INTO Characters from ``Also in:`` sorts
+    by relevance, as the first typed key does, and lands on the first match
+    by relevance, which here is not the first by name."""
+    from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
+
+    WorldBookManager(volume_348).create_world_book("Grand Library")
+    _also_in_world(mock_app_instance, volume_348)
+    WorldBookManager(volume_348).create_world_book("Grand Library 2")
+    volume_348.add_character_card(
+        {"name": "Alpha Kepler", "description": "A quiet cartographer."}
+    )
+    volume_348.add_character_card(
+        {
+            "name": "Zed Kepler",
+            "description": "Kepler of Kepler, by Kepler.",
+            "personality": "Kepler through and through.",
+        }
+    )
+    by_relevance = [
+        row["name"]
+        for row in personas_screen_module.get_character_page_for_ui(
+            volume_348,
+            limit=10,
+            offset=0,
+            order_by="relevance",
+            search_term=personas_screen_module.quote_fts5_prefix("kepler"),
+        )
+    ]
+    assert by_relevance == ["Zed Kepler", "Alpha Kepler"]  # not the name order
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=volume_348
+    ) as pilot:
+        screen = pilot.app.screen
+        item_list = screen.query_one(RoleplayItemList)
+        await _show_kind(pilot, screen, "lore")
+        await _search_settled(pilot, screen, "kepler")
+        await _targets(pilot, screen, ("Characters 2 ›",))
+        assert await pilot.click("#personas-library-also-in-character")
+        await wait_until(
+            pilot,
+            lambda: (
+                screen.state.active_mode == "characters"
+                and len(visible_item_ids(screen)) == 2
+            ),
+            what="the characters list",
+        )
+        await settle(pilot)
+        assert screen.state.sort_key == "relevance"
+        assert screen.state.search_query == "kepler"
+        assert [item.name for item in list_state(screen).items] == by_relevance
+        assert highlighted_item_id(screen) == visible_item_ids(screen)[0]
+        assert item_at(screen, 0).name == "Zed Kepler"
+        assert screen.focused is item_list

@@ -1347,6 +1347,8 @@ class PersonasScreen(BaseAppScreen):
         # The one Import picker's worker is running (frame slice B2b): a
         # second Import says an import is in progress.
         self._roleplay_import_running: bool = False
+        # The list the running Also in count was started for (``_start_also_in``).
+        self._also_in_fence: frame_state.ListFence | None = None
         # The New chooser is open (frame slice B2b).
         self._new_chooser_open: bool = False
         # Bumped by every guarded transition, kind switch, create and item
@@ -3880,15 +3882,43 @@ class PersonasScreen(BaseAppScreen):
         """The current kind found nothing for ``fence``'s query: count the other kinds.
 
         One count per kind, off the event loop, only for an empty result; the
-        renders that call this sit behind the search debounce already.
+        renders that call this sit behind the search debounce already. A
+        count still running for the same query (a sort or tag change
+        re-rendered the empty list) is left to land: the other kinds' counts
+        depend on the query alone (until B2b's final fix wave it was
+        cancelled and counted again).
         """
         if not fence.query or not self.is_running:
             return
+        running = self._also_in_fence
+        if (
+            running is not None
+            and self._also_in_same_query(running, fence)
+            and any(
+                worker.node is self
+                and worker.group == _ALSO_IN_GROUP
+                and not worker.is_finished
+                for worker in self.workers
+            )
+        ):
+            return
+        self._also_in_fence = fence
         self.run_worker(
             self._also_in_worker(fence),
             group=_ALSO_IN_GROUP,
             exclusive=True,
             exit_on_error=False,
+        )
+
+    @staticmethod
+    def _also_in_same_query(a: frame_state.ListFence, b: frame_state.ListFence) -> bool:
+        """Whether two lists ask the other kinds the same question (the sort,
+        tag and generation do not change their counts)."""
+        return (
+            a.mode == b.mode
+            and a.query == b.query
+            and a.runtime_source == b.runtime_source
+            and a.server_id == b.server_id
         )
 
     def _resume_also_in(self) -> None:
@@ -3930,30 +3960,44 @@ class PersonasScreen(BaseAppScreen):
         current = frame_state.KIND_FOR_MODE.get(fence.mode)
         counts: dict[str, int] = {}
         failed: set[str] = set()
+        capped: set[str] = set()
         for kind in frame_state.ALSO_IN_ORDER:
             if kind == current:
                 continue
             try:
-                counts[kind] = await self._count_kind_matches(kind, fence)
+                counts[kind], is_capped = await self._count_kind_matches(kind, fence)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.opt(exception=True).debug("An Also in count failed.")
                 failed.add(kind)
-        self._apply_also_in(fence, counts, failed)
+            else:
+                if is_capped:
+                    capped.add(kind)
+        self._apply_also_in(fence, counts, failed, capped)
 
     def _apply_also_in(
-        self, fence: frame_state.ListFence, counts: dict[str, int], failed: set[str]
+        self,
+        fence: frame_state.ListFence,
+        counts: dict[str, int],
+        failed: set[str],
+        capped: set[str] = frozenset(),
     ) -> None:
-        """Show the counts only on the list they were counted for (spec 1.5.6's fence)."""
-        if not self._list_fence_is_current(fence):
+        """Show the counts only on the list they were counted for (spec 1.5.6's fence).
+
+        The question is the same across a sort or tag change, so the fence is
+        matched on the kind, source and query alone (``_also_in_same_query``).
+        """
+        if not self._also_in_same_query(fence, self._list_fence()):
             return
         try:
-            self.query_one(PersonasLibraryPane).show_also_in(counts, failed)
+            self.query_one(PersonasLibraryPane).show_also_in(counts, failed, capped)
         except QueryError:
             pass
 
-    async def _count_kind_matches(self, kind: str, fence: frame_state.ListFence) -> int:
+    async def _count_kind_matches(
+        self, kind: str, fence: frame_state.ListFence
+    ) -> tuple[int, bool]:
         """How many of ``kind`` the query matches, with that kind's own search.
 
         Characters count with the list's FTS prefix expression (the database
@@ -3961,6 +4005,12 @@ class PersonasScreen(BaseAppScreen):
         source asks its search once, as its list does. Personas page the
         service as their list does; lore books and chat dictionaries filter
         names as theirs do. Raises when a kind cannot be read.
+
+        Returns:
+            The count, and whether it is a lower bound: the server search
+            answers at most ``_SERVER_CHARACTER_SEARCH_MAX_RESULTS`` rows and,
+            with no total, a full page may hide more (its list says ``100+``;
+            the cap exists on dev).
         """
         query = fence.query.strip()
         needle = query.lower()
@@ -3972,23 +4022,27 @@ class PersonasScreen(BaseAppScreen):
                 query, mode="server", limit=_SERVER_CHARACTER_SEARCH_MAX_RESULTS
             )
             rows, total = self._server_character_rows(response)
-            return total if total is not None else len(rows)
+            if total is not None:
+                return total, False
+            return len(rows), len(rows) >= _SERVER_CHARACTER_SEARCH_MAX_RESULTS
         if kind == "character":
             db = self._character_db()
             if db is None:
                 raise RuntimeError("No character database.")
-            return await asyncio.to_thread(
+            count = await asyncio.to_thread(
                 db.count_character_cards, search_term=quote_fts5_prefix(query)
             )
+            return count, False
         if kind == "persona":
             records = await self.persona_handler.list_all_persona_profiles()
-            return page_persona_profiles(
+            matched = page_persona_profiles(
                 records,
                 search_term=query,
                 sort_key="name_asc",
                 offset=0,
                 page_size=max(1, len(records)),
             )[1]
+            return matched, False
         if kind == "dictionary":
             service = self._dictionary_scope_service()
             response = await service.list_dictionaries(
@@ -4001,7 +4055,7 @@ class PersonasScreen(BaseAppScreen):
                 raise RuntimeError("No lore database.")
             books = await asyncio.to_thread(manager.list_world_books, True)
             names = [book.get("name", "") for book in books]
-        return sum(1 for name in names if needle in str(name).lower())
+        return sum(1 for name in names if needle in str(name).lower()), False
 
     @on(AlsoInRequested)
     async def _handle_also_in(self, message: AlsoInRequested) -> None:

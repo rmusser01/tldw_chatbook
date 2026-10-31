@@ -731,8 +731,13 @@ class PersonasLibraryPane(Vertical):
         # What the no-match message shows (query, tag, total), while it shows:
         # the other kinds' counts are laid over it when they arrive.
         self._no_match_args: tuple[str, str | None, int | None] | None = None
-        # Whether counts were laid over that message (a leave can cut them short).
+        # Whether counts were laid over that message (a leave can cut them short),
+        # and the counts themselves: a sort or tag change with the same query
+        # repaints the message with them instead of counting again.
         self._also_in_landed = False
+        self._also_in_counts: (
+            tuple[Mapping[str, int], Collection[str], Collection[str]] | None
+        ) = None
         # Retry held the focus when a reload's blank hid it (``_show_retry``).
         self._retry_owed_focus = False
 
@@ -1020,8 +1025,9 @@ class PersonasLibraryPane(Vertical):
             tag: The tag these rows answer.
 
         Returns:
-            Whether the no-match message shows (the screen then counts the
-            other kinds, spec 1.5.4).
+            Whether the no-match message shows and owes the other kinds'
+            counts (the screen then counts them, spec 1.5.4); False when it
+            kept the counts landed for the same query.
         """
         item_list = self.item_list
         visible_rows = () if recovery_copy else rows
@@ -1046,11 +1052,38 @@ class PersonasLibraryPane(Vertical):
         elif query or tag:
             # TASK-33788: dev said "No <kind> yet" for a search that matched
             # nothing; "N in total" only where the count says it (filtered).
-            no_match = frame_state.no_match_view(
-                item_list.kind, query=query, tag=tag, total=total if filtered else None
+            # The other kinds' counts depend on the query alone: a sort or
+            # tag change that keeps it repaints them and owes no count (they
+            # flickered and were counted again until B2b's final fix wave).
+            previous = self._no_match_args
+            kept = (
+                self._also_in_counts
+                if previous is not None
+                and previous[0] == query
+                and self._also_in_landed
+                else None
             )
+            if kept is not None:
+                counts, failed, capped = kept
+                no_match = frame_state.no_match_view(
+                    item_list.kind,
+                    query=query,
+                    tag=tag,
+                    total=total if filtered else None,
+                    counts=counts,
+                    failed=failed,
+                    capped=capped,
+                )
+            else:
+                no_match = frame_state.no_match_view(
+                    item_list.kind,
+                    query=query,
+                    tag=tag,
+                    total=total if filtered else None,
+                )
+                self._also_in_landed = False
+                self._also_in_counts = None
             self._no_match_args = (query, tag, total if filtered else None)
-            self._also_in_landed = False
         else:
             status = (
                 "personas-library-empty",
@@ -1068,7 +1101,7 @@ class PersonasLibraryPane(Vertical):
                 failed=bool(recovery_copy),
             )
         self.set_title(title)
-        return no_match is not None
+        return no_match is not None and not self._also_in_landed
 
     async def _sync_status(self, status: tuple[str, str] | None) -> None:
         """Show the empty or recovery copy; mount only when the state changes."""
@@ -1118,11 +1151,17 @@ class PersonasLibraryPane(Vertical):
         if held and not (view is not None and focused.display):
             self.item_list.focus()
 
-    def show_also_in(self, counts: Mapping[str, int], failed: Collection[str]) -> None:
+    def show_also_in(
+        self,
+        counts: Mapping[str, int],
+        failed: Collection[str],
+        capped: Collection[str] = (),
+    ) -> None:
         """Lay the other kinds' counts over the no-match message (spec 1.5.4).
 
         The screen fences them to the list they were counted for; a message
-        that is no longer shown takes nothing.
+        that is no longer shown takes nothing. ``capped`` names the kinds
+        whose count is a lower bound (``100+``).
         """
         if self._no_match_args is None:
             return
@@ -1135,9 +1174,11 @@ class PersonasLibraryPane(Vertical):
                 total=total,
                 counts=counts,
                 failed=failed,
+                capped=capped,
             )
         )
         self._also_in_landed = True
+        self._also_in_counts = (dict(counts), frozenset(failed), frozenset(capped))
 
     def hide_also_in(self) -> None:
         """Hide the targets: the search moved on from the query they were counted for.
@@ -1153,6 +1194,7 @@ class PersonasLibraryPane(Vertical):
             )
         )
         self._also_in_landed = False
+        self._also_in_counts = None
 
     def also_in_owed(self, query: str) -> bool:
         """Whether the no-match message for ``query`` shows with no counts laid over it."""
