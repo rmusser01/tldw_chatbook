@@ -313,13 +313,14 @@ async def _press_until_focus(
 _SETTLE_SECONDS = 10.0
 _WINDOWS_TEST_SETTLE_SECONDS = 120.0
 _WINDOWS = sys.platform == "win32"
+_settle_clock = time.monotonic  # injectable: tests drive the deadline with a fake
 _windows_settle_deadline = 0.0
 
 
 @pytest.fixture(autouse=True)
 def _windows_settle_deadline_per_test() -> None:
     global _windows_settle_deadline
-    _windows_settle_deadline = time.monotonic() + _WINDOWS_TEST_SETTLE_SECONDS
+    _windows_settle_deadline = _settle_clock() + _WINDOWS_TEST_SETTLE_SECONDS
 
 
 async def _settle_pilot_until(
@@ -331,7 +332,7 @@ async def _settle_pilot_until(
     """Pump bounded Pilot cycles until deferred Textual work reaches a condition."""
 
     seconds = (
-        max(0.0, _windows_settle_deadline - time.monotonic())
+        max(0.0, _windows_settle_deadline - _settle_clock())
         if _WINDOWS
         else _SETTLE_SECONDS
     )
@@ -402,14 +403,21 @@ async def test_windows_settles_share_one_deadline_per_test(
         budgets.append(seconds)
         return real_timeout(seconds)
 
+    # A fake clock: Windows' monotonic resolution can be coarser than a short
+    # real sleep, which made a strict real-time comparison flaky.
+    now = [1000.0]
     monkeypatch.setattr(asyncio, "timeout", recording_timeout)
+    monkeypatch.setitem(globals(), "_settle_clock", lambda: now[0])
     monkeypatch.setitem(globals(), "_WINDOWS", True)
-    for _ in range(2):
+    monkeypatch.setitem(
+        globals(), "_windows_settle_deadline", now[0] + _WINDOWS_TEST_SETTLE_SECONDS
+    )
+    for elapsed in (0.0, 30.0):
+        now[0] += elapsed
         await _settle_pilot_until(YieldingPilot(), lambda: True, message="settled")
-        await asyncio.sleep(0.01)
-    assert _WINDOWS_TEST_SETTLE_SECONDS >= budgets[0] > budgets[1] > 0
+    assert budgets == [_WINDOWS_TEST_SETTLE_SECONDS, _WINDOWS_TEST_SETTLE_SECONDS - 30]
     assert _WINDOWS_TEST_SETTLE_SECONDS <= 180 - 60
-    monkeypatch.setitem(globals(), "_windows_settle_deadline", time.monotonic())
+    now[0] += _WINDOWS_TEST_SETTLE_SECONDS
     with pytest.raises(AssertionError, match="budget spent"):
         await _settle_pilot_until(
             YieldingPilot(), lambda: False, message="budget spent"
