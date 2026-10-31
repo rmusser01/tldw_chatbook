@@ -75,6 +75,24 @@ bindings the Inspector passes. Closing the dialog resumes the Console the same
 way. Wait for the dialog's Apply button to take focus before choosing radios:
 `on_mount` re-syncs them to the stored choice and overwrites an earlier pick.
 
+## A new-copy precondition in a behaviour test hides whether the behaviour is red (TASK-37870, 2026-10-30)
+
+**Incident.** The owner decision "Enter always sends; Ctrl+E expands a token" changed
+the chip copy ("| Expand" became "| Ctrl+E expand") and the Enter behaviour in one
+change. The rewritten Enter tests asserted the new chip copy as a precondition before
+pressing Enter. Their first run on the pre-change code went 12 red, every one on
+`'| Ctrl+E expand' in 'Q: Pasted text | 199 characters | Expand'`, so not one of them
+showed whether Enter sent. With the preconditions made copy-agnostic (the body's text
+is hidden; the copy is pinned in the expand-key file instead), the same run went 3 red,
+each "one Enter did not send; the draft shows 'Q: Expand pasted text (199
+characters)? Enter: yes · Esc: no'" -- the actual defect -- and the other 11 flows
+were already green there.
+
+**What to do.** When a change moves copy and behaviour together, pin the copy in its
+own test and keep a behaviour test's preconditions free of the new copy. Read each
+pre-fix red's message, not the count: a red on a precondition is no evidence the
+assertion after it would have caught anything.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under

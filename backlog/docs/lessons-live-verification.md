@@ -38,6 +38,21 @@ when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
 bright-black run) or by the message the transcript shows after the send, not by
 the `.txt` row.
 
+## `tmux paste-buffer` turns line feeds into carriage returns unless you pass `-r` (TASK-37870, 2026-10-30)
+
+**Incident.** To show live that a paste starting with a line break could not be
+expanded from the keyboard, the driver pasted "\n" plus four log lines with
+`tmux load-buffer` and `paste-buffer -p`. The chip read "Pasted text | 157
+characters" on the caret's own row, with no break row above it, and Left then Enter
+asked to expand it -- the opposite of the defect being shown. tmux had replaced every
+LF with CR, and the composer does not draw a leading CR outside its chip. Pasted again
+with `paste-buffer -p -r`, the chip sat on its own row under the caret, and Left then
+Enter sent the message, as the defect says.
+
+**What to do.** Paste with `tmux paste-buffer -p -r` (bracketed, line feeds kept)
+whenever line breaks matter, and check in the capture that the paste rendered the way
+the scenario needs before reading any result from it.
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured
