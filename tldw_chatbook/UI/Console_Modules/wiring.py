@@ -572,13 +572,10 @@ def receive_console_visible_intent(
     )
     if config.current_config_identity() != config_identity:
         raise RuntimeError("Console configuration changed; Send again.")
-    turn_id = runtime.accept_received_intent(
+    # TASK-36610: the runtime's acceptance opens this send's start.
+    return runtime.accept_received_intent(
         intent, _configuration_preparation=preparation
     )
-    from .config_sync import note_send_accepted
-
-    note_send_accepted(screen)  # TASK-33620.15.4: the send's start begins.
-    return turn_id
 
 
 def _raw_cli_run_log_root() -> Path:
@@ -687,10 +684,7 @@ def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> 
 
 def _commit_sent_console_draft(screen: Any, session_id: str, stash: Any) -> None:
     """Take a sent draft out of the chat it was sent from (TASK-33620.15.2)."""
-    from .config_sync import note_send_accepted
     from .sent_draft import take_out_sent_draft
-
-    note_send_accepted(screen)  # TASK-33620.15.4: the send's start begins.
 
     take_out_sent_draft(
         session_id,

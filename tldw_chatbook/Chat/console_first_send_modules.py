@@ -60,6 +60,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.UI.Console_Modules.turn_admission",
     "tldw_chatbook.MCP.console_snapshot",
     "tldw_chatbook.Chat.console_received_dispatch",
+    "tldw_chatbook.Chat.console_send_start",  # TASK-36610: opened at acceptance.
     "tldw_chatbook.Chat.console_received_turn",
     "tldw_chatbook.Chat.console_send_diagnostics",
     "tldw_chatbook.Chat.console_automatic_submission",

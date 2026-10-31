@@ -437,6 +437,7 @@ class ConsoleChatStartCoordinator:
             ConsoleRunState,
             ConsoleRunStatus,
         )
+        from .console_send_start import submission_send_start
 
         controller, request = self._controller, item.request
         item.running = True
@@ -451,7 +452,9 @@ class ConsoleChatStartCoordinator:
             if not await self._prepare(item):
                 reason = "source_unavailable"
                 return
-            with item.context.scope():
+            # TASK-36610: this automatic submission is a send with a start,
+            # which its own provider request (or its end) closes.
+            with item.context.scope(), submission_send_start(controller.store):
                 await controller.submit_draft(
                     request.opening_prompt,
                     session_id=request.session_id,
