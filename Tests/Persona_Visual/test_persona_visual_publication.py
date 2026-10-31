@@ -301,7 +301,7 @@ def test_caller_authority_guard_runs_after_filesystem_publish_before_db_transact
         observed.append(
             any(profile_root.rglob("manifest.json"))
             and not repository.db.get_connection().in_transaction
-            and getattr(repository.db._local, "transaction_depth", 0) == 0
+            and repository.db.managed_transaction_depth() == 0
         )
         return False
 
@@ -324,7 +324,7 @@ def test_caller_authority_is_rechecked_inside_repository_transaction(
         observations.append(
             (
                 repository.db.get_connection().in_transaction,
-                getattr(repository.db._local, "transaction_depth", 0),
+                repository.db.managed_transaction_depth(),
             )
         )
         return len(observations) == 1
