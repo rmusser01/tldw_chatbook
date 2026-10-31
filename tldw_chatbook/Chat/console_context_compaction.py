@@ -3652,8 +3652,8 @@ class ConsoleCompactionPreflight:
             return flatten_preflight_messages(semantic), None
         if decision is self.read_global_CompactionDecision().ASK:
             # A composer send is held before commit (TASK-34350); Continue,
-            # Regenerate, Retry, queued and Buddy sends stop before commit
-            # (TASK-33621.4). Left: machine turns, or a probe that failed.
+            # Regenerate, Retry, Edit & resend, queued and Buddy sends stop
+            # before commit (TASK-33621.4). Left: machine turns, a failed probe.
             result = blocked(
                 "Conversation context reached its compaction threshold. Run "
                 "/compact or Compact now in Chat settings ▸ Context and memory "

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
 from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
@@ -156,6 +157,122 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
             assert not shown & {"Retry response", "Discard"}
     finally:
         release.set()
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
+@pytest.mark.parametrize("sigil_draft", ["$no-such-skill", "/no-such-command"])
+@private_profile_test
+async def test_a_sigil_composer_send_without_capture_is_refused_before_commit(
+    request, monkeypatch, tmp_path, sigil_draft
+):
+    """A "$" or "/" composer draft with exchange capture off has no preparation.
+
+    With no preparation there is no hold card. On dev the send was committed,
+    its assistant row marked Failed under the compaction System row (review
+    2026-10-30). Now it is refused before commit, and the composer keeps it.
+    ``_held_console`` turns capture off with the real setting.
+    """
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    try:
+        async with host.run_test(size=(100, 32)) as pilot:
+            console, controller, session, runtime, held_draft = await _drive_to_hold(
+                host, pilot, monkeypatch, adapter, adapter_calls
+            )
+            card = console.query_one(TraceCallRecoveryCallout)
+            card.query_one("#console-trace-cancel", Button).press()
+            for _ in range(100):
+                await console._sync_native_console_chat_ui()
+                await pilot.pause(0.1)
+                if (
+                    not card.display
+                    and controller.store.preparation_for_session(session.id) is None
+                ):
+                    break
+            assert not card.display
+            draft = f"{sigil_draft} {held_draft}"
+            calls = len(adapter_calls)
+            statuses_before = [
+                row.status
+                for row in _rows(controller, session.id, ConsoleMessageRole.ASSISTANT)
+            ]
+            composer = console._console_composer_or_none()
+            console._session._sync_console_session_draft()
+            composer.load_draft(draft)
+
+            async def press_send():
+                await asyncio.wait_for(
+                    console._send_console_message_from_visible_action(
+                        session_id=session.id
+                    ),
+                    10,
+                )
+
+            if sigil_draft.startswith("/"):
+                # An unknown "/name" sends as text on the Enter after its hint.
+                for _ in range(3):
+                    await press_send()
+                    await pilot.pause()
+                    if console._console_unknown_send_armed == draft:
+                        break
+                assert console._console_unknown_send_armed == draft
+            await press_send()
+            for _ in range(100):
+                await console._sync_native_console_chat_ui()
+                await pilot.pause(0.1)
+                if not runtime._turn_custody:
+                    break
+            assert not runtime._turn_custody, "the send never settled"
+
+            assert len(adapter_calls) == calls
+            users = [
+                row.content
+                for row in _rows(controller, session.id, ConsoleMessageRole.USER)
+            ]
+            assert draft not in users, users[-2:]
+            statuses = [
+                row.status
+                for row in _rows(controller, session.id, ConsoleMessageRole.ASSISTANT)
+            ]
+            assert statuses == statuses_before, statuses
+            systems = [
+                row.content
+                for row in _rows(controller, session.id, ConsoleMessageRole.SYSTEM)
+            ]
+            assert systems[-1].startswith("Not sent:"), systems[-2:]
+            assert "/compact" in systems[-1]
+            # The composer's ordinary refusal shelf holds the draft: "Not
+            # sent: <reason>" (one prefix) with Restore, never the dispatch
+            # panel's Retry response.
+            (entry,) = runtime.recoveries_for_session(session.id)
+            assert (entry.draft, entry.reason) == (draft, systems[-1])
+            summary = console.query_one("#console-prompt-queue-summary", Static)
+            for _ in range(50):
+                if summary.region.width:
+                    break
+                await console._sync_native_console_chat_ui()
+                await pilot.pause(0.1)
+            assert str(summary.render()).startswith(
+                "Not sent: this chat reached its compaction"
+            ), summary.render()
+            frame = _frame(host)
+            assert "waiting for dispatch" not in frame
+            shown = {str(b.label) for b in console.query(Button) if b.region.area}
+            assert "Retry response" not in shown
+            assert "Restore" in shown, shown
+            console.query_one("#console-prompt-queue-manage", Button).press()
+            for _ in range(50):
+                await console._sync_native_console_chat_ui()
+                await pilot.pause(0.1)
+                if composer.draft_text() == draft:
+                    break
+            assert composer.draft_text() == draft
+            assert runtime.recoveries_for_session(session.id) == ()
+    finally:
         if console is not None:
             await console._console_runtime().dispose()
         database.close()
