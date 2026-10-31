@@ -220,9 +220,7 @@ async def test_any_other_refusal_inside_the_turn_still_names_a_blocker(
     """
     persistent, warnings = logs
     _db, _store, controller, _gateway = _controller(tmp_path)
-    session_id = (
-        controller.new_session(ephemeral=True).id if temporary else "session-1"
-    )
+    session_id = controller.new_session(ephemeral=True).id if temporary else "session-1"
     _refuse_inside_the_stream(
         controller,
         monkeypatch,
