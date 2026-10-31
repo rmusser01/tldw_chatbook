@@ -136,7 +136,10 @@ async def test_a_temporary_chat_sends_with_traces_off_and_never_pauses(monkeypat
         assert snapshot.effective_capture_enabled is False
         # Inherit, not a stored Off: saving must not pin Capture Off.
         assert snapshot.conversation_capture_enabled is None
-        assert await _until(lambda: "Temporary · traces off" in _painted(case), 5)
+        # TASK-37840 (owner decision 2026-10-30) added "not saved".
+        assert await _until(
+            lambda: "Temporary · not saved · traces off" in _painted(case), 5
+        )
         painted = _painted(case)
         assert "Blocked" not in painted and "Not sent" not in painted
 

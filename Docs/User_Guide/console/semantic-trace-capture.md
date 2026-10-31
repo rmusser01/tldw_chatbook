@@ -31,9 +31,10 @@ Console Behavior**, or press **c** in a live Trace to choose **Next send**,
 and does not delete existing trace history.
 
 A temporary chat records no traces. Its sends go to the provider with Capture
-Off and never stop to ask, and the status strip shows **Temporary · traces
-off**. To save the chat, activate that segment or choose **Save chat** in the
-composer **Menu**. From its next send the saved chat follows its own Capture
+Off and never stop to ask, and the status strip shows **Temporary · not saved ·
+traces off** (its tab's tooltip ends with the same words). To save the chat,
+activate that segment or choose **Save chat** in the composer **Menu**. From
+its next send the saved chat follows its own Capture
 choice (**This conversation** in Trace Privacy), or the global default when it
 has none; the sends it made while temporary keep no trace. The Menu row says
 which: it reads **Save chat (enables capture)**, with the hint "records no
@@ -48,7 +49,11 @@ is traced", or "once saved, traces start after your next send".
 If you turn Capture On for a chat that is still temporary, a send pauses
 before the provider, because a Capture On call needs a durable owner: every
 send while **This conversation** is On, or only the next one when you chose
-**Next send**. The transcript shows
+**Next send**. While a send would pause, the status strip (and the tab's
+tooltip) reads **Temporary · not saved · capture on**; it goes back to
+**traces off** when you set Capture back, or once a **Next send** choice is
+spent (**Send without capture** spends it; **Cancel send** keeps it). The
+transcript shows
 **Save chat to capture this send** with **Save & Send**, **Send without
 capture** and **Cancel send**. **Save & Send** saves the current lineage and
 its trace ownership, then sends that message; **Send without capture** sends

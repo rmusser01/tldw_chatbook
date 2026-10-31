@@ -24,7 +24,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
-from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
+from tldw_chatbook.Chat.console_ephemeral import temporary_label
+from tldw_chatbook.Chat.console_exchange_capture import (
+    temporary_chat_captures_next_send,
+)
 from tldw_chatbook.Chat.console_glyphs import (
     GLYPH_CLOSE,
     GLYPH_COLLAPSE_LEFT,
@@ -129,11 +132,14 @@ def _session_tab_tooltip(
     if session.ephemeral:
         # The ◌ glyph carries no meaning on its own; this is where it is
         # decoded, exactly like the run-marker meanings above. CN-02
-        # (TASK-2154.13): the decode phrase is byte-for-byte the chip's
-        # ``TEMPORARY_LABEL`` ("Temporary · traces off", TASK-33621.17) so
-        # the concept has ONE short name; the "not saved locally" scope
-        # sentence stays in the chip's own tooltip.
-        text = f"{text} {TEMPORARY_LABEL}."
+        # (TASK-2154.13): the decode phrase is byte-for-byte the status
+        # strip's Temporary segment so the concept has ONE short name.
+        # TASK-37840 (owner decision 2026-10-30): both say "not saved" and
+        # whether this chat's next send is captured.
+        capture_on = temporary_chat_captures_next_send(
+            session.capture_enabled_override, session.next_capture_enabled
+        )
+        text = f"{text} {temporary_label(capture_on=capture_on)}."
     if queued_count:
         text = f"{text} Queue {queued_count}."
     return _escape_markup(text)

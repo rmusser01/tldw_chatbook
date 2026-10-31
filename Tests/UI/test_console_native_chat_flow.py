@@ -15217,7 +15217,8 @@ def test_temporary_tab_marker_is_presentation_only():
     tooltip = _session_tab_tooltip(session, active=False)
     # CN-02 (TASK-2154.13): the tab tooltip's ◌ decode is byte-for-byte the
     # status chip's TEMPORARY_LABEL -- one short name for the concept, no
-    # third wording. TASK-33621.17 renamed it "Temporary · traces off".
+    # third wording. TASK-33621.17 renamed it "Temporary · traces off";
+    # TASK-37840 made it "Temporary · not saved · traces off".
     from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
 
     assert tooltip.endswith(f"{TEMPORARY_LABEL}.")

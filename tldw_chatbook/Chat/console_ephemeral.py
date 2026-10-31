@@ -70,7 +70,25 @@ SAVE_CHAT_ENABLES_CAPTURE_LABEL = "Save chat (enables capture)"
 #: TASK-33621.17: "traces off" because a temporary chat resolves Capture Off
 #: (``console_exchange_capture.temporary_chat_capture``); no trace is written
 #: while it stays temporary, even after someone turns Capture on for it.
-TEMPORARY_LABEL = "Temporary · traces off"
+#: TASK-37840 (owner decision 2026-10-30): the always-visible segment says
+#: both that the chat is not saved and what its next send does to capture;
+#: "capture on" once Capture On is chosen for it (This conversation or Next
+#: send), because that send pauses on Save chat to capture this send.
+TEMPORARY_LABEL = "Temporary · not saved · traces off"
+TEMPORARY_CAPTURE_ON_LABEL = "Temporary · not saved · capture on"
+
+
+def temporary_label(*, capture_on: bool) -> str:
+    """Return the Temporary segment label (also the tab's ◌ decode).
+
+    Args:
+        capture_on: Whether the temporary chat's next send is captured
+            (``console_exchange_capture.temporary_chat_captures_next_send``).
+
+    Returns:
+        ``TEMPORARY_CAPTURE_ON_LABEL`` or ``TEMPORARY_LABEL``.
+    """
+    return TEMPORARY_CAPTURE_ON_LABEL if capture_on else TEMPORARY_LABEL
 
 #: Chip tooltip. Says what survives and what does not, without implying more.
 TEMPORARY_TOOLTIP = (

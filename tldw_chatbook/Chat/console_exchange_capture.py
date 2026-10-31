@@ -344,6 +344,32 @@ def temporary_chat_capture(
     return conversation
 
 
+def temporary_chat_captures_next_send(
+    conversation: bool | None, next_send: bool | None
+) -> bool:
+    """Return whether a Temporary chat's next manual send resolves Capture On.
+
+    TASK-37840: the Temporary status segment reads 'capture on' exactly when
+    this is True, because that send then pauses on Save chat to capture this
+    send. It is the controller's own resolution (``capture_policy_snapshot``,
+    the stream signals) for a chat that is still temporary, where
+    ``temporary_chat_capture`` leaves the global default nothing to decide.
+
+    Args:
+        conversation: The chat's Capture choice for This conversation, or None.
+        next_send: The one-time Next send Capture choice, or None.
+
+    Returns:
+        The Next send choice when set, else the conversation's, else False.
+    """
+
+    return resolve_scoped_boolean(
+        global_default=False,
+        conversation=temporary_chat_capture(conversation, ephemeral=True),
+        next_send=next_send,
+    )
+
+
 def saved_chat_capture(conversation: bool | None, *, global_enabled: bool) -> bool:
     """Return the Capture a Temporary chat follows once it is saved.
 

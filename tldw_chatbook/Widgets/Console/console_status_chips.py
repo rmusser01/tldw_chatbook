@@ -46,7 +46,7 @@ from tldw_chatbook.Chat.console_display_state import (
     ConsoleControlState,
     ConsoleRetrievalScopeState,
 )
-from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL, TEMPORARY_TOOLTIP
+from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_TOOLTIP, temporary_label
 from tldw_chatbook.Chat.rag_scope import SCOPE_REASON_EMPTY, scope_empty_notice
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Console.console_retrieval_scope_row import (
@@ -508,6 +508,7 @@ class ConsoleStatusChips(Horizontal):
         *,
         scope_state: ConsoleRetrievalScopeState | None = None,
         ephemeral: bool = False,
+        temporary_capture_on: bool = False,
         cost_state: ConsoleCostState | None = None,
         run_copy: str = "",
         **kwargs: Any,
@@ -522,6 +523,8 @@ class ConsoleStatusChips(Horizontal):
                 construction time (final-review F1) -- the Temporary segment
                 renders on the first frame rather than waiting for a
                 post-mount ``sync_temporary_chip`` call.
+            temporary_capture_on: Whether that temporary chat's next send
+                is captured (TASK-37840), for the same first frame.
             cost_state: Display-state snapshot for the cost segment (task-4,
                 PR3 cost ticker) -- same F1 precedent. ``None`` renders
                 hidden (non-Console-native contexts have no cost to show).
@@ -538,6 +541,7 @@ class ConsoleStatusChips(Horizontal):
         self.state = state
         self.scope_state = scope_state
         self.ephemeral = ephemeral
+        self.temporary_capture_on = temporary_capture_on
         self._cost_state = cost_state
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         # TASK-35100: settled-only badge, hidden at mount (nothing has
@@ -625,7 +629,9 @@ class ConsoleStatusChips(Horizontal):
         )
 
     def _temporary_segment(self) -> StatusSegment:
-        label, _tooltip, hidden = self._temporary_chip_render(self.ephemeral)
+        label, _tooltip, hidden = self._temporary_chip_render(
+            self.ephemeral, capture_on=self.temporary_capture_on
+        )
         return StatusSegment(
             name="temporary", label=label, visible=not hidden, actionable=True
         )
@@ -935,11 +941,15 @@ class ConsoleStatusChips(Horizontal):
         self._refresh_text()
 
     @staticmethod
-    def _temporary_chip_render(ephemeral: bool) -> tuple[str, str, bool]:
+    def _temporary_chip_render(
+        ephemeral: bool, *, capture_on: bool = False
+    ) -> tuple[str, str, bool]:
         """Pure ``(label, tooltip, hidden)`` render for the temporary segment.
 
         Args:
             ephemeral: Whether the active session is temporary.
+            capture_on: Whether its next send is captured (TASK-37840: the
+                label then reads "capture on" instead of "traces off").
 
         Returns:
             ``label``: segment text. ``tooltip``: hover text, which is
@@ -947,24 +957,31 @@ class ConsoleStatusChips(Horizontal):
             for a normal chat -- a "Saved" segment on every ordinary
             conversation would be noise, and the strip is width-bounded.
         """
-        if not ephemeral:
-            return TEMPORARY_LABEL, TEMPORARY_TOOLTIP, True
-        return TEMPORARY_LABEL, TEMPORARY_TOOLTIP, False
+        label = temporary_label(capture_on=capture_on)
+        return label, TEMPORARY_TOOLTIP, not ephemeral
 
-    def sync_temporary_chip(self, ephemeral: bool) -> None:
+    def sync_temporary_chip(self, ephemeral: bool, *, capture_on: bool = False) -> bool:
         """Refresh the temporary segment from the active session's flag.
 
         Separate from ``sync_state`` for the same reason ``sync_scope_chip``
         is: this is pushed from the screen when the active session changes,
-        not on every control-bar sync tick.
+        not on every control-bar sync tick. TASK-37840 also pushes it after
+        each full Console sync (one runs on return from a dialog), where a
+        spent Next send or a Trace Privacy choice changes ``capture_on``.
 
         Args:
             ephemeral: Whether the active session is temporary.
+            capture_on: Whether its next send is captured (TASK-37840).
+
+        Returns:
+            True when the segment changed.
         """
-        if ephemeral == self.ephemeral:
-            return
+        if (ephemeral, capture_on) == (self.ephemeral, self.temporary_capture_on):
+            return False
         self.ephemeral = ephemeral
+        self.temporary_capture_on = capture_on
         self._refresh_text()
+        return True
 
     @staticmethod
     def _scope_chip_render(

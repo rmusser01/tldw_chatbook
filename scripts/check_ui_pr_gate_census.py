@@ -709,7 +709,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Save chat copy against what saving does to capture (one mounted case, about
 # 7 s locally), so no existing entry changes shard: 1145 + 1 = 1146.
 # Rebased 2026-10-30 onto dev's 1149 (TASK-33626.1/.2 landed): 1150 + 1 = 1151.
-MINIMUM_FILES = 1278
+# TASK-37840 (2026-10-30) appends 1 whole-file entry at the tail: the
+# Temporary status segment's copy (three cases, about 8 s locally), so no
+# existing entry changes shard: 1163 + 1 = 1164.
+MINIMUM_FILES = 1279
 
 
 def read_census(path: Path) -> list[str]:
