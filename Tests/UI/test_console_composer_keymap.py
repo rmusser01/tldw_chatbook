@@ -25,6 +25,8 @@ thing itself.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.events import Key
 
@@ -43,6 +45,23 @@ async def _focused_composer(host, pilot, text: str = "") -> ConsoleComposerBar:
     composer.focus()
     await pilot.pause()
     return composer
+
+
+async def _clear_focus(host, pilot) -> None:
+    """Clear focus once the Console's activation stops giving it to the composer.
+
+    The activation focuses the composer more than once in the first ~0.3 s
+    after it mounts. A single ``set_focus(None)`` made in that window was
+    undone by the next restore, so the "nothing is focused" precondition
+    below was left to chance (it raced on dev too). Clear again until focus
+    stays cleared for a quiet window.
+    """
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        host.set_focus(None)
+        await pilot.pause(0.3)
+        if host.focused is None:
+            return
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +317,7 @@ async def test_a_printable_key_reaches_the_composer_while_nothing_is_focused():
     async with host.run_test(size=APP_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("z")
@@ -317,8 +335,7 @@ async def test_an_edit_key_reaches_the_composer_while_nothing_is_focused():
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("abc")
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("left")
@@ -336,8 +353,7 @@ async def test_ctrl_c_does_not_clear_the_draft_while_nothing_is_focused():
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep me")
-        host.set_focus(None)
-        await pilot.pause()
+        await _clear_focus(host, pilot)
         assert host.focused is None
 
         await pilot.press("ctrl+c")
