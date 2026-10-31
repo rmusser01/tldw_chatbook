@@ -85,6 +85,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunMarker,
     ConsoleRunState,
     ConsoleRunStatus,
+    ConsoleSubmitBlocker,
     ConsoleSessionCloseTicket,
     ConsoleQueuedAcceptanceEvent,
     ConsoleSubmissionOrigin,
@@ -3288,6 +3289,8 @@ class ConsoleSubmitResult:
     #: at a context review instead of draining. The shelf shows it as a
     #: warning so the press says why nothing else was sent.
     queue_notice: str = ""
+    #: TASK-33621.23: why a BLOCKED submit stopped; ``submit_draft`` logs it.
+    blocker: ConsoleSubmitBlocker | None = None
 
 
 @dataclass(frozen=True)
@@ -7464,21 +7467,8 @@ class ConsoleChatController:
                 "Prepared turn changed before continuation.",
             )
         try:
-            trace_request = self._build_durable_trace_request(
-                preparation=committing,
-                resolution=resolution,
-                provider_messages=self._provider_messages_with_prefill(
-                    continuation.provider_messages,
-                    continuation.prefill,
-                ),
-                trace_source_messages=continuation.trace_source_messages,
-                echoed_user_id=continuation.echoed_user_id,
-                committed_user_id=continuation.commit.user_message_id,
-                route=(
-                    ConsoleRequestRoute.DIRECT_PREFILL
-                    if continuation.prefill
-                    else ConsoleRequestRoute.FRESH
-                ),
+            trace_request = self._rebuild_continuation_trace_request(
+                committing, continuation, resolution
             )
         except Exception as exc:
             return self._handle_durable_trace_provenance_failure(continuation, exc)
@@ -7508,6 +7498,80 @@ class ConsoleChatController:
                 "Prepared turn changed before continuation.",
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
+
+    def _rebuild_continuation_trace_request(
+        self,
+        preparation: ConsoleTurnPreparation,
+        continuation: _DurablePostcommitContinuation,
+        resolution: Any,
+    ) -> PreparedConsoleRequest | None:
+        """Freeze a durable continuation's Capture-On request again."""
+
+        return self._build_durable_trace_request(
+            preparation=preparation,
+            resolution=resolution,
+            provider_messages=self._provider_messages_with_prefill(
+                continuation.provider_messages,
+                continuation.prefill,
+            ),
+            trace_source_messages=continuation.trace_source_messages,
+            echoed_user_id=continuation.echoed_user_id,
+            committed_user_id=continuation.commit.user_message_id,
+            route=(
+                ConsoleRequestRoute.DIRECT_PREFILL
+                if continuation.prefill
+                else ConsoleRequestRoute.FRESH
+            ),
+        )
+
+    def _restore_missing_trace_request(
+        self,
+        preparation: ConsoleTurnPreparation,
+        admission: ConsoleTurnPreparation,
+        resolution: Any,
+    ) -> ConsoleSubmitResult | None:
+        """Rebuild the request a TRACE_CALL pause lost before Retry resumes.
+
+        TASK-33621.23: ``resume_durable_postcommit`` pauses as TRACE_CALL when
+        a Capture-On continuation reaches dispatch with no frozen request.
+        Without this, Retry met the same check and paused again on every
+        press. A failed rebuild returns a refusal and leaves the pause and its
+        card in place; otherwise returns None.
+        """
+
+        preparation_id = preparation.preparation_id
+        continuation = self._durable_postcommit_continuations.get(preparation_id)
+        if (
+            preparation.pause_kind is not ConsolePreparationPauseKind.TRACE_CALL
+            or admission.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+            or continuation is None
+            or continuation.trace_request is not None
+        ):
+            return None
+        try:
+            trace_request = self._rebuild_continuation_trace_request(
+                preparation, continuation, resolution
+            )
+        except Exception as exc:  # noqa: BLE001 -- the card stays; type only
+            logger.warning(
+                "Console trace request could not be rebuilt; exception_type={}",
+                type(exc).__name__,
+            )
+            trace_request = None
+        with self.store.durable_preparation_lock:
+            if (
+                trace_request is not None
+                and self._durable_postcommit_continuations.get(preparation_id)
+                is continuation
+            ):
+                self._durable_postcommit_continuations[preparation_id] = replace(
+                    continuation, trace_request=trace_request
+                )
+                return None
+        return self._prepared_action_refusal(
+            preparation,
+            "Trace provenance could not be saved. Send without capture, or Cancel.",
+        )
 
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
         """Return only the active preparation offering a pre-dispatch card."""
@@ -7752,6 +7816,11 @@ class ConsoleChatController:
                 and preparation_id not in self._trace_call_boundaries_by_preparation
             ):
                 return self._prepared_action_refusal(current)
+            refusal = self._restore_missing_trace_request(
+                current, trace_call_admission, resolution
+            )
+            if refusal is not None:
+                return refusal
             if current.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
                 current = self.store.compare_and_set_preparation(
                     current.session_id,
@@ -9180,14 +9249,22 @@ class ConsoleChatController:
                 if result.accepted
                 else "refused"
             )
+            if result.terminal_status is ConsoleRunStatus.BLOCKED:
+                # TASK-33621.23: a blocked send always names its cause; a site
+                # with no code of its own (a refusal inside the turn) logs the
+                # generic one. Other outcomes log none.
+                blocker = result.blocker or ConsoleSubmitBlocker.TURN_REFUSED
+                diagnostic.outcome_category = blocker.value
             if not result.accepted or result.terminal_status in {
                 ConsoleRunStatus.BLOCKED,
                 ConsoleRunStatus.FAILED,
             }:
                 logger.warning(
-                    "Console submit requires attention | accepted={} status={}",
+                    "Console submit requires attention | accepted={} status={} "
+                    "blocker={}",
                     result.accepted,
                     diagnostic.outcome,
+                    diagnostic.outcome_category or "-",
                 )
             return result
 
@@ -11372,6 +11449,7 @@ class ConsoleChatController:
                                 assistant.id if assistant is not None else None
                             ),
                             terminal_status=ConsoleRunStatus.BLOCKED,
+                            blocker=ConsoleSubmitBlocker.TRACE_CALL,
                             origin=origin,
                             queue_entry_id=queue_entry_id,
                             committed_context_epoch=committed_context_epoch,
@@ -11963,6 +12041,7 @@ class ConsoleChatController:
                 user_message_id=continuation.commit.user_message_id,
                 assistant_message_id=continuation.commit.assistant_message_id,
                 terminal_status=ConsoleRunStatus.BLOCKED,
+                blocker=ConsoleSubmitBlocker.TRACE_PROVENANCE,
                 origin=continuation.origin,
                 queue_entry_id=continuation.queue_entry_id,
                 committed_context_epoch=continuation.committed_context_epoch,
@@ -12270,6 +12349,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=self.run_state_for(session_id).status,
+                    blocker=ConsoleSubmitBlocker.DELIVERY_UNKNOWN,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -12650,6 +12730,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=ConsoleRunStatus.BLOCKED,
+                    blocker=ConsoleSubmitBlocker.PREREQUISITES_ONLY,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -12674,20 +12755,10 @@ class ConsoleChatController:
                 is ConsoleTraceCaptureMode.CAPTURE_ON
                 and continuation.trace_request is None
             ):
-                return ConsoleSubmitResult(
-                    True,
-                    True,
-                    "Trace provenance must be recovered before provider dispatch.",
-                    session_id=session_id,
-                    user_message_id=commit.user_message_id,
-                    assistant_message_id=commit.assistant_message_id,
-                    terminal_status=ConsoleRunStatus.BLOCKED,
-                    origin=continuation.origin,
-                    queue_entry_id=continuation.queue_entry_id,
-                    committed_context_epoch=continuation.committed_context_epoch,
-                    preparation_id=preparation_id,
-                    provider_started=False,
-                )
+                # TASK-33621.23: this returned BLOCKED and published nothing.
+                # The trace-call handler below pauses with the transcript card;
+                # nothing was reserved, so its Cancel can end the send.
+                raise TraceCallPersistenceError(reservation_status="not_established")
             bind_trace_owner = getattr(
                 self.provider_gateway, "_bind_trace_preparation", None
             )
@@ -12788,6 +12859,7 @@ class ConsoleChatController:
                 user_message_id=commit.user_message_id,
                 assistant_message_id=commit.assistant_message_id,
                 terminal_status=ConsoleRunStatus.BLOCKED,
+                blocker=ConsoleSubmitBlocker.DISPATCH_SETTLEMENT,
                 origin=continuation.origin,
                 queue_entry_id=continuation.queue_entry_id,
                 committed_context_epoch=continuation.committed_context_epoch,
@@ -12818,6 +12890,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=ConsoleRunStatus.BLOCKED,
+                    blocker=ConsoleSubmitBlocker.SETTLEMENT_FAILED,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -12940,6 +13013,7 @@ class ConsoleChatController:
                                 user_message_id=commit.user_message_id,
                                 assistant_message_id=commit.assistant_message_id,
                                 terminal_status=ConsoleRunStatus.BLOCKED,
+                                blocker=ConsoleSubmitBlocker.TRACE_CALL,
                                 origin=continuation.origin,
                                 queue_entry_id=continuation.queue_entry_id,
                                 committed_context_epoch=(
@@ -12992,6 +13066,7 @@ class ConsoleChatController:
                     user_message_id=commit.user_message_id,
                     assistant_message_id=commit.assistant_message_id,
                     terminal_status=self.run_state_for(session_id).status,
+                    blocker=ConsoleSubmitBlocker.SETTLEMENT_FAILED,
                     origin=continuation.origin,
                     queue_entry_id=continuation.queue_entry_id,
                     committed_context_epoch=continuation.committed_context_epoch,
@@ -27461,7 +27536,10 @@ class ConsoleChatController:
             ConsoleRunState.blocked(visible_copy), session_id=session_id
         )
         return ConsoleSubmitResult(
-            accepted=False, should_clear_draft=False, visible_copy=visible_copy
+            accepted=False,
+            should_clear_draft=False,
+            visible_copy=visible_copy,
+            blocker=ConsoleSubmitBlocker.PROJECT_SETUP,  # TASK-33621.23
         )
 
     async def _finalize_agent_success(
