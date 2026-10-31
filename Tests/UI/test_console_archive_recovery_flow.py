@@ -1,6 +1,7 @@
 """Real Console producer, runtime, catalog and native recovery interaction."""
 
 import asyncio
+import os
 import sqlite3
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -21,7 +22,6 @@ from Tests.Chat.test_console_turn_library_authority import (
 )
 from Tests.UI.app_factory import _build_test_app, drain_created_runtimes
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_library_conversation_recovery_flow import wait_until
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -43,6 +43,16 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+async def wait_until(pilot, predicate, debug=None):
+    """Await the observed state while native profile work remains guarded."""
+    # The old 150 UI ticks expired during Windows native storage admission,
+    # before this integration harness's fake provider was entered.
+    deadline = asyncio.get_running_loop().time() + (60 if os.name == "nt" else 15)
+    while not predicate() and asyncio.get_running_loop().time() < deadline:
+        await pilot.pause(0.03)
+    assert predicate(), debug() if debug else "condition not reached"
 
 
 class MountedRecoveryGateway(RecoveryGateway):
@@ -118,6 +128,15 @@ async def mounted_recovery(
         prepare(services, target_id, db)
     app = _build_test_app()
     _configure_native_ready_console(app)
+
+    async def empty_skill_context(**_kwargs):
+        return {"available_skills": []}
+
+    # Match the empty skill inventory in the captured execution configuration.
+    # Archive tests must not start unrelated profile-backed skill discovery.
+    app.local_skills_service = app.skills_scope_service = SimpleNamespace(
+        get_context=empty_skill_context
+    )
     app.chachanotes_db = db
     app.workspace_registry_service = services.workspace_registry_service
     app.local_chat_conversation_service = services.local_chat_conversation_service
@@ -180,6 +199,7 @@ async def mounted_recovery(
     host = ConsoleHarness(app)
     # The unmounted runtime owner schedules UI callbacks on the mounted host.
     monkeypatch.setattr(app, "call_later", host.call_later)
+    turn = None
     try:
         async with host.run_test(size=size) as pilot:
             await wait_until(
@@ -233,6 +253,9 @@ async def mounted_recovery(
                 console, "Find my archived chat", source.id
             )
             turn = asyncio.create_task(owner.wait_for_turn(turn_id))
+            if entry == "button":
+                # Search-only production finishes before its result card is used.
+                await asyncio.wait_for(asyncio.shield(turn), 60)
             await wait_until(
                 pilot,
                 lambda: bool(console.query(".archive-recovery-results")),
@@ -269,8 +292,14 @@ async def mounted_recovery(
                 turn=turn,
             )
     finally:
-        await dispose_console_runtime(app)
-        runs_db.close()
+        try:
+            await dispose_console_runtime(app)
+        finally:
+            if turn is not None:
+                if not turn.done():
+                    turn.cancel()
+                await asyncio.gather(turn, return_exceptions=True)
+            runs_db.close()
 
 
 async def click(rig, selector):

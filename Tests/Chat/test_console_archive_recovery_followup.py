@@ -14,7 +14,10 @@ import pytest
 from Tests.Chat.test_archive_recovery_operations import (
     recovery_stores as recovery_stores,  # noqa: PLC0414 - pytest fixture export
 )
-from Tests.Chat.test_console_archive_recovery_dispatch import RecoveryGateway
+from Tests.Chat.test_console_archive_recovery_dispatch import (
+    RecoveryGateway,
+    _DISPATCH_WAIT_SECONDS,
+)
 from Tests.Chat.test_console_prepared_request import _private_group
 from Tests.Chat.test_console_runtime_lifetime import _View
 from Tests.Chat.test_console_turn_library_authority import (
@@ -351,9 +354,10 @@ async def native_followup(recovery_stores, tmp_path):
     try:
         yield state
     finally:
-        await recovery.shutdown()
-        await controller.shutdown()
-        runs.close()
+        try:
+            await owner.dispose()
+        finally:
+            runs.close()
 
 
 @pytest.fixture
@@ -767,7 +771,8 @@ async def test_captured_native_turn_restores_original_second_row(
     ready = asyncio.create_task(rig.ready.wait())
     try:
         await asyncio.wait_for(
-            asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED), 15
+            asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED),
+            _DISPATCH_WAIT_SECONDS,
         )
         assert rig.cards, (
             "Captured follow-up did not reach exact confirmation",
@@ -835,7 +840,7 @@ async def test_captured_native_turn_restores_original_second_row(
             rig.source.id, rig.cards[0].request_id, allow=True, scope="chat_only"
         )
         assert outcome.chat_changed and not outcome.workspace_changed
-        result = await asyncio.wait_for(turn, 15)
+        result = await asyncio.wait_for(turn, _DISPATCH_WAIT_SECONDS)
         assert result.terminal_status.value == "completed", rig.trace_failures
         restore_steps = [
             step
@@ -1269,7 +1274,9 @@ async def test_new_native_turn_restores_earlier_second_row_after_exact_confirmat
 ):
     rig = native_followup
     rig.direct = direct
-    await asyncio.wait_for(rig.send("Find my archived conversations."), 15)
+    await asyncio.wait_for(
+        rig.send("Find my archived conversations."), _DISPATCH_WAIT_SECONDS
+    )
     original = rig.gateway.original_page
     assert [row["conversation_id"] for row in original["items"]] == [
         rig.first,
@@ -1280,7 +1287,8 @@ async def test_new_native_turn_restores_earlier_second_row_after_exact_confirmat
     ready = asyncio.create_task(rig.ready.wait())
     try:
         await asyncio.wait_for(
-            asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED), 15
+            asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED),
+            _DISPATCH_WAIT_SECONDS,
         )
         context = rig.gateway.followup_context
         assert context is not None, (
@@ -1315,7 +1323,7 @@ async def test_new_native_turn_restores_earlier_second_row_after_exact_confirmat
             rig.source.id, rig.cards[0].request_id, allow=True, scope="chat_only"
         )
         assert outcome.chat_changed and not outcome.workspace_changed
-        await asyncio.wait_for(turn, 15)
+        await asyncio.wait_for(turn, _DISPATCH_WAIT_SECONDS)
         assert rig.db.get_conversation_by_id(rig.second)["archived"] == 0
         assert rig.db.get_conversation_by_id(rig.first)["archived"] == 1
         assert rig.store.active_session_id == rig.source.id
@@ -1373,7 +1381,7 @@ async def test_fresh_turn_gates_exclude_previously_observed_selection(
         rig.source.runtime_backend = "server"
     offset = len(rig.gateway.messages_seen)
     rig.gateway.phase, rig.gateway.index = "observe", 0
-    await asyncio.wait_for(rig.send("Restore the second one"), 15)
+    await asyncio.wait_for(rig.send("Restore the second one"), _DISPATCH_WAIT_SECONDS)
     assert rig.gateway.followup_context is None
     outgoing = str(rig.gateway.messages_seen[offset:])
     assert all(row["result_ref"] not in outgoing for row in original["items"])
@@ -1401,7 +1409,7 @@ async def test_fresh_destination_cannot_reuse_another_destinations_rows(
     }[change]
     offset = len(rig.gateway.messages_seen)
     rig.gateway.phase, rig.gateway.index = "observe", 0
-    await asyncio.wait_for(rig.send("Restore the second one"), 15)
+    await asyncio.wait_for(rig.send("Restore the second one"), _DISPATCH_WAIT_SECONDS)
     context = rig.gateway.followup_context
     assert not context or (
         context["archive_recovery_results"] == [] and context["omitted_pages"] == 1
@@ -1476,7 +1484,7 @@ async def test_live_registry_loss_never_recovers_selection_from_transcript(
         )
     offset = len(rig.gateway.messages_seen)
     rig.gateway.phase, rig.gateway.index = "observe", 0
-    await asyncio.wait_for(rig.send("Restore the second one"), 15)
+    await asyncio.wait_for(rig.send("Restore the second one"), _DISPATCH_WAIT_SECONDS)
     context = rig.gateway.followup_context
     assert not context or context["archive_recovery_results"] == []
     outgoing = str(rig.gateway.messages_seen[offset:])

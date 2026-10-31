@@ -1659,3 +1659,5 @@ Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_expl
 
 # TASK-18925: verified Console OS-notification Settings persistence journey.
 Tests/UI/test_settings_console_os_notifications_journeys.py
+# PR #3162, 2026-10-31: mounted archive controls; 14 cases passed.
+Tests/UI/test_console_archive_recovery_cards.py

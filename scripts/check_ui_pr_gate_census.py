@@ -645,7 +645,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-18925 adds the verified OS-notification Settings journey (+1).
 # Console hook-file qualification remains open after native-worker teardown
 # errors; no existing census entry is removed or replaced (review receipt).
-MINIMUM_FILES = 1174
+# PR #3162 (2026-10-31): append the verified archive-card file only.
+# The mounted flow remains outside this addition pending qualification.
+MINIMUM_FILES = 1175
 
 
 def read_census(path: Path) -> list[str]:

@@ -23107,3 +23107,19 @@ Rebasing archive recovery onto current dev combined two individually valid think
 Hosted Perf Guard's first profile-warming boot failed because archive control sync mounted into a detached root during app exit. An `is_mounted` check alone reproduced the same crash locally: Textual keeps that flag after detachment. Real app-exit and exit-during-mount probes required entry/post-await attachment checks; a deterministic overlapping-sync control also required serialization once post-custody first-use preparation became a second caller. Preserve those native negative controls instead of treating a passing ordinary card test as lifecycle evidence.
 
 After deferring all12 recovery residents, a local1032 count was still above1031. Three serial boots of unchanged dev5eb on one warmed profile measured1030/1033/1030, with only existing automatic-submission/change-review/character-search timing residents varying. The final isolated PR census passed1031 and explicit absence pins prove recovery stays off first paint. Separate named source attribution from baseline timer wobble; do not raise the budget or edit unrelated modules to make a single count green.
+
+
+## Locate the Windows preparation owner before blaming archive storage (2026-10-31)
+
+During PR #3162 integration, a 15s dispatch wait failed once and passed unchanged
+on an observation-only rerun. The sampled worker was still in native storage
+admission. A separate mounted-agent failure sampled the main Textual loop in
+profile-backed skill discovery before the fake provider was entered; all 16
+sampled admission/skill files matched the exact dev base. The archive fixture's
+captured execution context had no skills, so its UI discovery now uses that same
+empty inventory. Native admission and archive deadlines remain real. Retain the
+failed receipts, distinguish preparation from retirement, and do not label an
+unresolved assertion baseline-only merely because the host was slow. Ordinary
+Windows TEMP also failed admission before pytest collection; these runs needed
+native 0700 config/temp directories rather than relaxed permission validation.
+Evidence: `Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md`.

@@ -67,6 +67,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # pins changed owners at measured sizes without extra size-only moves.
 # 2026-10-31: user waived size limits for PR3156 backlog integration;
 # its three touched owners are pinned at exact current measurements.
+# 2026-10-31, PR #3162: the user explicitly waived size limits for this
+# backlog rebase. Affected rows are pinned to exact measured values; see
+# Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 776,
@@ -168,7 +171,7 @@ _BUDGETS: dict[str, int] = {
     # _continuation_binding; rows below re-pinned at their measured sizes.
     "tldw_chatbook/Chat/console_chat_controller.py": 29016,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
@@ -593,7 +596,7 @@ _BUDGETS: dict[str, int] = {
     # asks storage for its count by title only (owner decision 2026-10-27),
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8763,
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8774,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
@@ -636,7 +639,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
     "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
-    "tldw_chatbook/Workspaces/registry_service.py": 4232,
+    "tldw_chatbook/Workspaces/registry_service.py": 4304,
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,

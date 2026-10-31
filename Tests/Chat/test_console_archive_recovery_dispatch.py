@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import threading
 
 import pytest
@@ -11,6 +12,10 @@ from Tests.Chat.test_archive_recovery_operations import (
 )
 from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveRecoveryError
 from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
+
+# Native Windows profile admission precedes the fake gateway; this is a
+# bounded integration wait, not the archive service operation deadline.
+_DISPATCH_WAIT_SECONDS = 60 if os.name == "nt" else 15
 
 
 @pytest.mark.asyncio
@@ -449,6 +454,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             screen, "Find the archived chat", source.id
         )
         turn = asyncio.create_task(owner.wait_for_turn(turn_id))
+    ready = None
     try:
         if ask and restriction not in {
             "review_error",
@@ -458,7 +464,8 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
         }:
             ready = asyncio.create_task(approval_ready.wait())
             await asyncio.wait_for(
-                asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED), 15
+                asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED),
+                _DISPATCH_WAIT_SECONDS,
             )
             assert approval_payloads, str(gateway.messages_seen)
             payload = approval_payloads[0]
@@ -484,7 +491,8 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
         }:
             ready = asyncio.create_task(confirmation_ready.wait())
             await asyncio.wait_for(
-                asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED), 15
+                asyncio.wait({turn, ready}, return_when=asyncio.FIRST_COMPLETED),
+                _DISPATCH_WAIT_SECONDS,
             )
             assert cards, (
                 f"No confirmation: tool rows={[m for messages in gateway.messages_seen for m in messages if m.get('role') == 'tool']}; turn={turn.result() if turn.done() else 'running'}"
@@ -537,7 +545,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
                 source.id, cards[0].request_id, allow=True, scope="chat_and_workspace"
             )
             assert outcome.chat_changed and outcome.workspace_changed
-            await asyncio.wait_for(turn, 15)
+            await asyncio.wait_for(turn, _DISPATCH_WAIT_SECONDS)
             assert not recovery._authorities
             if restriction == "queued_block":
                 assert len(presented) == 1
@@ -545,7 +553,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             else:
                 assert "restored" in str(gateway.messages_seen[-1])
         else:
-            await asyncio.wait_for(turn, 15)
+            await asyncio.wait_for(turn, _DISPATCH_WAIT_SECONDS)
             assert not cards and not presented
             if ask:
                 assert (
@@ -577,9 +585,15 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             )
         assert store.active_session_id == source.id
     finally:
-        await recovery.shutdown()
-        await controller.shutdown()
-        runs_db.close()
+        try:
+            await owner.dispose()
+        finally:
+            for waiter in (turn, ready):
+                if waiter is not None:
+                    if not waiter.done():
+                        waiter.cancel()
+                    await asyncio.gather(waiter, return_exceptions=True)
+            runs_db.close()
         if capacity_hold is not None:
             capacity_hold.finish()
             capacity_owner.finish_root()

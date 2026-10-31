@@ -75,6 +75,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: the final merged tree measures 16,966/563.
 # 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
 # pins changed owners at measured sizes without extra size-only moves.
+# 2026-10-31, PR #3162: the user explicitly waived size limits for this
+# backlog rebase. Affected rows are pinned to exact measured values; see
+# Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     #: gone red on dev -- ~8,400 lines of feature work re-consumed the
