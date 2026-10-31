@@ -10,7 +10,6 @@ raise MarkupError.
 
 from __future__ import annotations
 
-from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -90,14 +89,21 @@ class CardWidget(Static):
         event.stop()
 
 
-class CardInspector(Static, can_focus=True):
-    """Detail pane for the selected card (Enter focuses it)."""
+class CardInspector(VerticalScroll):
+    """Keyboard-scrollable full card details; Escape returns to the board."""
+
+    def compose(self) -> ComposeResult:
+        self._card_id: int | None = None
+        yield Static("No card selected", id="kanban-card-inspector-text", markup=False)
 
     def update_card(self, card: CardView | None) -> None:
-        if card is None:
-            self.update(Text("No card selected"))
-            return
-        self.update(Text(_inspector_text(card)))
+        card_id = card.id if card is not None else None
+        self.query_one(Static).update(
+            _inspector_text(card) if card is not None else "No card selected"
+        )
+        if card_id != self._card_id:
+            self.scroll_home(animate=False)
+        self._card_id = card_id
 
 
 def _card_text(card: CardView) -> str:

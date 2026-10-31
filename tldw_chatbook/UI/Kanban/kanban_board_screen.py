@@ -42,6 +42,7 @@ from tldw_chatbook.UI.Kanban.board_widgets import (
     BoardColumn,
     BoardHeader,
     CardInspector,
+    CardWidget,
 )
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 
@@ -155,17 +156,18 @@ class KanbanBoardScreen(BaseAppScreen):
     """
 
     BINDINGS = (
-        Binding("left", "cursor_left", "Left", show=False),
-        Binding("right", "cursor_right", "Right", show=False),
-        Binding("up", "cursor_up", "Up", show=False),
-        Binding("down", "cursor_down", "Down", show=False),
+        Binding("left", "cursor_left", "Left", show=False, priority=True),
+        Binding("right", "cursor_right", "Right", show=False, priority=True),
+        Binding("up", "cursor_up", "Up", show=False, priority=True),
+        Binding("down", "cursor_down", "Down", show=False, priority=True),
         Binding("h", "cursor_left", "Left", show=False),
         Binding("l", "cursor_right", "Right", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("j", "cursor_down", "Down", show=False),
-        Binding("shift+h", "move_card_left", "Move card ←"),
-        Binding("shift+l", "move_card_right", "Move card →"),
+        Binding("H", "move_card_left", "Move card ←", key_display="Shift+H"),
+        Binding("L", "move_card_right", "Move card →", key_display="Shift+L"),
         Binding("enter", "focus_inspector", "Card detail"),
+        Binding("escape", "focus_board", "Board", show=False),
         Binding("n", "new_card", "New card"),
         Binding("/", "focus_filter", "Filter", show=False),
         Binding("r", "refresh_board", "Refresh"),
@@ -343,8 +345,18 @@ class KanbanBoardScreen(BaseAppScreen):
                     id="kanban-board-loading",
                 )
             )
-        selected = _selected_card(visible, self.selection.card_id)
-        self.query_one(CardInspector).update_card(selected)
+        self._render_selection()
+
+    def _render_selection(self) -> None:
+        """Keep mounted columns and their scroll offsets when selection changes."""
+        for widget in self.query(CardWidget):
+            widget.set_class(widget.card_view.id == self.selection.card_id, "selected")
+        self.query_one(CardInspector).update_card(self._selected_card())
+        self.call_after_refresh(self._reveal_selection)
+
+    def _reveal_selection(self) -> None:
+        for widget in self.query(".kanban-card.selected"):
+            widget.scroll_visible(animate=False)
 
     def _column_widget_id(self, status: str) -> str:
         # Upstream's widget_id discipline: Textual ids are ASCII-only, so a
@@ -378,7 +390,7 @@ class KanbanBoardScreen(BaseAppScreen):
                     self.selection = SelectionState(
                         card_id=card.id, status=status, row=row
                     )
-                    self.call_later(self._render_board)
+                    self._render_selection()
                     return
 
     def _selected_card(self) -> CardView | None:
@@ -407,7 +419,7 @@ class KanbanBoardScreen(BaseAppScreen):
         selection = next_column_selection(visible, self.selection, delta)
         if selection is not None:
             self.selection = selection
-            self.call_later(self._render_board)
+            self._render_selection()
 
     def _move_rows(self, delta: int) -> None:
         visible = self.visible_snapshot
@@ -416,7 +428,17 @@ class KanbanBoardScreen(BaseAppScreen):
         selection = moved_row_selection(visible, self.selection, delta)
         if selection is not None and selection != self.selection:
             self.selection = selection
-            self.call_later(self._render_board)
+            self._render_selection()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        focused = self.app.focused
+        navigation = action.startswith("cursor_") or action.startswith("move_card_")
+        if navigation and isinstance(focused, (Input, CardInspector)):
+            return False
+        return super().check_action(action, parameters)
+
+    def action_focus_board(self) -> None:
+        self.query_one("#kanban-board-columns").focus()
 
     def action_focus_inspector(self) -> None:
         self.query_one(CardInspector).focus()

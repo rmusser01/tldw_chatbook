@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@Robert'
 created_date: 2026-08-19 09:55
-updated_date: 2026-10-31 18:43
+updated_date: 2026-10-31 18:59
 labels:
 - kanban
 - ui
@@ -141,4 +141,5 @@ Files: UI/Kanban/{__init__,board_models,board_widgets,kanban_board_screen}.py; C
 
 Verification: 12/12 green; ruff clean; nav/lockstep battery has the identical 58 pre-existing setup errors (RecoveryRequired env condition) verified byte-identical on pristine via stash — no regression.
 2026-10-31 integration repair (ADR237/150/161/031/152/240): rebased on57e330, retained retired MCP route, fixed duplicate/suffixed column label collisions without losing store IDs, supplied required unique client IDs to real board/list/card creation, rendered modal column names literally, used existing design tokens and production CSS in mounted tests.16 focused tests pass including real SQLite keyboard bootstrap/create and duplicate-column move/create; RED controls recorded. QA:Docs/superpowers/qa/2026-10-31-pr3157-backlog-rebase.md. User waived hostedCI/size limits; independent review pending. Keep In Progress until review and oldest-first integration; shortcut must reconcile if Plugins lands first.
+Independent full review ofc02dc559 found4Important keyboard/visibility/detail issues; actualpushed-screen controls reproducedall4. Repaired nativeuppercaseShiftH/L, arrowownershipwithInput/detailfocus exclusions, persistentmountedcolumns+selectedcardreveal, andscrollablefullinspector withEscapeback.19casespassed; correctedfocus-settlementfixturethenitsonecaserunpassed. QA holds exactRED/GREENreceipts; same-reviewerfollowup pending. No storeauthoritychanges; noCI/fullsuite/release.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

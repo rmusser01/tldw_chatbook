@@ -23034,3 +23034,6 @@ principal; discard qualification on lossy normalization and exclude sentinels.
 ## Kanban recording fake missed required service fields — PR #3157, 2026-10-31
 
 The board's 13 existing tests passed, including a bootstrap/create test whose recording service accepted any dictionary. A mounted keyboard control using LocalKanbanService and real SQLite produced no board: the screen omitted the required `client_id` on board/list/card requests. Keep the real service boundary in the first-use control; recording a call proves dispatch, not that the service accepts it. The repaired 16-case run also proves unique client IDs, duplicate-name column preservation, and actual create/move results.
+
+
+PR #3157's independent review also found that direct action calls in a test named keyboard navigation missed terminal uppercase Shift keys and descendant scroll bindings. Actually pushed screens with `pilot.press()` reproduced four broken interactions, including off-screen selection and an inaccessible long inspector. Use parser-shaped key names and assert visible viewport state for keyboard promises; a selected ID alone does not prove that users can see it.

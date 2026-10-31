@@ -255,7 +255,9 @@ async def test_board_screen_renders_columns_and_navigates_by_keyboard(
         assert screen.selection.status == "Done"
         assert screen.selection.card_id == 3
 
-        inspector_text = str(app.query_one("#kanban-card-inspector", Static).renderable)
+        inspector_text = str(
+            app.query_one("#kanban-card-inspector-text", Static).renderable
+        )
         assert "Done card" in inspector_text
 
 
@@ -530,3 +532,115 @@ async def test_keyboard_bootstrap_and_create_use_real_local_store(request, tmp_p
             cards[0]["client_id"],
         ]
         assert len(set(client_ids)) == 5
+
+
+class _PushedKanbanHarness(ConsolidatedCSSApp[None]):
+    def __init__(self, board, service=None):
+        super().__init__()
+        self.board = board
+        self.service = service
+
+    def on_mount(self):
+        app_instance = _FakeAppInstance()
+        app_instance.local_kanban_service = self.service
+        screen = KanbanBoardScreen(app_instance)
+
+        async def loader():
+            return self.board
+
+        screen.snapshot_loader = loader
+        self.push_screen(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_terminal_uppercase_keys_move_selected_cards(request):
+    moves = []
+
+    class Service:
+        async def move_card(self, card_id, data):
+            moves.append((card_id, data["target_list_id"]))
+
+    board = _snapshot(
+        {"To Do": (_card(1),), "Done": (_card(2),)}, list_ids={"To Do": 10, "Done": 20}
+    )
+    app = _PushedKanbanHarness(board, Service())
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app.screen.workers.wait_for_complete()
+        await pilot.press("L")
+        await app.screen.workers.wait_for_complete()
+        assert moves == [(1, 20)]
+        await pilot.press("l", "H")
+        await app.screen.workers.wait_for_complete()
+        assert moves[-1] == (2, 10)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_overflow_arrows_navigate_without_stealing_input_keys(request):
+    board = _snapshot({f"Column {i}": (_card(i + 1),) for i in range(5)})
+    app = _PushedKanbanHarness(board)
+    async with app.run_test(size=(80, 30)) as pilot:
+        screen = app.screen
+        await screen.workers.wait_for_complete()
+        await pilot.press("right")
+        assert screen.selection.card_id == 2
+        search = screen.query_one(Input)
+        search.focus()
+        search.value = "abcdef"
+        await pilot.pause()  # settle Input focus/select-all before placing the caret
+        search.cursor_position = 4
+        await pilot.press("left")
+        assert search.cursor_position == 3
+        assert screen.selection.card_id is None  # filter excludes all cards
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_keyboard_selection_reveals_rows_and_overflow_columns(request):
+    from tldw_chatbook.UI.Kanban.board_widgets import BoardColumn
+
+    board = _snapshot(
+        {
+            "First": tuple(_card(i) for i in range(1, 13)),
+            **{f"Column {i}": (_card(20 + i),) for i in range(5)},
+        }
+    )
+    app = _PushedKanbanHarness(board)
+    async with app.run_test(size=(80, 30)) as pilot:
+        screen = app.screen
+        await screen.workers.wait_for_complete()
+        await pilot.press(*(["j"] * 11))
+        await pilot.pause()
+        card = screen.query_one("#kanban-card-12")
+        column = next(node for node in card.ancestors if isinstance(node, BoardColumn))
+        assert column.content_region.y <= card.region.y
+        assert card.region.bottom <= column.content_region.bottom
+        for _ in range(5):
+            await pilot.press("l")
+        await pilot.pause()
+        last_card = screen.query_one("#kanban-card-24")
+        viewport = screen.query_one("#kanban-board-columns").content_region
+        assert viewport.x <= last_card.region.x
+        assert last_card.region.right <= viewport.right
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_focused_inspector_scrolls_to_last_description_line(request):
+    from tldw_chatbook.UI.Kanban.board_widgets import CardInspector
+
+    card = _card(1, "Detailed", "\n".join(f"Detail line {i}" for i in range(40)))
+    app = _PushedKanbanHarness(_snapshot({"To Do": (card, _card(2))}))
+    async with app.run_test(size=(80, 30)) as pilot:
+        screen = app.screen
+        await screen.workers.wait_for_complete()
+        await pilot.press("enter", "end")
+        await pilot.pause()
+        inspector = screen.query_one(CardInspector)
+        assert inspector.scroll_y > 0
+        assert inspector.scroll_y == inspector.max_scroll_y
+        await pilot.press("up")
+        assert screen.selection.card_id == 1
+        await pilot.press("escape", "down")
+        assert screen.selection.card_id == 2

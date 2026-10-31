@@ -24,3 +24,12 @@ Private receipts are under sibling `test-runtime/`:
 ## Limits
 
 No full test sweep, hosted CI, release, server-backed board, scheduling feed or external Kanban qualification. The UI census accepts only Tests/UI paths; the board tests remain in their existing Tests/Kanban suite. F8 is the next free shortcut on this reviewed base; if earlier Plugins PR #3148 lands first, final rebase must allocate Kanban the next free slot and re-review that integration. No existing destination shortcut may move.
+
+
+## Independent review repairs
+
+Full review of `c02dc559b117ee22130670d26bcdc603aabce7e6` found four Important keyboard/access defects. Normal terminal Shift+H/L emits uppercase keys; horizontal overflow consumed arrow bindings; rebuilding columns lost selected-card visibility; fixed Static details could not scroll. All four were reproduced in actually pushed screens with production CSS (`keyboard-review-red-1793472836246736300/pytest.log`:4failed).
+
+Repairs bind uppercase H/L, give board arrows priority while declining them for Input/inspector focus, update selection classes without rebuilding mounted columns, reveal selection after layout, and use a keyboard-scrollable full-detail container. Escape returns to board navigation. Existing store and mutation paths are unchanged.
+
+`keyboard-review-green-1793472941878317000/pytest.log`:19passed; one Input caret assertion failed because its fixture placed the caret before focus/select-all settled. After adding a focus settlement pause, only that test reran: `keyboard-input-final-1793473077128288200/pytest.log`:1passed11.16seconds. This is combined targeted evidence, not a claim that the earlier20-case invocation was wholly green. Ruff/format/whitespace and final CSS regeneration were verified. The same independent reviewer must check the repair before merge.

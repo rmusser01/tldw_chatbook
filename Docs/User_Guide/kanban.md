@@ -13,7 +13,7 @@ surface them).
 
 Columns are the board's **lists** in order; cards are its cards, each
 showing its id, title, priority, and due date. The inspector strip below
-the board shows the selected card's full detail (Enter focuses it).
+the board shows the selected card's full detail. Enter focuses it; arrows, PageUp/PageDown and Home/End scroll long details, and Escape returns to the board.
 
 ```
 ┌─ To Do (2) ──┐  ┌─ Doing (0) ─┐  ┌─ Done (1) ──┐
@@ -31,7 +31,8 @@ here needs a mouse, though clicking a card selects it.
 |---|---|
 | `←` / `→` (or `h` / `l`) | Move between columns (empty columns are skipped) |
 | `↑` / `↓` (or `k` / `j`) | Move between cards in the current column |
-| `Enter` | Focus the selected card's detail in the inspector |
+| `Enter` | Focus the selected card's scrollable detail in the inspector |
+| `Escape` | Return from the inspector or filter to board navigation |
 | `Shift+H` / `Shift+L` | Move the selected card to the previous / next column |
 | `n` | New card in the focused column (Enter adds, Escape cancels) |
 | `/` | Focus the filter box — narrows every column by text (id, title, or description) |
