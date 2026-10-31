@@ -18,7 +18,9 @@ the search runs. Stop pauses the send exactly as a timeout does, with the
 same Retry / Send once without Library / Cancel choices.
 
 Imported lazily by the controller: nothing here runs unless an Automatic
-send is preparing, so it adds no work or module to boot.
+send is preparing, so it adds no work or module to boot. The first-send
+warm-up imports it after UI-ready (TASK-33620.15.19), so a first Automatic
+send does not load it on the UI loop.
 """
 
 from __future__ import annotations
