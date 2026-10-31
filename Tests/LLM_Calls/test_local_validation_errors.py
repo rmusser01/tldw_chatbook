@@ -21,7 +21,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     safe_provider_error_copy,
 )
 from tldw_chatbook.Chat.provider_failures import (
-    describe_console_stream_failure,
+    console_failure_copy,
     describe_stream_failure,
 )
 from tldw_chatbook.LLM_Calls import LLM_API_Calls
@@ -137,7 +137,8 @@ async def test_a_streamed_local_refusal_reaches_console_as_not_sent() -> None:
         ChatConfigurationError(status_code=None)
     )
     assert "messages" not in diagnostic
-    visible = describe_console_stream_failure(caught.value)
+    # The Console's failure row (TASK-33621.11: one sentence, no lead-in).
+    visible = console_failure_copy(caught.value, "Agent run failed")
     assert "provider returned HTTP" not in visible
     assert "Anthropic not sent: it failed a local check on messages" in visible
 
@@ -182,7 +183,7 @@ async def test_a_sensitive_run_through_the_default_adapter_still_names_the_field
     assert caught.value.status_code is None
     assert (
         "Anthropic not sent: it failed a local check on messages"
-        in describe_console_stream_failure(caught.value)
+        in console_failure_copy(caught.value, "Agent run failed")
     )
     assert describe_stream_failure(caught.value) == describe_stream_failure(
         ChatConfigurationError(status_code=None)
