@@ -22151,11 +22151,9 @@ class ConsoleChatController:
 
     @staticmethod
     def _blocked_visible_copy(copy: str) -> str:
-        if "Provider blocked" in copy:
-            return copy
-        if copy.startswith("WIP:"):
-            return f"Provider blocked: {copy}"
-        return copy or "Provider blocked."
+        # TASK-33621.11 AC#5: the gateway's sentence is the row, never
+        # rewritten by its words; only a silent resolution gets a generic one.
+        return str(copy or "").strip() or "Provider blocked."
 
     def _block(self, session_id: str, visible_copy: str) -> ConsoleSubmitResult:
         self._set_run_state(
