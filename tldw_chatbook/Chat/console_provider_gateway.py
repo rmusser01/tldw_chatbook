@@ -1623,11 +1623,23 @@ def _raise_if_context_overflow(
     error = ChatBadRequestError(provider=provider, status_code=status)
     error.context_overflow = True  # type: ignore[attr-defined]
     attach_provider_reason(error, exc.response, known_credentials=credentials)
-    raise ChatBadRequestError(
+    raise _gateway_sentence(ChatBadRequestError(
         safe_provider_error_copy(provider, error, known_credentials=credentials),
         provider=provider,
         status_code=status,
-    ) from None
+    ), console=True) from None
+
+
+def _gateway_sentence(error: ChatAPIError, *, console: bool = False) -> ChatAPIError:
+    """Mark ``error``: its message is this gateway's finished sentence.
+
+    TASK-33621.11: describe_stream_failure then keeps it whole by type, not by
+    finding "Status: N." in it; ``console`` also hands it to the Console row.
+    """
+    error.gateway_sentence = True
+    if console:
+        error.console_copy = error.message
+    return error
 
 
 def _error_copy_for(copy_fn: Any, resolution: Any, exc: BaseException) -> str:
@@ -5841,11 +5853,11 @@ class ConsoleProviderGateway:
                 status_code = exc.response.status_code
             else:
                 status_code = getattr(exc, "status_code", 502)
-            raise ChatProviderError(
+            raise _gateway_sentence(ChatProviderError(
                 _error_copy_for(safe_provider_error_copy, resolution, exc),
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
-            ) from None
+            )) from None
         finally:
             if call_signals is not None and rule_lease is None:
                 call_signals.close_usage_call()
@@ -5872,11 +5884,11 @@ class ConsoleProviderGateway:
         try:
             text = self._normalize_auxiliary_thinking(text, resolution)
         except ProviderThinkingCaptureError as exc:
-            raise ChatProviderError(
+            raise _gateway_sentence(ChatProviderError(
                 safe_provider_error_copy(provider, exc),
                 provider=provider,
                 status_code=502,
-            ) from None
+            )) from None
         return AuxiliaryCompletionResult(
             provider=provider,
             model=model,
@@ -7227,7 +7239,7 @@ class ConsoleProviderGateway:
                     # F5: carry the real status the worker captured -- never
                     # re-derive it by parsing item.text back out (that text
                     # is redacted prose, not a machine-readable status).
-                    raise ChatProviderError(
+                    raise _gateway_sentence(ChatProviderError(
                         item.text
                         or safe_provider_error_copy(
                             resolution.provider, ChatProviderError()
@@ -7236,7 +7248,7 @@ class ConsoleProviderGateway:
                         status_code=item.status_code
                         if isinstance(item.status_code, int)
                         else 502,
-                    )
+                    ), console=True)
                 if item.kind == "trace_verification_error":
                     raise TraceProvenanceAlignmentError(
                         "provider request trace verification failed"

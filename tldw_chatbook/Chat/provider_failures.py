@@ -153,14 +153,11 @@ def describe_stream_failure(exc: BaseException) -> str:
         if marker != -1:
             detail = detail[:marker].rstrip()
         detail = " ".join(detail.split())
-    if (
-        detail
-        and type(status_code) is int
-        and f"Status: {status_code}." in detail
-    ):
+    if detail and getattr(exc, "gateway_sentence", False) is True:
         # Review round 2 (V2-F6): the gateway's own finished copy already
         # names the status and the fix; wrapping it again read
-        # "HTTP 404 (... Status: 404. ... (Alt+M: Switch model).)."
+        # "HTTP 404 (... Status: 404. ... (Alt+M: Switch model).)." Decided by
+        # who raised it, never by the words "Status: N." (TASK-33621.11 AC#5).
         return detail
     if detail and detail.lower() != summary.lower():
         # The closing parenthesis ends the clause; a period inside it read
@@ -178,3 +175,23 @@ def describe_console_stream_failure(exc: BaseException) -> str:
     if isinstance(exc, ChatAPIError) and exc.console_copy:
         return exc.console_copy
     return describe_stream_failure(exc)
+
+
+def console_failure_copy(exc: BaseException, lead_in: str) -> str:
+    """Return one Console failure sentence for ``exc`` (TASK-33621.11 AC#4).
+
+    The gateway's finished sentence already names the provider, the category
+    and the status, so it is shown alone; prefixing it read "Agent run
+    failed: Provider error from Anthropic: ... Status: 401.". Only a failure
+    the gateway did not describe gets the path's own lead-in.
+
+    Args:
+        exc: The failure that ended the turn.
+        lead_in: The path's lead-in, e.g. ``"Agent run failed"``.
+
+    Returns:
+        One user-facing sentence.
+    """
+    if isinstance(exc, ChatAPIError) and exc.console_copy:
+        return exc.console_copy
+    return f"{lead_in}: {describe_stream_failure(exc)}"
