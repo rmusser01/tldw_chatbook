@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@Robert'
 created_date: 2026-08-19 09:55
-updated_date: 2026-10-31 17:00
+updated_date: 2026-10-31 20:00
 labels:
 - console
 - agents
@@ -81,4 +81,7 @@ Targeted evidence: reducer/log/service/provider run had 139 passes and 6 POSIX s
 - Audit sanitization drops qualification fingerprints when server/tool identities are lossy. The reducer independently refuses noncanonical/sentinel identities, including older invalid rows carrying a hash. Provider approval semantics are unchanged. ADR-032 and testing lessons record both reproduced failures.
 - Red evidence: 11 targeted service/sanitizer/reducer regressions and 2 native inherited-policy cases failed as expected. Green evidence: full service/reducer files 44 passed; all 7 native acceptance cases passed; final compatibility/log/store controls 21 passed with one existing lock-probe fixture failure. That failure reproduces identically with the original e6119782 permission_store module: _ContestedLockProbe lacks acquire, and recovery admission raises before first store construction completes. No unrelated repair made.
 - Syntax, changed-range formatting, git diff --check, and markup guard passed. Ruff has no new findings against e6119782 (10 existing findings in the currently touched files). No full sweep, provider-semantic change, remote action, or release. Status remains In Progress for fresh independent review.
+2026-10-31 final backlog integration:
+Rebased the five reviewed commits onto dev4d6764b132edde35c8a32b5d2c92ab189416dd6d; product patches are unchanged. Both appended conflict sections were preserved, including the landed Plugins lifecycle test. Independent integration review approved5810c2b21d15527120e099eb254802ffdb077e41 with3 focused tests passing (provider approval provenance, Plugins lifecycle ownership, inherited-policy refusal at final writer), zero failures/errors/skips; receipt is sibling test-runtime/integration-review-42ffd9b2f8ac4932a35412d83e7652b6/pytest.xml. Earlier limitations remain.
+The full diagnostic rebuild identified exactly7 missing warnings:2 in unified_control_plane_service,5 in mcp_workbench. Statement review against the merge base confirmed fixed text plus exception type only, with no user text, paths, credentials or new sink. Canonical regeneration changed only those2 owner rows (26/2f3b52d782c628867557 and50/bbfdcc1a9205181fbafe); all other rows and sink/path projections equal the base. UI census passes1174/floor1174. Under the explicit size waiver, affected owner pins exactly match6054/1680/7011 lines. HostedCI waived by the user; no full sweep or release work.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
