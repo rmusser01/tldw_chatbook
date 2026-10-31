@@ -1943,3 +1943,6 @@ Tests/UI/test_roleplay_import_sniff.py
 # Down/Up, the first match highlighted) on a real host app, no screen mount
 # (~6 s locally), appended at the tail so no existing entry changes shard.
 Tests/UI/test_tag_filter_picker.py
+
+# TASK-36571 / PR3335: batched projection restyles and computed-style guards.
+Tests/UI/test_console_projection_restyles.py
