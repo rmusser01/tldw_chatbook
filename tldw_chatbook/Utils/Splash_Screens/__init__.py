@@ -39,7 +39,7 @@ class _AliasFinder(importlib.abc.MetaPathFinder):
 if not any(isinstance(f, _AliasFinder) for f in sys.meta_path):
     sys.meta_path.insert(0, _AliasFinder())
 
-# The package itself becomes the real one. The target name is deliberately not a
-# string literal at an import call: this shim is the one Utils -> UI edge, kept
-# only for old import paths and deleted with them (see Docs/Architecture/layer-map.md).
-sys.modules[__name__] = importlib.import_module(_NEW)
+# The package itself becomes the real one. This is the one Utils -> UI edge, kept
+# only for old import paths (user custom cards may use them); it has an explicit
+# row in Tests/Architecture/layer_direction_allowlist.tsv and goes with the shim.
+sys.modules[__name__] = importlib.import_module("tldw_chatbook.UI.Splash_Screens")
