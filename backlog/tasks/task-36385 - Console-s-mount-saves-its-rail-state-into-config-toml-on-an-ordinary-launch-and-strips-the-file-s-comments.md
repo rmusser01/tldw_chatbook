@@ -161,4 +161,10 @@ No User Guide change: no page says that a launch rewrites config.toml.
     - The 3 failures are compact_access display checks. At dev the same file has 4 failures, these 3 among them.
     - The 31 errors are `raw_source_selection_changed` in `Tests/Wizards/test_first_run_setup_integration.py`. Dev shows the same 7 passed and 31 errors; this PR changes only a docstring there. CI gates one test from that file, `test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone` (pr-fast-lane-admission-2), and it passes at head.
   - Preflight passed.
+- **Re-sync 2026-10-31 onto dev 804dc00231:**
+  - One conflict: the lessons file, where dev's TASK-36389 lesson took the same spot. Both were kept, dev's first, and this task's lesson text is unchanged.
+  - Dev's TASK-33621.51 grew `chat_screen.py` by 4 lines into its 24331 row's slack, so dev's row is now exact. With this branch's +22 the row is the measured 24353 (it had been 24349), and the screen ratchet passes at that value.
+  - Apart from that row, the diff is identical to before.
+  - Runs at the new head (`-n 8`), across the 9 test files this PR touches: 193 passed, 3 failed, 31 errors. These are the same compact_access failures and Wizards setup errors as at the previous re-sync, and dev shows them too.
+  - Preflight passed.
 <!-- SECTION:NOTES:END -->
