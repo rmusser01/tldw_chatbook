@@ -12,6 +12,8 @@ This module covers the two halves of that: the model is now loaded during
 the component that actually produced nothing.
 
 Fakes only -- nothing here loads a model, downloads anything, or opens a device.
+(The real download path inside a running app is
+`Tests/Chat/test_console_voice_warmup_in_app.py`.)
 """
 
 from __future__ import annotations
@@ -22,8 +24,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual.app import App
+from textual.content import Content
 from textual.widgets import Button, Static
 
+from rich.cells import cell_len
+
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from Tests.UI.test_console_dictation import (
     _mounted_console,
     _ready_host,
@@ -32,8 +39,14 @@ from Tests.UI.test_console_dictation import (
 from Tests.UI.test_console_dictation_streaming import _patch_availability
 from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat import console_voice_input as voice_module
+from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import ConsoleTTSDestination
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
+from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+#: These tests mount the real ChatScreen (Tests/conftest.py keeps the
+#: collection-time profile for them; the per-test redirect fails admission).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 # --------------------------------------------------------------------------
@@ -491,16 +504,54 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
         gate.set()
 
 
-@pytest.mark.asyncio
-async def test_a_warm_up_failure_degrades_the_capture_instead_of_blocking_it(
-    monkeypatch,
-):
-    """The Console warms on every press, so a fatal warm-up is a permanent cliff.
+#: The raw error a real first run produced (TASK-33621.21): parakeet-mlx hid a
+#: failed fetch behind a local-path fallback.
+_RAW_LOAD_ERROR = (
+    "Failed to load model: [Errno 2] No such file or directory: "
+    "'mlx-community/parakeet-tdt-0.6b-v2/config.json'"
+)
 
-    A provider that dislikes 0.5 s of digital silence, or a transient blip with
-    the weights already on disk, must not make dictation unusable forever.
+
+def _assert_plain_failure_toast(text: str) -> None:
+    lowered = text.lower()
+    assert lowered.startswith("dictation failed:")
+    assert "speech model" in lowered
+    assert "try again" in lowered
+    assert "errno" not in lowered
+    assert "config.json" not in lowered
+    assert "/" not in text, text
+    assert "may be slow" not in lowered
+    assert "microphone" not in lowered
+    # The Hands-free entry shows this same toast: it names no one button.
+    assert "press dictate" not in lowered
+    assert "settings ▸ speech & tts" in lowered
+
+
+async def _wait_for_notices(notify, pilot, count: int, timeout: float = 4.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        errors = [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ]
+        if len(errors) >= count:
+            return errors
+        await pilot.pause(0.01)
+    return [
+        call for call in notify.call_args_list if call.kwargs.get("severity") == "error"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_load_ends_preparing_with_one_plain_error(monkeypatch):
+    """TASK-33621.21: the live run said "may be slow", then hung forever.
+
+    A load that fails ends `starting` at once with one plain error naming the
+    speech model and the retry, no capture is opened, the chip clears and the
+    mic reads Dictate again. Pressing it again (the retry) behaves the same.
     """
-    transcriber = _Transcriber(error=RuntimeError("could not download model weights"))
+    transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
     service = _WarmableDictationService(transcriber=transcriber)
     _patch_availability(monkeypatch)
     _install_session(monkeypatch, service)
@@ -511,28 +562,241 @@ async def test_a_warm_up_failure_degrades_the_capture_instead_of_blocking_it(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        chip = composer.query_one("#console-voice-status", Static)
+        composer.load_draft("keep this draft")
 
-        await pilot.click("#console-dictation")
-        await _wait_for_mic_label(composer, pilot, "Dictating")
+        for press in (1, 2):
+            if press == 2:
+                await pilot.pause(0.5)  # let Button's 0.2 s -active class clear
+            assert await pilot.click("#console-dictation")
+            errors = await _wait_for_notices(notify, pilot, press)
+            await _wait_for_mic_label(composer, pilot, "Dictate")
 
-        # The capture went ahead.
-        assert service.calls == ["start_dictation"]
-        assert console._console_dictation_state == "recording"
+            assert len(errors) == press, notify.call_args_list
+            _assert_plain_failure_toast(str(errors[-1].args[0]))
+            assert service.calls == [], "capture opened after a failed model load"
+            assert console._console_dictation_state == "idle"
+            assert _painted(chip) == ""
+            assert len(transcriber.buffer_calls) == press
 
+        assert str(errors[0].args[0]) == str(errors[1].args[0])
+        # Live at 80x24, a fast failure landed while the first-run detail
+        # toast was still up; the two do not fit in 24 rows, so the failure
+        # was cut off until the detail expired and gone about 1 s later. It
+        # must stay up well past the detail.
+        details = [
+            call for call in notify.call_args_list if "minutes" in str(call.args[0])
+        ]
+        assert details, "the first-run detail never showed"
+        detail_seconds = details[0].kwargs.get("timeout") or App.NOTIFICATION_TIMEOUT
+        error_seconds = errors[-1].kwargs.get("timeout") or App.NOTIFICATION_TIMEOUT
+        assert error_seconds >= detail_seconds + 5
         warnings = [
             call
             for call in notify.call_args_list
             if call.kwargs.get("severity") == "warning"
         ]
-        assert len(warnings) == 1
-        text = str(warnings[0].args[0])
-        assert "could not download model weights" in text
-        assert "microphone" not in text.lower()
-        assert [
-            call
-            for call in notify.call_args_list
-            if call.kwargs.get("severity") == "error"
-        ] == []
+        assert warnings == [], "a failed load must not also warn that it went ahead"
+        assert composer.draft_text() == "keep this draft"
+
+
+def _painted_toast(call) -> str:
+    """The text a toast paints for one `notify` call, honouring its markup flag."""
+    message = str(call.args[0])
+    if call.kwargs.get("markup", True) is False:
+        return message
+    return Content.from_markup(message).plain
+
+
+@pytest.mark.asyncio
+async def test_a_failure_toast_paints_its_remedy_exactly(monkeypatch):
+    """The failure toast is plain text, never markup (TASK-33621.21).
+
+    Read as markup, the missing-microphone remedy's "[speech_recording]" was
+    taken for a style tag and dropped, so the toast told the user to run an
+    install that adds no microphone support; an error carrying "[/]" would
+    not render at all.
+    """
+    _patch_availability(
+        monkeypatch,
+        availability=voice_module.Availability(
+            ok=False,
+            kind="missing-capture",
+            reason=voice_module.CAPTURE_REASON,
+            remedy=voice_module.CAPTURE_REMEDY,
+        ),
+    )
+    _install_session(monkeypatch, _WarmableDictationService())
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert await pilot.click("#console-dictation")
+        errors = await _wait_for_notices(notify, pilot, 1)
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+
+    assert len(errors) == 1, notify.call_args_list
+    painted = _painted_toast(errors[0])
+    assert "pip install 'tldw_chatbook[speech_recording]'" in painted
+
+
+class _GrowingDownload:
+    """The Hugging Face cache probe, reporting a download that keeps landing."""
+
+    def __init__(self, step: int) -> None:
+        self._step = step
+        self._reads = 0
+
+    def downloaded_bytes(self) -> int:
+        self._reads += 1
+        return (self._reads - 1) * self._step
+
+
+@pytest.mark.asyncio
+async def test_a_running_download_shows_its_size_in_the_chip(monkeypatch):
+    """AC#1's other branch: a download that is really running says so."""
+    gate = threading.Event()
+    transcriber = _Transcriber(gate=gate)
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    monkeypatch.setattr(
+        voice_module,
+        "download_progress_probe",
+        lambda: _GrowingDownload(47_000_000),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        voice_module.ConsoleVoiceInputController,
+        "WARMUP_PROGRESS_POLL_SECONDS",
+        0.05,
+        raising=False,
+    )
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            chip = composer.query_one("#console-voice-status", Static)
+
+            await pilot.click("#console-dictation")
+            painted = await _wait_for_painted(chip, pilot, "MB")
+
+            assert painted.startswith("◐ Downloading speech model… ")
+            assert painted.endswith(" MB"), painted
+            assert service.calls == [], "capture opened before the model was ready"
+
+            gate.set()
+            await _wait_for_mic_label(composer, pilot, "Dictating")
+            assert "Downloading" not in _painted(chip)
+    finally:
+        gate.set()
+
+
+def _painted_cells(screen, widget) -> str:
+    """Every row the compositor paints inside ``widget``'s region, cell-exact."""
+    strips = screen._compositor.render_strips()
+    rows = []
+    for y in range(widget.region.y, widget.region.bottom):
+        cells: list[str] = []
+        for segment in strips[y]:
+            for glyph in segment.text:
+                cells.append(glyph)
+                if cell_len(glyph) == 2:
+                    cells.append("")
+        rows.append("".join(cells[widget.region.x : widget.region.right]))
+    return "\n".join(rows)
+
+
+@pytest.mark.parametrize("size", [(80, 24), (235, 52)], ids=["80x24", "235x52"])
+@pytest.mark.asyncio
+async def test_preparing_mic_paints_cancel_whole_at_both_sizes(monkeypatch, size):
+    """AC#4: while the model prepares, the visible label says a press cancels."""
+    gate = threading.Event()
+    transcriber = _Transcriber(gate=gate)
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    _, host = _ready_host()
+
+    try:
+        async with host.run_test(size=size) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            chip = composer.query_one("#console-voice-status", Static)
+
+            await pilot.click("#console-dictation")
+            await _wait_for_painted(chip, pilot, "speech model")
+            mic = await _wait_for_mic_label(composer, pilot, "Cancel")
+            await pilot.pause()
+
+            assert mic.region.width > 0 and mic.region.height > 0
+            assert "Cancel" in _painted_cells(console, mic), _painted_cells(
+                console, mic
+            )
+    finally:
+        gate.set()
+
+
+_TTS_DESTINATION = ConsoleTTSDestination(
+    fingerprint="sha256:" + "c" * 64,
+    provider_label="Test Voice Cloud",
+    sanitized_destination="https://voice.example",
+    charges_may_apply=True,
+)
+
+
+def _install_tts_destination(app) -> None:
+    class _Handler:
+        async def resolve_console_speech_destination(self, *_args, **_kwargs):
+            return _TTS_DESTINATION
+
+    async def _ensure_tts_handler():
+        return _Handler()
+
+    app._ensure_tts_handler = _ensure_tts_handler
+
+
+@pytest.mark.asyncio
+async def test_a_failed_model_load_in_hands_free_leaves_both_controls_usable(
+    monkeypatch,
+):
+    """Hands-free's first capture fails to load: the loop ends, nothing hangs."""
+    transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    monkeypatch.setattr(hands_free_module, "speculative_voice_qualified", lambda: False)
+    app, host = _ready_host()
+    _install_tts_destination(app)
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        chip = composer.query_one("#console-voice-status", Static)
+
+        console._hands_free.request_console_hands_free_toggle()
+        await accept_hands_free_consent(host, pilot)
+        errors = await _wait_for_notices(notify, pilot, 1)
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline and console._console_hands_free is not None:
+            await pilot.pause(0.02)
+
+        assert len(errors) == 1, notify.call_args_list
+        _assert_plain_failure_toast(str(errors[0].args[0]))
+        assert console._console_hands_free is None, "Hands-free stayed on"
+        assert console._console_dictation_state == "idle"
+        assert service.calls == []
+        assert _painted(chip) == ""
+        controls = console.query_one("#console-speech-controls")
+        assert "Hands-free: Off" in _painted_cells(console, controls)
 
 
 @pytest.mark.asyncio
@@ -560,9 +824,9 @@ async def test_a_transcriber_that_cannot_be_built_blocks_the_capture(monkeypatch
 
         messages = [str(call.args[0]) for call in notify.call_args_list]
         assert len(messages) == 1
-        assert "model" in messages[0].lower()
-        assert "models are not installed" in messages[0]
-        assert "microphone" not in messages[0].lower()
+        _assert_plain_failure_toast(messages[0])
+        # TASK-33621.21: the raw cause is logged, not shown.
+        assert "models are not installed" not in messages[0]
         assert notify.call_args_list[0].kwargs.get("severity") == "error"
 
         # No capture was ever opened, and the draft is untouched.
