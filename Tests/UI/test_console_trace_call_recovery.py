@@ -238,19 +238,62 @@ def _painted(app) -> str:
     )
 
 
-async def test_a_compaction_hold_shows_its_numbers_and_three_choices() -> None:
+async def test_a_compaction_hold_shows_its_numbers_and_four_choices() -> None:
     app = _HoldApp(_HoldController(), estimated=False)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         painted = _painted(app)
         assert "1,650 of 1,800 tokens" in painted
+        # TASK-33621.4 AC#1: the trigger, and /rewind's own preview.
+        assert "1,440 tokens" in painted
+        assert "/rewind" in painted
         assert "Nothing was sent" in painted
         visible = {
             str(button.label) for button in app.screen.query(Button) if button.display
         }
-        assert visible == {"Compact and send", "Send without compacting", "Cancel send"}
+        assert visible == {
+            "Compact and send",
+            "Send without compacting",
+            "Change policy",
+            "Cancel send",
+        }
         assert "Problem:" not in painted
+        assert "Owner:" not in painted
         assert "estimate" not in painted
+
+
+async def test_change_policy_opens_chat_settings_at_context_and_memory() -> None:
+    """TASK-33621.4 AC#1: a one-step route to the policy, not a recovery action:
+    the send stays held, the card stays usable, the controller is not called."""
+    controller = _HoldController()
+    app = _HoldApp(controller, estimated=False)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        opened: list[dict] = []
+
+        async def open_settings(**kwargs) -> bool:
+            opened.append(kwargs)
+            return True
+
+        app.screen._open_console_settings = open_settings
+        card = app.screen.query_one(TraceCallRecoveryCallout)
+        card.query_one("#console-trace-change-policy", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert opened == [{"focus_context": True}]
+        assert controller.actions == []
+        assert card.display
+        assert not card.query_one("#console-trace-compact-send", Button).disabled
+
+
+async def test_change_policy_is_offered_only_for_a_compaction_hold() -> None:
+    app = _RecoveryApp(_Controller())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        card = app.screen.query_one(TraceCallRecoveryCallout)
+        assert not card.query_one("#console-trace-change-policy", Button).display
+        assert "Owner: This Console send" in _painted(app)
 
 
 async def test_a_compaction_hold_on_an_estimated_window_says_so() -> None:

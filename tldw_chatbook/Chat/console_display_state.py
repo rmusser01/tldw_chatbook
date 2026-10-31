@@ -1490,6 +1490,9 @@ class ConsoleInspectorState:
     #: TASK-33621.2: why the viewed chat's accepted turn is stuck unsent
     #: (paused for trace recovery); empty when no turn is blocked.
     run_blocked_reason: str = ""
+    #: TASK-33621.4: the chat is over its Ask compaction trigger, so the next
+    #: send will pause for compaction approval.
+    compaction_pause_expected: bool = False
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1646,6 +1649,7 @@ class ConsoleInspectorState:
         run_failed: bool = False,
         run_failure_reason: str = "",
         run_blocked_reason: str = "",
+        compaction_pause_expected: bool = False,
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -1698,6 +1702,8 @@ class ConsoleInspectorState:
                 the pinned authority line.
             run_blocked_reason: Why an accepted turn is stuck unsent, or ""
                 (TASK-33621.2).
+            compaction_pause_expected: The next send will pause for
+                compaction approval (TASK-33621.4).
             ephemeral: Whether this is a temporary conversation, which
                 blocks the Save Chatbook action.
             change_review_available: Whether change tracking has anything to
@@ -1845,6 +1851,7 @@ class ConsoleInspectorState:
             run_failed=run_failed,
             run_failure_reason=_clean(run_failure_reason, ""),
             run_blocked_reason=_clean(run_blocked_reason, ""),
+            compaction_pause_expected=bool(compaction_pause_expected),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             _pending_inputs=pending_inputs,

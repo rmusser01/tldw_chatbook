@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptQueueRegion,
     ConsolePromptQueueUIController,
     derive_prompt_queue_presentation,
+    turn_recovery_label,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
@@ -520,6 +521,30 @@ def test_painted_label_walk_covers_every_shelf_projection_input() -> None:
         f"never exercises: {unwalked}"
     )
     assert walked_modes == set(PromptQueueMode)
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Not sent: this chat reached its compaction threshold.",
+        "Not sent — this message doesn't fit the selected model.",
+    ],
+)
+def test_an_unsent_turn_reason_that_says_not_sent_is_not_prefixed_twice(
+    reason: str,
+) -> None:
+    """TASK-33621.4: a refusal that already starts "Not sent" reads once."""
+    label = turn_recovery_label(reason, budget=200)
+
+    assert label.startswith("Not sent: this ")
+    assert label.count("Not sent") == 1
+
+
+def test_an_unsent_turn_reason_without_the_prefix_still_gets_it() -> None:
+    assert turn_recovery_label("Provider validation failed.") == (
+        "Not sent: Provider validation failed"
+    )
+    assert turn_recovery_label("Not sent:") == "Unsent turn needs attention"
 
 
 def test_queue_shelf_has_no_dispatch_recovery_mode() -> None:

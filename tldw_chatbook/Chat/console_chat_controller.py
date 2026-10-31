@@ -337,6 +337,7 @@ from tldw_chatbook.Chat.console_configuration_capture import (
     capture_skill_context_maximum as capture_skill_context_maximum,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
 )
 from tldw_chatbook.Chat.console_turn_context import (
+    commit_fence_configuration,
     read_session_change_review_admission,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
@@ -18225,6 +18226,12 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "retried"
+        ):
+            return refusal  # TASK-33621.4: no new attempt to fail
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.RETRY,
@@ -18408,6 +18415,12 @@ class ConsoleChatController:
             provider_messages, session_id, turn_context
         )
         provider_messages = [*provider_messages, *hook_rows]
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "continued"
+        ):
+            return refusal  # TASK-33621.4: before commit, never Failed
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
@@ -18553,6 +18566,12 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "regenerated"
+        ):
+            return refusal  # TASK-33621.4: before the sibling, never Failed
         prefill = self._pinned_prefill_for_session(session_id)
         self.clear_original_attempt(message_id)
         new_message = self.store.create_sibling(
@@ -19683,6 +19702,12 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
+        from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
+
+        if refusal := await refuse_at_ask_trigger(
+            self, session_id, resolution, provider_messages, "resent"
+        ):
+            return refusal  # TASK-33621.4: before the sibling, never Failed
         prefill = self._pinned_prefill_for_session(session_id)
 
         # Every transform succeeded: now (and only now) fork the edited USER
@@ -23428,7 +23453,7 @@ class ConsoleChatController:
                 owner.context_policy_overrides,
                 self._global_context_policy_overrides(),
                 policy_revision,
-                configuration,
+                commit_fence_configuration(configuration),
                 resolution.provider,
                 resolution.model or "",
                 getattr(resolution, "base_url", None),
@@ -23867,13 +23892,25 @@ class ConsoleChatController:
             The result to return for a held or refused send, else ``None``.
         """
 
+        # TASK-33621.4: a queued or Buddy send cannot show the hold card, nor
+        # can one with no preparation ("$"/"/" with capture off); at the Ask
+        # trigger each is refused here, before commit, never Failed.
+        card = (
+            origin is ConsoleSubmissionOrigin.MANUAL
+            and not preserve_composer
+            and preparation is not None
+        )
+        mode = self._compaction_mode_for(session)
         if (
-            origin is not ConsoleSubmissionOrigin.MANUAL
-            or preparation is None
-            or preserve_composer
-            or preparation.preparation_id in self._compaction_hold_answered
+            origin
+            not in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+            or (
+                preparation is not None
+                and preparation.preparation_id in self._compaction_hold_answered
+            )
             or not isinstance(resolution, ConsoleProviderResolution)
-            or self._compaction_mode_for(session) is ContextCompactionMode.OFF
+            or mode is ContextCompactionMode.OFF
+            or (not card and mode is not ContextCompactionMode.ASK)
         ):
             return None
         hold, alert = await self._assess_context_compaction(
@@ -23884,6 +23921,28 @@ class ConsoleChatController:
                 echoed_user.id if echoed_user is not None else None
             ),
         )
+        if preparation is None:
+            from tldw_chatbook.Chat.console_compaction_gate import refuse_unprepared
+
+            return refuse_unprepared(
+                self,
+                session.id,
+                hold,
+                echoed_user=echoed_user,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        if not card:
+            from tldw_chatbook.Chat.console_compaction_gate import refuse_without_card
+
+            return refuse_without_card(
+                self,
+                preparation,
+                hold,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                preserve_composer=preserve_composer,
+            )
         if alert is not None:
             # Compacting cannot make it fit: refuse before commit, so the
             # alert is not buried under a dispatch-recovery panel and the

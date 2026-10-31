@@ -50,6 +50,7 @@ COMMANDS = [
     "/settings",
     "/context",
     "/endpoint",
+    "/compact",  # TASK-33621.4
     "/goal",
 ]
 

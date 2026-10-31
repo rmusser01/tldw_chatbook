@@ -149,10 +149,33 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-29 (TASK-33621.4, owner rule: a fix over a size ratchet raises
+    # the row with a dated comment): +1, the import of
+    # console_turn_context.commit_fence_configuration, which the manual
+    # summary's commit fence now compares (every /rewind Summarize went stale
+    # on a per-capture plugin run id). Dev ed7481a30c measures 29,055.
+    # 2026-10-29 (TASK-33621.4, same owner rule): +13, Continue, Regenerate
+    # and Retry ask console_compaction_gate before commit (one import, four
+    # lines per call site) so a deliberate Ask hold never marks a turn Failed.
+    # 2026-10-29 (TASK-33621.4, same owner rule): +17, the composer hold's
+    # admission check also refuses a queued or Buddy send at the Ask trigger
+    # before commit (the refusal itself lives in console_compaction_gate);
+    # live, a queued follow-up was marked Failed under the dispatch panel.
+    # 2026-10-29 (TASK-33621.4, same owner rule): +4, the console_compaction_gate
+    # import moves from module scope into its four call sites (four imports
+    # and the formatter's blank line after each, less the four-line module
+    # import) so the UI-ready module census (ADR-097) stays at dev's count.
+    # 2026-10-30 (TASK-33621.4, same owner rule): +24, review fixes. Edit &
+    # resend asks console_compaction_gate before it forks (+6), and the
+    # admission check refuses a send with no preparation ("$" or "/" while
+    # capture is off) at the Ask trigger (+18); both were marked Failed.
+    # 2026-10-30: rebased onto dev 7536ac3b87, which measures 29,038; the
+    # TASK-33621.4 lines above (+1 +13 +17 +4 +24 = +59) give 29,097.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29097,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
-    "tldw_chatbook/Chat/console_context_compaction.py": 4185,
+    # 2026-10-29 (TASK-33621.4): the queued-send refusal names /compact: -1.
+    "tldw_chatbook/Chat/console_context_compaction.py": 4184,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,

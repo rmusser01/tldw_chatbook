@@ -216,7 +216,34 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24331/737 -> 24338/738 2026-10-29 by TASK-33621.4, owner rule (a
+    #: fix over a size ratchet raises the row with a dated comment; never move
+    #: or reflow code to make it fit): `/compact` dispatches by name to a
+    #: ChatScreen action (the action-command contract requires the method on
+    #: the screen), so the screen gains action_compact_console_context (+1
+    #: method, +6 lines; the work lives in Console_Modules/compact_command.py)
+    #: and its target row (+1). The compaction forecast's two keywords (Inspect
+    #: and the header, +2) used dev's slack. Dev ed7481a30c measures 24329/737;
+    #: with the task, 24338/738, the exact measurement.
+    #: Raised 24338 -> 24342 (methods unchanged) 2026-10-29 by TASK-33621.4,
+    #: same owner rule: /rewind skips a send held for compaction, which is
+    #: not history yet -- not a rewind target (+2) and not the unfinished
+    #: exchange that disabled Summarize while it was held (+2).
+    #: Raised 24342 -> 24344 (methods unchanged) 2026-10-29 by TASK-33621.4,
+    #: same owner rule: F1 help gains a Context limit group, imported lazily
+    #: from Chat/console_context_budget_copy.py so the UI-ready census stays
+    #: flat (+2: the import and its blank line).
+    #: Raised 24344 -> 24347 (methods unchanged) 2026-10-29 by TASK-33621.4,
+    #: same owner rule: the run chip, the status strip's first segment at
+    #: every width, says the next send pauses for compaction (+2) with the
+    #: summary's own copy constant (+1 import). Live at 80x24 the header badge
+    #: drops to "Ready" there.
+    #: Lowered 24347/738 -> 24345/738 2026-10-30 after rebasing onto dev
+    #: 1eaa6a9429 (owner rule: the row is the exact measurement). Dev's file
+    #: measures 24327/737; this branch adds 18 lines and one method.
+    #: 2026-10-30: rebased onto dev 7536ac3b87, whose file measures
+    #: 24331/737; the same 18 lines and one method give 24349/738.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24349, 738),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

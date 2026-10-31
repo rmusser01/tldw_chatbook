@@ -1354,7 +1354,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 While Console is the active screen, the command palette (**Ctrl+P**) also
 gains "Console: …" entries for these same actions. Slash commands
 (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
-`/redirect`, `/stop`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+`/redirect`, `/stop`, `/emergency-stop`, `/rewind`, `/compact`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
 
 **A slash command stays with its chat.** Commands run in the background, so
 the Console keeps answering while one works — looking up a saved prompt,

@@ -28,6 +28,26 @@ MAX_TOKENS_SETTING = "Max tokens in Chat settings ▸ Model and generation (Ctrl
 MODEL_WINDOW_SETTING = "Settings ▸ Providers & Models (F4)"
 
 
+#: TASK-33621.4 AC#5: F1 help's group on what happens at the context limit.
+CONTEXT_LIMIT_HELP: tuple[str, tuple[tuple[str, str], ...]] = (
+    "Context limit",
+    (
+        (
+            "Ask (default)",
+            "a send over the compaction trigger is held: Compact and send, "
+            "Send without compacting, Change policy, or Cancel send",
+        ),
+        (
+            "Before it",
+            "the header reads Next send pauses to compact; Inspect and the "
+            "status strip's run chip, Pauses for compaction",
+        ),
+        ("/compact", "summarize older turns now (one model call)"),
+        ("/rewind", "Summarize up to here previews what would be summarized"),
+    ),
+)
+
+
 class ContextOverflowCause(str, Enum):
     """Why compacting older turns cannot make a send fit."""
 
@@ -153,26 +173,66 @@ def compaction_hold_detail(
     used_tokens: int,
     budget_tokens: int,
     estimated: bool,
-) -> tuple[str, str]:
-    """Compose the hold card's two detail rows.
+    trigger_tokens: int | None = None,
+) -> tuple[str, str, str]:
+    """Compose the hold card's three detail rows.
 
     Args:
         used_tokens: Conversation tokens this send would carry.
         budget_tokens: The conversation budget the threshold is a share of.
         estimated: True when the budget comes from an assumed window.
+        trigger_tokens: Where Ask compaction starts (TASK-33621.4 AC#1);
+            the clause is left out when unknown.
 
     Returns:
-        ``(usage, choices)``: the numbers, then what each action does.
+        ``(usage, choices, preview)``: the numbers, what each action does,
+        and where to preview a summary first (owner decision 2026-10-27:
+        the card points to /rewind rather than embedding its preview).
     """
 
+    threshold = "this chat reached its compaction threshold"
+    if trigger_tokens is not None and budget_tokens > 0:
+        share = round(trigger_tokens * 100 / budget_tokens)
+        threshold = f"compaction trigger {_tokens(trigger_tokens)} tokens ({share}%)"
     usage = (
         f"Context: {_tokens(used_tokens)} of {_tokens(budget_tokens)} tokens; "
-        "this chat reached its compaction threshold."
-        f"{_estimate_window_sentence(estimated)}"
+        f"{threshold}.{_estimate_window_sentence(estimated)}"
     )
     choices = (
         "Nothing was sent. Compact and send summarizes older turns first "
         "(one extra model call). Send without compacting sends it as is. "
+        "Change policy opens Chat settings ▸ Context and memory. "
         "Cancel puts it back in the composer."
     )
-    return usage, choices
+    preview = "To preview what would be summarized, use /rewind ▸ Summarize up to here."
+    return usage, choices, preview
+
+
+def ask_trigger_refusal_copy(
+    *,
+    action: str,
+    used_tokens: int,
+    budget_tokens: int,
+    trigger_tokens: int,
+    estimated: bool,
+) -> str:
+    """Compose the refusal for a turn that cannot show the hold card.
+
+    Args:
+        action: What did not happen, e.g. ``"continued"``.
+        used_tokens: Conversation tokens the turn would carry.
+        budget_tokens: The conversation budget.
+        trigger_tokens: Where Ask compaction starts.
+        estimated: True when the budget comes from an assumed window.
+
+    Returns:
+        Copy naming the numbers and how to go on (TASK-33621.4).
+    """
+
+    return (
+        f"Not {action}: this chat reached its compaction threshold "
+        f"({_tokens(used_tokens)} of {_tokens(budget_tokens)} tokens; trigger "
+        f"{_tokens(trigger_tokens)}). Run /compact to summarize older turns, "
+        "then try again, or change When limit nears in Chat settings ▸ "
+        f"Context and memory (Ctrl+O).{_estimate_window_sentence(estimated)}"
+    )

@@ -537,6 +537,7 @@ from ...Widgets.Console.console_transcript import (
 from ...Widgets.Console.console_settings_summary import (
     build_console_readiness_presentation,
 )
+from ...Widgets.Console.console_send_authority_summary import COMPACTION_PAUSE_RUN_COPY
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
@@ -4702,7 +4703,9 @@ class ChatScreen(BaseAppScreen):
         # cap so the help copy tracks a user override instead of quoting the
         # baked-in default.
         max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
-        shortcut_groups = CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        from ...Chat.console_context_budget_copy import CONTEXT_LIMIT_HELP
+
+        shortcut_groups = (CONTEXT_LIMIT_HELP, *CONSOLE_WORKBENCH_SHORTCUT_GROUPS)
         if self._console_inspector_active():
             shortcut_groups = (
                 *shortcut_groups,
@@ -5962,6 +5965,12 @@ class ChatScreen(BaseAppScreen):
         if self._console_setup_modal_blocking():
             return
         self.run_worker(self._open_console_settings(), exclusive=False)
+
+    def action_compact_console_context(self) -> None:
+        """`/compact` and the palette entry: Compact now (TASK-33621.4)."""
+        from ..Console_Modules.compact_command import run_compact_command
+
+        self.run_worker(run_compact_command(self), group="console-compact")
 
     def action_open_console_new_endpoint(self) -> None:
         """Open the endpoint-template creation flow on top of session settings.
@@ -13085,6 +13094,7 @@ class ChatScreen(BaseAppScreen):
                 str(getattr(run_state, "visible_copy", "") or "") if run_failed else ""
             ),
             run_blocked_reason=blocked_turn_reason(run_controller),
+            compaction_pause_expected=self._context_spend.compaction_pause_expected(),
             provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
@@ -13763,6 +13773,7 @@ class ChatScreen(BaseAppScreen):
             if self.size.width < CONSOLE_SINGLE_PANE_COLUMNS
             else build_console_readiness_presentation(readiness[1]).primary_label,
             blocked_turn=blocked_turn_reason(controller),
+            compaction_pause_expected=self._context_spend.compaction_pause_expected(),
         )
 
     def _console_provider_blocker_copy(
@@ -17295,6 +17306,8 @@ class ChatScreen(BaseAppScreen):
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             if reason := blocked_turn_reason(controller):  # TASK-33621.2: stuck
                 return f"Blocked — {reason}"
+            if self._context_spend.compaction_pause_expected():  # TASK-33621.4
+                return COMPACTION_PAUSE_RUN_COPY  # about the next send: first
             send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
             acknowledgement = send_ack.run_copy(session_id) if send_ack is not None else ""
             return acknowledgement or (rule_status(rule_state) if rule_state is not None else "")
@@ -18288,6 +18301,7 @@ class ChatScreen(BaseAppScreen):
         "settings": "action_open_console_session_settings",
         "context": "action_view_chat_context",
         "endpoint": "action_open_console_new_endpoint",
+        "compact": "action_compact_console_context",
     }
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
         command.name: command.handler_id
@@ -18879,10 +18893,12 @@ class ChatScreen(BaseAppScreen):
             content.
         """
         store = self._ensure_console_chat_store()
+        # TASK-33621.4: a send held for compaction is not history yet.
+        held = self._ensure_console_chat_controller()._held_send_echo_id(session_id)
         user_messages = [
             message
             for message in store.messages_for_session(session_id)
-            if message.role is ConsoleMessageRole.USER
+            if message.role is ConsoleMessageRole.USER and message.id != held
         ]
         from ...Widgets.Console.console_rewind_modal import RewindPromptRow
 
@@ -19042,8 +19058,10 @@ class ChatScreen(BaseAppScreen):
         """Return only synchronously known run/tip refusal guidance."""
         if not controller.run_state_for(session_id).is_send_allowed:
             return "A run is already running in this tab."
+        held = controller._held_send_echo_id(session_id)  # TASK-33621.4
         try:
             path = controller.store.active_path_message_ids(session_id)
+            path = [message_id for message_id in path if message_id != held]
             messages = {
                 message.id: message
                 for message in controller.store.messages_for_session(session_id)
