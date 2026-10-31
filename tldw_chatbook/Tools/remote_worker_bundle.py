@@ -3265,7 +3265,7 @@ def _is_relative_sensitive_path(relative: Path, exclusions: tuple[SensitiveExclu
             return True
         if kind == 'direct_children' and (not is_directory and parts[:-1] == value_parts):
             return True
-        if kind == 'name' and (not is_directory) and (fold_path_part(relative.name) == value):
+        if kind == 'name' and (not is_directory) and parts and (parts[-1] == value):
             return True
     return False
 
@@ -5719,4 +5719,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("8faea95ba2cc472b9655ba8f26c6495cc53e4348a5c2a4c3610db804052152c8")
+BUNDLE_SHA256 = _enter_worker_exchange("ec1ee4c4e895b8cfb41951cc18bbc6d600e6010a978768bd6541129d34c156bd")

@@ -39,6 +39,7 @@ from tldw_chatbook.Workspaces.file_inspector import (
     FilterProgress,
     FilterResult,
 )
+from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 
@@ -484,14 +485,16 @@ class ConsoleWorkspaceFilesModal(SafeModalDismissMixin, ModalScreen[None]):
     def _is_excluded(relative_path: str, exclusions: tuple[str, ...]) -> bool:
         """Whether one binding-relative path equals or lies under an exclusion.
 
-        Compared casefolded per component (final-review Finding 3), matching
-        the denylist's own ``_compare_key`` discipline: on a case-insensitive
-        filesystem a Settings-typed ``Docs`` exclusion refuses on-disk
-        ``docs/`` via the tools, so the badge must agree with them.
+        Compared with ``fold_path_part`` (case, final-review Finding 3, AND
+        Unicode normalization, TASK-37655), matching the denylist's own
+        ``_compare_key`` discipline: a Settings-typed ``Docs`` exclusion
+        refuses on-disk ``docs/`` via the tools, and an NFC ``Données``
+        refuses an NFD listing, so the badge must agree with them. The whole
+        string folds like each component: ``/`` is untouched by the fold.
         """
-        folded_path = relative_path.casefold()
+        folded_path = fold_path_part(relative_path)
         for exclusion in exclusions:
-            folded_exclusion = exclusion.casefold()
+            folded_exclusion = fold_path_part(exclusion)
             if folded_path == folded_exclusion or folded_path.startswith(
                 folded_exclusion + "/"
             ):

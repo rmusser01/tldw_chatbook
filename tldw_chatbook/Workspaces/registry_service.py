@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.rag_scope import (
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
+from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
 from .models import (
@@ -3050,7 +3051,7 @@ class LocalWorkspaceRegistryService:
 
         Spec §1: validates the path stays inside the binding root, infers
         file/directory from disk (nonexistent paths read as directories for
-        pre-excluding build output), rejects case-insensitive duplicates,
+        pre-excluding build output), rejects case/Unicode-insensitive duplicates,
         and persists via binding metadata so the live run is untouched.
 
         Task 17 (Phase 3c): SSH-filesystem bindings learn exclusions too.
@@ -3079,7 +3080,7 @@ class LocalWorkspaceRegistryService:
                 workspace, the path is invalid (empty/absolute/home-
                 relative/parent-escaping/root itself/unresolvable or
                 symlink-escaping), duplicates an existing exclusion
-                case-insensitively, or the per-binding cap (200) is reached.
+                case/Unicode-insensitively, or the per-binding cap (200) is reached.
         """
         with _BINDING_EXCLUSION_EDIT_LOCK:
             binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
@@ -3097,9 +3098,9 @@ class LocalWorkspaceRegistryService:
                     if not absolute.exists() or absolute.is_dir()
                     else "file"
                 )
-            key = relative.as_posix().casefold()
+            key = fold_path_part(relative.as_posix())  # tools' fold (TASK-37655)
             entries = list(binding_exclusion_entries(binding))
-            if any(entry.path.casefold() == key for entry in entries):
+            if any(fold_path_part(entry.path) == key for entry in entries):
                 raise WorkspaceRegistryServiceError("Path is already excluded.")
             if len(entries) >= _MAX_BINDING_EXCLUSIONS:
                 raise WorkspaceRegistryServiceError(
@@ -3121,7 +3122,7 @@ class LocalWorkspaceRegistryService:
             workspace_id: Owning workspace of the folder binding.
             binding_id: Folder binding whose metadata loses the exclusion.
             path: Binding-relative POSIX path whose exclusion is removed
-                (matched case-insensitively).
+                (matched case/Unicode-insensitively, as the tools match).
 
         Returns:
             The updated binding with the matching exclusion removed from
@@ -3135,11 +3136,11 @@ class LocalWorkspaceRegistryService:
         with _BINDING_EXCLUSION_EDIT_LOCK:
             binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
             relative = PurePosixPath(str(path).strip())
-            key = relative.as_posix().casefold()
+            key = fold_path_part(relative.as_posix())
             entries = [
                 e
                 for e in binding_exclusion_entries(binding)
-                if e.path.casefold() != key
+                if fold_path_part(e.path) != key
             ]
             return self._save_binding_exclusions(binding, entries)
 

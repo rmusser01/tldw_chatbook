@@ -10,6 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+import unicodedata
 
 import pytest
 from textual.app import App
@@ -112,6 +113,23 @@ def test_is_excluded_folds_case_componentwise() -> None:
     assert not ConsoleWorkspaceFilesModal._is_excluded("docsfoo/file.txt", ("docs",))
     assert not ConsoleWorkspaceFilesModal._is_excluded("other/file.txt", ("docs",))
 
+
+
+@pytest.mark.parametrize(
+    ("exclusion_form", "path_form"), [("NFC", "NFD"), ("NFD", "NFC")]
+)
+def test_is_excluded_folds_unicode_normalization(exclusion_form, path_form) -> None:
+    """The badge agrees with the tools for an other-normalization spelling.
+
+    The tools fold rule and path with ``fold_path_part`` (TASK-37655), so an
+    NFC ``Données`` exclusion refuses an NFD-listed ``Données/naïve.txt``;
+    the badge (and the unexclude toggle's covering lookup) must too.
+    """
+    exclusion = unicodedata.normalize(exclusion_form, "Donn\u00e9es")
+    for path in ("Donn\u00e9es", "Donn\u00e9es/na\u00efve.txt"):
+        spelled = unicodedata.normalize(path_form, path)
+        assert ConsoleWorkspaceFilesModal._is_excluded(spelled, (exclusion,))
+    assert not ConsoleWorkspaceFilesModal._is_excluded("Donnees/a.txt", (exclusion,))
 
 class _FakeFilesService:
     """The modal's whole service boundary, recording exclusion toggles."""

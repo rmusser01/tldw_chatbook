@@ -1850,10 +1850,7 @@ def _is_relative_sensitive_path(
             not is_directory and parts[:-1] == value_parts
         ):
             return True
-        if (
-            kind == "name"
-            and not is_directory
-            and fold_path_part(relative.name) == value
-        ):
+        # ``parts[-1]`` is the already-folded name; no per-rule re-fold.
+        if kind == "name" and not is_directory and parts and parts[-1] == value:
             return True
     return False
