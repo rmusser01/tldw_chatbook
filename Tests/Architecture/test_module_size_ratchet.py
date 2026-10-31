@@ -209,7 +209,11 @@ _BUDGETS: dict[str, int] = {
     # return, and a search change (typed or Escape's clear) stops them and
     # hides the targets counted for the old query: +40 (17,355 -> 17,395),
     # applied 2026-10-29.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 17395,
+    # Roleplay frame B2b: owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: B2b changes it by +646 lines (16,859 -> 17,505).
+    # The row rises to the measurement, never squeezed code; applied
+    # 2026-10-30 after the final fix wave (B2b rows).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 17505,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -245,7 +249,11 @@ _BUDGETS: dict[str, int] = {
     # loading_text): +71 (1,166 -> 1,237).
     # T10, the Also in targets (AlsoInTarget, the counts in no_match_view):
     # +48 (1,237 -> 1,285).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1285,
+    # Roleplay frame B2b: owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: B2b changes it by +463 lines (855 -> 1,318).
+    # The row rises to the measurement, never squeezed code; applied
+    # 2026-10-30 after the final fix wave (B2b rows).
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 1318,
     # Roleplay frame B2a (TASK-33910.3): recipient ceiling (spec 5.4 item 4,
     # 5.10) for the items list that replaced the ListView and its pager,
     # pinned at its measured size (727 on dev -> 1,223; owner decision
@@ -277,7 +285,11 @@ _BUDGETS: dict[str, int] = {
     # T10 fix round 1, the targets hide when the search moves on and the pane
     # says whether its no-match message still owes its counts, same decision:
     # +24 (1,491 -> 1,515), applied 2026-10-29.
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1515,
+    # Roleplay frame B2b: owner decision (expand limits, never contort code),
+    # TASK-33910.4, 2026-10-26: B2b changes it by +276 lines (1,297 -> 1,573).
+    # The row rises to the measurement, never squeezed code; applied
+    # 2026-10-30 after the final fix wave (B2b rows).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1573,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the

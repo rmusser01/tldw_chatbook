@@ -791,9 +791,11 @@ class PersonasLibraryPane(Vertical):
                 button = self.query_one(f"#personas-library-{part}", Button)
                 button.label = Content(label)
                 # Exactly the label's cells, unpadded, as the marks bar's
-                # actions: the controls' margin is the gap (Textual 8.2.8's
+                # actions: the controls' margin is the gap. Textual 8.2.8's
                 # Button pads an auto width by two cells, and its CSS parser
-                # refuses `line-pad: 0`).
+                # refuses `line-pad: 0`: both exist on dev today; B2b works
+                # around them here (an explicit width, line_pad set from
+                # Python) and does not fix them.
                 # ds-runtime: the cell width of the label this fit chose.
                 button.styles.width = cell_len(label)
                 button.styles.line_pad = 0
