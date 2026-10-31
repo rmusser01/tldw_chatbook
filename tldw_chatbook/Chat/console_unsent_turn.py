@@ -20,7 +20,12 @@ it if the send pauses again (the card covers every re-pause), drops it once
 the send is accepted or Cancel has put it back in the composer with its
 attachments, and offers it again otherwise.
 
-Imported lazily: it runs only when a paused turn is released or acted on.
+Card-owned pauses (TASK-33621.18): a capture pause has no shelf entry of its
+own to offer -- only its card ends it. Its unsent turn is recorded already
+held, and the card settles it the same way.
+
+Imported lazily: when a custodied send is refused, and when a paused turn is
+released or acted on -- never at boot.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from __future__ import annotations
 from typing import Any
 
 from tldw_chatbook.Chat.console_turn_preparation import (
+    CARD_OWNED_PAUSES,
     SHELF_RELEASABLE_PAUSES,
     ConsoleTurnPreparationState,
 )
@@ -50,6 +56,68 @@ def shelf_releasable(preparation: Any, preparation_id: str) -> bool:
         and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
         and getattr(preparation, "pause_kind", None) in SHELF_RELEASABLE_PAUSES
     )
+
+
+def card_owned_pause(preparation: Any, preparation_id: str | None) -> bool:
+    """Whether ``preparation`` is exactly this send, paused where only its card acts.
+
+    Args:
+        preparation: The preparation to test, if any.
+        preparation_id: The paused send's preparation id.
+
+    Returns:
+        True only for that preparation, PAUSED in a ``CARD_OWNED_PAUSES`` pause.
+    """
+    return (
+        preparation_id is not None
+        and getattr(preparation, "preparation_id", None) == preparation_id
+        and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
+        and getattr(preparation, "pause_kind", None) in CARD_OWNED_PAUSES
+    )
+
+
+def card_holds_refusal(controller: Any, preparation_id: str | None) -> bool:
+    """Whether a refused send's unsent turn is kept off the shelf for its card.
+
+    TASK-33621.18: a shelf entry beside a capture card survived the card's
+    Send without capture or Save & Send, then offered Restore for an
+    answered prompt. Review: the turn must still be recorded -- it alone
+    holds the send's attachments, which the card's Cancel gives back -- so
+    the runtime keeps it, held, until the card settles it.
+
+    Args:
+        controller: The Console chat controller that refused the send.
+        preparation_id: The refused send's preparation id, if it made one.
+
+    Returns:
+        True when that preparation is PAUSED in a card-owned pause.
+    """
+    lookup = getattr(getattr(controller, "store", None), "preparation_by_id", None)
+    if preparation_id is None or not callable(lookup):
+        return False
+    return card_owned_pause(lookup(preparation_id), preparation_id)
+
+
+def clear_answered_draft(store: Any, composer: Any, session_id: str, sent: str) -> None:
+    """Empty the composer a card-sent turn left holding its own prompt.
+
+    TASK-33621.18 AC#6: a composer send keeps showing its text until the turn
+    is accepted, and a card action (Send without capture, Save & Send, Retry)
+    accepts it outside the send's own intake, which is what clears it. The
+    answered prompt stayed, so one more Enter sent it again. Only that exact
+    text is cleared: a follow-up typed meanwhile is the user's.
+
+    Args:
+        store: The Console chat store.
+        composer: The composer showing ``session_id``'s draft.
+        session_id: The accepted turn's session.
+        sent: The text the accepted turn carried.
+    """
+    if not sent.strip() or composer.draft_text().strip() != sent.strip():
+        return
+    composer.load_draft("")
+    if store.session_draft(session_id).strip() == sent.strip():
+        store.set_session_draft(session_id, "")
 
 
 def release_unsent_turn_preparation(
@@ -149,11 +217,14 @@ def card_action_finished(
     if accepted:
         runtime.forget_turn_recoveries_for_preparation(preparation_id)
         return None
-    store = controller.store
-    if not interrupted and shelf_releasable(
-        store.preparation_by_id(preparation_id), preparation_id
+    current = controller.store.preparation_by_id(preparation_id)
+    # Paused again: the card covers it, the shelf stays clear. A card-owned
+    # pause stays held even when the action was interrupted: its card is
+    # drawn from that pause and is the only thing that can end it.
+    if card_owned_pause(current, preparation_id) or (
+        not interrupted and shelf_releasable(current, preparation_id)
     ):
-        return None  # paused again: the card covers it, the shelf stays clear
+        return None
     if return_to_composer:
         return runtime.return_turn_recovery_to_draft(preparation_id)
     runtime.unhold_turn_recoveries_for_preparation(preparation_id)

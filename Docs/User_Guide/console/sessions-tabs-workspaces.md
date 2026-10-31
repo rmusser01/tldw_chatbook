@@ -29,7 +29,14 @@ layout tour). Everything on this page lives in two places:
 "Chat 2"-style and takes the text of the first message you send. Labels are
 trimmed to about 19 characters — hover a tab to see the full title. Each tab
 has a "✕" close button, and the strip always ends with a "New tab" button and
-a "Temporary" button (a chat that is never saved locally).
+a "Temporary" button (a chat that is never saved locally and records no
+traces). A temporary tab's label starts with ◌, and its status strip reads
+**Temporary · not saved · traces off**; once you turn Capture On for it (This
+conversation, or Next send until that send goes out) it reads **Temporary ·
+not saved · capture on**, because its sends then pause to ask. Hovering the
+tab ends with the same words. Activating that segment saves the chat, which
+then follows your Capture setting — see
+[Semantic trace capture](semantic-trace-capture.md).
 Tabs that are running an agent show a marker glyph before the label:
 ● running, ◆ needs approval, ✓ finished, ✗ failed — the mark clears once you
 visit that tab (see [Agent runs & tools](agent-runs-and-tools.md)).

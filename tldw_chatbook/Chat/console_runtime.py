@@ -414,13 +414,21 @@ class _ConsoleTurnRefusedError(RuntimeError):
     """
 
     def __init__(
-        self, message: str, *, reason: str = "", preparation_id: str | None = None
+        self,
+        message: str,
+        *,
+        reason: str = "",
+        preparation_id: str | None = None,
+        card_held: bool = False,
     ) -> None:
         super().__init__(message)
         #: The code-owned copy the unsent-turn shelf states; may be empty.
         self.reason = reason
         #: TASK-33621.20: the paused preparation the refusal left, if any.
         self.preparation_id = preparation_id
+        #: TASK-33621.18: only that pause's card ends it, so its unsent turn
+        #: (and the attachments Cancel gives back) is kept off the shelf.
+        self.card_held = card_held
 
 
 @dataclass(frozen=True, slots=True)
@@ -2974,10 +2982,13 @@ class ConsoleRuntime:
                 is not None
             )
         ):
+            from .console_unsent_turn import card_holds_refusal
+
             raise _ConsoleTurnRefusedError(
                 "Console turn was refused before durable acceptance.",
                 reason=str(getattr(result, "visible_copy", "") or ""),
                 preparation_id=held_preparation_id,
+                card_held=card_holds_refusal(controller, held_preparation_id),
             )
         run_state_for = getattr(controller, "run_state_for", None)
         run_state = (
@@ -3271,6 +3282,7 @@ class ConsoleRuntime:
         *,
         reason: str = "",
         preparation_id: str | None = None,
+        card_held: bool = False,
     ) -> None:
         request = record.request
         if (
@@ -3295,6 +3307,8 @@ class ConsoleRuntime:
         self._recovery_turns_by_session.setdefault(entry.session_id, []).append(
             entry.turn_id
         )
+        if card_held and preparation_id is not None:
+            self._card_held_preparations.add(preparation_id)
 
     def _finish_custodied_turn(
         self,
@@ -3334,6 +3348,7 @@ class ConsoleRuntime:
                     record,
                     reason=exc.reason if refused else "",
                     preparation_id=exc.preparation_id if refused else None,
+                    card_held=refused and exc.card_held,
                 )
             logger.warning(
                 "Console runtime turn ended with exception_type={}",

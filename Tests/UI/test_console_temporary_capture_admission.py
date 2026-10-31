@@ -117,6 +117,9 @@ class _DialogApp(ConsolidatedCSSApp):
     pass
 
 
+# The dialog reads no config of its own, but the UI autouse setup does; the
+# collection-time profile lets this copy pin run under the plain command.
+@pytest.mark.bootstrap_profile
 async def test_capture_policy_explains_temporary_save_and_send_boundary() -> None:
     snapshot = CapturePolicySnapshot(
         session_id="temporary-session",
@@ -164,3 +167,14 @@ async def test_capture_policy_explains_temporary_save_and_send_boundary() -> Non
 
         assert "Save & Send" in str(guidance.render())
         assert "Send without capture" in str(guidance.render())
+        # TASK-33621.17: the pause is now opt-in; the default is said first.
+        # TASK-37811: and without promising that saving turns capture on,
+        # which it does not under a global or conversation Capture Off.
+        text = " ".join(str(guidance.render()).split())
+        assert "no traces are recorded while it stays temporary" in text
+        assert "until you save" not in text
+        # Review of TASK-37811: only This conversation On pauses every send;
+        # a Next send On pauses that one send, so the copy names the scope.
+        assert "This conversation" in text
+        assert "each send pauses" in text
+        assert "Next send pauses only that send" in text

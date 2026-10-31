@@ -2913,8 +2913,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "8458dc1cacf2ac5d22df",
+      "call_count": 2,
+      "diagnostic_digest": "f01c5ca37a86884a98fc",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/composer_run_controls.py",
       "reason": "remaining Chatbook production diagnostic owner"

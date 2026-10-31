@@ -630,7 +630,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-33621.17/.18 (2026-10-29) append 4 node ids at the tail: a Temporary
+# chat's sends on the stock received path, one entry per test (the whole file
+# measured 36 s at load 23; each test 5-10 s). TASK-37811 (2026-10-29)
+# appends 1 whole file: the Menu's Save chat copy against what saving does to
+# capture (one mounted case, about 7 s locally). TASK-37840 (2026-10-30)
+# appends 1 whole file: the Temporary status segment's copy (three cases,
+# about 8 s locally). No existing entry changes shard. Rebased 2026-10-30
+# onto dev 7536ac3b87's 1163 entries: 1163 + 6 = 1169.
+MINIMUM_FILES = 1169
 
 
 def read_census(path: Path) -> list[str]:
