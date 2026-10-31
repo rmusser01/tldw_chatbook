@@ -161,9 +161,9 @@ def require_received_source(runtime, record, source, *, inputs=True):
         or (
             inputs
             and (
-                runtime.snapshot_console_staged_evidence()[0]
+                runtime.snapshot_console_staged_evidence(record.session_id)[0]
                 is not record.received_intent.staged_evidence_launch
-                or runtime.snapshot_console_staged_evidence()[1]
+                or runtime.snapshot_console_staged_evidence(record.session_id)[1]
                 != record.received_intent.staged_evidence_revision
             )
         )

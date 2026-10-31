@@ -1,5 +1,39 @@
 # Lessons: what counts as evidence a change works
 
+## `-p no:warnings` turns `filterwarnings` marks into failures under `--strict-markers` (TASK-33620.7, 2026-10-30)
+
+**Incident.** To quiet pytest's tmp-dir cleanup warnings, a baseline runner
+passed `-p no:warnings`. pyproject's addopts include `--strict-markers`, and
+the `filterwarnings` marker is registered by the warnings plugin, so
+`Tests/UI/test_console_internals_decomposition.py` stopped at collection
+("'filterwarnings' not found in `markers`") and
+`Tests/UI/test_console_runtime_ownership.py` showed 11 failures on dev. The
+same files run without the flag: 0 runtime-ownership failures, and the
+decomposition file collected. The flag had been applied to dev and branch
+alike, so the comparison looked consistent while measuring the runner.
+
+**What to do.** Never disable the warnings plugin to reduce noise; filter
+the output instead, or point `--basetemp` at a scratch directory, which
+stops the cleanup warnings. When a baseline file errors at collection or
+fails en masse, check the command line before the code.
+
+## A redraw posted from an app-owned callback can reach a widget mid-mount at boot (TASK-33620.7, 2026-10-30)
+
+**Incident.** ConsoleRuntime started posting a staged-evidence redraw to the
+view on every active-chat change. Boot creates and activates the first chat
+while the Console is still mounting, so the redraw reached the Inspect
+live-work card swap before its viewport was attached and raised
+`MountError: Can't mount widget(s) before BoundedSectionViewport(...) is
+mounted`. Every Console UI test passed; only
+`Tests/Performance/test_ui_ready_module_census.py`, whose headless boot runs
+to `_ui_ready` in a subprocess, crashed (dev 7536ac3b87 passes it).
+
+**What to do.** When a runtime, store or service callback starts posting work
+to a screen, run the UI-ready census as well as the screen's tests, and make
+the posted work a no-op while its targets are unattached (check
+`is_attached`, which is what `mount()` itself checks) or post it only when
+there is something to redraw.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under

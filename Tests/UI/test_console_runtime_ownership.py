@@ -157,6 +157,9 @@ _VIEW_HOOK_OWNERSHIP = {
     "project_project_instruction_binding": "runtime-projection-router",
     "project_project_instruction_dispatch": "runtime-projection-router",
     "dismiss_project_instruction_decision": "runtime-projection-router",
+    # TASK-33620.7: the runtime asks the attached view to redraw the active
+    # chat's staged evidence after a release or a chat switch.
+    "staged_evidence": "runtime-projection-router",
 }
 
 
@@ -710,6 +713,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
         "project_project_instruction_binding",
         "project_project_instruction_dispatch",
         "dismiss_project_instruction_decision",
+        "staged_evidence",
     }
     assert declared == expected
 

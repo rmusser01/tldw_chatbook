@@ -1122,6 +1122,28 @@ def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     return len(formatted.entries) if formatted is not None else 0
 
 
+def console_sent_source_count(launch: ConsoleLiveWorkLaunch | None, result: Any) -> int:
+    """Return how many sources a capture of ``launch`` put in the prompt.
+
+    The capture's repair contract has one ordinal per formatted prompt entry,
+    so it is exact; the formatted pre-authority estimate covers a capture
+    that could not build one.
+
+    Args:
+        launch: The staged launch the send captured.
+        result: The capture's ``LocalRagContextResult``.
+
+    Returns:
+        The number of evidence entries carried into the prompt.
+    """
+    ordinals = getattr(
+        getattr(result, "citation_repair_contract", None), "allowed_ordinals", None
+    )
+    if isinstance(ordinals, tuple) and ordinals:
+        return len(ordinals)
+    return console_prompted_source_count(launch)
+
+
 def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
     """Return the zero-I/O formatted pre-authority evidence estimate.
 
@@ -1249,23 +1271,21 @@ class ConsoleStagedEvidenceRow:
 class ConsoleStagedEvidenceStripState:
     """Display state for the staged-evidence strip above the composer.
 
-    Three mutually exclusive shapes, all built by
-    :func:`build_console_staged_evidence_strip_state`:
+    Two shapes, both built by :func:`build_console_staged_evidence_strip_state`:
 
-    * hidden -- nothing staged and nothing just sent;
+    * hidden -- nothing staged;
     * staged -- a heading, up to
       :data:`CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS` rows, an optional
-      "+N more" overflow line, and the single un-stage action;
-    * sent -- the one-send ``notice`` line, which is the only confirmation
-      an unpersisted session ever gets that evidence went out with the
-      message (the transcript's ``Sources (N)`` row needs persistence).
+      "+N more" overflow line, and the single un-stage action.
+
+    TASK-33620.7: what a send carried is shown on its reply ("Sources (N)"),
+    not here; the strip only ever describes the NEXT send.
     """
 
     visible: bool = False
     heading: str = ""
     rows: tuple[ConsoleStagedEvidenceRow, ...] = ()
     overflow: str = ""
-    notice: str = ""
     unstage_label: str = CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL
 
 
@@ -1275,20 +1295,14 @@ def _source_noun(count: int) -> str:
 
 def build_console_staged_evidence_strip_state(
     launch: ConsoleLiveWorkLaunch | None,
-    *,
-    sent_source_count: int | None = None,
 ) -> ConsoleStagedEvidenceStripState:
     """Build the staged-evidence strip state for the current Console turn.
 
     Args:
         launch: Currently staged live-work launch, if any.
-        sent_source_count: Source count of the evidence consumed by the most
-            recent send, when that send has not yet been superseded.
 
     Returns:
-        The hidden, staged, or just-sent strip state. Live staging always
-        wins over a stale "sent" notice -- a strip that showed both would
-        claim evidence was consumed while new evidence sits waiting.
+        The hidden or staged strip state.
     """
     if launch is not None:
         bundle = evidence_bundle_from_launch(launch)
@@ -1321,14 +1335,6 @@ def build_console_staged_evidence_strip_state(
             rows=shown,
             overflow=f"+{hidden_count} more" if hidden_count > 0 else "",
         )
-
-    if sent_source_count:
-        count = int(sent_source_count)
-        return ConsoleStagedEvidenceStripState(
-            visible=True,
-            notice=f"Evidence sent with this message · {count} {_source_noun(count)}",
-        )
-
     return ConsoleStagedEvidenceStripState()
 
 

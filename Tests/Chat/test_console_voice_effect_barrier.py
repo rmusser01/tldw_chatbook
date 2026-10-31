@@ -383,7 +383,9 @@ def test_public_accepted_voice_handoff_enters_runtime_custody() -> None:
             return [SimpleNamespace(attachment_id="attachment-1")]
 
     class Runtime:
-        def snapshot_console_staged_evidence(self):
+        def snapshot_console_staged_evidence(self, session_id=None):
+            # TASK-33620.7: staged evidence is per chat; read the voice turn's.
+            assert session_id == context.session_id
             return "captured launch", 9, 4
 
         def accept_turn(self, request: ConsoleTurnCustodyRequest) -> str:

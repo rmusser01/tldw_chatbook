@@ -137,7 +137,6 @@ def test_strip_state_hidden_when_nothing_is_staged() -> None:
     state = build_console_staged_evidence_strip_state(None)
     assert state.visible is False
     assert state.rows == ()
-    assert state.notice == ""
 
 
 def test_strip_state_lists_bundle_references_with_overflow() -> None:
@@ -174,19 +173,6 @@ def test_strip_state_falls_back_to_the_launch_when_no_bundle_is_attached() -> No
     assert state.rows[0].source == "Library Search/RAG"
     assert state.overflow == ""
     assert "1 source" in state.heading
-
-
-def test_strip_state_renders_the_one_send_sent_notice() -> None:
-    state = build_console_staged_evidence_strip_state(None, sent_source_count=4)
-    assert state.visible is True
-    assert state.rows == ()
-    assert state.notice == "Evidence sent with this message · 4 sources"
-
-
-def test_strip_state_prefers_new_staging_over_a_stale_sent_notice() -> None:
-    state = build_console_staged_evidence_strip_state(_launch(2), sent_source_count=4)
-    assert state.notice == ""
-    assert len(state.rows) == 2
 
 
 def test_staged_source_count_is_the_bundle_reference_count() -> None:
@@ -312,21 +298,15 @@ async def test_strip_widget_renders_escaped_rows_overflow_and_one_unstage() -> N
 
 
 @pytest.mark.asyncio
-async def test_strip_widget_sync_state_swaps_rows_for_the_sent_notice() -> None:
+async def test_strip_widget_sync_state_hides_once_nothing_is_staged() -> None:
+    """TASK-33620.7: a consumed launch leaves no strip; its reply says it."""
     app = _StripApp(build_console_staged_evidence_strip_state(_launch(2)))
     async with app.run_test(size=(120, 12)) as pilot:
         strip = app.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
-        strip.sync_state(
-            build_console_staged_evidence_strip_state(None, sent_source_count=2)
-        )
-        await pilot.pause()
-        notice = strip.query_one("#console-staged-evidence-notice", Static)
-        assert str(notice.renderable) == "Evidence sent with this message · 2 sources"
-        assert not list(strip.query(UNSTAGE_ID))
-
         strip.sync_state(build_console_staged_evidence_strip_state(None))
         await pilot.pause()
         assert strip.display is False
+        assert not list(strip.query(UNSTAGE_ID))
 
 
 # --------------------------------------------------------------------------
@@ -547,6 +527,18 @@ async def test_console_library_u_key_handoff_populates_the_strip() -> None:
         assert "Sources: 2" in str(sources_chip.renderable)
 
 
+def _reply_source_counts(screen) -> list[int | None]:
+    """The "Sources (N)" count each assistant reply carries (TASK-33620.7)."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    store = screen._ensure_console_chat_store()
+    return [
+        message.evidence_source_count
+        for message in store.messages_for_session(store.active_session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ]
+
+
 async def _submit(screen, draft: str):
     controller = screen._ensure_console_chat_controller()
     controller.provider_gateway = _CapturingGateway()
@@ -566,7 +558,7 @@ async def _submit(screen, draft: str):
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-async def test_console_send_consumes_staging_and_shows_the_sent_transient(
+async def test_console_send_consumes_staging_and_its_reply_reports_it(
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -595,7 +587,10 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         # The staged bundle is gone -- the modal's "Running again replaces it"
         # promise is now true.
         assert screen._pending_console_launch_context is None
-        assert "Evidence sent with this message · 2 sources" in _strip_text(screen)
+        # TASK-33620.7: the strip describes only the NEXT send; the reply
+        # carries what this one sent.
+        assert screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip).display is False
+        assert _reply_source_counts(screen) == [2]
         sources_chip = screen.query_one("#console-sources-label", Static)
         assert "Sources: 0" in str(sources_chip.renderable)
 
@@ -605,16 +600,16 @@ async def test_console_send_consumes_staging_and_shows_the_sent_transient(
         await pilot.pause()
         assert capture.await_count == 1
         assert capture.await_args_list[0].args[1] is launch
-        # The transient is one-send only.
-        assert "Evidence sent with this message" not in _strip_text(screen)
+        # The second reply claims no sources; the first keeps its own.
+        assert _reply_source_counts(screen) == [2, None]
 
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-async def test_console_sent_notice_counts_only_what_reached_the_model(
+async def test_console_reply_counts_only_sources_that_reached_the_model(
     monkeypatch,
 ) -> None:
-    """4 staged, 2 promptable -- the notice must claim 2, not 4."""
+    """4 staged, 2 promptable -- the reply must claim 2, not 4."""
     app = _build_test_app()
     attach_chachanotes_db(app)
     launch = _mixed_launch()
@@ -639,12 +634,12 @@ async def test_console_sent_notice_counts_only_what_reached_the_model(
         await _submit(screen, "question")
         await pilot.pause()
 
-        assert "Evidence sent with this message · 2 sources" in _strip_text(screen)
+        assert _reply_source_counts(screen) == [2]
 
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
+async def test_console_reply_count_prefers_the_exact_prompted_entry_count(
     monkeypatch,
 ) -> None:
     """The repair contract's ordinals are one-per-prompt-entry: the exact count."""
@@ -682,7 +677,7 @@ async def test_console_sent_notice_prefers_the_exact_prompted_entry_count(
         await _submit(screen, "question")
         await pilot.pause()
 
-        assert "Evidence sent with this message · 1 source" in _strip_text(screen)
+        assert _reply_source_counts(screen) == [1]
 
 
 @pytest.mark.asyncio
