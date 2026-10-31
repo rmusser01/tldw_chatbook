@@ -152,3 +152,101 @@ def test_shared_message_stub_accepts_video_action_dependencies() -> None:
     assert controller._play_console_video is play
     assert controller._save_console_video_copy is save
     assert controller._regenerate_console_video_message is regenerate
+
+
+def _regenerate_controller(rows: list[str]):
+    """A no-mount controller holding one MiniMax video message to regenerate."""
+    meta = SimpleNamespace(
+        backend="minimax",
+        prompt="a kite over the harbor",
+        negative_prompt=None,
+        duration_seconds=5,
+        fps=None,
+        width=None,
+        height=None,
+        ratio="16:9",
+        model=None,
+        container="mp4",
+    )
+    store = SimpleNamespace(
+        get_message=lambda _message_id: SimpleNamespace(video_metadata=meta),
+        session_id_for_message=lambda _message_id: "session-1",
+    )
+    controller_type = _controller_type()
+    controller = controller_type(
+        app_instance=object(),
+        sync_native_console_chat_ui=lambda: None,
+        ensure_console_chat_store=lambda: store,
+        wait_for_console_screen_result=lambda _screen: None,
+        open_video_with_os=lambda _path: None,
+        append_native_console_system_message=lambda text, **_kwargs: rows.append(
+            text
+        ),
+        default_console_session_settings=lambda: None,
+        console_composer_or_none=lambda: None,
+        clear_console_composer_draft=lambda: None,
+    )
+    controller._console_video_store = object()
+    return controller
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("remote_cancel", "expected"),
+    [
+        (
+            "cancelled",
+            "Video regeneration stopped. MiniMax cancelled the remote task, so "
+            "it is not billed.",
+        ),
+        (
+            "refused",
+            "Video regeneration stopped here, but MiniMax had already started "
+            "rendering and refused to cancel. The remote task keeps running and "
+            "may still be billed.",
+        ),
+    ],
+)
+async def test_regenerate_stop_reads_as_a_stop_with_what_minimax_did(
+    monkeypatch, remote_cancel, expected
+) -> None:
+    """Stop on Regenerate is a stop, never "Video regeneration failed"
+    (TASK-33621.45), and says what MiniMax did with the remote task."""
+    from tldw_chatbook.UI.Console_Modules import video as video_module
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
+    seen: dict[str, object] = {}
+
+    def stopped_generation(**kwargs):
+        seen["cancel_event"] = kwargs.get("cancel_event")
+        raise VideoGenerationCancelled("stopped", remote_cancel=remote_cancel)
+
+    monkeypatch.setattr(video_module, "run_video_generation", stopped_generation)
+    rows: list[str] = []
+    controller = _regenerate_controller(rows)
+
+    await controller._regenerate_console_video_message("message-1")
+
+    assert rows == [expected]
+    assert seen["cancel_event"] is not None
+    # The in-flight guard and cancel event are released for the next run.
+    assert controller._console_videogen_inflight == set()
+    assert controller._console_videogen_cancels == {}
+
+
+@pytest.mark.asyncio
+async def test_regenerate_real_failure_still_reads_as_a_failure(monkeypatch) -> None:
+    """Control: an error that is not a stop keeps the failure row."""
+    from tldw_chatbook.UI.Console_Modules import video as video_module
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
+
+    def failed_generation(**_kwargs):
+        raise VideoGenerationError("MiniMax submit failed (HTTP 500)")
+
+    monkeypatch.setattr(video_module, "run_video_generation", failed_generation)
+    rows: list[str] = []
+    controller = _regenerate_controller(rows)
+
+    await controller._regenerate_console_video_message("message-1")
+
+    assert rows == ["Video regeneration failed (VideoGenerationError)."]
