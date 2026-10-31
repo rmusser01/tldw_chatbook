@@ -5304,7 +5304,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 # Saved rows remain authoritative; authorized entry retries later.
                 continue
 
-
     def prepare_progress_inbox(
         self,
         session_id: str,
@@ -5377,7 +5376,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self.publish_progress_inbox_hints(session_id, message_store=current_store)
         return owner_id
 
-
     async def prepare_progress_inbox_owned(self, session_id: str) -> str | None:
         """Keep one exact owner's physical preparation off-loop through cancellation."""
         with self.progress_owner_scope(session_id) as owner_id:
@@ -5431,7 +5429,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Publish cached metadata after initialization and ownership locks exit."""
         from tldw_chatbook.Agents.fleet_messages import MessageError
 
-        with self.progress_owner_scope(session_id, message_store=message_store) as owner_id:
+        with self.progress_owner_scope(
+            session_id, message_store=message_store
+        ) as owner_id:
             inbox = message_store.get_inbox(owner_id) if owner_id is not None else None
         if inbox is None:
             return
@@ -12073,6 +12073,29 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             self._snapshot(message)
             for message in self._nodes_by_session[session_id].values()
         ]
+
+    def has_live_reply_output(self, session_id: str) -> bool:
+        """Read current reply output without copying history or persisting chunks."""
+        self._session_or_raise(session_id)
+        for message in reversed(self._messages_by_session[session_id]):
+            if message.role is ConsoleMessageRole.ASSISTANT:
+                if (
+                    message.status not in {"pending", "streaming"}
+                    or message.generation_projection_quarantined
+                ):
+                    return False
+                return bool(
+                    message.content.strip()
+                    or any(
+                        chunk.strip()
+                        for chunk in self._stream_chunks_by_message.get(message.id, ())
+                    )
+                    or any(
+                        block.text.strip()
+                        for block in getattr(message.thinking, "blocks", ())
+                    )
+                )
+        return False
 
     def read_only_messages_for_session(
         self, session_id: str

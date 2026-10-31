@@ -2694,9 +2694,21 @@ class ConsoleRuntime:
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
+        pressed = request._pressed_inputs
+        if pressed is not None:
+            from .console_received_intent import ConsoleSessionInputSnapshot
+
+            if (
+                type(pressed) is not ConsoleSessionInputSnapshot
+                or pressed._store_ref() is not store
+                or pressed.session_id != request.session_id
+                or not store.session_inputs_are_current(pressed, include_draft=False)
+            ):
+                raise RuntimeError("Pressed Console input changed before admission.")
         claim = store.claim_received_turn(
             request.session_id, request.turn_id, origin=origin,
-            draft_revision=request.draft_revision,
+            draft_revision=pressed.draft_revision if pressed is not None else request.draft_revision,
+            _allow_draft_change=pressed is not None,
         )
         if claim is None:
             raise RuntimeError("Console session already has an admission owner.")
@@ -2763,12 +2775,12 @@ class ConsoleRuntime:
         """Retain the lazy Task before any configurable factory could step it."""
         return asyncio.Task(coroutine, loop=asyncio.get_running_loop())
 
-    def accept_received_intent(self, intent: Any, *, _configuration_preparation=None) -> str:
+    def accept_received_intent(self, intent: Any, *, _configuration_preparation=None, terminal_callback=None) -> str:
         """Register authored receipt inputs before checked native preparation."""
         from .console_received_dispatch import accept_received_intent
 
         return accept_received_intent(
-            self, intent, _configuration_preparation=_configuration_preparation
+            self, intent, _configuration_preparation=_configuration_preparation, terminal_callback=terminal_callback
         )
 
     def has_received_intents(
@@ -2806,10 +2818,10 @@ class ConsoleRuntime:
         return cancelled
 
 
-    def _project_received_input(self, record) -> None:
+    def _project_received_input(self, record, *, draft_committed=False) -> None:
         from .console_received_dispatch import project_received_input
 
-        project_received_input(self, record)
+        project_received_input(self, record, draft_committed=draft_committed)
 
     async def _submit_queued_turn(
         self,
@@ -2871,8 +2883,14 @@ class ConsoleRuntime:
         wake_authorization: Any | None,
         goal_authorization: Any | None,
         raise_on_refusal: bool,
+        hook_read: Any = None,
     ) -> Any:
-        """Run one screen-free turn using only its frozen custody record."""
+        """Run one screen-free turn using only its frozen custody record.
+
+        ``hook_read`` is the received intent's one full hook authority read
+        (``ConsoleHookAttemptRead``); it goes, as an argument, only to this
+        record's own initial submission (ADR-230 decision 3).
+        """
         request = record.request
         controller = self._chat_controller
         if request is None or controller is None:
@@ -2913,6 +2931,10 @@ class ConsoleRuntime:
             )
             from .console_received_turn import bind_received_turn_claim
 
+            from .console_chat_controller import ConsoleChatController
+            shared = ({"_hook_read": hook_read} if hook_read is not None
+                and getattr(controller.submit_draft, "__func__", None)
+                is ConsoleChatController.submit_draft else {})
             issuing_store, issuing_claim = record.store, record.received_claim
             try:
                 with bind_received_turn_claim(issuing_store, issuing_claim):
@@ -2941,6 +2963,7 @@ class ConsoleRuntime:
                             revision=record.inputs.staged_evidence_revision,
                         ),
                         custody_acceptance_hook=mark_durable_acceptance,
+                        **shared,
                     )
             finally:
                 # Nonpromoting routes release after physical submit completion,
@@ -3689,6 +3712,66 @@ class ConsoleRuntime:
 
         return hooks_v2_context_key(self, session_id)
 
+    def _hook_read_prepares_nothing(
+        self, session_id: str, review: Any, configuration: Any
+    ) -> bool:
+        """Whether an attempt's shared read answers ``prepare_hooks_v2`` "nothing".
+
+        ADR-230 decision 3 lets an attempt's earlier consent read stand in for
+        the ``v2_configuration()`` re-read only when the answer is "no v2 hook
+        to prepare": a ready review whose section configures no v2 handler
+        (not even an invalid batch), no plugin-owned skill that could add
+        native definitions, and a session holding no hook engine, lifecycle
+        or configured signature. Each clause is one of the fresh path's own
+        early-return conditions, checked at least as strictly, so the answer
+        is the one a fresh read of the same state gives.
+
+        Anything else -- building, keeping or replacing an engine -- reads
+        fresh. A handler captured from an earlier read may have been disabled
+        or removed by another process since (invisible in memory); an engine
+        built or kept around it would refuse that handler at its fresh
+        authority check, blocking the Send when the handler is required, where
+        a fresh read would configure nothing.
+
+        Args:
+            session_id: The preparing session.
+            review: The shared read's ``HookReviewSnapshot``.
+            configuration: The turn configuration ``prepare_hooks_v2`` got.
+
+        Returns:
+            ``True`` only for the "nothing to prepare" answer. Never raises:
+            an unexpected shape answers ``False`` so the fresh path reproduces
+            its existing behaviour and errors at their existing point.
+        """
+        try:
+            if not review.ready:
+                return False
+            section = review.config.section if review.config.section_present else {}
+            handlers = (
+                section.get("handler", []) if isinstance(section, Mapping) else []
+            )
+            # ``load_hooks_config`` maps exactly an empty list (or no key) to
+            # no v2 handlers and no invalid admissions; other shapes go fresh.
+            if not isinstance(handlers, list) or handlers:
+                return False
+            if configuration is not None and any(
+                row.get("plugin_owned")
+                for row in configuration.skill_context_maximum.get(
+                    "available_skills", ()
+                )
+            ):
+                # Plugin-owned skills may contribute native definitions.
+                return False
+            # No engine also means no engine-carried native plugins.
+            return (
+                self.get_hooks_v2(session_id) is None
+                and session_id not in self._hooks_v2_engines
+                and session_id not in self._hooks_v2_lifecycles
+                and session_id not in self._hooks_v2_configured
+            )
+        except Exception:  # noqa: BLE001 -- unknown shape: the fresh path decides
+            return False
+
     async def prepare_hooks_v2(
         self,
         session_id: str,
@@ -3696,14 +3779,47 @@ class ConsoleRuntime:
         reason="startup",
         initiator="manual",
         configuration=None,
+        _hook_read=None,
     ):
-        """Initialize only at validated execution admission, never at view access."""
+        """Initialize only at validated execution admission, never at view access.
+
+        ``_hook_read`` is the submitting attempt's own earlier full consent
+        read (``ConsoleHookAttemptRead``). While it stands for this session
+        and owner, and only when it answers "no v2 hook to prepare"
+        (``_hook_read_prepares_nothing``), it replaces the
+        ``v2_configuration()`` re-read (ADR-230 decision 3). Everything that
+        builds, keeps or replaces an engine still reads fresh, as before.
+        """
         from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
         from tldw_chatbook.Agents.run_hooks import load_hooks_config
 
         self._raise_if_disposed_or_session_fenced(session_id)
         permissions = self.ensure_hook_permissions()
         source = self._capture_hook_preparation_source(session_id, permissions)
+        shared = None
+        authority = (
+            _hook_read.authority_for(permissions, session_id)
+            if _hook_read is not None
+            else None
+        )
+        if authority is not None:
+            from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+            # A replaced reader keeps its original call (ADR-230 decision 8).
+            if (
+                "v2_configuration" not in vars(permissions)
+                and type(permissions).v2_configuration
+                is HookPermissions.v2_configuration
+            ):
+                shared = permissions.attempt_v2_configuration(authority)
+        if shared is not None and self._hook_read_prepares_nothing(
+            session_id, shared[0], configuration
+        ):
+            # The early return below, reached without the re-read: nothing in
+            # the attempt's read or this session's state needs an engine.
+            self._require_hook_preparation_source(source)
+            self._raise_if_disposed_or_session_fenced(session_id)
+            return None
         review, targets = await self._read_hook_preparation(
             permissions.v2_configuration, source
         )

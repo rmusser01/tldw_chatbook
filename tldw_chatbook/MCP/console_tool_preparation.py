@@ -82,6 +82,7 @@ class ConsoleToolPreparation:
     _captured_sources: snapshot._CapturedSources = field(repr=False)
     _builtin_raw_name_exclusions: frozenset[str] = field(repr=False)
     _owned_profile_ids: frozenset[str] = field(repr=False)
+    _includes_external_catalog: bool = field(repr=False)
 
     def require_current(self, service: UnifiedMCPControlPlaneService) -> None:
         """Refuse unissued or displaced source data before catalog adoption."""
@@ -265,11 +266,13 @@ async def prepare_console_tools(
     need_local_switch: bool,
     builtin_raw_name_exclusions: frozenset[str],
     owned_profile_ids: frozenset[str],
+    maximum_tool_ids: frozenset[str] | None = None,
 ) -> ConsoleToolPreparation | None:
     """Prepare shared stock data while preserving loop affinity/native custody.
 
     Unsupported source adapters or schemas return ``None`` for the ordinary
     route. Native source failures and cancellation keep their original outcome.
+    A builtin-only frozen maximum omits unused external reads and audits.
     Actual tool invocation still performs its existing fresh execution checks.
     """
     if not include_mcp_catalog and not need_local_switch:
@@ -300,6 +303,10 @@ async def prepare_console_tools(
     )
     if not _resolver_current() or not qualifier(service):
         return None
+    include_external = (
+        include_mcp_catalog
+        and hub_catalog.maximum_needs_external_catalog(maximum_tool_ids)
+    )
     captured = snapshot._CapturedSources(service, capture_catalog=include_mcp_catalog)
     with service._producer_lifetime.operation():
         payload = await snapshot._owned_worker(captured.read_permission_payload)
@@ -310,10 +317,11 @@ async def prepare_console_tools(
         records = []
         inventory = None
         if include_mcp_catalog and not killed:
-            # Reuse the existing catalog owner: governance/connection callbacks
-            # stay on this loop, and its joined catalog read stays in a worker.
-            records = await captured.catalog_callback()
-            captured.require_current()
+            if include_external:
+                # Governance/connection callbacks stay on this loop; the
+                # catalog owner keeps its finite native read in a worker.
+                records = await captured.catalog_callback()
+                captured.require_current()
             try:
                 inventory = captured.inventory_reader()
             except Exception as exc:  # noqa: BLE001 - preserve the original optional inventory failure policy. same optional inventory behavior as provider
@@ -411,6 +419,7 @@ async def prepare_console_tools(
             _captured_sources=captured,
             _builtin_raw_name_exclusions=builtin_raw_name_exclusions,
             _owned_profile_ids=owned_profile_ids,
+            _includes_external_catalog=include_external,
         )
         _ISSUED_PREPARATIONS.add(result)
         result.require_current(service)
@@ -465,12 +474,14 @@ _PREPARATION_CLASS_SHAPES = tuple(
                 "_captured_sources",
                 "_builtin_raw_name_exclusions",
                 "_owned_profile_ids",
+                "_includes_external_catalog",
             ),
         ),
     )
 )
 _HUB_CATALOG_MODULE = hub_catalog
 _HUB_CONSTRUCTION_ANCHOR = hub_catalog._HUB_TOOL_CONSTRUCTION_ANCHOR
+_EXTERNAL_CATALOG_ANCHOR = hub_catalog._MAXIMUM_EXTERNAL_CATALOG_ANCHOR
 
 
 def _class_shape_current(shape) -> bool:
@@ -492,6 +503,18 @@ def preparation_pipeline_current() -> bool:
         or hub_catalog._HUB_TOOL_CONSTRUCTION_ANCHOR is not _HUB_CONSTRUCTION_ANCHOR
         or hub_catalog.HubTool is not _HUB_CONSTRUCTION_ANCHOR[0]
         or HubTool is not _HUB_CONSTRUCTION_ANCHOR[0]
+    ):
+        return False
+    rule, code, namespace = _EXTERNAL_CATALOG_ANCHOR
+    if (
+        hub_catalog._MAXIMUM_EXTERNAL_CATALOG_ANCHOR is not _EXTERNAL_CATALOG_ANCHOR
+        or hub_catalog.maximum_needs_external_catalog is not rule
+        or rule.__code__ is not code
+        or rule.__globals__ is not namespace
+        or namespace is not vars(hub_catalog)
+        or rule.__defaults__ is not None
+        or rule.__kwdefaults__ is not None
+        or rule.__closure__ is not None
     ):
         return False
     for owner, name, original, code, namespace, inputs in _PREPARATION_BINDINGS:
@@ -529,6 +552,7 @@ _PREPARATION_BINDINGS = tuple(
     )
     for owner, name in (
         (globals(), "prepare_console_tools"),
+        (vars(hub_catalog), "maximum_needs_external_catalog"),
         (globals(), "preparation_pipeline_current"),
         (globals(), "_resolver_current"),
         (globals(), "_class_shape_current"),

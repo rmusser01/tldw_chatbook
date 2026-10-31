@@ -19,7 +19,8 @@ from types import FunctionType, MethodType, ModuleType
 from typing import Any
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
-from ...Chat.console_chat_controller import _is_empty_transcript_row
+from ...Chat.console_chat_controller import (_is_empty_transcript_row, ConsoleChatController, _CONSOLE_CONTEXT_PRESENTATION_READERS)
+from ...Chat.console_received_dispatch import stock_native_methods
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleDispatchRecoveryKind,
@@ -980,6 +981,18 @@ class ConsoleContextReadSnapshot:
         try:
             store = controller.store
             owner = next(item for item in store.sessions() if item.id == session_id)
+            dependency = (
+                ("stock-echo", controller._held_send_echo_id(session_id))
+                if type(controller) is ConsoleChatController
+                and stock_native_methods(
+                    controller, _CONSOLE_CONTEXT_PRESENTATION_READERS
+                )
+                else (
+                    "legacy-lifecycle",
+                    getattr(owner, "active_run_id", None),
+                    controller.run_state_for(session_id).status,
+                )
+            )
             return (
                 controller,
                 store,
@@ -994,14 +1007,13 @@ class ConsoleContextReadSnapshot:
                 owner,
                 owner.persisted_conversation_id,
                 owner.workspace_id,
-                getattr(owner, "active_run_id", None),
+                dependency,
                 owner.context_policy_overrides,
                 store.payload_revision(session_id),
                 store.display_projection_revision(session_id),
                 store.conversation_context_epoch(session_id),
                 store.session_settings_revision(session_id),
                 store.session_context_summary(session_id),
-                controller.run_state_for(session_id).status,
                 self.config_projection._key() if self.config_projection else None,
             )
         except (AttributeError, KeyError, StopIteration):

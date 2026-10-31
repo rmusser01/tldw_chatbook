@@ -19,7 +19,7 @@ mcp_sources = snapshot_controls.mcp_sources
 snapshot_case = snapshot_controls.snapshot_case
 
 
-async def _prepare(case, *, catalog=True, local=True, profile="default"):
+async def _prepare(case, *, catalog=True, local=True, profile="default", maximum=None):
     from tldw_chatbook.MCP import console_tool_preparation
 
     callback = getattr(console_tool_preparation, "prepare_console_tools", None)
@@ -31,6 +31,7 @@ async def _prepare(case, *, catalog=True, local=True, profile="default"):
         need_local_switch=local,
         builtin_raw_name_exclusions=frozenset(),
         owned_profile_ids=frozenset(),
+        **({"maximum_tool_ids": maximum} if maximum is not None else {}),
     )
 
 
@@ -489,3 +490,200 @@ async def test_oversized_catalog_declines_before_new_normalization_and_preserves
         assert actual_tool.parameters == expected_tool.get(
             "inputSchema", {"type": "object", "properties": {}}
         )
+
+
+_BUILTIN_MAXIMUM = frozenset({"builtin:tldw_chatbook::sample_builtin"})
+_MIXED_MAXIMUM = _BUILTIN_MAXIMUM | {"local:one::first"}
+
+
+@pytest.mark.parametrize(
+    "maximum,expected",
+    [
+        (None, True),
+        (frozenset(), False),
+        (_BUILTIN_MAXIMUM, False),
+        (_MIXED_MAXIMUM, True),
+        (frozenset({"local:one::first"}), True),
+        (frozenset({"server:remote::first"}), True),
+        (frozenset({"builtin:other::first"}), True),
+        (frozenset({"builtin:tldw_chatbook::"}), True),
+        (frozenset({"unknown"}), True),
+        (frozenset({1}), True),
+        (set(_BUILTIN_MAXIMUM), True),
+        (list(_BUILTIN_MAXIMUM), True),
+    ],
+)
+def test_external_catalog_requirement_is_conservative(maximum, expected):
+    from tldw_chatbook.MCP.hub_tool_catalog import maximum_needs_external_catalog
+
+    assert maximum_needs_external_catalog(maximum) is expected
+
+
+def test_external_catalog_requirement_does_not_consume_custom_values():
+    from tldw_chatbook.MCP.hub_tool_catalog import maximum_needs_external_catalog
+
+    class CustomMaximum(frozenset):
+        def __iter__(self):
+            pytest.fail("custom maximum was consumed during eligibility")
+
+    class CustomId(str):
+        def startswith(self, *args, **kwargs):
+            pytest.fail("custom ID callback was consumed during eligibility")
+
+    assert maximum_needs_external_catalog(CustomMaximum(_BUILTIN_MAXIMUM)) is True
+    assert (
+        maximum_needs_external_catalog(
+            frozenset({CustomId("builtin:tldw_chatbook::sample_builtin")})
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "maximum,external", [(_BUILTIN_MAXIMUM, False), (_MIXED_MAXIMUM, True)]
+)
+async def test_frozen_maximum_omits_only_unneeded_catalog_read(
+    snapshot_case, maximum, external
+):
+    case = snapshot_case
+    _, inventory = _loop_projection(case)
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        prepared = await _prepare(case, maximum=maximum)
+    prepared.require_current(case.service)
+    assert not prepared.kill_switch
+    assert [row.name for row in prepared.tools] == (
+        ["first", "sample_builtin"] if external else ["sample_builtin"]
+    )
+    assert prepared._includes_external_catalog is external
+    assert len(probe.permission_threads) == 1
+    assert len(probe.read_threads) == int(external)
+    assert inventory == [True]
+    assert all(
+        thread is not threading.current_thread()
+        for thread in probe.permission_threads + probe.read_threads
+    )
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+
+
+@pytest.mark.asyncio
+async def test_excluded_external_definition_is_audited_when_next_needed(snapshot_case):
+    case = snapshot_case
+    _loop_projection(case)
+    case.permissions.set_tool_state(
+        "local:one", "first", "allow", definition_hash="0" * 64
+    )
+    unused = _MaximumProbe(case.source, case.permissions)
+    with unused.installed():
+        prepared = await _prepare(case, maximum=_BUILTIN_MAXIMUM)
+    assert [row.name for row in prepared.tools] == ["sample_builtin"]
+    assert len(unused.permission_threads) == 1
+    assert not unused.read_threads and not unused.audit_threads
+    assert (
+        case.permissions.get_tool_entry("local:one", "first").get("config_changed")
+        is not True
+    )
+    needed = _MaximumProbe(case.source, case.permissions)
+    with needed.installed():
+        prepared = await _prepare(case, maximum=_MIXED_MAXIMUM)
+    external = next(row for row in prepared.tools if row.server_key == "local:one")
+    assert external.effective.state == "ask" and external.effective.config_changed
+    assert len(needed.read_threads) == len(needed.audit_threads) == 1
+    assert case.permissions.get_tool_entry("local:one", "first")["config_changed"]
+    assert (
+        len(
+            [
+                row
+                for row in case.service.execution_log.read_recent()
+                if row["decision"] == "downgraded"
+            ]
+        )
+        == 1
+    )
+    assert all(lease not in storage_admission._live_leases for lease in needed.leases)
+
+
+@pytest.mark.asyncio
+async def test_unused_corrupt_catalog_stays_unread_until_external_is_needed(
+    snapshot_case,
+):
+    from tldw_chatbook.MCP.local_store import LocalMCPStoreLoadError
+
+    case = snapshot_case
+    _loop_projection(case)
+    original = case.source.path.read_bytes()
+    corrupt = b"{not valid catalog JSON"
+    case.source.path.write_bytes(corrupt)
+    try:
+        unused = _MaximumProbe(case.source, case.permissions)
+        with unused.installed():
+            prepared = await _prepare(case, maximum=_BUILTIN_MAXIMUM)
+        assert [row.name for row in prepared.tools] == ["sample_builtin"]
+        assert len(unused.permission_threads) == 1
+        assert not unused.read_threads
+        assert case.source.path.read_bytes() == corrupt
+        needed = _MaximumProbe(case.source, case.permissions)
+        with needed.installed(), pytest.raises(LocalMCPStoreLoadError):
+            await _prepare(case, maximum=_MIXED_MAXIMUM)
+        assert len(needed.permission_threads) == len(needed.read_threads) == 1
+        assert case.source.path.read_bytes() == corrupt
+        assert needed.leases and all(
+            lease not in storage_admission._live_leases for lease in needed.leases
+        )
+    finally:
+        case.source.path.write_bytes(original)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["deny", "kill"])
+async def test_builtin_only_preparation_rereads_common_policy(snapshot_case, change):
+    case = snapshot_case
+    _, inventory = _loop_projection(case)
+    first = await _prepare(case, maximum=_BUILTIN_MAXIMUM)
+    assert first.tools[0].effective.state != "deny" and not first.kill_switch
+    inventory.clear()
+    if change == "kill":
+        case.permissions.set_kill_switch(True)
+    else:
+        case.permissions.set_tool_state(
+            "builtin:tldw_chatbook", "sample_builtin", "deny"
+        )
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        current = await _prepare(case, maximum=_BUILTIN_MAXIMUM)
+    current.require_current(case.service)
+    assert len(probe.permission_threads) == 1 and not probe.read_threads
+    if change == "kill":
+        assert current.kill_switch and current.tools == () and inventory == []
+    else:
+        assert not current.kill_switch and inventory == [True]
+        assert current.tools[0].effective.state == "deny"
+    assert first.tools[0].effective.state != "deny" and not first.kill_switch
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+
+
+@pytest.mark.asyncio
+async def test_builtin_only_preparation_keeps_builtin_hash_free_policy(snapshot_case):
+    case = snapshot_case
+    _loop_projection(case)
+    case.permissions.set_tool_state(
+        "builtin:tldw_chatbook", "sample_builtin", "allow", definition_hash="0" * 64
+    )
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        prepared = await _prepare(case, maximum=_BUILTIN_MAXIMUM)
+    assert [row.name for row in prepared.tools] == ["sample_builtin"]
+    # The builtin namespace is already hash-free; preserve that policy rather
+    # than inventing an external-definition downgrade for an installed tool.
+    assert prepared.tools[0].effective.state == "allow"
+    assert not prepared.tools[0].effective.config_changed
+    assert not probe.read_threads and not probe.audit_threads
+    assert probe.permission_threads and all(
+        thread is not threading.current_thread()
+        for thread in probe.permission_threads + probe.audit_threads
+    )
+    assert not case.permissions.get_tool_entry(
+        "builtin:tldw_chatbook", "sample_builtin"
+    ).get("config_changed", False)
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)

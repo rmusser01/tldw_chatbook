@@ -3821,3 +3821,50 @@ async def test_native_acceptance_consumes_only_open_target_revision(
         if not rig_registered:
             runs.close()
             store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_image_retirement_failure_cannot_skip_terminal_and_speech_cleanup(failure):
+    calls = []
+
+    async def ready():
+        pass
+
+    async def close_images():
+        calls.append("images")
+        raise failure("image retirement")
+
+    screen = SimpleNamespace(
+        _hooks=SimpleNamespace(cancel_pending=lambda: None),
+        _release_claimed_conversation_settings_return=lambda: None,
+        _console_runtime=lambda: SimpleNamespace(detach_view=lambda *_: calls.append("detach")),
+        _flush_sidebar_state_now=ready,
+        _finalize_guardian_visit=ready,
+        _terminal=SimpleNamespace(detach_workspace=lambda: calls.append("terminal")),
+        _message=SimpleNamespace(invalidate_console_speech_context=lambda: calls.append("speech")),
+        _console_auto_speak=SimpleNamespace(unmount=lambda: calls.append("auto-speak")),
+        _image=SimpleNamespace(
+            _recovered_images_close_admission=lambda: calls.append("sealed"),
+            _recovered_images_close=close_images,
+            _h3_image_edit_registry=lambda: SimpleNamespace(),
+        ),
+    )
+    screen._console_chat_store = None
+    screen.app_instance = SimpleNamespace()
+    screen._video = SimpleNamespace(_drain_pending_console_videos=lambda: None)
+    screen._fleet = SimpleNamespace(_stop_console_fleet_survivor_tick=lambda: None)
+    screen._context_spend = SimpleNamespace(_stop_console_cost_ttl_timer=lambda: None)
+    screen._stop_console_transcript_sync_timer = lambda: None
+    screen._stop_console_environment_poll_timer = lambda: None
+    screen._stop_console_credential_poll_timer = lambda: None
+    screen._console_draft_spend_refresh = SimpleNamespace(stop=lambda: None)
+    screen._teardown_console_roleplay_persistence = ready
+    screen._hands_free = SimpleNamespace(teardown=lambda: None, uninstall_console_hands_free_store_tap=lambda: None)
+    screen._realtime = SimpleNamespace(teardown=ready)
+    screen._dictation = SimpleNamespace(teardown=ready)
+    screen._console_original_attempt_previews = {}
+    with pytest.raises(failure, match="image retirement"):
+        await ChatScreen.on_unmount(screen)
+    assert calls[:2] == ["detach", "sealed"]
+    assert all(calls.index(name) < calls.index("images") for name in ("terminal", "speech", "auto-speak"))

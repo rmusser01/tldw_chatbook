@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -433,3 +434,45 @@ async def test_legacy_custom_queue_old_signature_still_uses_original_admission(
     assert calls == [(session.id, "legacy captured queue input", before.revision)]
     assert result.snapshot.total_count == before.total_count + 1
     assert store.session_draft(session.id) == "legacy captured queue input"
+
+
+async def test_received_queue_success_projects_committed_draft_through_owner_settlement(
+    received_workspace,
+):
+    case = received_workspace
+    runtime, store, session, controller = (
+        case.runtime, case.store, case.session, case.controller
+    )
+    store.set_session_draft(session.id, "captured queue input")
+    registry = controller.prompt_queue_registry
+    before = registry.begin_chain(
+        session.id,
+        context_epoch=store.conversation_context_epoch(session.id),
+        expected_revision=registry.snapshot(session.id).revision,
+    ).snapshot
+    projections = []
+
+    class View:
+        def console_view_hooks(self):
+            return {}
+
+        def _project_console_received_input(self, session_id, **kwargs):
+            projections.append(("unsettled", session_id))
+
+        def _project_console_saved_input(self, session_id, **kwargs):
+            assert kwargs["_captured_inputs"] is intent.inputs
+            projections.append(("settled", session_id))
+
+    view = View()
+    runtime.attach_view(view)
+    intent = _stock_intent(case, queue_revision=before.revision)
+    intent = replace(intent, _pressed_inputs=intent.inputs)
+    runtime.accept_received_intent(intent)
+    record = runtime._turn_custody[intent.turn_id]
+    result = await _outcome(record)
+
+    assert not isinstance(result, BaseException), result
+    assert result.applied
+    assert registry.snapshot(session.id).total_count == 1
+    assert store.session_draft(session.id) == ""
+    assert projections == [("settled", session.id)]

@@ -231,3 +231,35 @@ without native replay rows. A focused replay contract is pending before source
 changes at that extra boundary. Original diagnostic evidence is retained with
 QA/ac24/review-wake-repair-design/diagnosis-controller-correction.md. No authority,
 schema or additional live allowance follows from this correction.
+
+
+### PR3050 current-owner reconciliation — 2026-10-31
+
+The remaining Send work is rebased onto current dev owners. A pressed resident
+snapshot survives the acknowledgement paint and later draft edits; only that
+snapshot can retire its original draft after durable acceptance. Guardian may
+transform the submitted body while the original snapshot remains the cleanup
+witness. View publication retains the pressing view's attachment generation.
+Custom mounted capture uses the existing finite preparation-read owner until the
+physical callback retires, including repeated cancellation. Existing admission,
+Stop, source, Goal, response-rule, transferred-draft and citation fences remain.
+
+Stock MCP execution consumers freeze their own fresh definition ceiling during
+composition. A deferred capture refuses changed factories/catalog sources before
+reading them; invocation permission is still read fresh. Builtin-only captured
+maxima avoid external catalog work. Hook observations are reused only within the
+same exact attempt and owner, with fresh final admission and dispatch checks.
+
+Recovered-image tasks belong to the existing view-worker group. Unmount releases
+runtime and settings ownership before image admission is sealed, completes view
+cleanup, and joins actual reader retirement in finally. App shutdown also joins
+already detached workers. Reader failure or caller cancellation cannot skip the
+terminal/speech cleanup by preceding it.
+
+Current dev's native descriptor/admission generations, operation-owned DB scopes,
+character refresh and one-second configuration projection remain authoritative.
+The earlier Windows watcher and broad polling optimization are historical
+qualification material, not selected replacement implementations. No new cache,
+storage policy, authority, or ADR identity is introduced. The original under-100ms
+input and under-one-second overhead claims and complete platform/Close
+qualification remain unproven; TASK34601 and TASK34601.1 stay In Progress.

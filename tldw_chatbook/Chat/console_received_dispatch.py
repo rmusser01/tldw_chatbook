@@ -155,7 +155,8 @@ def require_received_source(runtime, record, source, *, inputs=True):
         or (
             inputs
             and not source.store.session_inputs_are_current(
-                record.received_intent.inputs
+                record.received_intent.inputs,
+                include_draft=record.received_intent._pressed_inputs is None,
             )
         )
         or (
@@ -207,10 +208,17 @@ async def _run_received_intent_bound(runtime, record, source):
         if source.permissions is None:
             source.permissions = owner
         require_received_source(runtime, record, source)
+        from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+        if isinstance(owner, HookPermissions):
+            # ADR-230 decision 3: the same snapshot() read, also keeping the
+            # targets it published, so this attempt's later preparation can
+            # share it instead of repeating the full read.
+            return owner.authority_read()
         return owner.snapshot()
 
     async def read_snapshot():
-        return await run_preparation_read(
+        result = await run_preparation_read(
             snapshot,
             creator=runtime,
             session_id=record.session_id,
@@ -218,8 +226,14 @@ async def _run_received_intent_bound(runtime, record, source):
             observers=(controller._preparation_reads,),
             require_current=lambda: require_received_source(runtime, record, source),
         )
+        # Imported after the worker read, so a cold owner import stays there.
+        from tldw_chatbook.Agents.hook_permissions import HookAuthorityRead
 
-    review = await read_snapshot()
+        if type(result) is HookAuthorityRead:
+            return result.snapshot, result
+        return result, None
+
+    review, authority = await read_snapshot()
     if not review.ready:
         result = await runtime.request_initial_hook_review(
             record.session_id,
@@ -232,9 +246,19 @@ async def _run_received_intent_bound(runtime, record, source):
         require_received_source(runtime, record, source)
         if result.kind != "ready":
             raise RuntimeError("Send cancelled; draft kept.")
-        review = await read_snapshot()
+        # The review answer is no authority: re-read, and share only this read.
+        review, authority = await read_snapshot()
     if not review.ready:
         raise RuntimeError("Hooks changed; Send again.")
+    from .console_hook_preparation import ConsoleHookAttemptRead
+
+    # Bound to this attempt only and passed explicitly to its own submission;
+    # each later consumer re-validates it or reads fresh (ADR-230 decision 3).
+    hook_read = (
+        ConsoleHookAttemptRead(record.session_id, authority)
+        if authority is not None
+        else None
+    )
     require_received_source(runtime, record, source)
     prepared_skills = None
     preparation = source.configuration_preparation
@@ -311,8 +335,9 @@ async def _run_received_intent_bound(runtime, record, source):
         queued = await method(record.session_id, **kwargs)
         if queued.applied:
             try:
-                if store.commit_session_input_draft(intent.inputs):
-                    runtime._project_received_input(record)
+                committed = store.commit_session_input_draft(intent.inputs)
+                if committed or intent._pressed_inputs is not None:
+                    runtime._project_received_input(record, draft_committed=committed)
             except Exception:  # noqa: BLE001, S110 - presentation cannot retract an already accepted domain outcome.
                 # Queue admission already won; presentation cannot retract it.
                 pass
@@ -324,6 +349,7 @@ async def _run_received_intent_bound(runtime, record, source):
             record.session_id,
             record.turn_id,
             draft_revision=intent.inputs.draft_revision,
+            _allow_draft_change=intent._pressed_inputs is not None,
         )
         if claim is None:
             raise RuntimeError(
@@ -358,11 +384,13 @@ async def _run_received_intent_bound(runtime, record, source):
         wake_authorization=None,
         goal_authorization=None,
         raise_on_refusal=True,
+        hook_read=hook_read,
     )
 
 
 def accept_received_intent(
-    self, intent: ConsoleReceivedTurnIntent, *, _configuration_preparation=None
+    self, intent: ConsoleReceivedTurnIntent, *, _configuration_preparation=None,
+    terminal_callback=None,
 ) -> str:
     """Reserve bounded authored input before any hook or configuration read."""
     from .console_received_intent import ConsoleReceivedTurnIntent
@@ -373,7 +401,7 @@ def accept_received_intent(
     store = self._chat_store
     if store is None or self._chat_controller is None:
         raise RuntimeError("Console chat owner is unavailable.")
-    if not store.session_inputs_are_current(intent.inputs):
+    if not store.session_inputs_are_current(intent.inputs, include_draft=intent._pressed_inputs is None):
         raise RuntimeError("Console input changed; Send again.")
     if _configuration_preparation is not None:
         from .console_configuration_preparation import (
@@ -396,6 +424,7 @@ def accept_received_intent(
             intent.session_id,
             intent.turn_id,
             draft_revision=intent.inputs.draft_revision,
+            _allow_draft_change=intent._pressed_inputs is not None,
         )
         if claim is None:
             raise RuntimeError(
@@ -418,7 +447,7 @@ def accept_received_intent(
                 self._finish_custodied_turn,
                 turn_id=record.turn_id,
                 recover_before_acceptance=True,
-                terminal_callback=None,
+                terminal_callback=terminal_callback,
             )
         )
     except BaseException:
@@ -444,18 +473,39 @@ def accept_received_intent(
 
 
 
-def project_received_input(self, record) -> None:
+def project_received_input(self, record, *, draft_committed=False) -> None:
     """Project a domain CAS into only the original attached composer."""
     intent = record.received_intent
-    view = self.view
-    if (
-        intent is None
-        or self._attached_generation != intent.view_attachment_generation
-    ):
+    request = record.request
+    if intent is not None:
+        inputs, stash = intent._pressed_inputs, intent._pressed_stash
+        generation = intent.view_attachment_generation
+    elif request is not None and request._pressed_inputs is not None:
+        inputs, stash = request._pressed_inputs, request._pressed_stash
+        generation = request._pressed_attachment_generation
+    else:
         return
-    project = getattr(view, "_project_console_received_input", None)
+    if self._attached_generation != generation:
+        return
+    project = getattr(self.view, "_project_console_received_input", None)
     if callable(project):
-        project(record.session_id)
+        if draft_committed:
+            saved_project = getattr(self.view, "_project_console_saved_input", None)
+            if callable(saved_project):
+                saved_project(
+                    record.session_id,
+                    _captured_stash=stash,
+                    _captured_inputs=intent.inputs if intent is not None else inputs,
+                )
+                return
+        if inputs is not None:
+            project(
+                record.session_id,
+                _captured_stash=stash,
+                _captured_inputs=inputs,
+            )
+        else:
+            project(record.session_id)
 
 
 
@@ -483,7 +533,10 @@ def require_received_custody_current(self, record, controller) -> None:
 def publish_received_acceptance(self, record, controller) -> None:
     record.inputs.durable_accepted = True
     intent = record.received_intent
-    if intent is not None:
+    request = record.request
+    captured = intent.inputs if intent is not None else (request._pressed_inputs if request is not None else None)
+    pressed = intent._pressed_inputs if intent is not None else captured
+    if captured is not None:
         try:
             store, claim = record.store, record.received_claim
             # Saved acceptance is a fact even when its original owner
@@ -509,8 +562,9 @@ def publish_received_acceptance(self, record, controller) -> None:
                 or not controller._ordinary_native_commit_current(native_owner)
             ):
                 return
-            if store.commit_session_input_draft(intent.inputs):
-                self._project_received_input(record)
+            committed = store.commit_session_input_draft(captured)
+            if committed or pressed is not None:
+                self._project_received_input(record, draft_committed=committed)
         except Exception as error:  # noqa: BLE001 - presentation cannot retract an already accepted domain outcome.
             logger.debug(
                 "Received input projection failed (exception_type={})",

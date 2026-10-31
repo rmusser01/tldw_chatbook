@@ -3,7 +3,7 @@
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import asyncio
 import contextlib
 from functools import partial
@@ -123,6 +123,7 @@ from ..Console_Modules.hands_free import (
     ConsoleSpeculativeHandsFreeSession,
 )
 from ..Console_Modules.agent import (
+    project_console_run_feedback,
     CONSOLE_AGENT_CANCEL_ALL_ID,
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
@@ -1651,6 +1652,7 @@ class _ConsolePendingSend:
     session_id: str
     stash: ConsoleDraftStash | None
     token: object
+    received_inputs: Any | None = field(default=None, repr=False)
 
 
 class ChatScreen(BaseAppScreen):
@@ -15699,57 +15701,64 @@ class ChatScreen(BaseAppScreen):
         )
         if callable(dismiss_project_decisions):
             dismiss_project_decisions()
-        # task-15470: after releasing ownership, flush pending sidebar state
-        # ahead of every other awaited teardown step below -- several can
-        # raise, and a raised exception must not strand an unpersisted
-        # toggle-then-quit.
-        await self._flush_sidebar_state_now()
-        # guardian: end the visit's summary (ADR-204 post-visit summary). It runs
-        # after the ownership release and the sidebar flush above, never before:
-        # it awaits a worker thread, and an await ahead of the runtime detach would
-        # reopen the window in which an unmounting screen is still attached. It
-        # needs the checker, the app's Guardian DB getter and the runtime-owned
-        # chat store (the checker's session getter calls
-        # `_ensure_console_chat_store()` from that thread); all survive the detach.
-        # A flush that raises or is cancelled skips this visit's summary, like
-        # every later teardown step; the finalize itself degrades, never raises.
-        await self._finalize_guardian_visit()
-        self._terminal.detach_workspace()
-        self._message.invalidate_console_speech_context()
-        self._console_auto_speak.unmount()
-        registry = self._image._h3_image_edit_registry()
-        store = self._console_chat_store
-        if store is not None:
-            terminal = getattr(self, "_console_h3_terminal_generations", None)
-            if terminal is None:
-                terminal = set()
-                self._console_h3_terminal_generations = terminal
-            for session in store.sessions():
-                operation = registry.request_cancel(session.id)
-                if operation is not None:
-                    terminal.add(operation.generation)
-        if getattr(self.app_instance, "_console_h3_image_edit_screen", None) is self:
-            self.app_instance._console_h3_image_edit_screen = None
-        self._video._drain_pending_console_videos()
-        self._stop_console_transcript_sync_timer()
-        self._fleet._stop_console_fleet_survivor_tick()
-        self._context_spend._stop_console_cost_ttl_timer()
-        self._stop_console_environment_poll_timer()
-        self._stop_console_credential_poll_timer()
-        self._console_draft_spend_refresh.stop()
-        await self._teardown_console_roleplay_persistence()
-        # The pipeline hands-free loop's own two-statement abandon teardown
-        # now lives in the decomposed controller (wave-2 console
-        # decomposition, task 1); calling it here keeps this method one line
-        # per subsystem, matching `_dictation.teardown()` below.
-        self._hands_free.teardown()
-        await self._realtime.teardown()
-        # Dictation's own seven-statement teardown now lives in the
-        # decomposed controller (dev's wave-1 extraction); calling it here
-        # keeps this method one line per subsystem.
-        await self._dictation.teardown()
-        self._console_original_attempt_previews.clear()
-        self._hands_free.uninstall_console_hands_free_store_tap()
+        image = getattr(self, "_image", None)
+        if image is not None:
+            image._recovered_images_close_admission()
+        try:
+            # task-15470: after releasing ownership, flush pending sidebar state
+            # ahead of every other awaited teardown step below -- several can
+            # raise, and a raised exception must not strand an unpersisted
+            # toggle-then-quit.
+            await self._flush_sidebar_state_now()
+            # guardian: end the visit's summary (ADR-204 post-visit summary). It runs
+            # after the ownership release and the sidebar flush above, never before:
+            # it awaits a worker thread, and an await ahead of the runtime detach would
+            # reopen the window in which an unmounting screen is still attached. It
+            # needs the checker, the app's Guardian DB getter and the runtime-owned
+            # chat store (the checker's session getter calls
+            # `_ensure_console_chat_store()` from that thread); all survive the detach.
+            # A flush that raises or is cancelled skips this visit's summary, like
+            # every later teardown step; the finalize itself degrades, never raises.
+            await self._finalize_guardian_visit()
+            self._terminal.detach_workspace()
+            self._message.invalidate_console_speech_context()
+            self._console_auto_speak.unmount()
+            registry = self._image._h3_image_edit_registry()
+            store = self._console_chat_store
+            if store is not None:
+                terminal = getattr(self, "_console_h3_terminal_generations", None)
+                if terminal is None:
+                    terminal = set()
+                    self._console_h3_terminal_generations = terminal
+                for session in store.sessions():
+                    operation = registry.request_cancel(session.id)
+                    if operation is not None:
+                        terminal.add(operation.generation)
+            if getattr(self.app_instance, "_console_h3_image_edit_screen", None) is self:
+                self.app_instance._console_h3_image_edit_screen = None
+            self._video._drain_pending_console_videos()
+            self._stop_console_transcript_sync_timer()
+            self._fleet._stop_console_fleet_survivor_tick()
+            self._context_spend._stop_console_cost_ttl_timer()
+            self._stop_console_environment_poll_timer()
+            self._stop_console_credential_poll_timer()
+            self._console_draft_spend_refresh.stop()
+            await self._teardown_console_roleplay_persistence()
+            # The pipeline hands-free loop's own two-statement abandon teardown
+            # now lives in the decomposed controller (wave-2 console
+            # decomposition, task 1); calling it here keeps this method one line
+            # per subsystem, matching `_dictation.teardown()` below.
+            self._hands_free.teardown()
+            await self._realtime.teardown()
+            # Dictation's own seven-statement teardown now lives in the
+            # decomposed controller (dev's wave-1 extraction); calling it here
+            # keeps this method one line per subsystem.
+            await self._dictation.teardown()
+            self._console_original_attempt_previews.clear()
+            self._hands_free.uninstall_console_hands_free_store_tap()
+        finally:
+            if image is not None:
+                await image._recovered_images_close()
         # BaseAppScreen.on_unmount is dispatched separately by Textual.
 
     @classmethod
@@ -17258,21 +17267,7 @@ class ChatScreen(BaseAppScreen):
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
-        """Return the viewed session's active-run copy, or "" when not active.
-
-        TASK-2154.18 (FB-08): unlike ``_native_run_status_copy`` -- which
-        reports ANY non-IDLE status, including lingering terminal copy --
-        this is gated on ``CONSOLE_ACTIVE_RUN_STATUSES``, the run chip's
-        visibility contract. Falls back to the status value when a
-        transition set no visible copy.
-
-        task-32345: ``run_state.visible_copy`` is a snapshot taken once at
-        dispatch start ("Agent running.") and never updated mid-turn -- an
-        approval round parking partway through leaves it stale. Checked
-        here, on every read, instead: the controller's own round registry
-        (``has_pending_approval_round``), not the run state, is the live
-        truth for "is a card waiting on the user right now".
-        """
+        """Show live progress for this session, with decisions and recovery first."""
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
         image_edit = (
@@ -17306,7 +17301,7 @@ class ChatScreen(BaseAppScreen):
         # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):
             return f"{console_pending_round_copy_for(controller, session_id or '')}."
-        return run_state.visible_copy or run_state.status.value
+        return self._agent.console_run_feedback_copy(run_state)
 
     @spend.console_readiness_presentation
     def _sync_console_mode_bar(self) -> None:
@@ -18101,6 +18096,7 @@ class ChatScreen(BaseAppScreen):
             each with its own toast or system row, and while a worker owns the
             Send's hook review (TASK-33621.28).
         """
+        received_inputs = None
         # A scheduled Enter callback may consume only its own capture.
         # Mouse/Workbench sends have no token and always read the live draft.
         stash = None
@@ -18111,6 +18107,7 @@ class ChatScreen(BaseAppScreen):
             self._console_pending_send = None
             session_id = pending_send.session_id
             stash = pending_send.stash
+            received_inputs = pending_send.received_inputs
         if session_id is None:
             session_id = self._console_visible_send_session_id()
         if (
@@ -18241,7 +18238,8 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         return await self._dispatch_console_draft_send(
-            draft, stash=stash, session_id=session_id
+            draft, stash=stash, session_id=session_id,
+            **({"_captured_inputs": received_inputs} if received_inputs is not None else {}),
         )
 
     async def _refresh_console_hooks(self) -> None:
@@ -18265,6 +18263,7 @@ class ChatScreen(BaseAppScreen):
     _project_console_received_preparing = run_controls._project_console_received_preparing
     _project_console_received_finished = run_controls._project_console_received_finished
     _project_console_received_input = run_controls._project_console_received_input
+    _project_console_saved_input = run_controls._project_console_saved_input
 
     _dispatch_console_draft_send = run_controls._dispatch_console_draft_send
 
@@ -23247,13 +23246,6 @@ class ChatScreen(BaseAppScreen):
             True when the draft answered the question and must NOT also be
             dispatched as a turn; False to send normally.
         """
-        # Local import by design: the module stays off the boot path.
-        from ...Agents.ask_user_questions import (
-            AskUserValidationError,
-            clean_other_text,
-            validate_answers,
-        )
-
         text = draft.strip()
         if not text or text.startswith("/"):
             # A `/`-prefixed draft is command text even when the user has
@@ -23280,6 +23272,13 @@ class ChatScreen(BaseAppScreen):
             return False
         if self._retrieval._pending_launch() is not None:
             return False
+        # Local import by design: the module stays off the boot path.
+        from ...Agents.ask_user_questions import (
+            AskUserValidationError,
+            clean_other_text,
+            validate_answers,
+        )
+
         other_text = clean_other_text(text)
         if other_text is None:
             return False

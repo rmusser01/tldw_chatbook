@@ -22737,3 +22737,13 @@ before publication. Empty withdrawals now retain those recovery rounds; accepted
 decisions and ordinary sealing checks remain unchanged. Exercise recovery through
 the next request's real history projection, not just the successful tool return.
 Evidence: `Docs/superpowers/qa/2026-10-18-multi-model-code-review/v1-conflict-offline/report.md`.
+
+
+### PR3050 rebase verification: use a fresh private profile for each invocation (2026-10-31)
+
+A rerun of the new delayed-view generation control reused the previous private
+`TLDW_TEST_CONFIG_ROOT`. Its fixed workspace name survived the earlier RED run,
+so the next run failed at workspace creation before exercising the corrected
+boundary. A newly created private profile root made the original regression pass.
+Keep TEMP/TMP and config isolation, but give each independent pytest invocation
+a fresh private root; a private path is not necessarily an empty profile.

@@ -234,3 +234,29 @@ async def test_compact_approval_layout_journeys(request: pytest.FixtureRequest) 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ResourceWarning)
                 gc.collect()
+
+
+async def _wait_for_reconciled_console(console, pilot):
+    """Finish original startup before publishing a fixture-only decision card."""
+    runtime = console._console_runtime()
+    generation = console._console_runtime_attachment_generation
+
+    def ready():
+        return (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+            and runtime.view is console
+            and runtime._attached_generation == generation
+            and runtime._reconciled_view is console
+            and runtime.has_answerable_view()
+        )
+
+    deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+    while not ready() and time.monotonic() < deadline:
+        await pilot.pause(_POLL_INTERVAL_SECONDS)
+    assert ready(), "Console initial reconciliation did not finish"
+    await pilot.pause()
+    assert ready(), "Console initial attachment changed before the approval fixture"
+
+import time
+from Tests.UI.test_console_native_chat_flow import _ASYNC_SETTLE_TIMEOUT, _POLL_INTERVAL_SECONDS

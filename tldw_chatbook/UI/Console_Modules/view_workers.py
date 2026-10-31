@@ -35,6 +35,7 @@ _GROUPS = frozenset(
         "console-character-context-refresh",
         "console-annotation-previews",
         "console-persisted-browser-cache",
+        "console-recovered-images",
         "console-flat-conversation-search",
     }
 )
