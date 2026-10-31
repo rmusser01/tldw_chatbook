@@ -154,7 +154,8 @@ _BUDGETS: dict[str, int] = {
     # 29,055 -> 29,082 (+27). Cancel on an unknown trace reservation, the
     # unconfirmed-reservation re-pause and the per-send provider-contact
     # record; their bodies live in console_trace_call_recovery.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 29038 -> 29065.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29065,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
