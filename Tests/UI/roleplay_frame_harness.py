@@ -589,13 +589,22 @@ async def wait_for_chooser(pilot: Pilot):
 
 
 async def start_new(
-    pilot: Pilot, choice_id: str | None = None, *, via: str = "click"
+    pilot: Pilot,
+    choice_id: str | None = None,
+    *,
+    via: str = "click",
+    until: Callable[[], bool] | None = None,
 ) -> None:
     """Open the New chooser and pick a variant like a user (frame slice B2b).
 
     On dev ``+ New`` and Ctrl+N created a blank item of the current kind at
     once; since B2b they open the New chooser on that kind's Blank, and Enter
-    picks it.
+    picks it. Returns once the create has begun, not after Enter plus one
+    pause (the B2b final fix wave; a site asserting ``_edit_mode == "create"``
+    right after the return was a flake before it): the chooser is off the
+    stack and a draft is open, an Actor Pack session exists, another screen
+    (the unsaved guard) is on top, or the chooser's worker has ended (a lore
+    book or chat dictionary created at once, or a create that failed).
 
     Args:
         pilot: The running pilot (Roleplay on screen).
@@ -603,7 +612,10 @@ async def start_new(
             None picks the preselected Blank.
         via: ``"click"`` (a real click on ``+ New``), ``"press"``
             (``Button.press()``) or ``"ctrl+n"``.
+        until: The condition to wait for instead of the default above (a
+            test that holds the create inside its own patch passes its own).
     """
+    screen = pilot.app.screen
     if via == "click":
         await pilot.click("#personas-library-new")
     elif via == "press":
@@ -622,6 +634,23 @@ async def start_new(
             await pilot.press("down" if low else "up")
         assert options.highlighted == target, f"{choice_id} cannot be highlighted"
     await pilot.press("enter")
+
+    def chooser_closed() -> bool:
+        return not any(
+            stacked.query(f"#{CHOOSER_OPTIONS_ID}") for stacked in pilot.app.screen_stack
+        )
+
+    def create_begun() -> bool:
+        return bool(
+            getattr(screen, "_edit_mode", None) == "create"
+            or getattr(screen, "_actor_pack_session", None) is not None
+            or pilot.app.screen is not screen
+            or not getattr(screen, "_new_chooser_open", False)
+        )
+
+    await wait_until(
+        pilot, lambda: chooser_closed() and (until or create_begun)(), what="the create"
+    )
     await pilot.pause()
 
 
