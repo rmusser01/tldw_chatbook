@@ -1,5 +1,23 @@
 # Lessons: what counts as evidence a change works
 
+## "Same red as dev" by test id can hide two different reds (TASK-37870 review, 2026-10-30)
+
+**Incident.** The branch's gate compared the composer keymap file with origin/dev by
+test id and reported "15/16, same red as dev". The review reran it six times: the
+printable-key case went red 4 of 6 on the branch and 0 of 6 on dev, and the edit-key
+case was red on both every run. All of those reds were the precondition `host.focused
+is None`: the Console's activation focuses the composer more than once in its first
+~0.3 s after mount, and the tests cleared focus once, inside that window. With the
+precondition made deterministic (clear focus again until it stays cleared), the
+printable case passed every run on both trees, and the edit-key case went red on its
+real assertion, `'abc' == 'ac'`, on dev too: a routing defect (TASK-38412) that the
+racing precondition had been hiding. Neither the "same red" comparison nor the
+earlier precondition red could have shown it.
+
+**What to do.** When a red appears on both trees, compare the failing line and message,
+not only the test id. A red at a precondition is a setup fact, not the test's verdict;
+make the precondition deterministic before calling the red "inherited".
+
 ## A new-copy precondition in a behaviour test hides whether the behaviour is red (TASK-37870, 2026-10-30)
 
 **Incident.** The owner decision "Enter always sends; Ctrl+E expands a token" changed
