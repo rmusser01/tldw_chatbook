@@ -149,7 +149,12 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-30 (TASK-33621.23, owner decision 2026-10-04: raise the row by
+    # the fix's own lines): +78 on dev 7536ac3b87 (29,038 -> 29,116). Every
+    # blocked submit names its blocker (the field, one keyword per BLOCKED
+    # exit, the log line and the generic fallback), and the missing-trace-
+    # request pause's Cancel and Retry work (the shared request rebuild).
+    "tldw_chatbook/Chat/console_chat_controller.py": 29116,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
