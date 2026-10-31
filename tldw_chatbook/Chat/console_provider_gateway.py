@@ -261,6 +261,28 @@ def _max_trace_accumulated_bytes() -> int:
 
 _UNSUPPORTED_RESPONSE = object()
 _EMPTY_RESPONSE = object()
+
+#: SSE fields that are transport framing, never payload (data is handled
+#: separately, before this set is consulted).
+_SSE_CONTROL_FIELDS = frozenset({"event", "id", "retry"})
+
+
+def _is_sse_transport_frame(item: str) -> bool:
+    """True for Server-Sent Events transport frames (``": keep-alive"``).
+
+    SSE comments (lines whose first non-space character is ``:``) and the
+    ``event:``/``id:``/``retry:`` control fields are connection heartbeats
+    and framing that proxies and gateways inject between records; they are
+    never assistant content. Providers relaying raw stream lines can still
+    forward them, so the content sink drops them here too.
+    """
+    stripped = item.lstrip()
+    if stripped.startswith(":"):
+        return True
+    field = stripped.partition(":")[0].strip()
+    return bool(field) and field.lower() in _SSE_CONTROL_FIELDS
+
+
 # ADR-179 Phase 2 Task 6: the whole custom execution family (including the
 # swapped engine key) decides credentials at the gateway and passes
 # ``api_key_resolved`` -- without membership here the swapped key's
@@ -8028,11 +8050,15 @@ def _content_from_provider_item(
     if isinstance(item, str):
         if item.startswith("data:"):
             return _content_from_sse_data(item, signals=signals)
+        if _is_sse_transport_frame(item):
+            return _EMPTY_RESPONSE
         return item
     if isinstance(item, bytes):
         decoded = item.decode("utf-8", errors="replace")
         if decoded.startswith("data:"):
             return _content_from_sse_data(decoded, signals=signals)
+        if _is_sse_transport_frame(decoded):
+            return _EMPTY_RESPONSE
         return decoded
     if isinstance(item, Mapping):
         _maybe_record_usage(item, signals)
