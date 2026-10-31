@@ -3067,8 +3067,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 16,
-      "diagnostic_digest": "374b587d3a9d81e40307",
+      "call_count": 18,
+      "diagnostic_digest": "71ee05009e4fdca43c45",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/video.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4131,8 +4131,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "677d94ed6857edd40689",
+      "call_count": 3,
+      "diagnostic_digest": "dc5ab3076d56ad828fb2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py",
       "reason": "remaining Chatbook production diagnostic owner"
