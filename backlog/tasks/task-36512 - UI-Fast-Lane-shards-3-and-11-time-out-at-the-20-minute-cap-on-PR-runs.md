@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-23 22:46
-updated_date: 2026-10-24 00:07
+updated_date: 2026-10-30 03:58
 labels:
 - follow-up
 - ci
@@ -78,4 +78,9 @@ The worst-case replay is now 17.2-17.3 pytest minutes on every shard, against 15
 **Checks.** Census checker OK. `Tests/CI` with `-n 4`: 1029 passed, 1 skipped. Preflight passed. Ruff check and format pass on the changed test file; the checker's two ruff findings predate this change. After review round 1 these all pass again with the same counts, and the shard-by-shard collection still gives the same 3,101 node ids.
 
 Files: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py` (floor), `Tests/CI/test_ui_pr_gate_census_checker.py`, `backlog/docs/lessons-testing-evidence.md`.
+- **AC#3 result (2026-10-30).** AC#3 was measured on three post-change runs and is not met.
+  - Run 40043746975: every job finished within 12.7-18.3 min.
+  - Run 40100579406: within 14.4-18.7 min.
+  - Run 40107677135, attempt 2 (PR #3230's run after the queue rebased it onto dev; job 120912663464): UI Fast Lane (8) was cancelled at the 20-min cap. Its pytest took 18.4 min, because the untimed `test_roleplay_item_list.py` (swapped in by #3229) cost 83 s and `test_settings_advanced_disclosures.py` cost 439 s.
+  - The 13-shard lane this task measured no longer exists. #3228 moved it to 17 shards, and dev now runs 28, so AC#3 can no longer be measured as written. Left unticked; closing this task is the owner's call.
 <!-- SECTION:NOTES:END -->
