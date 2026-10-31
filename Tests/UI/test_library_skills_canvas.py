@@ -4520,3 +4520,127 @@ async def test_skill_trust_buttons_carry_reason_tooltips():
         approve = pilot.app.query_one("#library-skill-trust-approve", Button)
         assert review.disabled is False
         assert approve.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_library_retry_recovers_immediately_through_real_posture_worker(
+    tmp_path, monkeypatch
+):
+    """Retry must bypass both the automatic cooldown and cached backend errors."""
+    from textual.app import App
+    from keyring.errors import KeyringError
+    from Tests.Skills.test_skill_trust_keyring_autounlock import _fresh_service
+    from Tests.Skills.test_skill_trust_service import (
+        FakeSecureKeyring,
+        _service,
+        _write_skill,
+    )
+    from tldw_chatbook.Skills_Interop import skill_trust_service as service_module
+    from tldw_chatbook.Skills_Interop import skill_trust_store as store_module
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        KeyringSkillTrustGenerationMarkerStore,
+        KeyringSkillTrustKeyCache,
+    )
+    from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
+
+    class RecoveringKeyring(FakeSecureKeyring):
+        failed = False
+
+        def get_password(self, service_name, username):
+            reads.append((service_name, threading.get_ident()))
+            if self.failed:
+                raise KeyringError("keyring locked")
+            return super().get_password(service_name, username)
+
+    reads = []
+    backend = RecoveringKeyring()
+    # The backend validator identifies the installed secure backend namespace.
+    RecoveringKeyring.__module__ = FakeSecureKeyring.__module__
+    cache = KeyringSkillTrustKeyCache(keyring_backend=backend)
+    marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=backend)
+    setup, skills_dir = _service(tmp_path, key_cache=cache)
+    setup.trust_store.marker_store = marker
+    _write_skill(skills_dir)
+    setup.bootstrap_trust()
+    setup.enable_keyring_convenience()
+    fresh = _fresh_service(
+        tmp_path, skills_dir, KeyringSkillTrustKeyCache(keyring_backend=backend)
+    )
+    fresh.trust_store.marker_store = KeyringSkillTrustGenerationMarkerStore(
+        keyring_backend=backend
+    )
+    reads.clear()
+    # Neither the automatic cooldown nor store TTL can expire during this test.
+    clock = SimpleNamespace(monotonic=lambda: 100.0)
+    monkeypatch.setattr(service_module, "time", clock)
+    monkeypatch.setattr(store_module, "time", clock)
+    backend.failed = True
+    instance = SimpleNamespace(app_config={}, local_skill_trust_service=fresh)
+
+    class Subject(LibraryScreen):
+        def compose(self):
+            yield LibrarySkillsListCanvas(
+                state=self._build_library_skills_state(),
+                trust_posture=self._skills_state.trust_posture,
+                id="library-skills-canvas",
+            )
+
+        def on_mount(self, event):
+            event.prevent_default()
+            self._refresh_library_skills_trust_posture()
+
+        async def on_unmount(self):
+            pass
+
+    class Host(ThemeVariableDefaultsMixin, App):
+        def on_mount(self):
+            self.subject = Subject(instance)
+            self.subject._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
+            self.subject._skills_state.view = "list"
+            controller = self.subject._library_skills_browse_controller
+            scope = SkillBrowseScope()
+            result = build_skill_browse_result(
+                scope,
+                {
+                    "skills": [{"name": "demo", "trust_blocked": False}],
+                    "count": 1,
+                    "total": 1,
+                    "limit": 20,
+                    "offset": 0,
+                    "blocked_total": 0,
+                    "first_blocked_skill_name": None,
+                },
+            )
+            controller.scope = scope
+            controller.result = controller.applied_result = result
+            controller.retained_items = result.items
+            controller.freshness = "fresh"
+            self.push_screen(self.subject)
+
+    host = Host()
+    async with host.run_test(size=(110, 44)) as pilot:
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = host.subject
+        assert screen._skills_state.trust_posture == "unavailable"
+        button = screen.query_one("#library-skills-trust-action", Button)
+        assert str(button.label) == "Retry"
+        assert {name for name, _thread in reads} == {
+            "tldw_chatbook.skill_trust.keys",
+            "tldw_chatbook.skill_trust",
+        }
+        initial_reads = len(reads)
+        backend.failed = False
+        button.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert screen._skills_state.trust_posture == "ready"
+        assert "ready" in str(
+            screen.query_one("#library-skills-trust-header", Static).content
+        )
+        assert len(reads) == initial_reads + 2
+        assert all(thread_id != threading.get_ident() for _name, thread_id in reads)
+        assert fresh.status_for_skill("demo").trust_status == "trusted"

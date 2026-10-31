@@ -19682,7 +19682,7 @@ class LibraryScreen(BaseAppScreen):
             scope=scope
         )
 
-    def _refresh_library_skills_trust_posture(self) -> None:
+    def _refresh_library_skills_trust_posture(self, *, retry: bool = False) -> None:
         """Kick an off-thread read of the Skills trust service's posture.
 
         Task 5: ``SkillTrustService.trust_posture()`` may touch the OS
@@ -19693,7 +19693,8 @@ class LibraryScreen(BaseAppScreen):
         whenever the skills snapshot itself is refreshed
         (``_refresh_local_source_snapshot``), so a stale cached posture
         from a previous visit (e.g. locked -> unlocked in another session)
-        never lingers.
+        never lingers. Explicit Retry also refreshes transient credential
+        failures inside this same worker, retaining recovery activation gates.
 
         Hidden (``""``) rather than fetched at all when the trust service
         is absent or doesn't expose ``trust_posture`` (server mode / no
@@ -19703,7 +19704,9 @@ class LibraryScreen(BaseAppScreen):
         to remove and the editor owns unsaved live fields.
         """
         service = getattr(self.app_instance, "local_skill_trust_service", None)
-        posture_fn = getattr(service, "recovery_posture", None)
+        posture_fn = getattr(service, "retry_trust_posture", None) if retry else None
+        if not callable(posture_fn):
+            posture_fn = getattr(service, "recovery_posture", None)
         if not callable(posture_fn):
             posture_fn = getattr(service, "trust_posture", None)
         if not callable(posture_fn):
@@ -27167,7 +27170,7 @@ class LibraryScreen(BaseAppScreen):
                 group="library_skill_trust",
             )
         elif action == "retry":
-            self._refresh_library_skills_trust_posture()
+            self._refresh_library_skills_trust_posture(retry=True)
         elif action == "review":
             self._open_first_blocked_skill()
 
