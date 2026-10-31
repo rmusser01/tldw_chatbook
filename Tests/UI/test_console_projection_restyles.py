@@ -10,8 +10,8 @@ class it changes, so one state flip paid several restyles:
   status class and added another: two restyles of the header's whole subtree
   (the speech controls live inside it), 4.4 ms of the window's first
   projection;
-* the composer's Stop button paid five for one availability flip (the
-  ``variant`` watcher's remove and add, then three ``set_class`` calls), and
+* the composer's Stop button paid four for one availability flip (the
+  ``variant`` watcher's remove and add, then its ``set_class`` calls), and
   Send three for one readiness flip (two for ``variant``, one for its classes);
 * the hidden Workbench command strip's buttons, the Agent status line and the
   Send reason strip each paid one restyle per changed class.
@@ -31,10 +31,12 @@ from typing import get_args
 import pytest
 from textual.app import App, ComposeResult
 from textual.css.model import CombinatorType, SelectorType
+from textual.css.styles import RulesMap
 from textual.css.stylesheet import Stylesheet
 from textual.widgets import Button, Static
 
 import tldw_chatbook
+from Tests.UI.test_console_composer_reason_restyles import ComposerHarness
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -54,6 +56,32 @@ pytestmark = pytest.mark.bootstrap_profile
 _CSS_DIR = Path(tldw_chatbook.__file__).resolve().parent / "css"
 #: Every class the Workbench status sync can set.
 _STATUS_CLASSES = frozenset(f"status-{status}" for status in get_args(WorkbenchStatus))
+#: Rules a widget's rendered style reads from its ancestors as well as itself
+#: (Textual 8.2.8 ``Widget.get_visual_style`` / ``DOMNode.rich_style`` walk the
+#: ancestors for these). A child caches that style keyed on its OWN pseudo
+#: classes and clears it only when it is itself restyled, so a status-keyed
+#: rule setting one of these would leave the header's children painting the
+#: old value after a node-only status restyle.
+_ANCESTOR_READ_RULES = frozenset(
+    {
+        "auto_color",
+        "color",
+        "background",
+        "background_tint",
+        "text_style",
+        "opacity",
+        "text_opacity",
+        "tint",
+        "link_color",
+        "auto_link_color",
+        "link_background",
+        "link_style",
+        "link_color_hover",
+        "auto_link_color_hover",
+        "link_background_hover",
+        "link_style_hover",
+    }
+)
 
 
 def _spy_restyles(host, monkeypatch) -> list:
@@ -117,7 +145,11 @@ async def test_a_header_status_flip_restyles_only_the_header_once(monkeypatch):
         assert not header.has_class(f"status-{state.status}")
         header_restyles = sum(1 for node in applied if node is header)
         restyled_children = sorted(
-            {f"{type(node).__name__}#{node.id}" for node in applied if node in descendants}
+            {
+                f"{type(node).__name__}#{node.id}"
+                for node in applied
+                if node in descendants
+            }
         )
         assert header_restyles == 1, (
             f"The header was restyled {header_restyles} times for one status flip."
@@ -150,11 +182,19 @@ def _target_compound(selectors: list) -> list:
     return selectors[start:]
 
 
-def _ancestor_keyed(rules, classes: set[str]) -> tuple[int, list[str]]:
-    """Count rules keyed on ``classes``; list those keyed above their target."""
+def _ancestor_keyed(rules, classes: set[str]) -> tuple[int, list[str], list[str]]:
+    """Count rules keyed on ``classes``; list the ones a node-only restyle misses.
+
+    Returns:
+        The number of keyed selectors, those keyed above their target (they
+        style a descendant), and those whose rule sets a property the
+        target's descendants read from it (``_ANCESTOR_READ_RULES``).
+    """
     keyed = 0
     offenders: list[str] = []
+    inherited: list[str] = []
     for rule in rules:
+        declared = set(rule.styles.get_rules()) & _ANCESTOR_READ_RULES
         for selector_set in rule.selector_set:
             selectors = selector_set.selectors
             hits = [
@@ -165,10 +205,13 @@ def _ancestor_keyed(rules, classes: set[str]) -> tuple[int, list[str]]:
             if not hits:
                 continue
             keyed += 1
+            text = " ".join(part.css for part in selectors)
             first_target = len(selectors) - len(_target_compound(selectors))
             if any(index < first_target for index in hits):
-                offenders.append(" ".join(part.css for part in selectors))
-    return keyed, offenders
+                offenders.append(text)
+            if declared:
+                inherited.append(f"{text} {{{', '.join(sorted(declared))}}}")
+    return keyed, offenders, inherited
 
 
 @pytest.mark.asyncio
@@ -179,13 +222,19 @@ async def test_no_rule_styles_a_descendant_from_a_workbench_status_class():
     Scans every rule the mounted app loads (widget DEFAULT_CSS included) and
     every built sheet, parsed on its own, so a lazy screen sheet the harness
     does not load is still covered. Fails with the selector when a rule
-    starts keying a descendant on a status class.
+    starts keying a descendant on a status class, or when a status-keyed
+    rule sets a property the node's descendants read from it (colour,
+    background, text style, opacity, tint, link styles): the descendants
+    are not restyled, so their cached styles would keep the old value.
+    Today every status rule sets ``border-title-color`` alone, which only
+    the node itself paints.
     """
+    assert _ANCESTOR_READ_RULES <= set(RulesMap.__annotations__)
     classes = set(_STATUS_CLASSES)
     host = _ready_host()
     async with host.run_test(size=(160, 45)) as pilot:
         await _mounted(host, pilot, "#console-workbench-header")
-        keyed, offenders = _ancestor_keyed(host.stylesheet.rules, classes)
+        keyed, offenders, inherited = _ancestor_keyed(host.stylesheet.rules, classes)
         variables = dict(host.stylesheet._variables)
     sheets = sorted(_CSS_DIR.glob("*.tcss"))
     assert sheets, f"No built sheets under {_CSS_DIR}"
@@ -196,13 +245,21 @@ async def test_no_rule_styles_a_descendant_from_a_workbench_status_class():
         stylesheet = Stylesheet(variables=variables)
         stylesheet.add_source(text, read_from=(str(sheet), ""))
         stylesheet.parse()
-        sheet_keyed, sheet_offenders = _ancestor_keyed(stylesheet.rules, classes)
+        sheet_keyed, sheet_offenders, sheet_inherited = _ancestor_keyed(
+            stylesheet.rules, classes
+        )
         keyed += sheet_keyed
         offenders += [f"{sheet.name}: {selector}" for selector in sheet_offenders]
+        inherited += [f"{sheet.name}: {selector}" for selector in sheet_inherited]
     assert keyed, "No rule is keyed on a Workbench status class."
     assert not offenders, (
         "These rules style a descendant from a Workbench status class, which a "
         f"status flip's targeted restyle skips: {offenders}"
+    )
+    assert not inherited, (
+        "These Workbench status rules set a property the node's descendants "
+        "read from it; a status flip's targeted restyle leaves the descendants' "
+        f"cached styles stale: {inherited}"
     )
 
 
@@ -210,8 +267,8 @@ async def test_no_rule_styles_a_descendant_from_a_workbench_status_class():
 async def test_a_stop_availability_flip_restyles_the_stop_button_once(monkeypatch):
     """Stop's variant and its three state classes cost one restyle.
 
-    Red on origin/dev: the ``variant`` watcher's remove and add, then three
-    ``set_class`` calls, restyled Stop five times when a run started.
+    Red on origin/dev: the ``variant`` watcher's remove and add, then the
+    ``set_class`` calls, restyled Stop four times when a run started.
     """
     host = _ready_host()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -300,6 +357,42 @@ async def test_composer_button_flips_leave_the_styles_a_full_restyle_computes():
                 targeted = _styles(button)
                 host.update_styles(button)
                 assert _styles(button) == targeted, (button.id, has_draft, run_active)
+
+
+@pytest.mark.asyncio
+async def test_a_send_reason_muted_and_size_flip_restyles_the_strip_once(monkeypatch):
+    """The reason strip's muted style joins its size-class swap: one restyle.
+
+    Red on origin/dev: ``set_class`` for the muted style restyled the strip,
+    then the size-class replacement restyled it again, so going from hidden
+    idle guidance to a visible blocker (and back) paid two restyles.
+    """
+    idle = "console-send-disabled-reason-idle"
+    app = ComposerHarness()
+    async with app.run_test(size=(160, 20)) as pilot:
+        composer = app.composer
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        composer._sync_send_disabled_reason("", muted=True)
+        await pilot.pause()
+        assert strip.has_class(idle) and strip.classes >= {"w-0", "h-0"}
+        applied = _spy_restyles(app, monkeypatch)
+
+        composer._sync_send_disabled_reason("Blocked", muted=False)
+
+        assert not strip.has_class(idle)
+        assert strip.classes >= {"w-auto", "h-1"}
+        restyles = sum(1 for node in applied if node is strip)
+        assert restyles == 1, (
+            f"The reason strip was restyled {restyles} times for one muted and size flip."
+        )
+        await pilot.pause()
+        assert strip.display and strip.region.height == 1
+        applied.clear()
+
+        composer._sync_send_disabled_reason("", muted=True)
+
+        assert strip.has_class(idle) and strip.classes >= {"w-0", "h-0"}
+        assert sum(1 for node in applied if node is strip) == 1
 
 
 class _Harness(App):

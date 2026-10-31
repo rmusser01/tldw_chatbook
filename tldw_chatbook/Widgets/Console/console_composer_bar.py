@@ -2634,7 +2634,7 @@ class ConsoleComposerBar(Horizontal):
 
         stop_button.disabled = False
         # TASK-36571: one restyle for Stop's variant and state classes; the
-        # variant watcher and three `set_class` calls paid five on a run start.
+        # variant watcher and three `set_class` calls paid four on a run start.
         _restyle_button_once(
             stop_button,
             "warning" if self._stop_available else "default",
