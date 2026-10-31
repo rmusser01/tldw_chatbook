@@ -216,7 +216,34 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Raised 24329 -> 24386 (methods unchanged) 2026-10-27 by TASK-33622.5,
+    #: owner rule (a fix over a size ratchet raises the row with a dated
+    #: comment; never move or reflow code to make it fit): the Terminal center
+    #: becomes a focus owner -- branches in the existing focus restore, pane
+    #: and target lookups, footer, input capture and composer-focus paths,
+    #: plus the Terminal footer constant. The logic lives in
+    #: Console_Modules/terminal.py (owns_widget, focus_target_ids,
+    #: sync_terminal_center_chrome). Rebased 2026-10-29 onto dev 3efe8476ce,
+    #: which measures 24329/737; with the fix, 24386/737, the exact measurement.
+    #: Lowered 24386 -> 24380 2026-10-27 by TASK-33622.8: the center swap's
+    #: focus branches moved into Console_Modules/terminal.py
+    #: (finish_center_swap), which also re-syncs the returned transcript.
+    #: Raised 24380 -> 24387 (methods unchanged) 2026-10-29 by TASK-33625.3,
+    #: same owner rule: both rail-state builders apply the Terminal's
+    #: narrow-width rail yield, and an explicit rail request exempts its side
+    #: from it (logic in Console_Modules/terminal.py yield_rails/reclaim_rails
+    #: and Chat/console_rail_state.py); 24387/737 measured.
+    #: Lowered 24387 -> 24385 2026-10-29 on rebase onto dev b5150753eb, which
+    #: measures 24327/737 (2 under its own row); with the three Terminal
+    #: fixes 24385/737, the exact measurement (dev's slack not absorbed).
+    #: Raised 24385 -> 24389 (methods unchanged) 2026-10-29 by TASK-33622.5's
+    #: review fix, same owner rule: with the composer collapsed, the rail's
+    #: Esc exit focuses the open Terminal and the rail footer hint names it
+    #: (one branch in action_focus_console_composer_home, one line in the
+    #: footer); 24389/737 measured on dev b5150753eb plus this branch.
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24391/737 -> 24389/737.
+    #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24389/737 -> 24393/737.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24393, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

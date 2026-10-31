@@ -1911,6 +1911,30 @@ release input into local keyboard scrollback; line/page/oldest navigation and
 **Jump live** stay local and are not forwarded. Mouse reporting is not
 supported in this version.
 
+While the Terminal fills the Console center, the chat composer is collapsed out
+of view and takes no keys, and the footer lists the Terminal's keys (**Ctrl+]**
+release input, **F6**/**Shift+F6** panes, **F1** help, **Ctrl+P** palette)
+instead of the chat send. Confirming **Arm Terminal** puts focus on **New**,
+and a session you create is selected and gets your typing straight away, even
+when other sessions exist. **F6** moves between the Terminal and the rails, and
+**Esc** from a rail goes back to the Terminal (the footer reads "Esc terminal"
+there). The line under the terminal says so when the terminal does not have the
+keyboard. **Return to transcript** brings the chat and its composer back: the
+same tabs, the conversation's messages at the place you were reading, and the
+keyboard in the composer.
+
+The terminal shows every cell of its screen whether or not it has focus: focus
+is a thicker, highlighted edge on the terminal's left side, never a frame drawn
+over the output, and the shell is always sized to exactly the cells you can
+see. Below 100 columns the Context and Inspect rails step aside while the
+Terminal is open (your rail settings are kept and come back with **Return to
+transcript**; press **Ctrl+]** first, because a terminal holding the keyboard
+sends Alt keys to the shell, and **Alt+C** or **Alt+I** then opens a rail
+beside the Terminal when you want one), and when a session tab or action button
+is too narrow for its full label it shows a short one instead (for example
+**Live**, **Return**, or the tab's position such as **#2**) rather than a word
+cut short.
+
 Close, Disarm, and shutdown perform bounded best-effort process cleanup and
 show when cleanup cannot be proven; deliberately detached processes may
 survive. macOS/Linux use an admitted controlling PTY. Windows Terminal support
