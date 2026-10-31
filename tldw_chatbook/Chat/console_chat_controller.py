@@ -7509,12 +7509,11 @@ class ConsoleChatController:
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
-<<<<<<< HEAD
     def trace_call_provider_contact(self, preparation_id: str) -> object | None:
         """Return whether a trace-paused send reached the provider (TASK-33621.5)."""
 
         return self._trace_call_provider_contacts.get(preparation_id)
-=======
+
     def _rebuild_continuation_trace_request(
         self,
         preparation: ConsoleTurnPreparation,
@@ -7588,7 +7587,6 @@ class ConsoleChatController:
             preparation,
             "Trace provenance could not be saved. Send without capture, or Cancel.",
         )
->>>>>>> 237d9cd16d (fix(console): make the missing-trace-request card's Cancel and Retry work (TASK-33621.23))
 
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
         """Return only the active preparation offering a pre-dispatch card."""
