@@ -18,7 +18,9 @@ from tldw_chatbook.Chat.console_turn_context import (
 )
 
 
-def _snapshot(run_id: str, skills=("character-creator",)) -> ConsoleTurnConfigurationSnapshot:
+def _snapshot(
+    run_id: str, skills=("character-creator",)
+) -> ConsoleTurnConfigurationSnapshot:
     return ConsoleTurnConfigurationSnapshot(
         session_id="session-a",
         provider_selection=ConsoleProviderSelection(provider="openai"),
