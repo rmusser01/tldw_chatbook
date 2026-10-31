@@ -1250,6 +1250,7 @@ def no_match_view(
     total: int | None,
     counts: Mapping[str, int] | None = None,
     failed: Collection[str] = (),
+    capped: Collection[str] = (),
 ) -> NoMatchView:
     """The no-match message for a search, a tag, or both (spec 1.5.4, RP-022).
 
@@ -1264,6 +1265,9 @@ def no_match_view(
             they are counted, or for a tag alone).
         failed: Kinds whose count failed: never listed, and they keep
             ``Not found in other kinds either.`` from being claimed.
+        capped: Kinds whose count is a lower bound (a server character
+            search answers at most 100 rows with no total, as its list's
+            ``100+`` says; the cap exists on dev): the label reads ``100+``.
 
     Returns:
         The two lines, the ``Also in:`` targets and the not-found line.
@@ -1292,7 +1296,8 @@ def no_match_view(
         AlsoInTarget(
             other,
             counts[other],
-            f"{ITEM_KINDS[other][2]} {counts[other]} {resolve_glyph(_GO)}",
+            f"{ITEM_KINDS[other][2]} {counts[other]}"
+            f"{'+' if other in capped else ''} {resolve_glyph(_GO)}",
         )
         for other in others
         if other not in failed and counts.get(other, 0) > 0
