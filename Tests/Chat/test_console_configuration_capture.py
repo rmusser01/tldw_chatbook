@@ -81,21 +81,35 @@ async def test_default_runtime_capture_does_not_import_console_session(
     assert captured.session_settings == case.store.effective_session_settings(
         case.session.id
     )
-    assert len(probe.permission_threads) == len(probe.read_threads) == 1
-    assert all(
-        thread is not threading.current_thread()
-        for thread in probe.permission_threads + probe.read_threads
-    )
-    assert probe.leases and all(
-        lease not in storage_admission._live_leases for lease in probe.leases
-    )
+    assert case.store.session_is_ephemeral(case.session.id)
+    assert captured.mcp_definition_capture == "captured"
+    assert captured.mcp_tool_maximum == frozenset()
+    assert dict(captured.mcp_definition_maximum) == {}
+    assert len(probe.permission_threads) == len(probe.read_threads) == 0
+    assert not probe.leases
 
 
 @pytest.mark.asyncio
 async def test_default_capture_releases_detached_view_while_native_worker_is_held(
     runtime_case,
 ):
+    from Tests.Chat.test_console_configuration_worker_lifetime import (
+        _OriginalConfigurationWorkspaceRead,
+    )
+    from tldw_chatbook import config
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
     case = runtime_case
+    database = WorkspaceDB(
+        config.get_user_data_dir() / "detached-view-capture.sqlite",
+        client_id="detached-view-capture",
+    )
+    registry = LocalWorkspaceRegistryService(database)
+    registry.create_workspace(workspace_id="capture-owned", name="Capture owned")
+    case.app.workspace_registry_service = registry
+    case.session.workspace_id = "capture-owned"
+    database.close()
 
     class View:
         def console_view_hooks(self):
@@ -104,31 +118,37 @@ async def test_default_capture_releases_detached_view_while_native_worker_is_hel
     view = View()
     reference = weakref.ref(view)
     generation = case.runtime.attach_view(view)
-    probe = snapshot_controls._MaximumProbe(case.source, case.permissions, hold=True)
+    # MCP is now deferred/empty here. Retain the actual stock Workspace reader
+    # so this still proves view detachment while native capture is outstanding.
+    probe = _OriginalConfigurationWorkspaceRead(registry)
     with probe.installed():
         task = asyncio.create_task(
             case.controller.capture_turn_configuration_snapshot(case.session.id)
         )
         try:
-            await catalog_controls._worker_entered(probe, task)
+            deadline = asyncio.get_running_loop().time() + 4
+            while not probe.entered.is_set() and not task.done():
+                assert asyncio.get_running_loop().time() < deadline
+                await asyncio.sleep(0.01)
+            assert probe.entered.is_set()
+            assert probe.thread is not threading.current_thread()
+            assert probe.live_at_entry and not probe.release_timed_out
             assert case.runtime.detach_view(view, generation)
             del view
             gc.collect()
             assert reference() is None
             assert not task.done()
-            assert probe.leases and all(
-                lease in storage_admission._live_leases for lease in probe.leases
-            )
+            assert probe.lease in storage_admission._live_leases
+            assert not probe.retired()
             probe.release.set()
             captured = await task
             assert captured.session_id == case.session.id
             assert captured.provider_selection.provider == "deepseek"
-            assert len(probe.permission_threads) == len(probe.read_threads) == 1
-            assert all(
-                lease not in storage_admission._live_leases for lease in probe.leases
-            )
+            assert not probe.release_timed_out
+            assert probe.retired()
         finally:
             await catalog_controls._settle(task, probe)
+            database.close()
 
 
 def test_shared_producer_captures_complete_detached_snapshot(snapshot_case, tmp_path):

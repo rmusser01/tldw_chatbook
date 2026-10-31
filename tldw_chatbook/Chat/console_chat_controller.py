@@ -6181,6 +6181,18 @@ class ConsoleChatController:
 
         return await read_hook_admission(self)
 
+    async def _hook_admission_read(self):
+        from .console_automatic_submission import read_hook_admission_result
+        return await read_hook_admission_result(self)
+
+    def _shared_hook_owner(self, session_id):
+        from .console_automatic_submission import shared_hook_owner
+        return shared_hook_owner(self, session_id)
+
+    async def _submission_hook_admission(self, session_id, shared=None):
+        from .console_automatic_submission import submission_hook_admission
+        return await submission_hook_admission(self, session_id, shared)
+
     async def queue_prompt(
         self,
         session_id: str,
@@ -9097,6 +9109,7 @@ class ConsoleChatController:
         custody_acceptance_hook: Callable[[], None] | None = None,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
+        _hook_read: Any = None,
     ) -> ConsoleSubmitResult:
         """Observe the whole attempt, including refusals before trace setup."""
         from .console_send_diagnostics import send_diagnostic_scope
@@ -9122,6 +9135,7 @@ class ConsoleChatController:
                 custody_acceptance_hook=custody_acceptance_hook,
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
+                _hook_read=_hook_read,
             )
             diagnostic.outcome = (
                 result.terminal_status.value
@@ -9166,6 +9180,7 @@ class ConsoleChatController:
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
         _operation: Callable[[], Awaitable[ConsoleSubmitResult]] | None = None,
+        _hook_read: Any = None,
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
         from .console_automatic_submission import resolve_automatic_authorization
@@ -9187,7 +9202,9 @@ class ConsoleChatController:
         from .console_hook_preparation import bind_hook_preparation_session
 
         with bind_hook_preparation_session(self, owner_key):
-            reason = await self.hook_admission_reason()
+            reason, hook_read = await self._submission_hook_admission(
+                owner_key, _hook_read
+            )
         if reason is not None:
             if (
                 origin
@@ -9244,6 +9261,7 @@ class ConsoleChatController:
                 custody_acceptance_hook=custody_acceptance_hook,
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
+                _hook_read=hook_read,
             )
         try:
             if _operation is not None:
@@ -9268,6 +9286,7 @@ class ConsoleChatController:
                 custody_acceptance_hook=custody_acceptance_hook,
                 _resume_preparation_id=_resume_preparation_id,
                 _resume_resolution=_resume_resolution,
+                _hook_read=hook_read,
             )
         except asyncio.CancelledError:
             bound_owner_key = self._submit_task_session(active_task) or owner_key
@@ -9349,6 +9368,7 @@ class ConsoleChatController:
         custody_acceptance_hook: Callable[[], None] | None = None,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
+        _hook_read: Any = None,
     ) -> ConsoleSubmitResult:
         """Submit work, explicitly identifying a wake's proven preflight refusal."""
         from .console_automatic_submission import resolve_automatic_authorization
@@ -9381,6 +9401,7 @@ class ConsoleChatController:
                     custody_acceptance_hook=custody_acceptance_hook,
                     _resume_preparation_id=_resume_preparation_id,
                     _resume_resolution=_resume_resolution,
+                    _hook_read=_hook_read,
                 )
         except BaseException as exc:
             # A wake may stop while preparation is still awaiting a helper,
@@ -9431,6 +9452,7 @@ class ConsoleChatController:
         *,
         recovery=False,
         chat_start_authorization=None,
+        hook_read=None,
     ) -> ConsoleSubmitResult | None:
         """Reuse the owning submission's provisional hook scope and reservation."""
         from .console_automatic_submission import prepare_submission_hooks
@@ -9443,6 +9465,7 @@ class ConsoleChatController:
             queue_authorization,
             recovery=recovery,
             chat_start_authorization=chat_start_authorization,
+            hook_read=hook_read,
         )
 
     async def _submission_hook_input(
@@ -9452,10 +9475,10 @@ class ConsoleChatController:
 
         return await submission_hook_input(self, draft, origin, provider_messages)
 
-    async def _legacy_submission_hook_input(self, draft, session_id):
+    async def _legacy_submission_hook_input(self, draft, session_id, hook_read=None):
         from .console_automatic_submission import legacy_submission_hook_input
 
-        return await legacy_submission_hook_input(self, draft, session_id)
+        return await legacy_submission_hook_input(self, draft, session_id, hook_read)
 
     async def _submit_draft_body(
         self,
@@ -9481,6 +9504,7 @@ class ConsoleChatController:
         custody_acceptance_hook: Callable[[], None] | None = None,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
+        _hook_read: Any = None,
     ) -> ConsoleSubmitResult:
         """Submit a composer draft through native Console validation and provider resolution.
 
@@ -9866,6 +9890,7 @@ class ConsoleChatController:
         hook_refusal = await self._prepare_submission_hooks(
             session, configuration, origin, queue_authorization,
             chat_start_authorization=chat_start_authorization,
+            hook_read=_hook_read,
         )
         if hook_refusal is not None:
             return hook_refusal
@@ -10828,7 +10853,7 @@ class ConsoleChatController:
         if origin is ConsoleSubmissionOrigin.MANUAL:
             try:
                 outcome = await self._legacy_submission_hook_input(
-                    clean_draft, session.id
+                    clean_draft, session.id, hook_read=_hook_read
                 )
             except BaseException:
                 if echoed_user is not None:
@@ -15160,13 +15185,29 @@ class ConsoleChatController:
                 and runtime_current()
             )
 
+        deferred = (
+            getattr(configuration, "mcp_definition_capture", "captured")
+            == "composition"
+        )
+        if deferred:
+            checker, code, namespace = _CONSOLE_TOOL_COMPOSITION_CHECKER
+            if (
+                _stock_console_tool_composition_current is not checker
+                or checker.__code__ is not code
+                or checker.__globals__ is not namespace
+                or not checker(self)
+            ):
+                raise PermissionError("mcp_catalog_source_changed")
         provider = await self._compose_mcp_provider(
             session_id,
             publish_counts=False,
             profile_id_provider=lambda: configuration.tool_policy_profile_id,
             persona_policy_provider=lambda: policy,
             maximum_tool_ids=configuration.mcp_tool_maximum,
-            maximum_definition_hashes=configuration.mcp_definition_maximum,
+            maximum_definition_hashes=(
+                None if deferred else configuration.mcp_definition_maximum
+            ),
+            **({"_freeze_definition_maximum_on_compose": True} if deferred else {}),
             **(
                 {"plugin_maximum": configuration.skill_context_maximum}
                 if any(
@@ -15202,6 +15243,7 @@ class ConsoleChatController:
         maximum_definition_hashes: Mapping[str, str] | None = None,
         plugin_maximum: Mapping | None = None,
         local_kill_switch: "LocalKillSwitchRead | None" = None,
+        _freeze_definition_maximum_on_compose: bool = False,
     ) -> MCPToolProvider | None:
         """Build + compose THIS run's MCPToolProvider for the running main loop.
 
@@ -15268,6 +15310,8 @@ class ConsoleChatController:
 
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
+            if _freeze_definition_maximum_on_compose:
+                raise PermissionError("mcp_catalog_source_changed")
             publish(None, None)
             return None
         bound_request_approvals = functools.partial(
@@ -15293,6 +15337,11 @@ class ConsoleChatController:
             ),
             maximum_tool_ids=maximum_tool_ids,
             maximum_definition_hashes=maximum_definition_hashes,
+            **(
+                {"_freeze_definition_maximum_on_compose": True}
+                if _freeze_definition_maximum_on_compose
+                else {}
+            ),
         )
         # TASK-33620.15.1: composed here, on the loop, or reused while nothing
         # it read has changed; ``None`` = switched off or a read failed.
@@ -15423,6 +15472,9 @@ class ConsoleChatController:
             )
         ):
             mcp_profile_kwargs["plugin_maximum"] = turn_context.skill_context_maximum
+        deferred = (turn_context is not None and turn_context.mcp_definition_capture == "composition")
+        if deferred and not _stock_console_tool_composition_current(self):
+            raise PermissionError("mcp_catalog_source_changed")
         from .console_run_start_tools import capture_run_tool_read
 
         local_kill_switch = capture_run_tool_read(
@@ -15439,9 +15491,10 @@ class ConsoleChatController:
             ),
             maximum_definition_hashes=(
                 turn_context.mcp_definition_maximum
-                if turn_context is not None
+                if turn_context is not None and not deferred
                 else None
             ),
+            **({"_freeze_definition_maximum_on_compose": True} if deferred else {}),
         )
         builtin_gate = build_builtin_gate(
             getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
@@ -29034,3 +29087,39 @@ _CONSOLE_PREPARING_CONTROLLER_READERS = tuple(
     for name in ('_provider_selection', 'in_flight_run_count', '_live_busy_session_ids', 'activity_for')
     for method in (getattr(ConsoleChatController, name),)
 )
+
+
+def _stock_console_tool_composition_current(controller):
+    from tldw_chatbook.Agents import mcp_tool_provider as providers
+    from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
+
+    if (not providers._controller_factory_current(MCPToolProvider)
+        or not standard_console_catalog_sources(
+            getattr(controller.app, "unified_mcp_service", None)
+        )):
+        return False
+    for name, original, code, namespace, defaults, keyword_defaults, keyword_items, closure in _CONSOLE_TOOL_COMPOSITION_METHODS:
+        # Examine descriptors without running custom getters during qualification.
+        descriptor = inspect.getattr_static(controller, name, None)
+        if descriptor is not original:
+            return False
+        callback = getattr(controller, name, None)
+        if not (
+            getattr(callback, "__self__", None) is controller
+            and getattr(callback, "__func__", None) is original
+            and vars(ConsoleChatController).get(name) is original
+            and original.__code__ is code
+            and original.__globals__ is namespace
+            and namespace is globals()
+            and original.__defaults__ is defaults
+            and original.__kwdefaults__ is keyword_defaults
+            and len(original.__kwdefaults__ or {}) == len(keyword_items)
+            and all((original.__kwdefaults__ or {}).get(key) is value for key, value in keyword_items)
+            and original.__closure__ is closure
+        ):
+            return False
+    return True
+
+_CONSOLE_TOOL_COMPOSITION_CHECKER = (_stock_console_tool_composition_current, _stock_console_tool_composition_current.__code__, globals())
+
+_CONSOLE_CONTEXT_PRESENTATION_READERS = tuple((name, function, function.__code__) for name in ("context_control_presentation_inputs", "_held_send_echo_id") for function in (getattr(ConsoleChatController, name),))

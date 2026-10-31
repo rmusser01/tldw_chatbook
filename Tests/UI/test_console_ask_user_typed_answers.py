@@ -111,14 +111,18 @@ async def test_visible_send_resolves_the_question_and_does_not_dispatch():
     composer.insert_text("use apac only")
     dispatched = []
 
-    async def dispatch(draft, *, stash=None):
+    async def dispatch(draft, *, stash=None, session_id=None):
+        assert session_id == "s1"
         dispatched.append(draft)
         return True
 
     card = _Card(_answers())
     controller = _controller()
     screen = SimpleNamespace(
-        _console_pending_send_stash=None,
+        _console_pending_send=None,
+        _console_visible_draft_session_id="s1",
+        _console_visible_send_session_id=lambda: "s1",
+        _ui_responsiveness_monitor=lambda: None,
         _raw_cli=SimpleNamespace(start_user_command=Mock()),
         _console_composer_or_none=lambda: composer,
         query_one=lambda *_a, **_k: composer,
@@ -134,6 +138,11 @@ async def test_visible_send_resolves_the_question_and_does_not_dispatch():
         _console_chat_controller=controller,
         _retrieval=SimpleNamespace(_pending_launch=lambda: None),
         _clear_console_composer_draft=lambda: composer.clear_draft(),
+    )
+    screen._send_console_message_from_visible_action_observed = (
+        lambda **kwargs: ChatScreen._send_console_message_from_visible_action_observed(
+            screen, **kwargs
+        )
     )
     screen._answer_pending_question_with_draft = (
         lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
@@ -157,13 +166,17 @@ async def test_visible_send_without_a_card_dispatches_as_before():
     composer.insert_text("hello")
     dispatched = []
 
-    async def dispatch(draft, *, stash=None):
+    async def dispatch(draft, *, stash=None, session_id=None):
+        assert session_id == "s1"
         dispatched.append(draft)
         return True
 
     controller = _controller()
     screen = SimpleNamespace(
-        _console_pending_send_stash=None,
+        _console_pending_send=None,
+        _console_visible_draft_session_id="s1",
+        _console_visible_send_session_id=lambda: "s1",
+        _ui_responsiveness_monitor=lambda: None,
         _raw_cli=SimpleNamespace(start_user_command=Mock()),
         _console_composer_or_none=lambda: composer,
         query_one=lambda *_a, **_k: composer,
@@ -179,6 +192,11 @@ async def test_visible_send_without_a_card_dispatches_as_before():
         _console_chat_controller=controller,
         _retrieval=SimpleNamespace(_pending_launch=lambda: None),
         _clear_console_composer_draft=lambda: composer.clear_draft(),
+    )
+    screen._send_console_message_from_visible_action_observed = (
+        lambda **kwargs: ChatScreen._send_console_message_from_visible_action_observed(
+            screen, **kwargs
+        )
     )
     screen._answer_pending_question_with_draft = (
         lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)

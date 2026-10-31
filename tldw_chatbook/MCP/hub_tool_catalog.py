@@ -26,6 +26,28 @@ _RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 DIRECT_RUNTIME_UNAVAILABLE_TOOLS = frozenset({"chat_with_llm"})
 
 
+def maximum_needs_external_catalog(maximum: frozenset[str] | None) -> bool:
+    """Whether a frozen tool ceiling may include an external catalog tool."""
+    if type(maximum) is not frozenset:
+        return True
+    prefix = "builtin:tldw_chatbook::"
+    return any(
+        type(tool_id) is not str  # noqa: E721 -- do not invoke custom string methods
+        or not tool_id.startswith(prefix)
+        or len(tool_id) == len(prefix)
+        for tool_id in maximum
+    )
+
+
+# Define before consumers import this module: a replacement must not become
+# the stock dependency rule merely by arriving before preparation's import.
+_MAXIMUM_EXTERNAL_CATALOG_ANCHOR = (
+    maximum_needs_external_catalog,
+    maximum_needs_external_catalog.__code__,
+    maximum_needs_external_catalog.__globals__,
+)
+
+
 @dataclass(frozen=True)
 class HubTool:
     """A single tool normalized for cross-server display.

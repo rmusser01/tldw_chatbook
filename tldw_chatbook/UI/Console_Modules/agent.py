@@ -629,6 +629,48 @@ def console_turn_activity_text(
     )
 
 
+def project_console_run_feedback(screen: Any, copy: str) -> None:
+    """Paint resident run feedback without configuration or authority reads."""
+    from textual.css.query import QueryError
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    try:
+        screen.query_one("#console-status-chips", ConsoleStatusChips).sync_run_chip(
+            bool(copy), copy
+        )
+    except QueryError:
+        pass
+
+
+def console_send_activity_copy(
+    run_state: Any, *, snapshot: Any = None, reply_started: bool = False
+) -> str:
+    """Project current send feedback without implying remote receipt."""
+    status = getattr(run_state.status, "value", run_state.status)
+    if status == "validating":
+        return "Sending…"
+    if status in {"retrying", "checking_citations"}:
+        return run_state.visible_copy or status
+    if status != "streaming":
+        return ""
+    if getattr(snapshot, "status", None) == "setup":
+        return CONSOLE_TURN_ACTIVITY_SETUP
+    step = next(
+        (
+            item
+            for item in reversed(tuple(getattr(snapshot, "steps", ()) or ()))
+            if getattr(item, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
+        None,
+    )
+    if (
+        getattr(snapshot, "status", None) == "running"
+        and getattr(step, "kind", None) == STEP_TOOL_CALL
+    ):
+        return f"{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {step.text}"
+    return "Streaming reply…" if reply_started else "Waiting for reply…"
+
+
 def _viewed_provider_is_self_hosted(controller: Any, session_id: Any) -> bool:
     """Whether the viewed session's provider is self-hosted (review A-F6)."""
     store = getattr(controller, "store", None)
@@ -1116,6 +1158,29 @@ class ConsoleAgentController:
             ),
         )
         return self._console_agent_bridge
+
+    def console_run_feedback_copy(self, run_state: Any) -> str:
+        """Read only resident viewed-session messages and current bridge activity."""
+        if getattr(run_state.status, "value", run_state.status) != "streaming":
+            return console_send_activity_copy(run_state)
+        controller = self._console_chat_controller
+        store = getattr(controller, "store", None)
+        session_id = getattr(store, "active_session_id", None)
+        runtime = getattr(self._screen, "_console_runtime_ref", None)
+        bridge = getattr(runtime, "agent_bridge", None)
+        read = getattr(bridge, "live_snapshot", None)
+        snapshot = (
+            read(self._current_console_rail_conversation_id() or "")
+            if callable(read)
+            else None
+        )
+        has_output = getattr(store, "has_live_reply_output", None)
+        reply_started = bool(
+            callable(has_output) and session_id and has_output(session_id)
+        )
+        return console_send_activity_copy(
+            run_state, snapshot=snapshot, reply_started=reply_started
+        )
 
     def console_turn_activity(self) -> str:
         """The viewed session's live turn-activity line, or ``""``.

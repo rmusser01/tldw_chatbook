@@ -57,3 +57,14 @@ Original source decision at c504ff3b1bda is preserved above with its original ap
 ## Current-owner integration amendment (2026-10-13)
 
 The accepted narrow route excludes Goal, automatic/machine/hook followups, Rules Checking/repair, pending helper cleanup, and all non-manual producers. Explicit False from FULL means deferred reconciliation: no timer stop or survivor handoff. Completed-current FULL, exact unpromoted manual receipt/task/claim/draft/attachments/visit/membership/gate/bridge, post-await checks and trailing FULL dominance remain required. This amendment selects no general polling cache.
+
+
+### PR3050 reconciliation boundary — 2026-10-31
+
+Retain the current configuration projection cadence, explicit FULL request
+accounting, trailing FULL dominance and durable-commit maintenance hold. The
+older separate two-second light-poll implementation is not replayed over those
+owners. Pressed fallback custody starts the existing transcript poll only for its
+original attached generation; a failed presentation handoff cannot undo already
+accepted custody. This reconciliation does not qualify the broader polling or
+whole-path latency proposal.

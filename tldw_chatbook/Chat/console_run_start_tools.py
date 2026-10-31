@@ -257,6 +257,9 @@ async def compose_run_mcp_provider(
         entry = _entry
     if entry is not None and entry.service() is not service:
         entry = None
+    deferred = getattr(provider, "_composition_definition_ceiling", False)
+    if deferred:
+        entry = None  # Each execution consumer establishes its own fresh ceiling.
     servers = entry.servers if entry is not None else ()
     observed_at = time.time_ns()
     epoch = _admission_epoch()
@@ -304,6 +307,7 @@ async def compose_run_mcp_provider(
                     need_local_switch=local_read is not None,
                     builtin_raw_name_exclusions=provider._builtin_raw_name_exclusions,
                     owned_profile_ids=provider._owned_profile_ids,
+                    maximum_tool_ids=provider._maximum_tool_ids,
                 )
                 _require_current(local_read)
                 if prepared is not None and not prepared.kill_switch:
@@ -317,6 +321,8 @@ async def compose_run_mcp_provider(
                     )
             except Exception as caught:  # noqa: BLE001 - preserve optional catalog refusal and the shared permission result. same optional catalog failure policy
                 _require_current(local_read)
+                if deferred:
+                    raise
                 _fill(local_read, True, caught)
                 logger.opt(exception=caught).warning(
                     "ConsoleChatController: MCP preparation failed; skipping MCP this run"
@@ -344,6 +350,8 @@ async def compose_run_mcp_provider(
             compose = provider.compose_catalog
             await (compose(kill_switch_engaged=False) if plain else compose())
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
+            if deferred:
+                raise
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
             )

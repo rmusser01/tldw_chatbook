@@ -63,9 +63,19 @@ async def test_initial_typing_survives_first_deferred_draft_refresh(initial):
         history = composer.export_undo_history()
         assert composer.draft_text() == initial + "x"
 
+        generation = screen._hooks._generation
+        assert screen._session._console_visible_draft_session_id == owner
+        assert store.active_session_id == owner
+        assert screen._session._initial_composer_sync_pending
         screen._console_sync_maintenance_paused = False
         screen._session._sync_console_session_draft()
+        assert (
+            screen._hooks._generation == generation
+        ), "First same-owner sync cancelled the hook Send"
         screen._session._sync_console_session_draft()
+        assert (
+            screen._hooks._generation == generation
+        ), "Repeat same-owner sync cancelled the hook Send"
 
         assert host.changed_owners == [owner]
         assert composer.draft_text() == initial + "x"
@@ -155,3 +165,33 @@ def test_initial_binding_without_existing_session_leaves_composer_untouched():
 
     assert composer.capture_draft_snapshot() == captured
     assert controller._console_visible_draft_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_successor_draft_sync_invalidates_hooks_and_preserves_original_draft():
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    host = DeferredInitialConsole(app, "original draft ")
+    async with host.run_test(size=(160, 48)) as pilot:
+        screen = host.screen_stack[-1]
+        await _wait_for_selector(screen, pilot, "#console-native-composer")
+        composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
+        store = screen._ensure_console_chat_store()
+        owner = store.active_session_id
+        assert composer.handle_console_key(Key("x", "x"))
+        history = composer.export_undo_history()
+        screen._console_sync_maintenance_paused = False
+        screen._session._sync_console_session_draft()
+        generation = screen._hooks._generation
+
+        successor = store.create_session(title="Successor draft")
+        store.set_session_draft(successor.id, "successor input")
+        screen._session._sync_console_session_draft()
+
+        assert screen._hooks._generation == generation + 1
+        assert host.changed_owners == [owner, successor.id]
+        assert store.session_draft(owner) == "original draft x"
+        assert screen._session._console_undo_histories[owner] == history
+        assert composer.draft_text() == "successor input"
+        assert screen._console_visible_draft_session_id == successor.id

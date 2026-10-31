@@ -219,3 +219,23 @@ async def test_defining_hub_constructor_changed_before_preparation_import_declin
     with monkeypatch.context() as patch:
         _substitute_hub_constructor(patch, hub_tool_catalog.HubTool, calls)
         await _assert_boundary(case, None, calls)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_dependency_rule_changed_before_preparation_import_declines(
+    request, snapshot_case, monkeypatch
+):
+    from tldw_chatbook.MCP import hub_tool_catalog
+
+    assert "tldw_chatbook.MCP.console_tool_preparation" not in sys.modules
+    case = snapshot_case
+    snapshot_controls._loop_projection(case)
+    calls = []
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            hub_tool_catalog,
+            "maximum_needs_external_catalog",
+            lambda maximum: calls.append(maximum) or False,
+        )
+        await _assert_boundary(case, None, calls)

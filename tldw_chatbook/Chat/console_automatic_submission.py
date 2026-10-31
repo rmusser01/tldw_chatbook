@@ -188,6 +188,7 @@ async def prepare_submission_hooks(
     *,
     recovery=False,
     chat_start_authorization=None,
+    hook_read=None,
 ):
     """Reuse the submission's existing hook scope and capacity reservation."""
     import asyncio
@@ -230,6 +231,11 @@ async def prepare_submission_hooks(
         if submissions is None:
             submissions = controller._hooks_v2_submissions = {}
         submissions[asyncio.current_task()] = (None, None, session_id)
+        from .console_runtime import ConsoleRuntime
+
+        shared = ({"_hook_read": hook_read} if hook_read is not None
+            and getattr(hook_runtime.prepare_hooks_v2, "__func__", None)
+            is ConsoleRuntime.prepare_hooks_v2 else {})
         try:
             lifecycle = await hook_runtime.prepare_hooks_v2(
                 session_id,
@@ -240,6 +246,7 @@ async def prepare_submission_hooks(
                     if origin is ConsoleSubmissionOrigin.MANUAL
                     else "scheduled"
                 ),
+                **shared,
             )
             if lifecycle is not None:
                 scope = lifecycle.turn_scope or lifecycle.open_scope()
@@ -287,19 +294,43 @@ async def submission_hook_input(
     return rows
 
 
-async def legacy_submission_hook_input(controller, draft, session_id):
-    """Use the existing legacy engine and bounded prompt projection."""
-    from tldw_chatbook.Agents.run_hooks import truncate_hook_text
+async def legacy_submission_hook_input(controller, draft, session_id, hook_read=None):
+    """Use the existing legacy engine and bounded prompt projection.
+
+    ``hook_read`` is the submitting attempt's one full consent read
+    (``ConsoleHookAttemptRead``). While it stands, the stock engine takes
+    only "no UserPromptSubmit hook matches" from it (ADR-230 decision 3).
+    When a hook matches, the engine selects it from a fresh read exactly
+    as before: a stale target would be refused at its fresh
+    ``launch_guard`` and block the Send, where a fresh selection omits a
+    hook another process disabled since the shared read.
+    """
+    from tldw_chatbook.Agents.run_hooks import RunHooksEngine, truncate_hook_text
 
     hooks_engine = controller._run_hooks_engine()
-    return (
-        await hooks_engine.fire_async(
-            "UserPromptSubmit",
-            session_id=session_id,
-            data={"prompt": truncate_hook_text(draft)},
+    if hooks_engine is None:
+        return None
+    shared = {}
+    if (
+        hook_read is not None
+        and type(hooks_engine) is RunHooksEngine
+        # An instance-replaced fire keeps its original call shape.
+        and "fire" not in vars(hooks_engine)
+        and "fire_async" not in vars(hooks_engine)
+    ):
+        owner = controller._shared_hook_owner(session_id)
+        authority = (
+            hook_read.authority_for(owner, session_id)
+            if owner is not None
+            else None
         )
-        if hooks_engine is not None
-        else None
+        if authority is not None:
+            shared["authority_read"] = authority
+    return await hooks_engine.fire_async(
+        "UserPromptSubmit",
+        session_id=session_id,
+        data={"prompt": truncate_hook_text(draft)},
+        **shared,
     )
 
 
@@ -318,16 +349,29 @@ def hook_admission_reason(controller) -> str | None:
         )
         if accessor is not None:
             if isinstance(source, _HookAdmissionReadSource) and source.managed:
-                # Keep cold construction inside the exact original native read.
+                # Preserve cold constructor/import affinity on this worker.
                 with source.runtime._run_hooks_lock:
                     permissions = (
-                        source.permissions if source.permissions is not None else accessor()
+                        source.permissions
+                        if source.permissions is not None
+                        else accessor()
                     )
                     source.permissions = permissions
             else:
                 permissions = accessor()
                 if isinstance(source, _HookAdmissionReadSource):
                     source.permissions = permissions
+            from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+            if isinstance(source, _HookAdmissionReadSource) and isinstance(
+                permissions, HookPermissions
+            ):
+                # ADR-230 decision 3: the same snapshot() read and reason,
+                # also keeping the targets it published so a submission
+                # can share this one read with its later preparation.
+                read = permissions.authority_read()
+                source.read = read
+                return read.snapshot.blocked_reason
             return permissions.snapshot().blocked_reason
         saved = read_hooks_config_snapshot()
         inventory = inspect_hooks_config(
@@ -379,12 +423,24 @@ class _HookAdmissionReadSource:
     permissions: Any = field(repr=False)
     runtime: Any = field(default=None, repr=False)
     managed: bool = False
+    read: Any = field(default=None, repr=False)
 
 
 async def read_hook_admission(self) -> str | None:
-    """Retain the original finite authority read without changing callback shape."""
-    from types import MethodType
+    return (await read_hook_admission_result(self))[0]
 
+
+async def read_hook_admission_result(self) -> tuple[str | None, Any]:
+    """``hook_admission_reason()`` plus the full read it performed.
+
+    Returns:
+        The admission reason exactly as ``hook_admission_reason()`` returns
+        it, and the stock callback's ``HookAuthorityRead`` (``None`` for a
+        custom callback, a non-stock owner, the owner-less config path or
+        any failure). The read grants nothing on its own; see
+        ``_submission_hook_admission``.
+    """
+    from types import MethodType
     from .console_hook_preparation import (
         hook_preparation_session_for,
         run_hook_preparation_read,
@@ -474,7 +530,7 @@ async def read_hook_admission(self) -> str | None:
                 raise RuntimeError("Console hook admission owner changed.")
 
         observers = () if runtime is None else (runtime._preparation_reads,)
-        return await run_hook_preparation_read(
+        reason = await run_hook_preparation_read(
             callback,
             creator=self,
             session_id=session_id,
@@ -483,7 +539,130 @@ async def read_hook_admission(self) -> str | None:
             require_current=require_current,
             source=source,
         )
-    except Exception:  # noqa: BLE001 - preserve public hook refusal while cancellation retains native custody.
+        return reason, source.read
+    except Exception:
         # Keep the existing public reason-return contract; cancellation is
         # BaseException and escapes only after its real native read retires.
-        return "Hooks unavailable; review or disable hooks before sending."
+        return "Hooks unavailable; review or disable hooks before sending.", None
+
+
+def shared_hook_owner(self, session_id: str | None) -> Any:
+    """The consent owner one attempt's shared read may stand in for.
+
+    In memory only. Sharing (ADR-230 decision 3) is limited to the stock
+    route: the runtime-managed owner behind the stock accessor, the stock
+    admission method and worker callback, and a live, unfenced runtime
+    bound to this controller and store. Anything else -- a custom callback
+    or reader (ADR-230 decision 8), an unbuilt owner, a changed or fenced
+    owner -- returns ``None`` and every consumer keeps its fresh read,
+    which also reproduces that route's existing refusals.
+
+    Args:
+        session_id: The submitting session.
+
+    Returns:
+        The ``HookPermissions`` owner, or ``None``.
+    """
+    from .console_chat_controller import ConsoleChatController
+
+    from types import MethodType
+
+    runtime = getattr(self, "_hooks_v2_runtime", None)
+    if session_id is None or runtime is None:
+        return None
+    from .console_runtime import _HOOK_PERMISSION_ACCESSOR_ORIGINAL
+
+    function, code = _HOOK_PERMISSION_ACCESSOR_ORIGINAL
+    accessor = self._hook_permissions_accessor
+    admission = self.hook_admission_reason
+    reader = self._hook_admission_reason
+    if (
+        self._disposed
+        or runtime._disposed
+        or runtime._chat_controller is not self
+        or runtime._chat_store is not self.store
+        or session_id in runtime._admission_fenced_sessions
+        or not (
+            isinstance(accessor, MethodType)
+            and accessor.__self__ is runtime
+            and accessor.__func__ is function
+            and function.__code__ is code
+        )
+        or not (
+            isinstance(admission, MethodType)
+            and admission.__self__ is self
+            and admission.__func__ is ConsoleChatController.hook_admission_reason
+        )
+        or not (
+            isinstance(reader, MethodType)
+            and reader.__self__ is self
+            and reader.__func__ is ConsoleChatController._hook_admission_reason
+        )
+    ):
+        return None
+    return runtime._hook_permissions
+
+
+async def submission_hook_admission(
+    self, session_id: str | None, shared: Any = None
+) -> tuple[str | None, Any]:
+    """Admit one submission attempt from at most one full hook read.
+
+    ADR-230 decision 3: a Send attempt reads hook consent in full once
+    before durable commit and passes that immutable read, as an argument,
+    to its later pre-commit preparation (v2 hook preparation, legacy
+    UserPromptSubmit selection). ``shared`` is that read when an earlier
+    step of the same attempt (received-intent preparation) already made
+    it; while it stands for this session and owner, it answers this
+    admission without another read. Otherwise this admission performs the
+    attempt's first full read and returns it for the later consumers.
+
+    Neither path weakens a later gate: the final pre-dispatch admission is
+    a fresh read, and every hook launch re-checks consent fresh in its own
+    ``launch_guard``. The later consumers take only a "nothing to do"
+    answer from the read (no UserPromptSubmit hook, no v2 hook to
+    prepare); any hook to select or prepare is read fresh there.
+
+    Args:
+        session_id: The submitting session.
+        shared: The attempt's earlier ``ConsoleHookAttemptRead``, if any.
+
+    Returns:
+        The admission refusal reason (``None`` admits) and the attempt's
+        ``ConsoleHookAttemptRead`` for its later consumers, or ``None``
+        when nothing may be shared.
+    """
+    from .console_chat_controller import ConsoleChatController
+
+    from types import MethodType
+    from .console_hook_preparation import ConsoleHookAttemptRead
+
+    admission = self.hook_admission_reason
+    if not (
+        isinstance(admission, MethodType)
+        and admission.__self__ is self
+        and admission.__func__ is ConsoleChatController.hook_admission_reason
+    ):
+        # A supported custom callback keeps its zero-argument call.
+        return await admission(), None
+    owner = self._shared_hook_owner(session_id)
+    authority = (
+        shared.authority_for(owner, session_id)
+        if owner is not None and isinstance(shared, ConsoleHookAttemptRead)
+        else None
+    )
+    if authority is not None and owner.attempt_read_current(authority):
+        # The attempt's earlier read was ready and nothing has moved it.
+        return None, shared
+    # The stock admission itself: same read, same reasons and refusals.
+    reason, authority = await self._hook_admission_read()
+    # A cold first read builds the owner; re-check the route after it.
+    owner = self._shared_hook_owner(session_id)
+    if (
+        reason is not None
+        or owner is None
+        or authority is None
+        or authority.owner is not owner
+    ):
+        return reason, None
+    return reason, ConsoleHookAttemptRead(session_id, authority)
