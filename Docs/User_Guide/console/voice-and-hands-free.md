@@ -180,8 +180,11 @@ each fully-silent reply says so.
   microphone permission for your terminal.
 - **"Dictation failed: The '…' speech model could not be downloaded or
   loaded."** — nothing was recorded and Hands-free turns Off. Check the
-  network and press **Dictate** (or turn Hands-free on) to try again; the
-  app log names the underlying error.
+  network and turn Hands-free on (or press **Dictate**) to try again, or
+  choose another model in Settings ▸ Speech & TTS; the app log names the
+  underlying error. "…showed no download progress for 120 seconds" means the
+  load went two minutes without a byte landing in the Hugging Face cache;
+  raise `dictation.model_prepare_stall_seconds` if your model needs longer.
 - **Turns send too early / too late** — adjust **Send delay** in Settings
   (or `dictation.handsfree_send_delay_seconds`).
 

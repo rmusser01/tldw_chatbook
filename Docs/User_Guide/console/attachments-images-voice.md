@@ -165,16 +165,22 @@ is never sent automatically, so you can edit before pressing Enter.
   runs, the chip counts it: "◐ Downloading speech model… 412 MB". The
   download streams into the Hugging Face cache, so one interrupted by
   quitting resumes on the next press (set `HF_HUB_DISABLE_XET=0` to use
-  hf_xet instead; it shows no progress).
+  hf_xet instead; it shows no progress). **Cancel** stops the attempt, not
+  the download: it keeps running in the background until it finishes or you
+  quit, and a later press uses what it fetched.
 - **Model download or load fails:** the attempt ends with one message —
   "Dictation failed: The 'parakeet-mlx' speech model could not be downloaded
-  or loaded. Nothing was recorded. Check your network connection and press
-  Dictate to try again. The log has the details." The microphone never
-  opens, the chip clears and the button reads **Dictate** again; pressing it
-  is the retry. A load that shows no progress for 2 minutes ends the same
-  way ("…stopped loading: no progress for 120 seconds."); raise
-  `dictation.model_prepare_stall_seconds` in config.toml for a provider whose
-  download the chip cannot count.
+  or loaded. Nothing was recorded. Check your network connection and try
+  again, or choose another model in Settings ▸ Speech & TTS. The log has the
+  details." The microphone never opens, the chip clears and the button reads
+  **Dictate** again; pressing it is the retry.
+- **No download progress for 2 minutes:** the attempt ends the same way
+  ("…showed no download progress for 120 seconds."), and the message names
+  `dictation.model_prepare_stall_seconds`. Only bytes landing in the Hugging
+  Face cache count as progress, so a provider that downloads elsewhere
+  (lightning-whisper-mlx), or a model that takes longer than that to load
+  once downloaded, can end here while still working; raise the setting in
+  config.toml for it.
 - **Length cap:** a capture stops itself at 60 seconds — "Dictation limit
   reached; transcribing the captured audio."
 - **Requires optional extras.** Without a microphone backend: "Microphone
