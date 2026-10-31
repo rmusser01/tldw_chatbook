@@ -21,8 +21,9 @@ def _write_sparse_config(path: Path, *, data_dir: Path, marker: str) -> bytes:
     path.parent.chmod(0o700)
     serialized = textwrap.dedent(
         f"""
+        # A note the user wrote; any rewrite of this file drops it.
         [general]
-        default_tab = "chat"
+        default_tab = "chat"  # and an inline one
         profile_marker = {json.dumps(marker)}
 
         [first_run]
@@ -85,7 +86,7 @@ def test_real_app_quit_persists_only_the_effective_config(tmp_path: Path) -> Non
 
     effective_config = tmp_path / "effective" / "config.toml"
     decoy_default = home / ".config" / "tldw_cli" / "config.toml"
-    _write_sparse_config(
+    effective_before = _write_sparse_config(
         effective_config,
         data_dir=effective_data,
         marker=EFFECTIVE_SENTINEL,
@@ -122,8 +123,7 @@ import os
 from pathlib import Path
 
 state = {{"mounted": False, "effective_path_selected": False,
-         "persistence_called": False, "persistence_succeeded": False,
-         "persistence_left_file_unchanged": False}}
+         "persistence_called": False, "persistence_succeeded": False}}
 phase = "import"
 
 try:
@@ -139,11 +139,8 @@ try:
             config_module.get_cli_config_path()
             == Path(os.environ["TLDW_CONFIG_PATH"])
         )
-        config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-        before = config_path.read_bytes()
         result = real_persist()
         state["persistence_succeeded"] = result is True
-        state["persistence_left_file_unchanged"] = config_path.read_bytes() == before
         return result
 
     lifecycle_module.persist_cli_config_for_shutdown = observed_persist
@@ -182,9 +179,9 @@ print({RESULT_PREFIX!r} + json.dumps(state, sort_keys=True))
         for stream in (result.stdout, result.stderr)
     )
     child_succeeded = result.returncode == 0
-    payload = _result_payload(result.stdout) if child_succeeded else {}
-    persisted_in_place = payload.pop("persistence_left_file_unchanged", False)
-    lifecycle_evidence_complete = payload == {
+    lifecycle_evidence_complete = child_succeeded and _result_payload(
+        result.stdout
+    ) == {
         "effective_path_selected": True,
         "mounted": True,
         "persistence_called": True,
@@ -198,15 +195,16 @@ print({RESULT_PREFIX!r} + json.dumps(state, sort_keys=True))
         effective_present = (
             effective_config.is_file() and effective_config.stat().st_size > 0
         )
+        effective_unchanged = effective_config.read_bytes() == effective_before
     except OSError:
-        effective_present = False
+        effective_present = effective_unchanged = False
 
     assert not marker_exposed, "isolated lifecycle exposed a config marker"
     assert child_succeeded, "isolated lifecycle child failed"
     assert lifecycle_evidence_complete, "isolated lifecycle evidence was incomplete"
     assert decoy_unchanged, "isolated lifecycle changed the decoy config"
     assert effective_present, "isolated lifecycle effective config was unavailable"
-    # TASK-35835: the quit's shutdown persist leaves the file as it found it.
-    # It used to write the template merge back. (Console's mount still saves
-    # its rail state, so the file is compared around the persist alone.)
-    assert persisted_in_place, "the shutdown persist rewrote the effective config"
+    # A launch that changes no setting leaves the file as it found it: the
+    # quit used to write the template merge back (TASK-35835), and Console's
+    # mount used to save its default rail layout (TASK-36385).
+    assert effective_unchanged, "the boot and quit rewrote the effective config"

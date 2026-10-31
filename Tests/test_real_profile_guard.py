@@ -368,6 +368,7 @@ def test_the_incidents_own_dir_fd_writer_cannot_replace_the_profile_file(
 
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(fake_profile / "config.toml"))
     screen = ChatScreen.__new__(ChatScreen)
+    screen._console_rail_first_use_seeds = {}
     screen.ui_state = NS(
         collapsible_states={}, sidebar_search_query="", last_active_section=None
     )

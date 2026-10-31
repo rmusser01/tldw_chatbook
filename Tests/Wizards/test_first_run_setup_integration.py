@@ -969,9 +969,10 @@ async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_h
     """AC#3 in the order the live app runs on a fresh profile.
 
     Start chatting stages the first-chat handoff at the config generation its
-    commit published. Console's first mount then writes the missing rail
+    commit published. Console's first mount used to write the missing rail
     scope to the config file (``_ensure_console_rail_scope_seed``) before
-    ``on_mount`` consumes the handoff (tmux capture, 2026-09-26). That write
+    ``on_mount`` consumed the handoff (tmux capture, 2026-09-26; TASK-36385
+    stopped that write), so this test makes the write itself. That write
     leaves the saved provider and model alone, and the handoff is fenced on
     those values (TASK-34100.5), so it applies: its own target is created
     and shows setup's pair, with nothing left pending.

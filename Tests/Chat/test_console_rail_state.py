@@ -1321,3 +1321,33 @@ def test_reveal_derived_right_close_does_not_mark_explicit():
         explicit_right_toggle=True,
     )
     assert console_rail_right_open_explicit(direct)
+
+
+def test_seed_flush_writes_held_defaults_before_a_record_that_could_seed_them():
+    """TASK-36385: seeding stays one-time once defaults are no longer saved at mount."""
+    take = console_rail_state_module.take_console_rail_seed_flush
+    shared = build_console_rail_preference_key(layout_scope="global").value
+    ws_a = build_console_rail_preference_key(
+        workspace_id="A", layout_scope="workspace"
+    ).value
+    ws_b = build_console_rail_preference_key(
+        workspace_id="B", layout_scope="workspace"
+    ).value
+    defaults = console_rail_state_module.serialize_console_rail_stored_preferences(None)
+
+    # A workspace save with no shared layout anywhere writes the shared defaults.
+    records: dict = {}
+    unsaved: dict = {}
+    assert take(records, unsaved, ws_a) == [(shared, defaults)]
+    assert records == {shared: defaults} and unsaved == {}
+
+    # A shared save writes a workspace's held defaults, not its own record.
+    held_b = dict(defaults)
+    records = {shared: dict(defaults), ws_b: held_b}
+    unsaved = {shared: records[shared], ws_b: held_b}
+    assert take(records, unsaved, shared) == [(ws_b, held_b)]
+    assert unsaved == {}
+
+    # A record the user edited (a new object) is no longer held defaults.
+    records = {shared: {**defaults, "model_open": True}}
+    assert take(records, {shared: dict(defaults)}, ws_a) == []

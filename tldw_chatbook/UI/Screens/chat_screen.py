@@ -456,6 +456,7 @@ from ...Chat.console_rail_state import (
     normalize_console_rail_layout_scope,
     resolve_console_rail_priority,
     serialize_console_rail_stored_preferences,
+    take_console_rail_seed_flush,
     serialize_console_rail_updated_preferences,
     console_rail_right_open_explicit,
 )
@@ -7275,6 +7276,10 @@ class ChatScreen(BaseAppScreen):
         # when the session's payload has actually changed since the last
         # check, and never while a run is actively streaming.
         self._last_console_rail_state: ConsoleRailState | None = None
+        #: TASK-36385: see `take_console_rail_seed_flush`.
+        self._console_rail_unsaved_seeds: dict[str, dict[str, bool]] = {}
+        self._console_rail_first_use_seeds: dict[str, dict[str, bool]] = {}
+        self._console_rail_seed_flush: list[tuple[str, dict[str, bool]]] = []
         # TASK-2154.1: last width band seen by the resize hook; a rebuild of
         # the (expensive) effective rail state only happens when the band
         # actually changes, not on every pixel of a resize drag.
@@ -11690,6 +11695,12 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(rail_state_config, dict):
             rail_state_config = {}
             console_config["rail_state"] = rail_state_config
+        # Explicit config records win; UI state retains only first-use defaults.
+        for key, seed in self._console_rail_first_use_seeds.items():
+            if key not in rail_state_config:
+                restored = dict(seed)
+                rail_state_config[key] = restored
+                self._console_rail_unsaved_seeds[key] = restored
         return rail_state_config
 
     @work(thread=True)
@@ -11702,27 +11713,45 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
         with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
-            latest: Any = serialized
-            app_config = getattr(self.app_instance, "app_config", None)
-            if isinstance(app_config, Mapping):
-                console_config = app_config.get("console")
-                if isinstance(console_config, Mapping):
-                    rail_state_config = console_config.get("rail_state")
-                    if (
-                        isinstance(rail_state_config, Mapping)
-                        and key in rail_state_config
-                    ):
-                        latest = rail_state_config[key]
-            latest_serialized = serialize_console_rail_stored_preferences(latest)
-            try:
-                saved = save_setting_to_cli_config(
-                    "console.rail_state",
-                    key,
-                    latest_serialized,
-                )
-            except Exception as exc:
-                logger.warning("Failed to persist Console rail preference: {}", exc)
-                saved = False
+            saved = False
+            # Retain failed prerequisites; a dependent record must not pass them.
+            while self._console_rail_seed_flush:
+                flush_key, flush_value = self._console_rail_seed_flush[0]
+                try:
+                    saved = save_setting_to_cli_config(
+                        "console.rail_state", flush_key, flush_value
+                    )
+                except Exception as exc:  # noqa: BLE001 -- retain failed seed for retry
+                    logger.warning(  # noqa: PLE1205 - Loguru brace format
+                        "Failed to persist Console rail seed defaults (error_type={})",
+                        type(exc).__name__,
+                    )
+                    saved = False
+                if not saved:
+                    break
+                self._console_rail_seed_flush.pop(0)
+            else:
+                latest: Any = serialized
+                app_config = getattr(self.app_instance, "app_config", None)
+                if isinstance(app_config, Mapping):
+                    console_config = app_config.get("console")
+                    if isinstance(console_config, Mapping):
+                        rail_state_config = console_config.get("rail_state")
+                        if (
+                            isinstance(rail_state_config, Mapping)
+                            and key in rail_state_config
+                        ):
+                            latest = rail_state_config[key]
+                latest_serialized = serialize_console_rail_stored_preferences(latest)
+                try:
+                    saved = save_setting_to_cli_config(
+                        "console.rail_state",
+                        key,
+                        latest_serialized,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to persist Console rail preference: {}", exc)
+                    saved = False
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 
@@ -12006,14 +12035,19 @@ class ChatScreen(BaseAppScreen):
         )
         serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
-        if persist and source is None:
-            from ...Backup_Recovery.profile_open import unchanged_selected_config
-            from ...config import get_cli_config_path
-
-            # Mounting a recovered Console must not rewrite its verified config
-            # merely to serialize defaults; explicit rail edits still save below.
-            persist = not unchanged_selected_config(get_cli_config_path())
-        if persist:
+        # Retain first use through the existing UI-state writer, preserving the
+        # commented config until an explicit edit or source-record migration.
+        if source is None:
+            self._console_rail_unsaved_seeds[selected_key.value] = serialized
+            if persist:
+                self._console_rail_first_use_seeds[selected_key.value] = dict(
+                    serialized
+                )
+                self._schedule_sidebar_state_save()
+        elif persist:
+            self._console_rail_seed_flush += take_console_rail_seed_flush(
+                rail_state_config, self._console_rail_unsaved_seeds, selected_key.value
+            )
             self._save_console_rail_preferences(
                 selected_key.value,
                 serialized,
@@ -12605,6 +12639,11 @@ class ChatScreen(BaseAppScreen):
                 explicit_right_toggle=explicit_right_toggle,
             )
             rail_state_config[preference_key.value] = serialized
+            self._console_rail_seed_flush += take_console_rail_seed_flush(
+                rail_state_config,
+                self._console_rail_unsaved_seeds,
+                preference_key.value,
+            )
             self._save_console_rail_preferences(
                 preference_key.value,
                 serialized,
@@ -23991,6 +24030,15 @@ class ChatScreen(BaseAppScreen):
                 except FileNotFoundError:
                     return
                 sidebar_data = data.get("sidebar", {})
+                seeds = sidebar_data.get("console_rail_seeds", {})
+                if isinstance(seeds, Mapping):
+                    self._console_rail_first_use_seeds = {
+                        key: serialize_console_rail_stored_preferences(value)
+                        for key, value in seeds.items()
+                        if isinstance(key, str)
+                        and key.startswith("console_rail_state:")
+                        and isinstance(value, Mapping)
+                    }
                 self.ui_state.collapsible_states = sidebar_data.get(
                     "collapsible_states", {}
                 )
@@ -24023,6 +24071,10 @@ class ChatScreen(BaseAppScreen):
         so a toggle arriving while that write is in flight cannot race it.
         """
         return {
+            "console_rail_seeds": {
+                key: dict(value)
+                for key, value in self._console_rail_first_use_seeds.items()
+            },
             "collapsible_states": dict(self.ui_state.collapsible_states),
             "search_query": self.ui_state.sidebar_search_query,
             "last_active_section": self.ui_state.last_active_section,
