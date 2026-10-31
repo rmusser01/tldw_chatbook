@@ -1273,6 +1273,31 @@ def test_only_a_pane_too_narrow_for_one_row_of_controls_stacks_them():
     assert (personas.rows, personas.stacked) == (2, False)
 
 
+def test_import_shortens_where_the_header_row_cannot_hold_it(ascii_mode):
+    """Deferred minor T7a: at 80x24 the pane has 12 cells and the header row
+    holds Import plus the 3-cell collapse button. In ASCII mode "Import..."
+    is 9 cells, so the row needed 13 and the collapse button spilled one
+    cell past the pane (new with B2b). The ladder's new rung shortens it to
+    "Import" there; "Import..." comes back one cell wider."""
+    tight = frame_state.fit_items_toolbar("characters", width=12, sort_key="name_asc")
+    assert tight.labels["import"] == "Import"
+    wider = frame_state.fit_items_toolbar("characters", width=13, sort_key="name_asc")
+    assert wider.labels["import"] == "Import..."
+    for fit in (tight, wider):
+        assert (
+            frame_state.CONTROL_GAP_CELLS
+            + cell_len(fit.labels["import"])
+            + frame_state.RAIL_COLLAPSE_CELLS
+            <= (12 if fit is tight else 13)
+        )
+
+
+def test_the_unicode_import_label_fits_the_tightest_pane_whole():
+    """The control: "Import…" (7 cells) plus the collapse button fits 12 cells."""
+    fit = frame_state.fit_items_toolbar("characters", width=12, sort_key="name_asc")
+    assert fit.labels["import"] == "Import…"
+
+
 def test_the_rail_title_yields_to_import_below_about_100_columns():
     """Owner decision D2: "Library" shows beside the interim Import… where
     both fit whole (100 columns and wider), and yields below that."""

@@ -161,6 +161,54 @@ async def test_enter_with_no_match_picks_nothing_and_keeps_the_picker_open():
         assert app.screen is picker
 
 
+async def test_down_and_up_do_nothing_while_the_box_matches_no_tag():
+    """Deferred minor T11a: with a query no tag matches, the list holds only
+    "All (clear filter)" with nothing highlighted, and Textual's cursor_down
+    went from no highlight to row 0, so Enter then cleared the filter the
+    user was narrowing to (new with B2b's combobox). Down and Up now do
+    nothing there; Enter still picks nothing."""
+    app = _Host(TAGS, "noir")
+    async with app.run_test() as pilot:
+        picker, search, listing = await _open(pilot)
+        await pilot.press(*"zzz")
+        await _settled(pilot)
+        assert _rows(listing) == ["All (clear filter)"]
+        assert _highlighted(picker, listing) is None
+        await pilot.press("down")
+        assert _highlighted(picker, listing) is None
+        await pilot.press("up")
+        assert _highlighted(picker, listing) is None
+        assert picker.focused is search
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.picked is NOT_YET and app.screen is picker
+        # Deleting back to a query with matches highlights its first match.
+        await pilot.press("backspace", "backspace", "backspace", *"fan")
+        await _settled(pilot)
+        assert _highlighted(picker, listing) == "fantasy"
+
+
+async def test_up_at_the_first_row_and_down_at_the_last_row_stay_put():
+    """Deferred minor T11a pins the ends: Up on the first row ("All") and
+    Down on the last row keep that row highlighted (Textual's ListView
+    clamps); typing still goes to the box."""
+    app = _Host(TAGS)
+    async with app.run_test() as pilot:
+        picker, search, listing = await _open(pilot)
+        assert _highlighted(picker, listing) == "All (clear filter)"
+        await pilot.press("up")
+        assert _highlighted(picker, listing) == "All (clear filter)"
+        for _ in range(len(TAGS) + 2):
+            await pilot.press("down")
+        assert _highlighted(picker, listing) == TAGS[-1]
+        await pilot.press("down")
+        assert _highlighted(picker, listing) == TAGS[-1]
+        assert picker.focused is search
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.picked == TAGS[-1]
+
+
 async def test_a_row_picked_in_the_list_returns_its_exact_tag():
     """Rows map back by index, never by their painted label (a tag that looks
     like markup is returned as typed)."""

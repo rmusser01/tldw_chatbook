@@ -503,20 +503,33 @@ async def test_the_focused_search_shows_what_you_type_and_nothing_moves(
 
 
 @pytest.mark.parametrize(
-    "size",
-    [(80, 24), (120, 36), (160, 45), (220, 55)],
-    ids=["80x24", "120x36", "160x45", "220x55"],
+    "size, ascii_glyphs",
+    [
+        ((80, 24), False),
+        ((120, 36), False),
+        ((160, 45), False),
+        ((220, 55), False),
+        ((80, 24), True),
+    ],
+    ids=["80x24", "120x36", "160x45", "220x55", "80x24-ascii"],
 )
 async def test_every_toolbar_control_is_whole_and_inside_the_pane(
-    size, mock_app_instance, volume_348
+    size, ascii_glyphs, mock_app_instance, volume_348
 ):
-    """TASK-33787 AC#4 and B2b AC#1 in every kind: each control and the search
-    box lie inside the pane with their whole label painted, the toolbar takes
-    at most 2 rows at 120 columns and 1 at 160 and wider, and Import sits on
-    the rail's title row (owner decision D2)."""
+    """TASK-33787 AC#4 and B2b AC#1 in every kind: each control, the search
+    box and the rail's collapse button lie inside the pane with their whole
+    label painted, the toolbar takes at most 2 rows at 120 columns and 1 at
+    160 and wider, and Import sits on the rail's title row (owner decision
+    D2). In ASCII mode at 80x24 "Import..." is two cells wider than "Import…"
+    and the collapse button spilled one cell past the pane (deferred minor
+    T7a, new with B2b): the fit now shortens Import to "Import" there."""
     _seed_every_kind(mock_app_instance, volume_348)
     async with open_styled_roleplay(
-        "mock", mock_app_instance, size=size, character_db=volume_348
+        "mock",
+        mock_app_instance,
+        size=size,
+        character_db=volume_348,
+        ascii_glyphs=ascii_glyphs,
     ) as pilot:
         screen = pilot.app.screen
         pane = screen.query_one("#personas-library-pane")
@@ -524,7 +537,7 @@ async def test_every_toolbar_control_is_whole_and_inside_the_pane(
         for mode in _KINDS:
             await _show_kind(pilot, screen, mode)
             rows = painted_rows(screen)
-            for selector in _TOOLBAR_PARTS:
+            for selector in (*_TOOLBAR_PARTS, "#personas-library-rail-collapse"):
                 widget = screen.query_one(selector)
                 if not widget.display:
                     continue
@@ -535,7 +548,12 @@ async def test_every_toolbar_control_is_whole_and_inside_the_pane(
                     region,
                     inside,
                 )
-                if selector != "#personas-library-search":
+                if selector == "#personas-library-rail-collapse":
+                    # Three cells wide for a one-cell glyph: whole, centred.
+                    assert rows[region.y][region.x : region.right].strip() == str(
+                        widget.label
+                    ), (mode, selector)
+                elif selector != "#personas-library-search":
                     label = str(widget.label)
                     assert rows[region.y][region.x : region.right] == label, (
                         mode,
