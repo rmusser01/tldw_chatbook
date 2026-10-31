@@ -276,6 +276,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
     #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24391/737 -> 24389/737.
     #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
+    #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24389/737 -> 24393/737.
+    #: PR3300 integration, 2026-10-31: explicit user size waiver; exact measurement.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24566, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
