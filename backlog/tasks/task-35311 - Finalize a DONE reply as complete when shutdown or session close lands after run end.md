@@ -12,7 +12,7 @@ labels:
 - uat
 priority: medium
 dependencies: []
-updated_date: 2026-10-31 17:46
+updated_date: 2026-10-31 21:23
 ---
 
 ## Description
@@ -90,3 +90,11 @@ Review repair plan (2026-10-31): reproduce a provider failure after submit cance
   Stop had already settled. The wrapper now uses the existing maintenance task owner
   for retention and terminal exception observation; no new owner or blocking Stop
   drain was added. All eight focused lifecycle cases pass (review-provider-green.log).
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Current-base integration after archive recovery merged (2026-10-31): rebased PR #3173 onto a0dbc1174c3dbd4d2732b0212786ec9e08bfc3b5. Independent conflict review confirmed the combined lifecycle: initialize run_id/outcome before archive preparation inside try; finally retire the active-provider lookup before awaiting release of the exact archive authority. The stock provider already performs finish/release before returning; citation finalization stays on the original stream task. Maintenance-task retention, shared hydration guard, recorder ownership assertions and explicit Stop behavior are preserved. No new ADR: this directly preserves the existing shutdown and archive authority contracts.
+
+The selected integration run passed all eleven cases in 177.98s: eight shutdown/terminal-state/citation cases, both native archive reseal refusal/cancellation cases, and the plain direct successful archive restore. No failures or errors; all five frozen SHA-256 hashes of UTF-8 text normalized to LF match. Receipts: pr3173-resync/test-runtime/archive-shutdown-integration-1793481485448106600 (command.json, source-hashes.json, pytest.log, result.xml). All six changed product diagnostic owner/sink/path projections match. Census retains the full 1,175-entry base prefix and appends four reviewed unique resume nodes (1,179). Exact user-waived size pins: controller 29,252; session 7,061; workspace 8,777; ChatScreen 24,328/739. Whitespace checks pass. User explicitly waived hosted CI/size and selected independent review instead of Qodo; final head review and oldest-first publication remain pending.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
