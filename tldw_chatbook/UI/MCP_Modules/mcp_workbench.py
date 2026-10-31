@@ -2961,6 +2961,13 @@ class MCPWorkbench(Container):
         await self.query_one(MCPPermissionsMode).update_server_profiles(
             await self._server_governance_profiles(service, refresh=refresh_governance)
         )
+        # TASK-18928: keep the suggestion-review section coherent with the
+        # same pass (one bounded execution-log read; the report's own
+        # effective-state resolution is the engine's, not this pass's
+        # ``effective`` batch -- it must re-resolve because exclusions like
+        # "already allowed" depend on the store this pass may have just
+        # mutated).
+        await self._refresh_permissions_suggestions(canvas)
         canvas.call_after_refresh(canvas.reveal_focused_control)
 
     def _cascade_for_tool(
@@ -3837,6 +3844,162 @@ class MCPWorkbench(Container):
                         successor.profile_id
                     ),
                 )
+
+    # -- TASK-18928: suggestion-review application (single-writer contract
+    # mirrors the state-cycle handler above: the workbench applies every
+    # mutation through the control-plane service and resyncs the canvas).
+
+    async def _refresh_permissions_suggestions(
+        self, canvas: MCPPermissionsMode | None = None
+    ) -> None:
+        """Push one mined-suggestion snapshot into the Permissions canvas.
+
+        Reads the (already dismissal-filtered) recommendation report plus
+        the dismissal map; every seam is ``getattr``-guarded the way the
+        state-cycle path guards its T4 seams, so an older/fake service
+        renders an empty section instead of raising.
+        """
+        service = self._service()
+        if service is None:
+            return
+        try:
+            if canvas is None:
+                canvas = self.query_one(MCPPermissionsMode)
+        except Exception:
+            return
+        report_getter = getattr(service, "permission_prompt_recommendations", None)
+        list_dismissals = getattr(service, "list_permission_suggestion_dismissals", None)
+        if not callable(report_getter):
+            return
+        try:
+            # task-32804.7 discipline: the report read is a JSONL log read
+            # plus a store load -- run it off the event loop like every
+            # other permission read this canvas triggers. The getter is an
+            # async service method, so it gets its own loop on the thread.
+            report = await asyncio.to_thread(lambda: asyncio.run(report_getter()))
+            dismissals: dict[str, str] = {}
+            if callable(list_dismissals):
+                dismissals = dict(await asyncio.to_thread(list_dismissals))
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion refresh failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return
+        canvas.populate_suggestions(report.recommendations, dismissals)
+
+    async def on_mcp_permissions_mode_suggestion_accept_requested(
+        self, event: MCPPermissionsMode.SuggestionAcceptRequested
+    ) -> None:
+        """Accept one suggestion: persist a real Always-allow entry through
+        the same hash-safe apply path the recommendation engine defines
+        (re-verified against the CURRENT catalog snapshot at apply time, so
+        a definition that changed since the row was rendered refuses)."""
+        event.stop()
+        service = self._service()
+        if service is None:
+            return
+        apply_suggestion = getattr(
+            service, "apply_permission_prompt_recommendation", None
+        )
+        if not callable(apply_suggestion):
+            return
+        try:
+            # task-32804.7: the apply path ends in a store write (~13 ms of
+            # locked fsync JSON); offload the whole coroutine like the
+            # sibling dismissal handlers, not just its tail.
+            recommendation = await asyncio.to_thread(
+                lambda: asyncio.run(
+                    apply_suggestion(event.server_key, event.tool_name)
+                )
+            )
+        except KeyError:
+            self.app.notify(
+                _toast(
+                    "That suggestion is no longer current — refreshed the list."
+                ),
+                severity="warning",
+            )
+            await self._refresh_permissions_suggestions()
+            return
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion accept failed (exception_type={})",
+                type(exc).__name__,
+            )
+            self.app.notify(
+                _toast("Could not save that Always-allow entry."),
+                severity="error",
+            )
+            return
+        self.app.notify(
+            _toast(
+                f"Always-allow saved for {recommendation.tool_name} "
+                f"({recommendation.server_label or recommendation.server_key})."
+            ),
+            severity="information",
+        )
+        await self._sync_permissions_mode()
+
+    async def on_mcp_permissions_mode_suggestion_dismiss_requested(
+        self, event: MCPPermissionsMode.SuggestionDismissRequested
+    ) -> None:
+        event.stop()
+        service = self._service()
+        if service is None:
+            return
+        dismiss = getattr(service, "dismiss_permission_suggestion", None)
+        if not callable(dismiss):
+            return
+        try:
+            await asyncio.to_thread(dismiss, event.server_key, event.tool_name)
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion dismiss failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return
+        await self._refresh_permissions_suggestions()
+
+    async def on_mcp_permissions_mode_suggestion_restore_requested(
+        self, event: MCPPermissionsMode.SuggestionRestoreRequested
+    ) -> None:
+        event.stop()
+        service = self._service()
+        if service is None:
+            return
+        restore = getattr(service, "restore_permission_suggestion", None)
+        if not callable(restore):
+            return
+        try:
+            await asyncio.to_thread(restore, event.server_key, event.tool_name)
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion restore failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return
+        await self._refresh_permissions_suggestions()
+
+    async def on_mcp_permissions_mode_suggestion_dismissals_clear_requested(
+        self, event: MCPPermissionsMode.SuggestionDismissalsClearRequested
+    ) -> None:
+        event.stop()
+        service = self._service()
+        if service is None:
+            return
+        clear = getattr(service, "clear_permission_suggestion_dismissals", None)
+        if not callable(clear):
+            return
+        try:
+            await asyncio.to_thread(clear)
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion dismissal clear failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return
+        await self._refresh_permissions_suggestions()
 
     async def on_mcp_permissions_mode_kill_switch_toggled(
         self, event: MCPPermissionsMode.KillSwitchToggled
