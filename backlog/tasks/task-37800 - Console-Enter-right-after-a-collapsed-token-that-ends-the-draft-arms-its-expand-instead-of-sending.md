@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-29 17:13'
-updated_date: '2026-10-30 05:15'
+updated_date: '2026-10-31 00:30'
 labels:
   - console
   - composer
@@ -57,4 +57,6 @@ TASK-33622.1 implemented the owner decision of 2026-10-27 (Enter expands a token
 **Known limit.** A paste that starts with a line break can only be expanded by a click: the caret can never sit right before its chip. The User Guide says so.
 
 **Merge evidence (2026-10-29, rebased onto dev ff815f8559).** Review of 6e6447f19a: ship, no blocking findings. Follow-ups applied: both TASK-37800 tests joined the UI PR gate census (floor 1152 + 2 = 1154); a new real-ChatScreen case pins that a pending expand question still answers Enter at its token's right edge (live: Home, Enter, End left the question up and the next Enter expanded it), and the User Guide now says so; the composer's size row was lowered to its measured 7142 before TASK-37873 raised it. The raw-CLI hidden-paste finding is fixed here as TASK-37873; owner questions filed as TASK-37870, TASK-37871 and TASK-37872. Under the plain command test_console_composer_token_enter.py 18 passed, and all 18 fail on origin/dev (a bare 'Expand?', no send, or a chip without '| Expand'). Composer test files compared by test id with a detached origin/dev worktree: no new failures. ./scripts/preflight.sh passes.
+
+**Superseded by the owner decision of 2026-10-30 (TASK-37870, TASK-37871).** ENTER ALWAYS SENDS: Enter never expands a collapsed paste, file or prompt token, wherever the caret is, so the left-edge rule this task implemented (and the pending confirm owning Enter at either edge) is retired. A dedicated key, Ctrl+E, named in every chip's hint ('Pasted text | N characters | Ctrl+E expand'), expands the token right before or right after the caret, or the nearest one; a click still asks and a second click or Ctrl+E answers. Paste then Enter still sends on one Enter. This task's two tests changed with it: test_one_enter_sends_with_the_caret_right_after_a_token became test_one_enter_sends_wherever_the_caret_is (every flow it named, plus a question typed in front of a paste, a paste then a question, a leading-line-break paste and a caret right before a trailing token), and test_left_onto_a_trailing_token_then_enter_still_expands_it is replaced by Ctrl+E tests in Tests/UI/test_console_composer_token_expand_key.py.
 <!-- SECTION:NOTES:END -->
