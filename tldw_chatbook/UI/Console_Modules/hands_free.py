@@ -424,6 +424,12 @@ class ConsoleSpeculativeHandsFreeSession:
     generation: int
 
 
+def _meeting_in_progress(app_instance: Any) -> bool:
+    """Read the lazy meeting owner afresh for each voice-entry check."""
+    owner = getattr(app_instance, "meeting_session_owner", None)
+    return owner is not None and bool(getattr(owner, "is_active", False))
+
+
 class ConsoleHandsFreeController:
     """Owns the Console shell's V3 pipeline hands-free loop, plus the
     engine-fork/action coordination shared with the V4 realtime loop.
@@ -1170,8 +1176,7 @@ class ConsoleHandsFreeController:
             ``(message, severity)``, or None when entry may ask for consent.
             The engine paths repeat these checks after acceptance.
         """
-        owner = getattr(self.app_instance, "meeting_session_owner", None)
-        if owner is not None and getattr(owner, "is_active", False):
+        if _meeting_in_progress(self.app_instance):
             return (
                 "Meeting in progress: stop it in Meetings before using hands-free.",
                 "warning",
@@ -1378,8 +1383,7 @@ class ConsoleHandsFreeController:
         if self._console_realtime is not None:
             self._console_realtime.controller.on_exit_request()
             return
-        owner = getattr(self.app_instance, "meeting_session_owner", None)
-        if owner is not None and getattr(owner, "is_active", False):
+        if _meeting_in_progress(self.app_instance):
             self.app_instance.notify(
                 "Meeting in progress: stop it in Meetings before using hands-free.",
                 severity="warning",
