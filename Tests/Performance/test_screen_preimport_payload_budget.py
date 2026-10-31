@@ -67,9 +67,7 @@ module count as its own row, ``MAX_FIRST_SEND_WARMUP_ADDED_MODULES``
 the warm-up newly imports one of ``test_app_import_weight.HEAVY_MODULES``, so
 a heavy third-party import (invisible to a tldw-only module count) is named
 too. Measured 2026-10-20: 94 modules / 61,281 LOC; re-pinned 2026-10-22:
-94 modules / 61,609 LOC (dev grew ``local_tool_provider``); re-pinned
-2026-10-30: 95 modules / 61,957 LOC (TASK-33620.15.19 lists the two Library
-preparation modules an Automatic first send imports).
+94 modules / 61,609 LOC (dev grew ``local_tool_provider``).
 
 Honest blind spots:
 
@@ -146,15 +144,7 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: warm-up list), modules exactly, no slack. RATCHET (ADR-097): never rises.
 #: No LOC row: a LOC pin with no slack would fail every edit that adds a line
 #: to one of these Console modules; the per-entry LOC is printed instead.
-#: Re-pinned 94 -> 95 on 2026-10-30 (TASK-33620.15.19): a live first send
-#: with Library Auto set to Automatic loaded
-#: ``Chat.console_library_preparation`` and ``Chat.console_library_search`` on
-#: the UI loop, so both joined the list. Measured at origin/dev 7536ac3b87:
-#: dev 93 modules, branch 95 (exactly those two); ADR-097 ledger row. Owner
-#: decision: PENDING. The task's AC#2 asks for this re-pin, but an agent filed
-#: that AC in review; ADR-097 needs the owner's explicit sign-off, quoted in
-#: the ledger row, before this merges.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 95
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
 import json

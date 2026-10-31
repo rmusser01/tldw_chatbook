@@ -12,13 +12,6 @@ UI-ready census), so the first send paid them while the user waited, in
 run-start callbacks of 40-118 ms. After the provider call it imported nine
 more, the canvas settlement's in one callback of 157 ms CPU.
 
-TASK-33620.15.19 measured a first send with the conversation's Library Auto
-set to Automatic (origin/dev 7536ac3b87, a note found and sent): with this
-warm-up done, the UI loop still loaded the two modules the controller imports
-function-locally to prepare Library retrieval, ``console_library_preparation``
-and ``console_library_search``, in the send's own run-start callback (about
-1 ms between them; their imports are resident). They are listed below.
-
 The app's post-UI-ready pre-import pass (``TldwCli._preimport_heavy_screens``,
 a daemon thread behind the same on/off switch, off in the census) imports them
 after the speculative screen routes, paced like them, then parses the built-in
@@ -54,10 +47,9 @@ from loguru import logger
 from tldw_chatbook.Utils.ui_responsiveness import freeze_long_lived_heap
 
 #: In first-send order. Before acceptance: the acknowledgement, the received
-#: intent and admission. After it, run start: hook preparation, an Automatic
-#: send's Library preparation, compaction preflight, the durable commit,
-#: response rules, the agent's tool providers and the run-start catalog; then
-#: the stream and the run's end.
+#: intent and admission. After it, run start: hook preparation, compaction
+#: preflight, the durable commit, response rules, the agent's tool providers
+#: and the run-start catalog; then the stream and the run's end.
 FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
@@ -87,9 +79,6 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Agents.hooks_v2.context",
     "tldw_chatbook.Chat.console_legacy_flat_roots",
     "tldw_chatbook.Chat.console_context_window",
-    # An Automatic-retrieval send's Library preparation (TASK-33620.15.19).
-    "tldw_chatbook.Chat.console_library_preparation",
-    "tldw_chatbook.Chat.console_library_search",
     "tldw_chatbook.Chat.console_visual_transcript",
     "tldw_chatbook.Chat.console_predispatch_block",
     "tldw_chatbook.Chat.console_native_commit",
