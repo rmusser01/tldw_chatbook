@@ -31,9 +31,19 @@ shares the GIL with that import instead.
 ``Tests/UI/test_console_first_send_import_cycles.py`` keeps the list free of
 module-level import cycles, which two threads could otherwise deadlock on.
 
-Keep the list to modules the send path really imports, in the order it does;
-``Tests/UI/test_console_first_send_preimport.py`` checks that each is still
-lazy at UI-ready and that the harness's send imports nothing lazy beyond it.
+A step that has started runs to its end, so a navigation that arrives
+mid-step shares the GIL with the rest of it. TASK-33620.15.18 measured that
+live: imported whole, ``Canvas.native_authority`` was one 63-70 ms-CPU step
+(it loaded aiohttp, html5lib and tinycss2), and a Library click landing in it
+drew its first frame +52 ms later (paired median) than without the warm-up.
+So each third-party package the send path loads is its own step, listed
+after its dependencies; the heaviest left is aiohttp (about 37 ms CPU).
+
+Keep the list to modules the send path really imports, in the order it does
+(a package's dependencies first); ``Tests/UI/test_console_first_send_preimport.py``
+checks that each is still lazy at UI-ready, that the harness's send imports
+nothing lazy beyond it, and that no step loads a third-party package it does
+not name.
 """
 
 from __future__ import annotations
