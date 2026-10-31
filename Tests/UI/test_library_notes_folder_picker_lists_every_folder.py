@@ -214,6 +214,18 @@ async def _leave_text_fields(screen, pilot) -> None:
 
 
 async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDialog:
+    # PR #3259 CI (UI Fast Lane 15, 2026-10-31): the opened note's snapshot
+    # lands before the canvas recomposes its placement actions, so a click
+    # made right after "the note to open" found no button on a loaded
+    # runner. Wait for the control itself, on screen and enabled.
+    def clickable() -> bool:
+        found = host.screen.query(button_id)
+        if not found:
+            return False
+        button = found.first()
+        return not button.disabled and button.region.area > 0
+
+    await _wait(pilot, clickable, f"{button_id} on screen and enabled")
     await pilot.click(button_id)
     await _wait(
         pilot,
