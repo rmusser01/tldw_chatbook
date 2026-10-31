@@ -1847,9 +1847,13 @@ Tests/UI/test_settings_configuration_hub.py::test_inspector_guidance_covers_ever
 # TASK-33621.17/.18 (2026-10-29): a Temporary chat's sends on the stock
 # received path -- the default send goes out with traces off, Save & Send
 # reaches the provider, a capture pause leaves no shelf entry or answered
-# prompt, and its Cancel gives back the text and image (five mounted cases,
-# about 25 s locally), appended at the tail.
-Tests/UI/test_console_temporary_capture_flow.py
+# prompt, and its Cancel gives back the text and image (five mounted cases),
+# appended at the tail. One node id per test: the whole file measured 36 s
+# at load 23 (each test 5-10 s), over the lane's 30 s per-entry budget.
+Tests/UI/test_console_temporary_capture_flow.py::test_a_temporary_chat_sends_with_traces_off_and_never_pauses
+Tests/UI/test_console_temporary_capture_flow.py::test_save_and_send_saves_the_chat_and_its_send_gets_a_reply
+Tests/UI/test_console_temporary_capture_flow.py::test_a_capture_pause_leaves_no_shelf_entry_and_no_answered_prompt
+Tests/UI/test_console_temporary_capture_flow.py::test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image
 # TASK-37811 (2026-10-29): the Menu's Save chat row says '(enables capture)'
 # only when saving turns capture on (global On, stored conversation Off, global
 # Off, global Off with conversation On; one mounted case, about 7 s locally),
