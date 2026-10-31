@@ -1,5 +1,28 @@
 # Lessons: what counts as evidence a change works
 
+## A mounted send held at provider validation is not accepted yet, and a queued turn needs the archive check (TASK-36610, 2026-10-30)
+
+**Incident.** A test needed a prompt queued behind a running Console send.
+The send harness's `HeldGateway` holds the send in `resolve_for_send`, which
+runs before the send's durable acceptance, so `prompt_queue.dispatch` refused:
+"Preparing the current turn. Queueing becomes available once it is
+accepted." Moving the hold into the gateway double's `stream_chat` (after
+acceptance, just before the provider request) let the prompt queue. The queue
+then dispatched it, and the turn died before validation with `RuntimeError:
+Local conversation storage is unavailable`. The factory app has no local
+conversation service, and the runtime's archived-conversation check runs
+before any turn whose session already has a saved conversation. A first send
+has none, so the first-send tests never reach that check. The queue paused
+with `DISPATCH_REFUSED`, and the test only timed out waiting for a provider
+call.
+
+**What to do.** Hold a mounted send where the scenario needs it: before or
+after its acceptance. When a follow-up turn silently never runs, wrap the
+runtime's `_finish_custodied_turn` and print the custody task's exception
+before you lengthen a wait. The queued-dispatch case in
+`Tests/UI/test_console_send_start_window.py` holds in the stream and stubs
+only the archive check.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
