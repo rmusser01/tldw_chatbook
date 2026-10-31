@@ -45,4 +45,8 @@ Reason: rebase the reviewed display scheduling work onto current native admissio
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented qualified transcript reuse of existing finite context inputs with source-identity invalidation; original custom-reader cadence and storage checks remain. Product commit9220460203. 104 distinct targeted checks passed; three connected tab-publication controls remain unqualified (also fail at different stages on exact original sources), so AC2 and task status remain open. Serial ABBA and independent review recorded in MEMORY_RESULTS.md: no consistent overall speedup; median input177.02 to186.68ms, attachment1023.92 to1038.45ms; worst input203.79 to247.49ms, worst attachment1973.95 to1590.37ms. Original startup policy call479ms to zero updated; neither settled return trace calls it. PR3166 update prepared with auto-merge off. ADR required:no under existing ADR126/230; no storage/schema or authority change.
+
+### 2026-10-31 integration notes
+
+Rebased onto b1ca1b11 with current native source/owner/config-lock callers retained. Deferred Library preparation restores the existing app startup handoff; stale appearance display reuse now retains service identity; reconciliation diagnostics omit exception bodies. Current-dev fixture seams and reviewed diagnostic/size inventories were updated. Results and unresolved qualifications: `Docs/Development/evidence/pr3166-integration-2026-10-31/RESULTS.md`. Existing ADR-126/230 apply; AC2 and In Progress remain unchanged. Root coordinates fresh independent review and final current-base publication.
 <!-- SECTION:NOTES:END -->

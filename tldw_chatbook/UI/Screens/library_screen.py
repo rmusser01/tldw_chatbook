@@ -9548,22 +9548,28 @@ class LibraryScreen(BaseAppScreen):
                 else getattr(app_owner, "notes_sync_runtime_owner", None)
             )
             if runtime is not None:
-                return runtime
+                return runtime, True
             if (
                 getattr(app_owner, "_notes_sync_runtime_build_failure", None)
                 is not None
             ):
                 return InertLastingSyncRuntime(
                     status="failed", next_action="review_settings"
-                )
-            return InertLastingSyncRuntime()
+                ), False
+            return InertLastingSyncRuntime(), False
 
         try:
-            runtime = await self._run_library_service_call(read_runtime)
+            runtime, owner_available = await self._run_library_service_call(read_runtime)
             if not self.is_attached or self.app_instance is not app_owner:
                 return
             self._library_notes_sync_controller.attach_prepared_runtime(runtime)
             self._notes_sync_runtime_prepared = True
+            if owner_available:
+                ensure_started = getattr(
+                    app_owner, "ensure_notes_sync_runtime_started", None
+                )
+                if callable(ensure_started):
+                    ensure_started()
             self.refresh_notes_sync_runtime()
         finally:
             self._notes_sync_runtime_preparing = False

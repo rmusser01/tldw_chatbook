@@ -1,0 +1,21 @@
+{
+  "head": "fd922602dfa9711476da79e171ce0ead93eeab97",
+  "source_diff_sha256": "3ee3686520a5fb8a6d230adcebe9a834ce0645f444c57255a9d3fdd819a0a404",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run",
+    "-x",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-de0983df6436",
+  "exit_code": 0,
+  "seconds": 51.45299999997951
+}

@@ -22,7 +22,7 @@ Windows/Python 3.12.10/Textual 8.2.8. Changes remain uncommitted.
 
 ADR required: no. ADR path: N/A. Routine scheduling and concurrency corrections
 preserve ADR-126 and TASK-21249's app-owned lifecycle and failure contract.
-Tasks: TASK-35587 and TASK-35588.
+Tasks: TASK-38237 (formerly TASK-35587; renumbered during 2026-10-31 integration) and TASK-35588.
 
 ## Measurements
 

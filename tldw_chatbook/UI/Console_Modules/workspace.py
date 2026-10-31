@@ -3202,7 +3202,7 @@ class ConsoleWorkspaceController:
         queried_ids = getattr(self, "_console_appearance_map_queried_ids", set())
         if current and wanted <= queried_ids:
             return cached_map
-        if cached_map is not None and self._stale_display_reads_on:
+        if same_service and cached_map is not None and self._stale_display_reads_on:
             # An id the last re-read found absent (unknown or soft-deleted)
             # is not re-requested while the map is fresh, or every tick's
             # build would start another read (TASK-33620.15.4 review).
@@ -5949,7 +5949,7 @@ class ConsoleWorkspaceController:
         except _WorkspaceAvailabilityObsolete:
             raise  # Existing attach reconciliation owns the bounded retry.
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Unable to read active workspace during Console resume reconcile"
             )
             active = None  # Preserve the original optional-read failure policy.
@@ -6026,7 +6026,7 @@ class ConsoleWorkspaceController:
         except _WorkspaceAvailabilityObsolete:
             raise
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Unable to read active workspace during Console resume reconcile"
             )
             return

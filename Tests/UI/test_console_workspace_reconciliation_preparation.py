@@ -397,3 +397,31 @@ async def test_new_attach_visit_defers_resume_while_original_read_is_held(
             await asyncio.gather(task, return_exceptions=True)
         await controller.app_instance.console_runtime.dispose()
         database.close()
+
+
+async def test_failed_resume_read_does_not_persist_exception_body():
+    from loguru import logger
+
+    private_detail = "synthetic-private-workspace-path"
+
+    def refused():
+        raise RuntimeError(private_detail)
+
+    controller = _workspace_controller(
+        app_instance=SimpleNamespace(
+            workspace_registry_service=SimpleNamespace(get_active_workspace=refused)
+        )
+    )
+    records = []
+    sink = logger.add(lambda message: records.append(message.record), level="DEBUG")
+    try:
+        controller._reconcile_console_session_with_registry()
+    finally:
+        logger.remove(sink)
+    record = next(
+        record
+        for record in records
+        if "Unable to read active workspace" in record["message"]
+    )
+    assert record["exception"] is None
+    assert private_detail not in record["message"]

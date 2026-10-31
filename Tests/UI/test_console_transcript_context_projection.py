@@ -55,6 +55,9 @@ def _transcript_screen(screen, store, controller):
     screen._console_chat_controller = controller
     screen._ensure_console_chat_controller = lambda: controller
     screen._ensure_console_chat_store = lambda: store
+    screen._current_console_conversation_id = (
+        lambda: store.ensure_session().persisted_conversation_id
+    )
     screen._console_original_attempt_previews = {}
     screen._pending_console_swipe_selection = None
     screen._show_model_thinking = lambda: False
@@ -64,6 +67,7 @@ def _transcript_screen(screen, store, controller):
     screen._console_citation_counts = {}
     screen._console_annotation_previews = {}
     screen._library_activity = SimpleNamespace(sync_transcript=lambda _: {})
+    screen._library_outcome = SimpleNamespace(sync_transcript=lambda *_: {})
     screen._review_selection = SimpleNamespace(
         _sync_console_annotation_discovery=lambda _: None,
         _console_change_review_provider=lambda: None,
@@ -216,7 +220,8 @@ async def test_custom_live_reader_keeps_original_post_gate_cadence_and_thread(
     paints, fetches = _transcript_screen(screen, store, controller)
     calls = []
 
-    def custom(session_id):
+    def custom(session_id, *, include_global=True):
+        assert include_global is False
         calls.append((threading.get_ident(), session_id))
         return None, None, EffectiveMemoryResult(EffectiveMemoryKind.RAW)
 
@@ -244,11 +249,20 @@ async def test_custom_presentation_reader_is_not_newly_used_by_transcript(
         pytest.fail("transcript newly entered a custom settings presentation reader")
 
     monkeypatch.setattr(controller, "context_control_presentation_inputs", custom)
+    original = controller.context_control_inputs
+    live_reads = []
+
+    def live(*args, **kwargs):
+        live_reads.append(kwargs["include_global"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(controller, "context_control_inputs", live)
     try:
         with _actual_calls(controller) as calls:
             await _render(screen)
             await _render(screen)
-        assert calls["live_policy"] == 1
+        assert live_reads == [False]
+        assert calls["live_policy"] == 0
         assert not tasks
     finally:
         await asyncio.gather(*tasks, return_exceptions=True)

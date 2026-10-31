@@ -59,7 +59,7 @@ async def test_runtime_preparation_does_not_block_or_publish_after_unmount(outco
     loop_thread = threading.get_ident()
     observed = []
     runtime = InertLastingSyncRuntime(status="not_configured")
-    owner = SimpleNamespace()
+    owner = SimpleNamespace(ensure_notes_sync_runtime_started=Mock())
 
     def read():
         observed.append(threading.get_ident())
@@ -90,11 +90,15 @@ async def test_runtime_preparation_does_not_block_or_publish_after_unmount(outco
                         await asyncio.sleep(0.01)
                 controller = screen._library_notes_sync_controller
                 assert controller.snapshot.lasting_available == (outcome == "ready")
-                if outcome == "failed":
+                if outcome == "ready":
+                    owner.ensure_notes_sync_runtime_started.assert_called_once_with()
+                else:
+                    owner.ensure_notes_sync_runtime_started.assert_not_called()
                     assert "could not start" in controller._unavailable_copy()
             else:
                 await pilot.pause(0.1)
                 assert not screen._notes_sync_runtime_prepared
+                owner.ensure_notes_sync_runtime_started.assert_not_called()
     finally:
         release.set()
 

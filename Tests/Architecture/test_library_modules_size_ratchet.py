@@ -132,6 +132,8 @@ _CONTROLLER_GLOB = "*_controller.py"
 #: not yet created, so not yet rows here — they are born governed by the
 #: glob in `test_every_controller_file_has_a_budget_row` the moment they
 #: exist, and get their own row at that point).
+# 2026-10-31 PR3166: exact final integration measurements under the user
+# backlog size-limit waiver; no spare budget and no behavioral guard changes.
 _BUDGETS: dict[str, int] = {
     # Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     # gone red on dev: 15 controller rows had been overrun by feature
@@ -636,7 +638,7 @@ _BUDGETS: dict[str, int] = {
     # decision): P1-B's .17 begin_add_from_files / release-on-exit and .71
     # availability re-derive on top of P1-C's .16 activation hold, measured
     # on the rebased tree: 2415 -> 2461.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2461,
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2468,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

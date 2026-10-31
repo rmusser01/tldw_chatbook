@@ -676,6 +676,43 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: behind the same two poll equality gates as "
         "_set_static_text above."
     ),
+    # PR3166 integration 2026-10-31: individually reviewed new prompt-summary
+    # reachability; retain the config-identity and category branch gates.
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._refresh_internal_prompts_customized_widgets",
+        "row",
+    ): "NOT-PER-TICK: the subscription poll reaches the loading/count rows only after _request_internal_prompts_count detects a changed config identity; the completed worker publishes once for that identity. The status can change width and wrap.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_category_state_banner",
+        "banner",
+    ): "NOT-PER-TICK: prompt-summary refresh enters after the config-identity gate (or its finite completion), then recomputes a variable-length category banner; unchanged polls return before this path.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_draft_status_widgets",
+        "self.query_one('#settings-selected-category-draft-status', Static)",
+    ): "NOT-PER-TICK: the new prompt-summary path passes INTERNAL_PROMPTS only after the config-identity gate or worker completion. Dirty status changes preserve their natural layout.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_draft_status_widgets",
+        "note",
+    ): "NOT-PER-TICK: this write is inside the PROVIDERS_MODELS branch; the new clock-reachable prompt-summary path passes INTERNAL_PROMPTS and cannot execute it. Explicit provider draft edits may change wrapped note height.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_provider_return_widgets",
+        "existing",
+    ): "NOT-PER-TICK: the new prompt-summary path cannot enter the PROVIDERS_MODELS branch calling this helper; actual provider return events change variable-length handoff copy.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_provider_return_widgets",
+        "self.query_one('#settings-provider-navigation-conflict-summary', Static)",
+    ): "NOT-PER-TICK: the prompt-summary clock path passes INTERNAL_PROMPTS, so its draft-status helper cannot call the provider-return branch. Explicit conflict changes require natural wrapped layout.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_provider_return_widgets",
+        "self.query_one('#settings-provider-return-continuation-status', Static)",
+    ): "NOT-PER-TICK: the prompt-summary clock path passes INTERNAL_PROMPTS, so its draft-status helper cannot call the provider-return branch. Explicit continuation changes may change wrapped height.",
     # -- UI/Library_Modules/skills_trust_modals.py (moved verbatim out of
     #    UI/Screens/skills_screen.py by task-34893; the row follows it)
     (

@@ -48,7 +48,7 @@ def _owner(held=None):
         app=app,
         app_instance=app,
         _home_content_snapshot=previous,
-        _home_console_provider_ready=read("readiness", True),
+        _home_console_model_state=read("readiness", (True, False)),
         _sync_home_triage_after_refresh=lambda: calls.append("paint"),
     )
     app.screen = owner

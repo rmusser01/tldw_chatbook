@@ -84,9 +84,13 @@ def test_new_appearance_queries_do_not_renew_an_older_missing_id(monkeypatch):
     assert len(calls) == 3
 
 
-def test_replacing_appearance_service_drops_the_previous_display_map(monkeypatch):
+@pytest.mark.parametrize("stale_display_reads", [False, True])
+def test_replacing_appearance_service_drops_the_previous_display_map(
+    monkeypatch, stale_display_reads
+):
     controller, app, calls, _values, _clock = _appearances(monkeypatch)
     assert controller._console_conversation_appearance_map(["known"])
+    controller._stale_display_reads_on = stale_display_reads
     replacement_calls = []
 
     def replacement(ids):
