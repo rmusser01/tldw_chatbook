@@ -736,7 +736,7 @@ async def settle(console):
 _MOUNT_REBUILD_STARTS = {
     "mount": "on_mount",
     "view-start": "_start_console_view_after_reconciliation",
-    "roleplay": "_dispatch_active_console_roleplay_refresh",
+    "roleplay": "_sync_console_identity_surfaces",
 }
 
 
@@ -750,12 +750,13 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     A config rebuild starts as the mount reaches one step and holds the config
     while the refreshes after it run: ``on_mount`` itself (the width rail rules
     of its first resize), the attach reconcile's view start (skill discovery),
-    or the first roleplay refresh (the identity surfaces). Each read config on
+    or the identity-surfaces entry reached by roleplay refresh. Each read config on
     the UI loop before this task; a rebuild from the start of the mount defers
     the full sync, and with it the later two, so they get their own start.
     The watchdog records where the UI thread was waiting. After release, every
     deferred refresh finishes.
     """
+    import inspect
     import itertools
     import sys
     import threading
@@ -776,7 +777,9 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     blocked = []
 
     def hold_rebuild():
-        hold.wait(10)
+        hold.wait()
+        if release.is_set():
+            return
         with config._settings_rebuild_lock():
             config._invalidate_config_caches()
             held.set()
@@ -788,6 +791,13 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         release.set()
 
     step = getattr(ChatScreen, _MOUNT_REBUILD_STARTS[start])
+    original_step = inspect.unwrap(step)
+    if start == "roleplay":
+        # A lazy mount may have no active chat. Give the native roleplay
+        # projection a real session to refresh instead of observing a no-op.
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
+        ensure_console_runtime(app).ensure_chat_store().create_session()
 
     holder = threading.Thread(target=hold_rebuild)
     # 5 s, not 2: from on_mount the rest of startup runs inside the hold, and a
@@ -809,14 +819,21 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         break
     assert monitor is not None
 
+    observed_entry = []
+
     def observe(code, _offset):
         # Observe just these original entries. Replacing their methods changes
         # native qualification; a process-wide profiler distorts mount timing.
-        if code is step.__code__ and not hold.is_set():
+        frame = sys._getframe(1)
+        if (
+            code is step.__code__ and not hold.is_set()
+            and frame.f_locals.get("function", step) is original_step
+        ):
+            observed_entry.append(frame.f_locals.get("screen", frame.f_locals.get("self")))
             hold.set()
             assert held.wait(3)
             watchdog.start()
-        if code is context_code and sys._getframe(1).f_locals.get("self") is service:
+        if code is context_code and frame.f_locals.get("self") is service:
             fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
 
     entry_event = sys.monitoring.events.PY_START
@@ -856,22 +873,34 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             assert not waited, "the Console mount waited for the config rebuild:\n" + "".join(
                 blocked[-14:]
             )
+            assert observed_entry == [console], "the intended native refresh never started"
             assert expected is None or expected in deferred, deferred
             assert discovery_waited or start != "view-start"
             assert "hold" not in fetches, "skill discovery fetched in the hold"
             # Deferred, not dropped: every retry runs, and discovery fetches
             # unless it already had before the hold began.
-            async with asyncio.timeout(5):
-                while (
-                    getattr(console, "_console_config_retries", None)
-                    or not console._console_attach_reconciled
-                    or not {"before", "after"} & set(fetches)
-                    or any(
-                        worker.group == "console-skill-discovery" and not worker.is_finished
-                        for worker in console.workers
-                    )
-                ):
-                    await asyncio.sleep(0.02)
+            try:
+                async with asyncio.timeout(5):
+                    while (
+                        getattr(console, "_console_config_retries", None)
+                        or not console._console_attach_reconciled
+                        or not {"before", "after"} & set(fetches)
+                        or any(
+                            worker.group == "console-skill-discovery" and not worker.is_finished
+                            for worker in console.workers
+                        )
+                    ):
+                        await asyncio.sleep(0.02)
+            except TimeoutError:
+                pytest.fail(
+                    "after-release refreshes did not settle: "
+                    f"retries={getattr(console, '_console_config_retries', None)!r}, "
+                    f"reconciled={console._console_attach_reconciled}, "
+                    f"fetches={fetches!r}, "
+                    f"skill_workers={[str(worker) for worker in console.workers if worker.group == 'console-skill-discovery']!r}, "
+                    f"locks={(config._settings_rebuild_lock(), config._config_file_lock())!r}, "
+                    f"timer_count={len(console._timers)}"
+                )
             assert console._last_console_workspace_width_band is not None
             await console._console_runtime().dispose()
     finally:
@@ -879,9 +908,9 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             sys.monitoring.set_local_events(monitor, code, 0)
         sys.monitoring.register_callback(monitor, entry_event, None)
         sys.monitoring.free_tool_id(monitor)
-        hold.set()
         watchdog.cancel()
         release.set()
+        hold.set()
         holder.join(3)
     assert not holder.is_alive()
 
