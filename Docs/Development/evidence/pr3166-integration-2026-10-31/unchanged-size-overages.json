@@ -1,0 +1,38 @@
+[
+  {
+    "path": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/change_review_screen.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/llm_screen.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/app_command_providers.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/app_ingest_queue.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/app_lifecycle.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/tldw_api/client.py",
+    "same_product_source_as_base": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
+    "same_product_source_as_base": true
+  }
+]

@@ -2621,9 +2621,13 @@ class ConsoleComposerBar(Horizontal):
         # control that is never actionable while shown, so the dead copy
         # goes instead of the budget.
         stop_button.tooltip = "Stop this tab's run." if self._stop_available else None
-        stop_button.set_class(self._stop_available, "console-stop-active")
-        stop_button.set_class(not self._stop_available, "console-stop-idle")
-        stop_button.set_class(not self._stop_available, "console-action-disabled")
+        stop_button.update_classes(
+            {
+                "console-stop-active": self._stop_available,
+                "console-stop-idle": not self._stop_available,
+                "console-action-disabled": not self._stop_available,
+            }
+        )
         stop_button.styles.display = "block" if self._stop_available else "none"
         # Redirect requires active generation; a pending hook exposes only Stop.
         # TASK-28227: Redirect appears only while this tab's run is active.

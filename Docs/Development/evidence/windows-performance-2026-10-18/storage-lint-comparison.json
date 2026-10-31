@@ -1,0 +1,15 @@
+{
+  "baseline_revision": "579de70851ca4c655947f9962671be774296c80f",
+  "files": {
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": {
+      "before": 8,
+      "after": 8,
+      "unchanged_by_code_and_message": true
+    },
+    "tldw_chatbook/Backup_Recovery/control_records.py": {
+      "before": 1,
+      "after": 1,
+      "unchanged_by_code_and_message": true
+    }
+  }
+}

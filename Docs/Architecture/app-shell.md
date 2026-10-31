@@ -134,6 +134,13 @@ focus/selection-dependent hints. These are the existing ADR-031/033 contracts.
 
 Image/Video Settings completion acknowledges the submitted category draft, retaining later raw values through configuration reload. `UI/Settings_Modules/media_gen_save.py` owns the narrow completion/recomposition helpers; the screen retains staging and checked-write ownership. Current focus/selection and expanded backend sections survive replacement, and a deliberate focus move wins (TASK-36098).
 
+The Settings Internal Prompts count is a display snapshot prepared after the
+first refresh by an exclusive thread worker. Rendering and category filtering
+never read prompt storage. The worker retains the original checked config
+lifetime; config identity, request revision, cancellation and attachment checks
+fence publication. Pending/failed reads display Loading/Unavailable, and prompt
+edits update the existing rows without rebuilding the editor.
+
 ## Splash subsystem
 
 `Widgets/splash_screen.py` (`SplashScreen`) with effects in `Utils/Splash_Screens/` by category (classic/environmental/tech/gaming/psychedelic/custom) plus custom cards from `examples/custom_splash_cards/`. Config under `[splash_screen]`: `enabled`, `duration` (default 7.0 s), `skip_on_keypress`, `show_progress`, `card_selection`. On close the app removes the splash widget, mounts the main UI, pushes the initial screen (first-run → Home; focus-mode request or default → Console/chat), and defers logging setup until then.

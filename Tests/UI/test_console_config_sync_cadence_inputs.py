@@ -727,3 +727,30 @@ async def test_the_input_read_of_the_agent_rail_starts_no_historical_read(tmp_pa
         assert reads() == 1
     finally:
         database.close()
+
+
+@pytest.mark.parametrize("defer_first_projection", [False, True])
+def test_late_tail_publication_is_a_new_input_and_refusal_remains_owed(
+    clock, defer_first_projection
+):
+    """A publication after quiet ticks is new work even at the same clock."""
+    screen = _settled(clock)
+    screen._console_chat_controller.states["s1"] = ConsoleRunState(
+        ConsoleRunStatus.COMPLETED
+    )
+    assert _tick(screen) == 1
+    screen._console_transcript_sync_timer = object()
+    assert [_tick(screen) for _ in range(3)] == [0, 0, 0]
+    cadence = config_sync._cadence(screen)
+    before = cadence.published
+    config_sync.publish_console_presentation(screen, "console-context-publication")
+    assert cadence.published == before + 1
+    screen.result = not defer_first_projection
+    assert _tick(screen) == 1
+    if defer_first_projection:
+        assert screen.replays_requested == 1
+        assert cadence.values[9] == before
+        screen.result = True
+        assert _tick(screen) == 1
+    assert cadence.values[9] == before + 1
+    assert [_tick(screen) for _ in range(3)] == [0, 0, 0]

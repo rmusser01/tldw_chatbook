@@ -1,0 +1,888 @@
+{
+  "next-discovery": {
+    "instrumented_discovery_only": true,
+    "exit_code": 0,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "returns": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 142.9908999998588,
+        "resume_to_attach_ms": 1166.1902999912854,
+        "input_ms": 20.608699996955693,
+        "max_loop_overshoot_ms": 91.07150000636466,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1203.7311999883968
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 140.59710002038628,
+        "resume_to_attach_ms": 917.8009000024758,
+        "input_ms": 5.425799987278879,
+        "max_loop_overshoot_ms": 103.88359997887164,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 918.1967000185978
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 210.95409998088144,
+        "resume_to_attach_ms": 1262.270899984287,
+        "input_ms": 43.94929998670705,
+        "max_loop_overshoot_ms": 135.72620000923052,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1286.069599998882
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 183.20339999627322,
+        "resume_to_attach_ms": 1091.9788999890443,
+        "input_ms": 42.5624999916181,
+        "max_loop_overshoot_ms": 109.28570001851767,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1126.4979999978095
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 203.8689000182785,
+        "resume_to_attach_ms": 1420.6744000257459,
+        "input_ms": 35.49039998324588,
+        "max_loop_overshoot_ms": 137.05789999221452,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1466.3099000172224
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 140.7005999935791,
+        "resume_to_attach_ms": 1478.695300000254,
+        "input_ms": 5.733700003474951,
+        "max_loop_overshoot_ms": 103.65780000574887,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1525.0864999834448
+      }
+    ],
+    "sync_spans": {
+      "ChatScreen.on_screen_resume": {
+        "calls": 12,
+        "total_ms": 37.046800018288195,
+        "max_ms": 8.202800003346056,
+        "values_ms": null
+      },
+      "Stylesheet.update_nodes": {
+        "calls": 23,
+        "total_ms": 707.8435999865178,
+        "max_ms": 134.7657000005711,
+        "values_ms": [
+          97.82629998517223,
+          0.9747000003699213,
+          11.18460000725463,
+          0.5511000053957105,
+          0.6130999827291816,
+          0.5978999834042042,
+          0.6443999882321805,
+          0.32309998641721904,
+          0.7058999908622354,
+          0.6501000025309622,
+          0.6026000191923231,
+          0.8067000017035753,
+          0.4681000136770308,
+          0.7733000093139708,
+          108.56600000988692,
+          130.40059999912046,
+          0.6720999954268336,
+          0.4582999972626567,
+          108.43880000174977,
+          134.7657000005711,
+          0.6567999953404069,
+          0.46629999997094274,
+          106.69710001093335
+        ]
+      },
+      "Screen._on_screen_resume": {
+        "calls": 6,
+        "total_ms": 698.1225999770686,
+        "max_ms": 136.92920000175945,
+        "values_ms": [
+          99.50260000186972,
+          110.37939999368973,
+          132.62409999151714,
+          110.39459999301471,
+          136.92920000175945,
+          108.29269999521784
+        ]
+      },
+      "_config_file_posture": {
+        "calls": 43,
+        "total_ms": 32.162899849936366,
+        "max_ms": 3.2164000149350613,
+        "values_ms": null
+      },
+      "load_settings": {
+        "calls": 75,
+        "total_ms": 33.2987000583671,
+        "max_ms": 3.2868999987840652,
+        "values_ms": null
+      },
+      "ChatScreen._build_console_provider_selection": {
+        "calls": 202,
+        "total_ms": 49.75499992724508,
+        "max_ms": 3.72179999249056,
+        "values_ms": null
+      },
+      "ChatScreen._build_console_inspector_state": {
+        "calls": 45,
+        "total_ms": 59.049000090453774,
+        "max_ms": 17.053899995516986,
+        "values_ms": null
+      },
+      "run_console_config_sync": {
+        "calls": 53,
+        "total_ms": 131.57159998081625,
+        "max_ms": 12.593299994478002,
+        "values_ms": null
+      },
+      "run_console_presentation_sync": {
+        "calls": 53,
+        "total_ms": 134.2138000181876,
+        "max_ms": 12.643800000660121,
+        "values_ms": null
+      },
+      "ChatScreen._sync_console_cost_chip": {
+        "calls": 28,
+        "total_ms": 28.877000062493607,
+        "max_ms": 2.8061000048182905,
+        "values_ms": null
+      }
+    },
+    "async_and_worker_spans": []
+  },
+  "next-phases": {
+    "instrumented_discovery_only": true,
+    "exit_code": 0,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "returns": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 217.361000017263,
+        "resume_to_attach_ms": 2207.6787000114564,
+        "input_ms": 57.592299999669194,
+        "max_loop_overshoot_ms": 128.48939999821596,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2250.3598000039347
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 183.68140002712607,
+        "resume_to_attach_ms": 1762.5601000036113,
+        "input_ms": 37.37760000512935,
+        "max_loop_overshoot_ms": 115.01880001742393,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1831.8613000155892
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 255.39139998727478,
+        "resume_to_attach_ms": 1094.9837999942247,
+        "input_ms": 45.51189998164773,
+        "max_loop_overshoot_ms": 178.5383000096772,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1142.143999983091
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 183.32749998080544,
+        "resume_to_attach_ms": 1748.624200001359,
+        "input_ms": 16.761900013079867,
+        "max_loop_overshoot_ms": 135.24979999056086,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1788.77799998736
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 186.42610000097193,
+        "resume_to_attach_ms": 1149.3591999751516,
+        "input_ms": 37.84109998377971,
+        "max_loop_overshoot_ms": 117.21669998951256,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1187.4548999767285
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 178.4017999889329,
+        "resume_to_attach_ms": 1563.5201999975834,
+        "input_ms": 34.34309997828677,
+        "max_loop_overshoot_ms": 112.78639998636208,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1574.9541000113823
+      }
+    ],
+    "sync_spans": {
+      "ChatScreen.on_screen_resume": {
+        "calls": 12,
+        "total_ms": 34.29879999021068,
+        "max_ms": 9.687400015536696,
+        "values_ms": null
+      },
+      "Stylesheet.update_nodes": {
+        "calls": 23,
+        "total_ms": 750.3569999244064,
+        "max_ms": 158.32079999381676,
+        "values_ms": [
+          100.37880000891164,
+          0.8823999960441142,
+          11.317399999825284,
+          0.535999977728352,
+          0.6648999988101423,
+          0.6160999764688313,
+          0.6760000251233578,
+          0.3403000009711832,
+          0.984199985396117,
+          0.6887999770697206,
+          0.5957999965175986,
+          0.6643999950028956,
+          0.44850000995211303,
+          0.680199998896569,
+          108.26619999716058,
+          158.32079999381676,
+          1.3421000039670616,
+          1.3802000030409545,
+          130.20429998869076,
+          112.76630000793375,
+          0.7114000036381185,
+          0.4960999940522015,
+          117.3957999853883
+        ]
+      },
+      "Screen._on_screen_resume": {
+        "calls": 6,
+        "total_ms": 738.5043999820482,
+        "max_ms": 161.0971000045538,
+        "values_ms": [
+          101.24889999860898,
+          109.76130000199191,
+          161.0971000045538,
+          132.38229998387396,
+          114.43899999721907,
+          119.57579999580048
+        ]
+      },
+      "_config_file_posture": {
+        "calls": 38,
+        "total_ms": 26.67480008676648,
+        "max_ms": 1.581200020154938,
+        "values_ms": null
+      },
+      "load_settings": {
+        "calls": 71,
+        "total_ms": 27.843899879371747,
+        "max_ms": 1.6509999986737967,
+        "values_ms": null
+      },
+      "ChatScreen._build_console_provider_selection": {
+        "calls": 159,
+        "total_ms": 45.16210005385801,
+        "max_ms": 2.0327999955043197,
+        "values_ms": null
+      },
+      "run_console_config_sync": {
+        "calls": 49,
+        "total_ms": 115.8173999574501,
+        "max_ms": 17.257400002563372,
+        "values_ms": null
+      },
+      "run_console_presentation_sync": {
+        "calls": 49,
+        "total_ms": 119.09240004024468,
+        "max_ms": 17.292300006374717,
+        "values_ms": null
+      },
+      "ChatScreen._build_console_inspector_state": {
+        "calls": 31,
+        "total_ms": 73.04310001200065,
+        "max_ms": 18.03570002084598,
+        "values_ms": null
+      },
+      "ChatScreen._sync_console_cost_chip": {
+        "calls": 22,
+        "total_ms": 23.786200094036758,
+        "max_ms": 2.824800001690164,
+        "values_ms": null
+      }
+    },
+    "async_and_worker_spans": [
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.03730002208612859
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 1331.6203000140376
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 1331.8043999897782
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.02780000795610249
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 618.5759999789298
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 619.0635000239126
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 350.439700006973
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.037699996028095484
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 388.25730001553893
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 391.8779000232462
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 177.95779998414218
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.04529999569058418
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 660.3921999922022
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 660.3324000025168
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 375.99069997668266
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.043400010326877236
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.08930001058615744
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 506.09509999048896
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 512.256999994861
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 260.3852000029292
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.055199983762577176
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 906.5971000236459
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 907.1473999938462
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 653.5268000152428
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.06649998249486089
+      }
+    ]
+  },
+  "next-queue": {
+    "instrumented_discovery_only": true,
+    "exit_code": 0,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "returns": [
+      {
+        "iteration": 0,
+        "resume_to_input_ms": 284.557400009362,
+        "resume_to_attach_ms": 4893.950900004711,
+        "input_ms": 38.77970000030473,
+        "max_loop_overshoot_ms": 214.51090002665296,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 4940.6658000079915
+      },
+      {
+        "iteration": 1,
+        "resume_to_input_ms": 214.40870000515133,
+        "resume_to_attach_ms": 1269.7795999993104,
+        "input_ms": 25.15760000096634,
+        "max_loop_overshoot_ms": 157.93739998480305,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1288.052499992773
+      },
+      {
+        "iteration": 2,
+        "resume_to_input_ms": 389.76849999744445,
+        "resume_to_attach_ms": 1990.575900010299,
+        "input_ms": 168.6174999922514,
+        "max_loop_overshoot_ms": 189.8691000242252,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 2037.4270000029355
+      },
+      {
+        "iteration": 3,
+        "resume_to_input_ms": 231.32419999456033,
+        "resume_to_attach_ms": 1126.6000000177883,
+        "input_ms": 51.8463000189513,
+        "max_loop_overshoot_ms": 148.15699998871423,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1172.6778000011109
+      },
+      {
+        "iteration": 4,
+        "resume_to_input_ms": 261.96799997705966,
+        "resume_to_attach_ms": 1174.8584999877494,
+        "input_ms": 27.705400018021464,
+        "max_loop_overshoot_ms": 202.97489999211393,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1188.967900001444
+      },
+      {
+        "iteration": 5,
+        "resume_to_input_ms": 238.22629998903722,
+        "resume_to_attach_ms": 1788.6054999835324,
+        "input_ms": 43.29810000490397,
+        "max_loop_overshoot_ms": 163.46619999967515,
+        "draft_retained": true,
+        "attach_reconciled": true,
+        "elapsed_ms": 1811.087599984603
+      }
+    ],
+    "sync_spans": {
+      "Stylesheet.update_nodes": {
+        "calls": 25,
+        "total_ms": 1113.5857001354452,
+        "max_ms": 207.9422000097111,
+        "values_ms": [
+          13.299399986863136,
+          15.887899993686005,
+          174.71780002233572,
+          1.6508999979123473,
+          21.185900026466697,
+          1.39720001607202,
+          1.176300022052601,
+          1.1032999900635332,
+          1.3620000099763274,
+          0.8771999855525792,
+          2.7667999966070056,
+          1.9799000001512468,
+          1.0742000013124198,
+          1.6442000051029027,
+          2.119000011589378,
+          1.1100000119768083,
+          132.76330000371672,
+          207.9422000097111,
+          1.2005000025965273,
+          1.1212000099476427,
+          135.5254999944009,
+          207.2187000012491,
+          0.7169000164140016,
+          0.506000011228025,
+          183.2394000084605
+        ]
+      },
+      "ChatScreen.on_screen_resume": {
+        "calls": 12,
+        "total_ms": 39.085600059479475,
+        "max_ms": 7.358100003330037,
+        "values_ms": null
+      },
+      "Screen._on_screen_resume": {
+        "calls": 6,
+        "total_ms": 1055.4653999570291,
+        "max_ms": 210.05319998948835,
+        "values_ms": [
+          177.467900008196,
+          135.82769999629818,
+          210.05319998948835,
+          137.33689999207854,
+          208.8567999890074,
+          185.92289998196065
+        ]
+      },
+      "_config_file_posture": {
+        "calls": 39,
+        "total_ms": 28.60530008911155,
+        "max_ms": 1.7463999975007027,
+        "values_ms": null
+      },
+      "load_settings": {
+        "calls": 71,
+        "total_ms": 30.78439988894388,
+        "max_ms": 1.8179999897256494,
+        "values_ms": null
+      },
+      "ChatScreen._build_console_provider_selection": {
+        "calls": 165,
+        "total_ms": 49.245000001974404,
+        "max_ms": 2.2416000138036907,
+        "values_ms": null
+      },
+      "run_console_config_sync": {
+        "calls": 55,
+        "total_ms": 109.92819993407466,
+        "max_ms": 15.358000004198402,
+        "values_ms": null
+      },
+      "run_console_presentation_sync": {
+        "calls": 55,
+        "total_ms": 114.45859994273633,
+        "max_ms": 15.523500012932345,
+        "values_ms": null
+      },
+      "ChatScreen._build_console_inspector_state": {
+        "calls": 34,
+        "total_ms": 56.77619995549321,
+        "max_ms": 11.06760001857765,
+        "values_ms": null
+      },
+      "ChatScreen._sync_console_cost_chip": {
+        "calls": 23,
+        "total_ms": 22.444999951403588,
+        "max_ms": 2.7184000064153224,
+        "values_ms": null
+      }
+    },
+    "async_and_worker_spans": [
+      {
+        "began_stage": "leave-console",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 5711.240999982692
+      },
+      {
+        "began_stage": "leave-console",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 5714.334099990083
+      },
+      {
+        "began_stage": "leave-console",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 3746.5703999914695
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 1801.0387999820523
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 551.2450999813154
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 570.8297999808565
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 576.3747000019066
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.036900019040331244
+      },
+      {
+        "began_stage": "console-resume-0",
+        "ended_stage": "console-resume-0",
+        "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+        "ms": 204.79879999766126
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 328.7787000008393
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 434.4287000130862
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 438.18220001412556
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 93.5835000127554
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.034199998481199145
+      },
+      {
+        "began_stage": "console-resume-1",
+        "ended_stage": "console-resume-1",
+        "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+        "ms": 255.04800002090633
+      },
+      {
+        "began_stage": "leave-console",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 1055.3970000182744
+      },
+      {
+        "began_stage": "leave-console",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 1062.5576000020374
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 609.9296000029426
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 333.65720001165755
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.03679998917505145
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.045900000259280205
+      },
+      {
+        "began_stage": "console-resume-2",
+        "ended_stage": "console-resume-2",
+        "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+        "ms": 262.8240000049118
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 237.91250001522712
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 355.1660999946762
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 360.9320000105072
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 140.75969997793436
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.036500015994533896
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.03539997851476073
+      },
+      {
+        "began_stage": "console-resume-3",
+        "ended_stage": "console-resume-3",
+        "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+        "ms": 231.0105999931693
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 402.0572000008542
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 403.397899994161
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 407.55189998890273
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 199.98919998761266
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.0447999918833375
+      },
+      {
+        "began_stage": "console-resume-4",
+        "ended_stage": "console-resume-4",
+        "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+        "ms": 324.7207999811508
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.for_screen.<locals>.read_current",
+        "ms": 742.7981999935582
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection._refresh",
+        "ms": 1266.71830000123
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 625.260700006038
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 605.5969000153709
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleReadinessConfigProjection.warm",
+        "ms": 0.08960001287050545
+      },
+      {
+        "began_stage": "console-resume-5",
+        "ended_stage": "console-resume-5",
+        "function": "ConsoleWorkspaceController.prepare_console_workspace_reconciliation.<locals>.read",
+        "ms": 229.08910000114702
+      }
+    ]
+  }
+}

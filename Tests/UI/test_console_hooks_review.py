@@ -1,6 +1,8 @@
 """Native Console hook review routing, draft retention, and literal details."""
 
 import asyncio
+from contextlib import ExitStack
+import os
 
 import pytest
 
@@ -85,15 +87,28 @@ async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(hook_file)
         assert console._console_hook_review_snapshot.ready
         approved_tooltip = console.query_one("#console-control-hooks").tooltip
         directory = console._console_hook_review_snapshot.store_path.parent
-        mode = directory.stat().st_mode & 0o777
-        directory.chmod(mode | 0o020)
-        try:
+        with ExitStack() as restore:
+            if os.name == "nt":
+                from Tests.Backup_Recovery.windows_acl_fixture import (
+                    _replace_protected_windows_dacl,
+                    preserve_windows_dacl,
+                )
+                from tldw_chatbook.Utils.windows_files import _native
+
+                restore.enter_context(preserve_windows_dacl(directory))
+                _replace_protected_windows_dacl(
+                    directory,
+                    f"D:P(A;;FA;;;{_native().user_sid})"
+                    "(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;WD)",
+                )
+            else:
+                mode = directory.stat().st_mode & 0o777
+                restore.callback(directory.chmod, mode)
+                directory.chmod(mode | 0o020)
             await console._refresh_console_hooks()
             await pilot.pause()
             refreshed = console._console_hook_review_snapshot
             tooltip = console.query_one("#console-control-hooks").tooltip
-        finally:
-            directory.chmod(mode)
 
     assert not refreshed.ready, "the control bar kept the approved state"
     assert tooltip != approved_tooltip, tooltip

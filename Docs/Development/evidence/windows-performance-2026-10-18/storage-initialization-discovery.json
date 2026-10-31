@@ -1,0 +1,25 @@
+{
+  "note": "Timer-only diagnostic; overlapping worker samples not additive. body_ms in this run includes original context-exit lock reacquisition; observer now records exit separately. Extra attach observer workload, excluded from normal latency medians.",
+  "initialization_count": 19,
+  "initialization_wait_sum_ms": 38661.56799996679,
+  "largest_body_including_exit": {
+    "stage": "console-resume-0",
+    "thread": "asyncio_14",
+    "wait_ms": 230.52820000157226,
+    "body_ms": 9797.824300010689
+  },
+  "worker_samples": {
+    "storage_admission.py:initializing": 1309,
+    "control_records.py:admission_authority": 248,
+    "control_records.py:_ensure": 79,
+    "control_records.py:_require_settled_ancestry": 55,
+    "bootstrap.py:startup_permission": 92,
+    "control_records.py:_existing_admission_authority": 98,
+    "control_records.py:_establish_ancestry": 57
+  },
+  "raw_sha256": {
+    "plain-ready-storage-discovery-worker-samples.json": "46109b265b6d76e182cf88cc6f80ebb0708be54658f5a0a7730037fdecfac899",
+    "plain-ready-storage-discovery-initialization.json": "cdcfe0f3618e1a0858ae8229d23193281732d129f3b6c45c13f1f5700a0e10d3",
+    "plain-ready-storage-discovery.json": "5965c9625f93e7d742be807975b3609b0a8e418f086641f45b3a51806aafe0b0"
+  }
+}

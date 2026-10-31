@@ -148,6 +148,7 @@ from ..Console_Modules.left_rail import (
 )
 from ..Console_Modules.workspace import (
     CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS as CONSOLE_PERSISTED_ROWS_CACHE_TTL_SECONDS,  # noqa: PLC0414 -- retain the original module export.
+    _WorkspaceAvailabilityObsolete,
 )
 from ..Console_Modules.message import ConsoleMessageController
 from ..Console_Modules.right_rail import ConsoleInspectorRail
@@ -8842,13 +8843,14 @@ class ChatScreen(BaseAppScreen):
         (task-15452): the control state and the Workbench state built off it
         each re-derive this leg.
         """
-        memo = self._console_derivation_memo
-        if memo is not None and "provider_model_display" in memo:
-            return memo["provider_model_display"]
-        display = self._active_console_provider_model_display_uncached()
-        if memo is not None:
-            memo["provider_model_display"] = display
-        return display
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            if memo is not None and "provider_model_display" in memo:
+                return memo["provider_model_display"]
+            display = self._active_console_provider_model_display_uncached()
+            if memo is not None:
+                memo["provider_model_display"] = display
+            return display
 
     def _active_console_provider_model_display_uncached(
         self,
@@ -8876,13 +8878,14 @@ class ChatScreen(BaseAppScreen):
         blocker each re-derive it, and `build_console_settings_readiness`
         is the single most expensive leg of a draft-edit sync.
         """
-        memo = self._console_derivation_memo
-        if memo is not None and "settings_readiness" in memo:
-            return memo["settings_readiness"]
-        readiness = self._active_console_settings_readiness_uncached()
-        if memo is not None:
-            memo["settings_readiness"] = readiness
-        return readiness
+        with self._console_derivation_scope():
+            memo = self._console_derivation_memo
+            if memo is not None and "settings_readiness" in memo:
+                return memo["settings_readiness"]
+            readiness = self._active_console_settings_readiness_uncached()
+            if memo is not None:
+                memo["settings_readiness"] = readiness
+            return readiness
 
     def _active_console_settings_readiness_uncached(
         self,
@@ -12935,6 +12938,15 @@ class ChatScreen(BaseAppScreen):
         self,
         pending_launch: Optional[ConsoleLiveWorkLaunch],
     ) -> ConsoleInspectorState:
+        # Share derivation only within this synchronous build. In particular,
+        # FULL's post-await inspector still starts from fresh config/session data.
+        with self._console_derivation_scope():
+            return self._derive_console_inspector_state(pending_launch)
+
+    def _derive_console_inspector_state(
+        self,
+        pending_launch: Optional[ConsoleLiveWorkLaunch],
+    ) -> ConsoleInspectorState:
         _provider_display, model, _settings = (
             self._active_console_provider_model_display()
         )
@@ -15174,7 +15186,7 @@ class ChatScreen(BaseAppScreen):
         # Claim this visit before Textual posts its mount-time ScreenResume.
         # That handler waits behind the same successful full reconciliation.
         self._console_mount_visit_refreshed = True
-        self.call_after_refresh(self._reconcile_console_after_attach)
+        self.call_after_refresh(self._start_console_attach_reconciliation)
 
     def _current_console_attach_visit(self) -> ConsoleAttachVisit:
         return ConsoleAttachVisit(
@@ -15183,6 +15195,26 @@ class ChatScreen(BaseAppScreen):
             self._console_runtime_attachment_generation,
             self._console_attach_visit_generation,
             not _console_screen_is_torn_down(self) and self._is_active_console_screen(),
+        )
+
+    def _start_console_attach_reconciliation(self) -> None:
+        """Keep native-read awaits outside Textual's screen message pump."""
+        if (
+            self._console_attach_reconciled
+            or self._console_attach_reconcile_running
+            or _console_screen_is_torn_down(self)
+        ):
+            return
+        worker = getattr(self, "_console_attach_reconcile_worker", None)
+        if worker is not None and not worker.is_finished:
+            return
+        # Retain the exact issued worker through the existing view/App drain.
+        # Do not cancel an older visit's physical read to start a replacement:
+        # the reconciler re-arms the current visit after the old one retires.
+        self._console_attach_reconcile_worker = self.run_worker(
+            self._reconcile_console_after_attach,
+            group="console-attach-reconciliation",
+            exclusive=False,
         )
 
     async def _reconcile_console_after_attach(self) -> None:
@@ -15211,23 +15243,48 @@ class ChatScreen(BaseAppScreen):
                 self._console_attach_sync_complete = True
             if not visit.can_complete(self._current_console_attach_visit()):
                 return
-            if not self._console_attach_runtime_reconciled:
-                if not visit.runtime.finish_view_reconciliation(self, visit.generation):
+            ordered_resume = self._resume_navigation_startup_in_progress or (
+                not self._console_mount_visit_refreshed
+                and (
+                    self._pending_resume_local_conversation_id is not None
+                    or self._pending_character_conversation_target is not None
+                )
+            )
+            preparation = (
+                self._workspace.prepare_console_workspace_reconciliation()
+                if (
+                    self._console_resume_after_reconcile
+                    and not ordered_resume
+                    and not self._console_attach_runtime_reconciled
+                )
+                else contextlib.nullcontext()
+            )
+            # Keep the runtime unanswerable during the new native-read await.
+            # The synchronous resume flag must never span that await either.
+            # A retry whose runtime phase already succeeded stays synchronous:
+            # that existing phase deliberately retains its answerability.
+            async with preparation:
+                if not visit.can_complete(self._current_console_attach_visit()):
                     return
-                self._console_attach_runtime_reconciled = True
-            if not self._console_attach_view_started:
-                self._start_console_view_after_reconciliation()
-                self._console_attach_view_started = True
-            if self._console_resume_after_reconcile:
-                self._console_attach_resume_in_progress = True
-                try:
-                    self.on_screen_resume()
-                finally:
-                    self._console_attach_resume_in_progress = False
-                self._console_resume_after_reconcile = False
-            self._console_attach_reconciled = True
-            self._console_attach_reconcile_retry_count = 0
-            self._console_attach_reconcile_retry_exhausted = False
+                if not self._console_attach_runtime_reconciled:
+                    if not visit.runtime.finish_view_reconciliation(
+                        self, visit.generation
+                    ):
+                        return
+                    self._console_attach_runtime_reconciled = True
+                if not self._console_attach_view_started:
+                    self._start_console_view_after_reconciliation()
+                    self._console_attach_view_started = True
+                if self._console_resume_after_reconcile:
+                    self._console_attach_resume_in_progress = True
+                    try:
+                        self.on_screen_resume()
+                    finally:
+                        self._console_attach_resume_in_progress = False
+                    self._console_resume_after_reconcile = False
+                self._console_attach_reconciled = True
+                self._console_attach_reconcile_retry_count = 0
+                self._console_attach_reconcile_retry_exhausted = False
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
             if not _console_screen_is_torn_down(self):
                 failure = exc
@@ -15240,8 +15297,11 @@ class ChatScreen(BaseAppScreen):
             current = self._current_console_attach_visit()
             if not visit.same_visit(current):
                 failure = None
-                if current.can_complete(current) and not self._console_attach_reconciled:
-                    self.call_after_refresh(self._reconcile_console_after_attach)
+                if (
+                    current.can_complete(current)
+                    and not self._console_attach_reconciled
+                ):
+                    self.call_after_refresh(self._start_console_attach_reconciliation)
         if failure is None or _console_screen_is_torn_down(self):
             return
         retry_index = self._console_attach_reconcile_retry_count
@@ -15255,7 +15315,7 @@ class ChatScreen(BaseAppScreen):
         self._console_attach_reconcile_retry_count += 1
         self.set_timer(
             _CONSOLE_ATTACH_RECONCILIATION_RETRY_DELAYS[retry_index],
-            self._reconcile_console_after_attach,
+            self._start_console_attach_reconciliation,
         )
 
     def _start_console_view_after_reconciliation(self) -> None:
@@ -16817,6 +16877,31 @@ class ChatScreen(BaseAppScreen):
         # gap, and the refresh-key reconcile inside the pipeline remains
         # the final arbiter of DOM writes.
         store = self._console_chat_store
+        memory_inputs = None
+        effective_memory = None
+        live_memory_reader = False
+        if (
+            transcript is not None
+            and store is not None
+            and store.active_session_id is not None
+        ):
+            try:
+                from ..Console_Modules.console_spend_projection import (
+                    console_transcript_context_inputs,
+                )
+
+                memory_inputs = console_transcript_context_inputs(
+                    self,
+                    self._console_chat_controller
+                    or self._ensure_console_chat_controller(),
+                    store.active_session_id,
+                )
+                if memory_inputs is None:
+                    live_memory_reader = True
+                else:
+                    _local, _global, effective_memory = memory_inputs
+            except Exception:
+                logger.warning("Console effective-memory presentation selection failed")
         if store is not None:
             session_id = store.active_session_id
             try:
@@ -16896,6 +16981,9 @@ class ChatScreen(BaseAppScreen):
                 getattr(self, "_console_send_ack", None) is not None,
                 run_activity,
                 delete_arm,
+                # Existing finite context publication must reopen a quiet
+                # transcript after cold preparation, without holding chunks.
+                effective_memory,
             )
             # getattr fail-open: bare test shells build this screen via
             # __new__ and do not run __init__ (review finding).
@@ -16989,12 +17077,12 @@ class ChatScreen(BaseAppScreen):
             self._review_selection._sync_console_annotation_discovery(store)
             transcript.set_annotation_previews(self._console_annotation_previews)
             memory_banner = None
-            if store.active_session_id is not None:
+            if live_memory_reader and store.active_session_id is not None:
                 try:
                     memory_controller = (
                         controller or self._ensure_console_chat_controller()
                     )
-                    _global, _local, effective_memory = (
+                    _local, _global, effective_memory = (
                         memory_controller.context_control_inputs(
                             store.active_session_id, include_global=False
                         )
@@ -17003,11 +17091,10 @@ class ChatScreen(BaseAppScreen):
                     logger.warning(
                         "Console effective-memory presentation selection failed"
                     )
-                else:
-                    memory_banner = derive_console_memory_banner_presentation(
-                        effective_memory,
-                        active_messages,
-                    )
+            if effective_memory is not None:
+                memory_banner = derive_console_memory_banner_presentation(
+                    effective_memory, active_messages
+                )
             transcript.set_memory_banner_presentation(memory_banner)
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
@@ -17526,6 +17613,23 @@ class ChatScreen(BaseAppScreen):
             # and the later reads rebuild, while a settled tick pays for one
             # build. Task-scoped: only THIS coroutine's task reads the cache —
             # workers and handlers interleaving during the awaits build live.
+            if poll_record is None:
+                from ..Console_Modules.config_sync import prepare_console_presentation_sync
+
+                prepared = await prepare_console_presentation_sync(self)
+                if _console_screen_is_torn_down(self):
+                    return False
+                current_visit = self._current_console_attach_visit()
+                if (
+                    not visit.same_visit(current_visit)
+                    or visit.active != current_visit.active
+                ):
+                    self._console_sync_requested = True
+                    return False
+                if not prepared or getattr(self, "_console_sync_maintenance_paused", False):
+                    self._console_control_bar_replay_whole_sync = True
+                    self._request_console_control_bar_sync(delayed=True)
+                    return False
             with self._workspace.tick_workspace_build_scope():
                 if config_sync.project_console_tick(self) is False:  # Replay owns it.
                     return False
@@ -17567,7 +17671,7 @@ class ChatScreen(BaseAppScreen):
                     self._console_attach_reconciled
                     or self._console_attach_reconcile_running
                 ):
-                    self.call_after_refresh(self._reconcile_console_after_attach)
+                    self.call_after_refresh(self._start_console_attach_reconciliation)
             if not poll_is_current():
                 return False
             if poll_record is None and not self._console_sync_requested and full_source is not None and run_controls.poll_source_is_current(self, full_source):
@@ -20656,9 +20760,8 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.config_sync import run_console_presentation_sync
 
         def sync() -> None:
-            rail_state = self._current_console_rail_state()
             self._sync_console_settings_summary()
-            self._sync_console_control_bar_under_config(rail_state)
+            self._sync_console_control_bar_under_config(None)
 
         result = run_console_presentation_sync(self, sync)
         if result is False:
@@ -22618,13 +22721,6 @@ class ChatScreen(BaseAppScreen):
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
-        self.call_after_refresh(
-            lambda: self.run_worker(
-                self._refresh_console_hooks,
-                group="console-hook-refresh",
-                exclusive=True,
-            )
-        )
         if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
             wiring.review_view_resumed(controller)
@@ -22636,11 +22732,21 @@ class ChatScreen(BaseAppScreen):
             and not self._console_attach_resume_in_progress
         ):
             self._console_resume_after_reconcile = True
-            self.call_after_refresh(self._reconcile_console_after_attach)
+            self.call_after_refresh(self._start_console_attach_reconciliation)
             if self._console_attach_reconcile_retry_exhausted:
                 self._console_attach_reconcile_retry_count = 0
                 self._console_attach_reconcile_retry_exhausted = False
             return
+        # Reconciliation invokes this resume body again when ready. Publishing
+        # hooks before that handoff duplicated the read/repaint and could enter
+        # synchronous config admission while FULL's native read was pending.
+        self.call_after_refresh(
+            lambda: self.run_worker(
+                self._refresh_console_hooks,
+                group="console-hook-refresh",
+                exclusive=True,
+            )
+        )
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)
@@ -22715,6 +22821,8 @@ class ChatScreen(BaseAppScreen):
         if not ordered_resume_active:
             try:
                 self._workspace._reconcile_console_session_with_registry()
+            except _WorkspaceAvailabilityObsolete:
+                raise
             except Exception:
                 logger.opt(exception=True).debug(
                     "Unable to reconcile Console session with registry-active workspace"

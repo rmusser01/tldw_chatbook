@@ -58,6 +58,10 @@ Interrupted operations recover through `recover <operation-id> --finish|--rollba
 
 `admit_startup()` runs before runtime/config imports (literally the first lines of `app.py` and `Web_Server/serve.py`, and several package `__init__`s — `Web_Server`, `RAG_Search`, `TTS`); enrollment failure is a hard `SystemExit("Recovery required: …")`. When config encryption is enabled with a verifier, `startup_unlock` prompts pre-TUI: a wrong-but-readable password offers rekey; an empty one resets encrypted config values (keys removed; chats/notes untouched). Served children refuse the unlock with a plain-language error rather than hanging. Non-unlock recovery reasons get the minimal recovery host. A recovery restart (app → CLI handoff) checks no running operation and no unsaved editors, quits guarded, and spawns a fresh process into the minimal recovery host.
 
+Same-process initialization followers wait on the existing `_changed` condition (TASK-35595). Initializer retirement/error, acquisition close and local-pause cancellation notify under the same lock. The original acquisition/path/provenance checks run at entry and after waking; native admission still follows before any dependent effect. Removing the 10 ms wake timer avoids repeating native path checks under the shared lock while the leader is unchanged. This does not change native cross-process lock polling, deadlines, source validation or lease retirement.
+
+Creation-intent ancestry validation uses the internal visitor of `native_files.pinned_directory` to inspect every existing parent in a single nofollow traversal (ADR-126, TASK-35595). Each descriptor reaches the visitor only after its original owner/mode check and is borrowed only for that call. Missing descendants do not hide existing ancestor intents; visitor errors and native close errors propagate. No settled verdict or directory handle is cached between acquisitions.
+
 ## Failure behaviors and boundaries
 
 | Case | Behavior |

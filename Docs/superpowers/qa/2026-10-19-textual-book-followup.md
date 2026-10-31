@@ -57,7 +57,7 @@ full private-profile keyboard Save/Revert check qualify the correction; see
   fresh authority, native-read retirement or existing lifecycle owners.
 - Native attachment timing and the completed keyboard-responsiveness fix
   are already on [PR #3166](https://github.com/rmusser01/tldw_chatbook/pull/3166)
-  (primary-checkout TASK-35614 / TASK-35645); no duplicate task was filed.
+  (primary-checkout TASK-35614 / TASK-38267); no duplicate task was filed.
 
 Chapter 8's dynamic actions were adapted to the existing custom footer and
 guidance-only bindings. Blanket check_action gating would remove existing

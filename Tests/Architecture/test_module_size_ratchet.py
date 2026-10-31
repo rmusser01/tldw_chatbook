@@ -70,6 +70,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # 2026-10-31, PR #3162: the user explicitly waived size limits for this
 # backlog rebase. Affected rows are pinned to exact measured values; see
 # Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
+# 2026-10-31 PR3166: exact final integration measurements under the user
+# backlog size-limit waiver; no spare budget and no behavioral guard changes.
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 776,
@@ -128,7 +130,7 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3690,
+    "tldw_chatbook/app_service_wiring.py": 3701,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -385,7 +387,7 @@ _BUDGETS: dict[str, int] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: Keep canonical notification settings together; exact measured size,
     #: with no reflow/extraction solely to satisfy the old ceiling.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35674,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35726,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -596,24 +598,24 @@ _BUDGETS: dict[str, int] = {
     # asks storage for its count by title only (owner decision 2026-10-27),
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8774,
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8935,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7047,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6990,
+    "tldw_chatbook/UI/Console_Modules/session.py": 7002,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
     # docstring says so.
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6943,
+    "tldw_chatbook/Chat/console_runtime.py": 7067,
     "tldw_chatbook/Chat/console_trace_service.py": 6679,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
@@ -633,7 +635,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
     "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4648,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,

@@ -1,0 +1,4 @@
+# Raw receipts retain exact CRLF and patch-context bytes.
+*.patch -text -whitespace
+*.log -text -whitespace
+*.diff -text -whitespace

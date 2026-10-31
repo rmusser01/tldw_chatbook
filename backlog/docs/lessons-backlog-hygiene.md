@@ -3,6 +3,19 @@
 Mechanical traps in the task board and the plumbing around it. Cheap to avoid once
 known, expensive to rediscover. Every entry states the incident that produced it.
 
+## PowerShell validation errors need terminating semantics (TASK-35644, 2026-10-19)
+
+**Incident.** Cleanup of 20 exact completed diagnostic roots used the unsupported
+`Split-Path -LiteralPath ... -Parent` combination. Its parameter errors were
+nonterminating, so the intended parent-validation expression did not stop the
+script. All removed targets were the intended disposable roots; a corrected
+post-check verified every parent, prefix and absence. The receipt retains the
+error rather than claiming that initial validation succeeded.
+
+**What to do.** Use `$ErrorActionPreference = 'Stop'` before filesystem validation
+and `[IO.Path]::GetDirectoryName()` for an absolute path's parent. Check every exact
+target before starting a separate removal loop in the same shell.
+
 ---
 
 ## A removed worktree path can make Git operate on a parent checkout (TASK-31985, 2026-09-07)

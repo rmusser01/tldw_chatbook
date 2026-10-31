@@ -1,0 +1,149 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\Working\Github\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 60.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 1 item
+
+Tests/Backup_Recovery/test_storage_ancestry_walk.py::test_native_ancestry_walk[linear] FAILED [100%]
+
+================================== FAILURES ===================================
+______________________ test_native_ancestry_walk[linear] ______________________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-68/test_native_ancestry_walk_line0')
+case = 'linear'
+
+    @pytest.mark.parametrize(
+        "case",
+        [
+            "linear",
+            "all-parents",
+            "missing",
+            "junction",
+            "mode",
+            "visitor-first",
+            "visitor-last",
+            "close",
+        ],
+    )
+    def test_native_ancestry_walk(tmp_path, case):
+>       _run(tmp_path, case, "native", script=_SCRIPT, timeout=30)
+
+Tests\Backup_Recovery\test_storage_ancestry_walk.py:136:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-68/test_native_ancestry_walk_line0')
+route = 'linear', outcome = 'native'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w", encoding="utf-8") as output:
+                result = subprocess.run(
+                    [sys.executable, "-X", "utf8", "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text(encoding="utf-8", errors="replace")
+        stderr = ""
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: native directory opens: 91 linear bound: 13
+E         Traceback (most recent call last):
+E           File "<string>", line 29, in <module>
+E         AssertionError: (91, 13)
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '-c', "\nimport os,stat,subprocess,sys\nfrom pathlib import Path\nfrom tldw_chatbook.Backup_Recovery import control_records as records,native_files\n\ncase=sys.argv[1]\nhome=Path.home()\nparents=[home]\nfor index in range(5):\n child=parents[-1]/f'level-{index}';child.mkdir(mode=0o700);parents.append(child)\nroot=parents[-1]/'bootstrap'\nnative=native_files.os\noriginal_open,original_close=native.open,native.close\nopened=[];live=set();visits=[]\ndef tracked_open(*args,**kwargs):\n fd=original_open(*args,**kwargs);opened.append(fd);live.add(fd);return fd\ndef tracked_close(fd):\n original_close(fd);live.discard(fd)\ndef visit(fd):\n info=native.fstat(fd)\n assert stat.S_ISDIR(info.st_mode)\n visits.append((info.st_dev,info.st_ino))\nnative.open=tracked_open;native.close=tracked_close\ntry:\n if case=='linear':\n  records._require_settled_ancestry(root)\n  expected=len(root.parent.parts)\n  print('native directory opens:',len(opened),'linear bound:',expected,flush=True)\n  assert len(opened)==expected,(len(opened),expected)\n elif case=='all-parents':\n  with native_files.pinned_directory(root.parent,_visit=visit):pass\n  expected=[]\n  for parent in reversed((root.parent,*root.parent.parents)):\n   info=native.stat(parent);expected.append((info.st_dev,info.st_ino))\n  assert visits==expected,(visits,expected)\n  for parent in parents:\n   marker=parent/records._DIRECTORY_CREATION_INTENT\n   marker.write_bytes(b'incomplete');marker.chmod(0o600)\n   try:\n    try:records._require_settled_ancestry(root)\n    except records.RecoveryRequired as error:assert str(error)=='bootstrap_creation_unsettled'\n    else:raise AssertionError(f'creation intent ignored at {parent}')\n    assert marker.read_bytes()==b'incomplete'\n   finally:marker.unlink()\n elif case=='missing':\n  missing=root/'missing'/'deeper'\n  records._require_settled_ancestry(missing)\n  for parent in parents:\n   marker=parent/records._DIRECTORY_CREATION_INT\n   marker.write_bytes(b'incomplete');marker.chmod(0o600)\n   try:\n    try:records._require_settled_ancestry(missing)\n    except records.RecoveryRequired:pass\n    else:raise AssertionError('missing descendant hid existing ancestor intent')\n   finally:marker.unlink()\n elif case=='junction':\n  alias=home/'alias'\n  if os.name=='nt':\n   subprocess.run(['cmd','/c','mklink','/J',str(alias),str(parents[-1])],check=True,capture_output=True)\n  else:alias.symlink_to(parents[-1],target_is_directory=True)\n  try:\n   try:records._require_settled_ancestry(alias/'bootstrap')\n   except OSError:pass\n   else:raise AssertionError('directory alias admitted')\n   assert alias.exists()\n  finally:\n   if os.name=='nt':alias.rmdir()\n   else:alias.unlink()\n elif case=='mode':\n  unsafe=parents[2]\n  if os.name=='nt':\n   subprocess.run(['icacls',str(unsafe),'/grant','*S-1-1-0:(W)'],check=True,capture_output=True)\n  else:unsafe.chmod(0o777)\n  assert native.stat(unsafe).st_mode & 0o022\n  try:\n   try:\n    with native_files.pinned_directory(root.parent,_visit=visit):pass\n   except OSError:pass\n   else:raise AssertionError('shared-writable ancestor admitted')\n   info=native.stat(unsafe)\n   assert (info.st_dev,info.st_ino) not in visits,'visitor ran before posture validation'\n   assert native.stat(unsafe).st_mode & 0o022,'read repaired unsafe mode'\n  finally:\n   if os.name=='nt':subprocess.run(['icacls',str(unsafe),'/remove:g','*S-1-1-0'],check=True,capture_output=True)\n   else:unsafe.chmod(0o700)\n elif case.startswith('visitor-'):\n  position=1 if case=='visitor-first' else len(root.parent.parts)\n  def fail_visitor(fd):\n   visit(fd)\n   if len(visits)==position:raise RuntimeError('visitor failed')\n  try:\n   with native_files.pinned_directory(root.parent,_visit=fail_visitor):pass\n  except RuntimeError as error:assert str(error)=='visitor failed'\n  else:raise AssertionError('visitor failure disappeared')\n  assert len(visits)==position\n elif case=='close':\n  selected=[]\n  def failed_close(fd):\n   tracked_close(fd)\n   if fd in selected:raise RuntimeError('native close failed')\n  native.close=failed_close\n  try:\n   with native_files.pinned_directory(root.parent,_visit=visit) as fd:selected.append(fd)\n  except RuntimeError as error:assert str(error)=='native close failed'\n  else:raise AssertionError('native close failure disappeared')\n else:raise AssertionError(case)\n assert not live,('unretired native descriptors',live)\nfinally:\n native.open=original_open;native.close=original_close\n for fd in live:original_close(fd)\nprint('retired and reopened')\n", 'linear', 'native'], returncode=1).returncode
+
+Tests\Backup_Recovery\test_home_citation_retirement.py:332: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 10:01:48.103 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 10:01:48.241 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 10:01:48.242 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 10:01:48.242 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================== warnings summary ===============================
+Tests/Backup_Recovery/test_storage_ancestry_walk.py::test_native_ancestry_walk[linear]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+0.73s setup    Tests/Backup_Recovery/test_storage_ancestry_walk.py::test_native_ancestry_walk[linear]
+0.37s call     Tests/Backup_Recovery/test_storage_ancestry_walk.py::test_native_ancestry_walk[linear]
+0.00s teardown Tests/Backup_Recovery/test_storage_ancestry_walk.py::test_native_ancestry_walk[linear]
+=========================== short test summary info ===========================
+FAILED Tests/Backup_Recovery/test_storage_ancestry_walk.py::test_native_ancestry_walk[linear] - AssertionError: native directory opens: 91 linear bound: 13
+  Traceback (most recent call last):
+    File "<string>", line 29, in <module>
+  AssertionError: (91, 13)
+
+assert 1 == 0
+ +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '-c', "\nimport os,stat,subprocess,sys\nfrom pathlib import Path\nfrom tldw_chatbook.Backup_Recovery import control_records as records,native_files\n\ncase=sys.argv[1]\nhome=Path.home()\nparents=[home]\nfor index in range(5):\n child=parents[-1]/f'level-{index}';child.mkdir(mode=0o700);parents.append(child)\nroot=parents[-1]/'bootstrap'\nnative=native_files.os\noriginal_open,original_close=native.open,native.close\nopened=[];live=set();visits=[]\ndef tracked_open(*args,**kwargs):\n fd=original_open(*args,**kwargs);opened.append(fd);live.add(fd);return fd\ndef tracked_close(fd):\n original_close(fd);live.discard(fd)\ndef visit(fd):\n info=native.fstat(fd)\n assert stat.S_ISDIR(info.st_mode)\n visits.append((info.st_dev,info.st_ino))\nnative.open=tracked_open;native.close=tracked_close\ntry:\n if case=='linear':\n  records._require_settled_ancestry(root)\n  expected=len(root.parent.parts)\n  print('native directory opens:',len(opened),'linear bound:',expected,flush=True)\n  assert len(opened)==expected,(len(opened),expected)\n elif case=='all-parents':\n  with native_files.pinned_directory(root.parent,_visit=visit):pass\n  expected=[]\n  for parent in reversed((root.parent,*root.parent.parents)):\n   info=native.stat(parent);expected.append((info.st_dev,info.st_ino))\n  assert visits==expected,(visits,expected)\n  for parent in parents:\n   marker=parent/records._DIRECTORY_CREATION_INTENT\n   marker.write_bytes(b'incomplete');marker.chmod(0o600)\n   try:\n    try:records._require_settled_ancestry(root)\n    except records.RecoveryRequired as error:assert str(error)=='bootstrap_creation_unsettled'\n    else:raise AssertionError(f'creation intent ignored at {parent}')\n    assert marker.read_bytes()==b'incomplete'\n   finally:marker.unlink()\n elif case=='missing':\n  missing=root/'missing'/'deeper'\n  records._require_settled_ancestry(missing)\n  for parent in parents:\n   marker=parent/records._DIRECTORY_CREATION_INT\n   marker.write_bytes(b'incomplete');marker.chmod(0o600)\n   try:\n    try:records._require_settled_ancestry(missing)\n    except records.RecoveryRequired:pass\n    else:raise AssertionError('missing descendant hid existing ancestor intent')\n   finally:marker.unlink()\n elif case=='junction':\n  alias=home/'alias'\n  if os.name=='nt':\n   subprocess.run(['cmd','/c','mklink','/J',str(alias),str(parents[-1])],check=True,capture_output=True)\n  else:alias.symlink_to(parents[-1],target_is_directory=True)\n  try:\n   try:records._require_settled_ancestry(alias/'bootstrap')\n   except OSError:pass\n   else:raise AssertionError('directory alias admitted')\n   assert alias.exists()\n  finally:\n   if os.name=='nt':alias.rmdir()\n   else:alias.unlink()\n elif case=='mode':\n  unsafe=parents[2]\n  if os.name=='nt':\n   subprocess.run(['icacls',str(unsafe),'/grant','*S-1-1-0:(W)'],check=True,capture_output=True)\n  else:unsafe.chmod(0o777)\n  assert native.stat(unsafe).st_mode & 0o022\n  try:\n   try:\n    with native_files.pinned_directory(root.parent,_visit=visit):pass\n   except OSError:pass\n   else:raise AssertionError('shared-writable ancestor admitted')\n   info=native.stat(unsafe)\n   assert (info.st_dev,info.st_ino) not in visits,'visitor ran before posture validation'\n   assert native.stat(unsafe).st_mode & 0o022,'read repaired unsafe mode'\n  finally:\n   if os.name=='nt':subprocess.run(['icacls',str(unsafe),'/remove:g','*S-1-1-0'],check=True,capture_output=True)\n   else:unsafe.chmod(0o700)\n elif case.startswith('visitor-'):\n  position=1 if case=='visitor-first' else len(root.parent.parts)\n  def fail_visitor(fd):\n   visit(fd)\n   if len(visits)==position:raise RuntimeError('visitor failed')\n  try:\n   with native_files.pinned_directory(root.parent,_visit=fail_visitor):pass\n  except RuntimeError as error:assert str(error)=='visitor failed'\n  else:raise AssertionError('visitor failure disappeared')\n  assert len(visits)==position\n elif case=='close':\n  selected=[]\n  def failed_close(fd):\n   tracked_close(fd)\n   if fd in selected:raise RuntimeError('native close failed')\n  native.close=failed_close\n  try:\n   with native_files.pinned_directory(root.parent,_visit=visit) as fd:selected.append(fd)\n  except RuntimeError as error:assert str(error)=='native close failed'\n  else:raise AssertionError('native close failure disappeared')\n else:raise AssertionError(case)\n assert not live,('unretired native descriptors',live)\nfinally:\n native.open=original_open;native.close=original_close\n for fd in live:original_close(fd)\nprint('retired and reopened')\n", 'linear', 'native'], returncode=1).returncode
+======================== 1 failed, 1 warning in 1.55s =========================

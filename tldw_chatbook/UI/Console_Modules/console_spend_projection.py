@@ -19,7 +19,11 @@ from types import FunctionType, MethodType, ModuleType
 from typing import Any
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
-from ...Chat.console_chat_controller import (_is_empty_transcript_row, ConsoleChatController, _CONSOLE_CONTEXT_PRESENTATION_READERS)
+from ...Chat.console_chat_controller import (
+    ConsoleChatController,
+    _CONSOLE_CONTEXT_PRESENTATION_READERS,
+    _is_empty_transcript_row,
+)
 from ...Chat.console_received_dispatch import stock_native_methods
 from ...Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -38,6 +42,11 @@ from ...Chat.console_cost_tracker import (
     ConsoleCostSnapshot,
     ConsoleCostState,
     build_cost_state,
+    build_cost_snapshot as _stock_cost_snapshot,
+)
+from ...Chat.console_session_settings import (
+    _estimate_tokens_locally as _stock_token_estimator,
+    build_console_context_estimate as _stock_context_estimate,
 )
 from ...Chat.console_turn_preparation import (
     ConsoleTurnPreparation,
@@ -53,9 +62,16 @@ from ...Widgets.Console.console_context_controls import (
     build_console_next_send_spend_state,
 )
 from . import pricing_display as _pricing_display
+from . import tokenizer_display as _tokenizer_display
 
 _PRICING_DISPLAY_SOURCE = _pricing_display._SOURCE_CAPSULE
 _DISPLAY_PRICING_CLASS = _pricing_display.DisplayPricingCatalog
+_TRANSCRIPT_CONTEXT_READER = (
+    ConsoleChatController.context_control_presentation_inputs,
+    ConsoleChatController.context_control_presentation_inputs.__code__,
+    ConsoleChatController.context_control_presentation_inputs.__defaults__,
+    ConsoleChatController.context_control_presentation_inputs.__kwdefaults__,
+)
 
 _ACCEPTED_RECOVERY_KINDS = frozenset(
     {
@@ -195,6 +211,9 @@ class ConsoleReadinessConfigProjection:
         self._read_request = None
         self._reads = set()
         self._runtime_owner = None
+        self._tokenizer_request = None
+        self._tokenizer_prepared = None
+        self._tokenizer_retry_at = 0.0
         self._settled = asyncio.Event()
         self._settled.set()
 
@@ -326,14 +345,23 @@ class ConsoleReadinessConfigProjection:
         runtime = _readiness_runtime(screen)
         if getattr(screen, "_closing", False) or getattr(runtime, "_disposed", False):
             return False
-        pending_at_entry = self.pending
         key = self._key()
-        current = (_same_readiness_key(key, self.key) and self.value is not None
-                   and self._runtime_owner is runtime)
+        current = (
+            _same_readiness_key(key, self.key)
+            and self.value is not None
+            and self._runtime_owner is runtime
+        )
         life = self.max_age
         if getattr(screen, "_console_transcript_sync_timer", None) is not None:
             life *= REFRESH_AHEAD_SHARE
-        if (not current or time.monotonic() - self.at >= life) and not self.pending:
+        tokenizer_due = (
+            self._tokenizer_request is not None
+            and self._tokenizer_prepared is not self._tokenizer_request
+            and time.monotonic() >= self._tokenizer_retry_at
+        )
+        if (
+            not current or time.monotonic() - self.at >= life or tokenizer_due
+        ) and not self.pending:
             self.pending = True
             self._settled.clear()
             refresh = self._refresh(key)
@@ -352,19 +380,42 @@ class ConsoleReadinessConfigProjection:
         if not current:
             return False
         previous = getattr(screen, "_console_readiness_projection_active", None)
-        previous_pending = getattr(self, "_display_refresh_pending_at_entry", None)
         screen._console_readiness_projection_active = (
             threading.get_ident(),
             self.value,
             self,
         )
         try:
-            self._display_refresh_pending_at_entry = pending_at_entry
             with screen._console_derivation_scope():
                 return body() is not False
         finally:
             screen._console_readiness_projection_active = previous
-            self._display_refresh_pending_at_entry = previous_pending
+
+    def tokenizer_ready(self, model: str, provider: str) -> bool:
+        """Prepare cold stock tokenizers under this display's finite read owner."""
+        runtime = _readiness_runtime(self.screen)
+        if getattr(self.screen, "_closing", False) or getattr(runtime, "_disposed", False):
+            return False
+        request = self._tokenizer_request
+        if (
+            request is None
+            or (request.model, request.provider) != (model, provider)
+            or not _tokenizer_display.preparation_current(request)
+        ):
+            request = _tokenizer_display.capture_tokenizer_preparation(model, provider)
+            self._tokenizer_request = request
+            self._tokenizer_prepared = None
+            self._tokenizer_retry_at = 0.0
+        # Unqualified/custom backends retain their original synchronous route.
+        if request is None:
+            return True
+        self.run(lambda: None)
+        return (
+            self._tokenizer_prepared is request
+            and self._runtime_owner is runtime
+            and _same_readiness_key(self._key(), self.key)
+            and _tokenizer_display.preparation_current(request)
+        )
 
     async def warm(self) -> bool:
         """Wait for the same checked owner when a modal needs cold display data."""
@@ -385,6 +436,8 @@ class ConsoleReadinessConfigProjection:
 
     async def _refresh(self, key: tuple) -> None:
         reader = self.read_current
+        tokenizer_request = self._tokenizer_request
+        tokenizer_prepared = False
         self._read_request = asyncio.get_running_loop(), threading.current_thread(), key
         from ...Chat.console_preparation_reads import run_preparation_read
         from ...Chat.console_runtime import ConsoleRuntime
@@ -398,6 +451,25 @@ class ConsoleReadinessConfigProjection:
                 reader, creator=self, session_id=key[5], reads=self._reads,
                 observers=observers, require_current=lambda: None,
             )
+            read_at = time.monotonic()
+            if (
+                tokenizer_request is not None
+                and tokenizer_request is self._tokenizer_request
+                and _same_readiness_key(key, self._key())
+                and not getattr(self.screen, "_closing", False)
+                and not getattr(runtime, "_disposed", False)
+            ):
+                tokenizer_prepared = (
+                    tokenizer_request is self._tokenizer_prepared
+                    and _tokenizer_display.preparation_current(tokenizer_request)
+                ) or await run_preparation_read(
+                    tokenizer_request,
+                    creator=self,
+                    session_id=key[5],
+                    reads=self._reads,
+                    observers=observers,
+                    require_current=lambda: None,
+                )
             if (
                 getattr(self.screen, "_closing", False)
                 or getattr(runtime, "_disposed", False)
@@ -437,8 +509,22 @@ class ConsoleReadinessConfigProjection:
                 or self.context_policy != result.context_policy
                 or self.pricing != result.pricing
             )
+            if (
+                tokenizer_request is self._tokenizer_request
+                and tokenizer_request is not None
+            ):
+                if tokenizer_prepared and _tokenizer_display.preparation_current(
+                    tokenizer_request
+                ):
+                    changed = (
+                        changed or self._tokenizer_prepared is not tokenizer_request
+                    )
+                    self._tokenizer_prepared = tokenizer_request
+                else:
+                    self._tokenizer_prepared = None
+                self._tokenizer_retry_at = time.monotonic() + self.max_age
             self._runtime_owner = runtime
-            self.key, self.value, self.at = current_key, value, time.monotonic()
+            self.key, self.value, self.at = current_key, value, read_at
             self.context_policy = result.context_policy
             self.pricing = result.pricing
             proof = result._display_proof
@@ -455,7 +541,8 @@ class ConsoleReadinessConfigProjection:
                 # The existing pristine-default handoff may change only this
                 # owner's settings revision. Bind the issued display copy to
                 # that final exact owner and its original one-second clock.
-                published = replace(proof, owner=current_key, at=self.at)
+                published = replace(proof, owner=current_key)
+                self.at = proof.at
                 _checked_display_proofs.add(published)
                 self._display_proof = published
         except Exception:  # noqa: BLE001 - remain cold and retryable.
@@ -498,6 +585,27 @@ def _same_readiness_key(
     return left == right
 
 
+def console_tokenizer_display_ready(screen: Any, model: str, provider: str) -> bool:
+    """Gate only the disk-backed Console display; live/action counters stay live."""
+    if not model:
+        return True
+    value = _screen_readiness_config(screen)
+    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+        return True
+    from ..Screens import chat_screen
+
+    if (
+        chat_screen.build_console_context_estimate is not _stock_context_estimate
+        or chat_screen._estimate_tokens_locally is not _stock_token_estimator
+        or chat_screen.build_cost_snapshot is not _stock_cost_snapshot
+    ):
+        return True
+    projection = ConsoleReadinessConfigProjection.for_screen(screen)
+    if type(projection) is not ConsoleReadinessConfigProjection:
+        return True
+    return projection.tokenizer_ready(model, provider)
+
+
 _standard_readiness_key = ConsoleReadinessConfigProjection._key
 
 
@@ -505,7 +613,8 @@ def _checked_display_status(projection: Any) -> bool | None:
     """Return fresh display acceptance, owner refusal, or native fallback.
 
     All checks here are in-memory identity or lexical source checks. The
-    coordinator lock protects only installed participant mappings, never IO.
+    coordinator lock protects the installed participant mappings. Contention
+    defers presentation to the existing retry; it never grants acceptance.
     """
     if type(projection) is not ConsoleReadinessConfigProjection:
         return None
@@ -578,8 +687,7 @@ def _checked_display_status(projection: Any) -> bool | None:
     if not _checked_pricing_current(projection, proof):
         return None
     # These lexical checks include the current generation and raw selected path.
-    # An expired same-owner mapping may use the original native fallback; a
-    # different owner/source may never enter a body around that old mapping.
+    # A different owner/source may never enter a body around an old mapping.
     if (
         not _same_readiness_key(projection._key(), projection.key)
         or not _same_readiness_key(projection.key, proof.owner)
@@ -591,7 +699,9 @@ def _checked_display_status(projection: Any) -> bool | None:
         return False
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-    with storage._lock:
+    if not storage._lock.acquire(blocking=False):
+        return False
+    try:
         try:
             state = raw._participant_identity(proof.participant)
         except RecoveryRequired as error:
@@ -607,24 +717,22 @@ def _checked_display_status(projection: Any) -> bool | None:
             or storage._pause is not None
         ):
             return False
+    finally:
+        storage._lock.release()
     if not _same_readiness_key(projection._key(), projection.key):
         return False
     if projection.at != proof.at:
         return None
     if time.monotonic() - proof.at >= min(1.0, projection.max_age):
-        # Defer only a refresh pending before this synchronous display entry;
-        # a direct call that starts its own refresh keeps its native fallback.
-        return (
-            False
-            if projection.pending is True
-            and getattr(projection, "_display_refresh_pending_at_entry", None) is True
-            else None
-        )
+        # run() already requested the existing finite checked refresh. Direct
+        # presentation must also wait for it instead of entering native work
+        # on the event loop; refusal retains the existing coalesced retry.
+        return False
     return True
 
 
-class _ContextCapacityDisplayRefused(Exception):
-    """A captured metadata source changed before display publication."""
+class _CheckedDisplayRefused(Exception):
+    """Display ownership changed or its coordinator is busy; request a retry."""
 
 
 def _original_capacity_method(owner: Any, module: Any, entry: tuple) -> Any:
@@ -748,7 +856,10 @@ def _context_capacity_display_sources(gateway: Any, app: Any) -> Any:
 def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) -> Any:
     """Use an issued copy for metadata only; custom/direct routes stay fresh."""
     projection = getattr(screen, "_console_readiness_config_projection", None)
-    if _checked_display_status(projection) is not True:
+    status = _checked_display_status(projection)
+    if status is False:
+        raise _CheckedDisplayRefused()
+    if status is None:
         return gateway.cached_context_window(settings)
     proof = projection._display_proof
     captured = _context_capacity_display_sources(gateway, proof.owner[1])
@@ -770,7 +881,7 @@ def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) 
         or projection._display_proof is not proof
         or _checked_display_status(projection) is not True
     ):
-        raise _ContextCapacityDisplayRefused()
+        raise _CheckedDisplayRefused()
     return value
 
 
@@ -820,7 +931,10 @@ def _checked_pricing_current(projection, proof) -> bool:
 def pricing_catalog_for_display(screen: Any, get_catalog: Callable) -> Any:
     """Supply detached prices only inside the qualified synchronous UI route."""
     projection = getattr(screen, "_console_readiness_config_projection", None)
-    if _checked_display_status(projection) is True:
+    status = _checked_display_status(projection)
+    if status is False:
+        raise _CheckedDisplayRefused()
+    if status is True:
         return projection.pricing
     return get_catalog()
 
@@ -858,7 +972,7 @@ def _run_checked_display_sync(
         if failure is not None and error is not failure:
             raise error from failure
         raise
-    if type(failure) is _ContextCapacityDisplayRefused:
+    if type(failure) is _CheckedDisplayRefused:
         if accepted:
             request_retry()
         return False
@@ -896,6 +1010,36 @@ def console_readiness_presentation(function: Callable) -> Callable:
         )
 
     return wrapped
+
+
+def _context_presentation_source_key(controller: Any) -> tuple:
+    """Retain callback identities so restored stock readers cannot reuse custom UI."""
+    from ...Chat.console_chat_controller import _CONTEXT_DISPLAY_CALLBACKS
+
+    sources = []
+    for name in (
+        "context_control_presentation_inputs",
+        *(item[0] for item in _CONTEXT_DISPLAY_CALLBACKS),
+    ):
+        bound = getattr(controller, name, None)
+        method = type(bound) is MethodType
+        function = bound.__func__ if method else bound
+        if type(function) is FunctionType:
+            sources.append(
+                (
+                    bound.__self__ if method else None,
+                    function,
+                    id(function.__code__),
+                    function.__code__,
+                    id(function.__defaults__),
+                    function.__defaults__,
+                    id(function.__kwdefaults__),
+                    function.__kwdefaults__,
+                )
+            )
+        else:
+            sources.append((id(bound), bound))
+    return tuple(sources)
 
 
 class ConsoleContextReadSnapshot:
@@ -1015,6 +1159,7 @@ class ConsoleContextReadSnapshot:
                 store.session_settings_revision(session_id),
                 store.session_context_summary(session_id),
                 self.config_projection._key() if self.config_projection else None,
+                _context_presentation_source_key(controller),
             )
         except (AttributeError, KeyError, StopIteration):
             return None
@@ -1123,6 +1268,57 @@ class ConsoleContextReadSnapshot:
             self.schedule(
                 self.refresh(), exclusive=False, group="console-context-publication"
             )
+
+
+def console_transcript_context_inputs(
+    screen: Any,
+    controller: Any,
+    session_id: str,
+) -> tuple | None:
+    """Share disposable memory display inputs without holding transcript paint."""
+    from ...Chat.console_chat_controller import (
+        _CONTEXT_DISPLAY_CALLBACKS,
+    )
+
+    reader = getattr(controller, "context_control_presentation_inputs", None)
+    function, code, defaults, kwdefaults = _TRANSCRIPT_CONTEXT_READER
+    if (
+        type(controller) is ConsoleChatController
+        and type(reader) is MethodType
+        and reader.__self__ is controller
+        and reader.__func__ is function
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is kwdefaults
+    ):
+        for (
+            name,
+            function,
+            code,
+            defaults,
+            kwdefaults,
+            static,
+        ) in _CONTEXT_DISPLAY_CALLBACKS:
+            bound = getattr(controller, name, None)
+            original = (
+                bound is function
+                if static
+                else (
+                    type(bound) is MethodType
+                    and bound.__self__ is controller
+                    and bound.__func__ is function
+                )
+            )
+            if (
+                not original
+                or function.__code__ is not code
+                or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not kwdefaults
+            ):
+                break
+        else:
+            return screen._context_spend._context_inputs(controller, session_id)
+    return None  # The transcript retains its original post-gate custom read.
 
 
 async def prepare_console_settings_context(

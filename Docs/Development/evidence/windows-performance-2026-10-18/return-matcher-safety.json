@@ -1,0 +1,17 @@
+{
+  "baseline_revision": "48339e4d6d2fa82b561e6fa1651f8e82928177b2",
+  "normalization": "CRLF to LF",
+  "modules": {
+    "tldw_chatbook/config.py": "866c6cf615b8f7c6054de50db24f683e9e7a4de1036690c8bdaf58e570e2099a",
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": "548f803a0098931a42f1af7ad35a5e6021127f132060baa3b77ce79f1c36da72",
+    "tldw_chatbook/Backup_Recovery/config_participants.py": "fa786f6bf98612be9e8d83c9c91f038ff3ab3485651d273c3591275a0abf0ab2",
+    "tldw_chatbook/Backup_Recovery/raw_participants.py": "30a79b960ce3503c04a1132a798f25c89f267523c029041753ec04d132e7a9f4",
+    "tldw_chatbook/Backup_Recovery/native_files.py": "087e16b01e91fb8ebdf34ffbaaf0911513b71063a2968c7af4aa4ca63c462e43",
+    "tldw_chatbook/Backup_Recovery/control_records.py": "644a6e76095dec8f3e29b00ca3661aa3c62c996c324ba545e34415601cb05da0",
+    "tldw_chatbook/UI/Console_Modules/config_sync.py": "2ed60c11cdbd614e99ad6f733c29cab1dc97c478ca21215440ecd2978442e75e",
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": "ba968c98a4352a7cca450a6f2414b418f9fb97dedda9d54ca134c9bffe36a2f3",
+    "tldw_chatbook/UI/Console_Modules/workspace.py": "424163c933ad0ea68ddc114e31ae1d8cfe0312bb155279cf006228c849d40afd",
+    "tldw_chatbook/Chat/console_preparation_reads.py": "160c2463e9ec5451853828ef305f5fe45ecdf50ac1839524aaefd60bbefafa31",
+    "tldw_chatbook/Chat/console_native_commit.py": "3998e5bc1d5f02d3a2b352863322ee2feb017e7457329e8ff8487e7b825c9431"
+  }
+}

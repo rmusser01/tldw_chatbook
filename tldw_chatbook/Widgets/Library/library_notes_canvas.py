@@ -3748,7 +3748,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._children_ready = True
         self._apply_post_compose_state()
         if self.mode == "lasting_add":
-            self.call_after_refresh(self._focus_initial_lasting_sync_control)
+            # Children are mounted; establish the action before the first frame
+            # instead of leaving Textual's default focus on the scroll body.
+            self._focus_initial_lasting_sync_control()
 
     def _focus_initial_lasting_sync_control(self) -> None:
         """Focus the safe first control once, after the wrapper initially mounts."""

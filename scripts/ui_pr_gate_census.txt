@@ -1661,3 +1661,8 @@ Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_expl
 Tests/UI/test_settings_console_os_notifications_journeys.py
 # PR #3162, 2026-10-31: mounted archive controls; 14 cases passed.
 Tests/UI/test_console_archive_recovery_cards.py
+
+# PR #3166, 2026-10-31: original-proof expiry and late-publication/refusal controls.
+# Both parameterized nodes passed on the isolated PR3162 candidate (four cases).
+Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display
+Tests/UI/test_console_config_sync_cadence_inputs.py::test_late_tail_publication_is_a_new_input_and_refusal_remains_owed

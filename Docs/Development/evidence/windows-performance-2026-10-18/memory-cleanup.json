@@ -1,0 +1,11 @@
+{
+  "owned_python_processes": 0,
+  "original_source_sha256": {
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": "77d008b7febd98c10bd06c5581492ed7ac74af994b47dbc3e8044299f6b2225a",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "926e2b150d9aba1efe0318aa0b860320c1b6310fc84e943ae07e1d6059ef9b99"
+  },
+  "profile_roots_removed_or_absent": 26,
+  "all_targets_absent": true,
+  "validation": "Absolute roots, exact parent/name, no reparse points; original source files and directories restricted to two verified Git-byte sources; all targets checked before deletion",
+  "original_source_root_removed": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.tmp-memory-baseline-sources"
+}

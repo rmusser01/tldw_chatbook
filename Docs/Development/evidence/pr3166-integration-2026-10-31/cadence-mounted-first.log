@@ -1,0 +1,43 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 90.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 1 item
+
+Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run FAILED [100%]
+
+================================== FAILURES ===================================
+___ test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run ___
+Tests\UI\test_console_config_sync_cadence.py:353: in test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+    assert seen.calls == tail, (
+E   AssertionError: 1 checked config operations in 3 unchanged ticks of the run's tail
+E   assert 6 == 5
+E    +  where 6 = <Tests.UI.test_console_config_sync_cadence._Projections object at 0x000001C72BD639E0>.calls
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+26.88s call     Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+======================= 1 failed, 2 warnings in 41.96s ========================

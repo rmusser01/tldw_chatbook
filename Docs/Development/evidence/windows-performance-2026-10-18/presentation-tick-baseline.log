@@ -1,0 +1,502 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFFFFFFF.                                                                [100%]
+================================== FAILURES ===================================
+____________ test_settled_run_ticks_do_zero_workspace_registry_sql ____________
+
+    @pytest.mark.asyncio
+    async def test_settled_run_ticks_do_zero_workspace_registry_sql():
+        """The review's probe, as a gate: settled ticks -> 0 registry SQL.
+
+        On the pre-fix code each tick counts ~6 ``ensure_default_workspace`` +
+        ~6 ``list_workspaces`` + 3 x (``get_active_workspace`` +
+        ``list_runtime_bindings`` + ``list_workspaces`` +
+        ``list_workspace_memberships``) and their SQLite statements.
+        """
+>       _, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:168:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_settled_run_ticks_do_zero0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 10:50:25.621 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 10:50:25.647 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 10:50:25.648 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 10:50:25.648 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+______________ test_the_counter_still_sees_real_registry_traffic ______________
+
+    @pytest.mark.asyncio
+    async def test_the_counter_still_sees_real_registry_traffic():
+        """Control: "zero" above must not be satisfiable by an unwired counter."""
+>       app, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:196:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_the_counter_still_sees_re0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+______________ test_registry_mutation_reflects_in_the_next_tick _______________
+
+    @pytest.mark.asyncio
+    async def test_registry_mutation_reflects_in_the_next_tick():
+        """A mutation with no Console seam must reach the next tick's state.
+
+        The create/rename/set-active trio is performed directly on the registry
+        service � the way Settings or Library do it � so only the memo's own
+        ``mutation_generation`` revalidation can keep the Console truthful.
+        """
+>       app, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:229:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_registry_mutation_reflect0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+_________________ test_row_pipeline_runs_once_per_state_build _________________
+
+    @pytest.mark.asyncio
+    async def test_row_pipeline_runs_once_per_state_build():
+        """canonical-owner + overlay must each run once for a no-query build."""
+>       _, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:270:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_row_pipeline_runs_once_pe0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+________________ test_settled_tick_builds_workspace_state_once ________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001E6AA0ABF50>
+
+    @pytest.mark.asyncio
+    async def test_settled_tick_builds_workspace_state_once(monkeypatch):
+        """One settled tick must pay for the context build at most once.
+
+        Counted at the uncached seam (``build_console_workspace_state`` as
+        imported by the workspace controller module) rather than the memoized
+        front method, which the tick legitimately CALLS several times -- the
+        stack probe that motivated the tick scope measured six calls per tick
+        (rail states x2, workspace push, control bar + agent section inspector
+        legs, settings summary).
+        """
+        from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
+
+>       _, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:312:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_settled_tick_builds_works0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+__________ test_tick_scope_rebuilds_when_registry_changes_mid_scope ___________
+
+    @pytest.mark.asyncio
+    async def test_tick_scope_rebuilds_when_registry_changes_mid_scope():
+        """Inputs changing inside one tick scope must rebuild, not reuse."""
+>       app, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:334:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_tick_scope_rebuilds_when_0/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+_________ test_tick_scope_rebuilds_when_session_is_created_mid_scope __________
+
+    @pytest.mark.asyncio
+    async def test_tick_scope_rebuilds_when_session_is_created_mid_scope():
+        """The PR #660 letter, store half: a session created mid-tick rebuilds.
+
+        ``_sync_console_native_session_tabs`` can create a session between the
+        tick's builds; the fingerprint's store-sessions component is the ONLY
+        thing keeping the later reads fresh. Adversarial review (TASK-22201)
+        proved a mutant with that component deleted passed every prior test:
+        the registry mid-scope test above cannot see it (a session create
+        touches no registry table), and a create was masked one layer deeper
+        still by the per-session queued-counts token changing length. The
+        activation test below pins the fully-masked case.
+        """
+>       _, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:367:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_tick_scope_rebuilds_when_1/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+________ test_tick_scope_rebuilds_when_session_is_activated_mid_scope _________
+
+    @pytest.mark.asyncio
+    async def test_tick_scope_rebuilds_when_session_is_activated_mid_scope():
+        """Activating a DIFFERENT session mid-scope must rebuild, not reuse.
+
+        The narrowest #660 shape: activation changes no session-row fields and
+        no queued counts, so only the fingerprint's ``active_session_id``
+        component can catch it � the exact component the review's escaping
+        mutant had deleted.
+        """
+>       _, host = _ready_host()
+
+Tests\UI\test_console_run_tick_workspace_reads.py:399:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests\UI\test_console_dictation.py:95: in _ready_host
+    app = _build_test_app()
+Tests\UI\app_factory.py:398: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests\UI\app_factory.py:125: in build_test_app_config
+    config = load_settings()
+tldw_chatbook\config.py:2194: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook\Backup_Recovery\config_participants.py:505: in wrapped
+    with operation(source, target=target):
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\config_participants.py:436: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+C:\Python312\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+tldw_chatbook\Backup_Recovery\raw_participants.py:897: in _scope
+    participant = _raw_participant(source)
+tldw_chatbook\Backup_Recovery\raw_participants.py:325: in _raw_participant
+    participant = _register_raw_participant(source, owner, selected)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+source = <module 'tldw_chatbook.config' from 'C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\config.py'>
+owner = 'config'
+selected = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-82/test_tick_scope_rebuilds_when_2/test_data/config/config.toml')
+
+    def _register_raw_participant(source, owner, selected):
+        """Register observed metadata; admission and file effects validate separately."""
+        selected = lexical_path(selected)
+        with storage._lock:
+            participant = _source_participants.get(source)
+            if participant is None:
+                participant = object.__new__(_RawParticipant)
+                _participants[participant] = _ParticipantState(
+                    weakref.ref(source), type(source), owner, selected
+                )
+                _source_participants[source] = participant
+            state = _participant_identity(participant)
+            if state.source() is not source:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+            if state.owner != owner or state.selected != selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook\Backup_Recovery\raw_participants.py:275: RecoveryRequired
+============================== warnings summary ===============================
+.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(25 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_settled_run_ticks_do_zero_workspace_registry_sql
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_the_counter_still_sees_real_registry_traffic
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_registry_mutation_reflects_in_the_next_tick
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_row_pipeline_runs_once_per_state_build
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_settled_tick_builds_workspace_state_once
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_tick_scope_rebuilds_when_registry_changes_mid_scope
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_tick_scope_rebuilds_when_session_is_created_mid_scope
+FAILED Tests/UI/test_console_run_tick_workspace_reads.py::test_tick_scope_rebuilds_when_session_is_activated_mid_scope
+8 failed, 1 passed, 2 warnings in 9.17s

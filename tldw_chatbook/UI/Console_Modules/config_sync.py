@@ -53,7 +53,10 @@ def run_console_config_sync(
         defer()
         return False
     if checked_projection is not None:
-        from .console_spend_projection import _run_checked_display_sync
+        from .console_spend_projection import (
+            _CheckedDisplayRefused,
+            _run_checked_display_sync,
+        )
 
         displayed = _run_checked_display_sync(checked_projection, sync, defer)
         if displayed is not None:
@@ -92,9 +95,49 @@ def run_console_config_sync(
         if failure is not None and error is not failure:
             raise error from failure
         raise
+    if checked_projection is not None and type(failure) is _CheckedDisplayRefused:
+        # An expired display may have selected this native route. A later
+        # metadata refusal still requests replay, but only after native exit.
+        # Cleanup errors propagate through the exception path above.
+        defer()
+        return False
     if failure is not None:
         raise failure
     return True
+
+
+async def prepare_console_presentation_sync(screen: Any) -> bool:
+    """Await the existing stock display owner before FULL's synchronous render.
+
+    No native operation spans this await. Direct/custom presentation keeps its
+    existing route; the caller owns whole-FULL replay when preparation refuses.
+
+    Args:
+        screen: Current Console view with its existing display projection.
+
+    Returns:
+        Whether FULL may attempt its original synchronous presentation.
+    """
+    from .console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _screen_readiness_config,
+        _standard_readiness_projections,
+    )
+
+    if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
+        screen, "_closing", False
+    ):
+        return False
+    value = _screen_readiness_config(screen)
+    if not value or not screen._console_config_snapshot_is_disk_loaded(value):
+        return True
+    projection = ConsoleReadinessConfigProjection.for_screen(screen)
+    if (
+        type(projection) is not ConsoleReadinessConfigProjection
+        or projection not in _standard_readiness_projections
+    ):
+        return True
+    return await projection.warm()
 
 
 def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
@@ -107,7 +150,9 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
     def render(projection=None):
         return run_console_config_sync(
             sync,
-            maintenance_paused=getattr(screen, "_console_sync_maintenance_paused", False),
+            maintenance_paused=getattr(
+                screen, "_console_sync_maintenance_paused", False
+            ),
             defer=lambda: screen._request_console_control_bar_sync(delayed=True),
             checked_projection=projection,
         )

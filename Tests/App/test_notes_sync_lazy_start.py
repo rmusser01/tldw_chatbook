@@ -482,6 +482,7 @@ def test_refresh_is_a_no_op_on_a_suspended_screen() -> None:
     assert refreshed == []
 
     live = SimpleNamespace(
+        _notes_sync_runtime_prepared=True,
         _library_screen_suspended=False,
         _library_notes_sync_controller=controller,
         is_mounted=False,

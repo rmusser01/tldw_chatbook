@@ -956,6 +956,53 @@ the operation can.
 The 57 tests from the first round passed throughout. No test interrupted a changed check.
 
 **What to do.** When you fold step B into step A, list everything B did on entry, such as clearing a marker, advancing a generation or publishing a loading state. Then check every exit of the merged path against that list: each return, each exception, and cancellation. Write one test per exit class, not per return statement. A barrier that cancels the task, or makes a loop accessor raise, while the worker is held, will cover the raising exits.
+## Validate monitoring event masks before booting the app (TASK-38267, originally TASK-35645, 2026-10-19)
+
+**Incident.** A review correctly noticed missing unwind accounting in a Windows
+native-read observer, but adding `PY_UNWIND` to `set_local_events` failed before
+app construction with `ValueError: invalid local event set 0x100f`. A tiny
+Python 3.12 reproduction confirmed that unwind is a global-only event. A
+filtered `set_events` callback then observed the original exception correctly.
+
+**What to do.** Validate the actual runtime's monitoring API with a small
+raising function before another app boot. Filter global callbacks by exact code
+objects, clear their masks on finish, and retain failed diagnostic setup exits
+separately from product failures and plain timing comparisons.
+
+## A performance warmup pause does not establish quiet background work (TASK-35644, 2026-10-19)
+
+**Incident.** After a focused CSS optimization, a Windows Console return
+comparison became slower overall. The old sampler grouped everything from
+navigation through attachment, so it could not place a stack before the key.
+Separate identity-preserving phase observations then measured 98–135 ms full
+styling spans and 388–1,332 ms configuration preparation waits. A further worker
+trace caught a real config read starting while leaving Console and finishing
+during the next return, after 5.71 seconds. The probe's three-second initial
+pause and half-second away interval had not established a settled workload.
+
+**What to do.** Distinguish input, styling and completed attachment; observe
+original callback entry and retirement before blaming a component optimization
+for overall variance. Keep protocol and guards identical in comparison arms,
+retain every outlier, and label instrumented discovery separately from plain
+timing. Do not treat a fixed pause as proof that background work has retired or
+freeze freshness checks to manufacture a quiet run. The earlier runs' exact
+cause remains unproved by this later observation.
+
+## An idle event loop can still have blocked keyboard dispatch (TASK-35614, 2026-10-19)
+
+**Incident.** A Windows Console return took 2.29 seconds while 152 of 178
+main-thread samples were in the event-loop poll. Textual 8.2 awaited the async
+attach callback in `Screen._invoke_and_clear_callbacks`, so the screen message
+pump could not process a typed key during the native-read await. A mounted test
+holding reconciliation reproduced the missing key despite continuing loop
+progress; dispatching through a retained finite view worker let the key through
+without acknowledging runtime attachment early.
+
+**What to do.** Measure a real posted key separately from loop heartbeat and
+attachment completion. Inspect the callback's awaiting message pump when CPU
+samples are mostly idle. Moving work off the UI thread alone does not establish
+input responsiveness; retain native retirement and visit fences when changing
+the async caller.
 
 ## A CI flake can be filed from runs that predate its fix (TASK-35443, 2026-10-18)
 
@@ -964,6 +1011,34 @@ The 57 tests from the first round passed throughout. No test interrupted a chang
 **What to do.** Before investigating a CI flake, read the log to the first exception rather than the summary line, then check whether dev has changed that code since, with `git merge-base --is-ancestor <fix> <failing head>` for each failing run. If the heads predate the fix, the work left is counting the runs since it.
 
 **Seen again (TASK-33620.15.23, 2026-10-27): a commit date is not a merge date.** The task was filed on 2026-10-24 from the two nothing-focused composer tests failing "in most runs" on dev 5b5920b8e2. The wait that fixed them (a19334f0e6) is dated 2026-10-20, four days earlier, so it read as already on dev. It reached dev only on 2026-10-26, with the merge of PR #3211 (c398d3a4d0), and 5b5920b8e2 does not contain it. On dev a2b7104d1e the two tests passed 8 of 8 serial runs before any change. Run the ancestry check against the failing head, never compare dates.
+## Separate worker SQL from UI-thread SQL in performance counters (TASK-35610, 2026-10-19)
+
+The Windows CSS/presentation follow-up's settled-tick test counted two registry
+reads on the updated code and zero on an original-code control. Repeating the
+updated test reproduced the assertion. Thread/stack observation located both
+reads in the existing finite workspace-availability worker, outside the UI loop.
+The class-level counter's method wrappers also selected the conservative custom
+reader route, which legitimately calls both folder and runtime-binding readers.
+The counter had been interpreting all-thread traffic as UI blocking work.
+
+Keep UI and background read/connection/SQL counts separately, retain the actual
+native calls, and prove both counters with positive controls. Do not silence a
+worker, freeze its TTL, or weaken admission to make a timing window green. Also
+avoid unconditional `asyncio.current_task()` in a thread observer: the first
+diagnostic raised without an event loop and was discarded; the corrected observer
+preserved the original call and supplied the usable evidence.
+
+## A render-entry wait must also observe its producer's failure (TASK-35592, 2026-10-19)
+
+The Windows attention regression run reached two stale transcript fixtures,
+then timed out after 180 seconds in a third test. Its refresh task had already
+raised because the harness lacked `_console_chat_store`, but the test waited
+only for an event the failed task would never set. Both assertion failures
+reproduced on pre-change `efb71994`. Supplying the existing store/rate-chip seams
+and racing the entry event against producer completion made all three tests
+pass. Observe early producer errors, bound the entry wait, and retire both tasks
+in `finally`; an event-only wait hides the useful failure until Windows kills
+the entire pytest process.
 
 ## A held-lock test's blocked stack names the product read to fix (TASK-35444, 2026-10-18)
 
@@ -23123,3 +23198,31 @@ unresolved assertion baseline-only merely because the host was slow. Ordinary
 Windows TEMP also failed admission before pytest collection; these runs needed
 native 0700 config/temp directories rather than relaxed permission validation.
 Evidence: `Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md`.
+
+## Sub-resolution async polling can manufacture Windows stalls (TASK-35595, 2026-10-19)
+
+**Incident.** The Console profiling probe added a second 5 ms observer alongside
+a 5 ms input poll and 10 ms heartbeat. Python 3.12 Windows used GetTickCount64
+with 15.625 ms event-loop clock resolution. A standalone reproduction, importing
+no application code, made 261,448 loop iterations in two seconds, every selector
+call with zero timeout, consuming nearly one CPU core and starving ctypes work.
+Stacks looked like native-storage initialization stalls while the main loop was
+inside its I/O poll. Both original and updated app code timed out; both completed
+all six returns when diagnostic polling was raised above the clock resolution.
+
+**What to do.** Measure the event loop's clock resolution, not only the stopwatch
+resolution. Keep diagnostic polling above it, or observe existing events. Record
+poll/heartbeat intervals with results and rerun both versions after correcting
+the probe. Do not credit removal of an observer-induced timeout as a product fix.
+Evidence: `Docs/Development/evidence/windows-performance-2026-10-18/STORAGE_RESULTS.md`
+and `asyncio_polling_probe.py` in the same directory.
+
+
+## Test freshness at the original checked read, after every unrelated await (PR3166, 2026-10-31)
+
+Independent review held optional tokenizer preparation after the original native config reader had issued a one-second proof. Publication re-dated that proof: its actual age was 1.218s, but the presentation gate saw age 0 and rendered without a fresh native entry. Preserve the original issue time when rebinding an otherwise qualified display owner. The regression must exercise the actual presentation gate and verify refusal/replay plus fresh-read recovery, not just compare timestamps. The RED/GREEN receipts and native reader/source checks are in `Docs/Development/evidence/pr3166-review-2026-10-31/RESULTS.md`.
+
+
+### 2026-10-31 — Do not hold a downstream UI lock before its startup publication retires
+
+PR3166 final-base connected Close controls passed readiness's pending/sync/replay predicate, then deliberately held ConsoleSessionSurface's sync lock. A later deferred startup FULL ran on ChatScreen's message pump and waited behind that held publication; Pilot.click waited for the pump before delivering any mouse event. The original-task trace identified Screen._invoke_and_clear_callbacks → original FULL → the screen tab lock, while the earlier FULL waited on the fixture-owned Surface lock. Finishing that exact attach/startup publication within the same ten-second setup budget qualified the coalesced control. Same-session then exposed a remaining 10ms Pilot poll on a measured 15.625ms Proactor clock; its released original reader returned a checked proof after 10.547s. Observing the exact runtime Close return at the same 10s bound qualified that path without cancelling native work or changing product guards. Preserve the explicit setup prerequisite and real click/DOM/retirement assertions; a broader quiet predicate or larger timeout would hide the observed ownership problem. Raw RED/GREEN receipts: `Docs/Development/evidence/pr3166-final-integration-2026-10-31/RESULTS.md`.

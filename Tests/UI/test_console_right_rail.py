@@ -1012,6 +1012,7 @@ async def test_inspector_root_pins_project_and_authority_above_outer_body(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
     monkeypatch,
 ) -> None:

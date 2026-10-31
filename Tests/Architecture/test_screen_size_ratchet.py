@@ -78,6 +78,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # 2026-10-31, PR #3162: the user explicitly waived size limits for this
 # backlog rebase. Affected rows are pinned to exact measured values; see
 # Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
+# 2026-10-31 PR3166: exact final integration measurements under the user
+# backlog size-limit waiver; no spare budget and no behavioral guard changes.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     #: gone red on dev -- ~8,400 lines of feature work re-consumed the
@@ -230,7 +232,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: Retain the notification hooks and bounded shutdown repair in place;
     #: pin the measured tree exactly, without reflow/extraction to fit.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24301, 739),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24409, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -1148,7 +1150,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-24, TASK-34000 P1-B rebased onto dev 96cae7eec0 (owner decision,
     #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
     #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37759, 1361),
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37805, 1362),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
