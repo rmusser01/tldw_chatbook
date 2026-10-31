@@ -853,6 +853,7 @@ _BUDGETS: dict[str, int] = {
     # test_bundle_rebuild_matches_committed_artifact already failed on dev).
     # Round 2: 5950 -> 5951 (+1): git exclusion pathspecs in both spellings,
     # fold_path_part moved to path_validation, grep's ``re`` at module scope.
+
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5722,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
