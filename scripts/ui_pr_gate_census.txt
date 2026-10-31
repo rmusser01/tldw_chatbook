@@ -1659,3 +1659,9 @@ Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_expl
 
 # TASK-18925: verified Console OS-notification Settings persistence journey.
 Tests/UI/test_settings_console_os_notifications_journeys.py
+# TASK-36571 (2026-10-30): a run start's state flips restyle each widget once
+# (Workbench header status alone, Stop/Send variant + classes, Agent status,
+# command strip), plus the guards that no rule keys a descendant on a status
+# class and that the targeted restyles compute a full restyle's styles (nine
+# cases, about 17 s locally at load 5), appended at the tail.
+Tests/UI/test_console_projection_restyles.py
