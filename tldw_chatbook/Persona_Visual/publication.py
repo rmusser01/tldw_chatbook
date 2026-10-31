@@ -1266,9 +1266,7 @@ def _storage_reference_exists(
 def _require_idle_repository(repository: PersonaVisualRepository) -> None:
     try:
         connection = repository.db.get_connection()
-        if connection.in_transaction or getattr(
-            repository.db._local, "transaction_depth", 0
-        ):
+        if connection.in_transaction or repository.db.managed_transaction_depth():
             raise PersonaVisualPublicationError("persona_visual_transaction_active")
     except PersonaVisualPublicationError:
         raise

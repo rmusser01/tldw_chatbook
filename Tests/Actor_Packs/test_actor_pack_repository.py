@@ -77,7 +77,7 @@ def test_lookup_by_portable_uuid_returns_exact_cross_kind_identity(
         nonlocal entered
         with transaction(*args, **kwargs) as cursor:
             entered = True
-            assert getattr(repository.db._local, "transaction_depth", 0) == 1
+            assert repository.db.managed_transaction_depth() == 1
             yield cursor
 
     monkeypatch.setattr(repository.db, "transaction", observe_transaction)
@@ -301,7 +301,7 @@ def test_intent_authority_guard_runs_inside_reserved_transaction(repository) -> 
         observed.append(
             (
                 repository.db.get_connection().in_transaction,
-                getattr(repository.db._local, "transaction_depth", 0),
+                repository.db.managed_transaction_depth(),
             )
         )
         return False
