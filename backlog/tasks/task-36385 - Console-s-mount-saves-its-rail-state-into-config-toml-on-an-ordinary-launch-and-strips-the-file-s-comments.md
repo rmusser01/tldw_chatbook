@@ -1,7 +1,7 @@
 ---
 id: TASK-36385
 title: Console's mount saves its rail state into config.toml on an ordinary launch and strips the file's comments
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: 2026-10-22 23:58
@@ -38,6 +38,10 @@ Found by TASK-35835 (PR #3216, 2026-10-22). Once TASK-35835 lands, a quit no lon
 2. Fix: never persist the no-source default seed. An absent record already reads back as those defaults, so the in-memory latch is enough. The recovered-profile check becomes redundant and goes. Real edits still go through `_set_console_rail_preference`, which writes.
 3. Tests: the real-app boot + quit test (`Tests/ProductionApp/test_config_profile_isolation.py`) compares a commented config across the whole session; a census-listed mounted Console test pins that the first mount leaves a commented file byte-identical and a real rail toggle is persisted. Both red at dev where applicable. Update the two unit pins of the old default write.
 4. List the other startup writes through the same writer; fix none unless the same guard applies.
+5. 2026-10-31 backlog repair: mechanically rebase onto current dev; retain both ratchet histories. Verify rail-state and real mounted/boot behavior. Independent review reproduced False/exception seed writes being discarded while the dependent record saves: add mounted worker regressions, retain failed seeds, block dependent writes and notify the user; retry prerequisites first.
+ADR required: no new ADR
+ADR path: backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md
+Reason: repair existing one-time rail-seeding and persistence guarantees without changing ownership.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -168,3 +172,12 @@ No User Guide change: no page says that a launch rewrites config.toml.
   - Runs at the new head (`-n 8`), across the 9 test files this PR touches: 193 passed, 3 failed, 31 errors. These are the same compact_access failures and Wizards setup errors as at the previous re-sync, and dev shows them too.
   - Preflight passed.
 <!-- SECTION:NOTES:END -->
+
+## 2026-10-31 backlog repair evidence (in progress)
+
+Rebased original ccbd3e8 onto dev198eca8b93. Mechanical conflicts preserved both size-ratchet histories; user subsequently waived size limits. Independent review reproduced two issues.
+
+1. Fixed seed persistence failure: False and exceptions retain the failed queued seed, prevent the dependent record write, and notify on the requested failure path. A retry writes the seed before the dependent record. Both real mounted-App regressions failed on the original worker because the dependent record was written. After the fix their assertions pass, but full-App teardown hits Native app workers remain uncertain; this is not reported as a green run. A bounded Textual App dispatching the actual decorated ChatScreen worker against a real private config file passes both failure/retry cases (2 passed). Existing full-App ordering controls remain intact.
+2. Unresolved behavior decision: first-use defaults currently survive only this session. An untouched workspace can inherit a later Global edit after restarting, contrary to ADR-083's one-time seeding contract. User input requested; no merge until resolved.
+
+The pre-fix/rebase focused battery produced 97 passed and 6 failed: four full-App tests report native-worker retirement/teardown issues, the boot/quit subprocess needs diagnosis, and the ChatScreen size test observed concurrent local code growth during the run. This is not final-head qualification. Diagnostic inventory verified before the seed fix (708 owners,7773 TASK494 calls,16 sinks); final inventory verification remains due. Fatal-name/import lint and whitespace checks passed. Task remains In Progress.

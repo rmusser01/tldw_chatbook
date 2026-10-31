@@ -11706,39 +11706,45 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Persist Console rail preferences without blocking the UI thread."""
         with _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK:
-            # Held seed defaults land first (the UI thread only appends).
+            saved = False
+            # Retain failed prerequisites; a dependent record must not pass them.
             while self._console_rail_seed_flush:
-                flush_key, flush_value = self._console_rail_seed_flush.pop(0)
+                flush_key, flush_value = self._console_rail_seed_flush[0]
                 try:
-                    save_setting_to_cli_config(
+                    saved = save_setting_to_cli_config(
                         "console.rail_state", flush_key, flush_value
                     )
-                except Exception as exc:  # noqa: BLE001 -- the record still saves
+                except Exception as exc:  # noqa: BLE001 -- retain failed seed for retry
                     logger.warning(  # noqa: PLE1205 - Loguru brace format
                         "Failed to persist Console rail seed defaults (error_type={})",
                         type(exc).__name__,
                     )
-            latest: Any = serialized
-            app_config = getattr(self.app_instance, "app_config", None)
-            if isinstance(app_config, Mapping):
-                console_config = app_config.get("console")
-                if isinstance(console_config, Mapping):
-                    rail_state_config = console_config.get("rail_state")
-                    if (
-                        isinstance(rail_state_config, Mapping)
-                        and key in rail_state_config
-                    ):
-                        latest = rail_state_config[key]
-            latest_serialized = serialize_console_rail_stored_preferences(latest)
-            try:
-                saved = save_setting_to_cli_config(
-                    "console.rail_state",
-                    key,
-                    latest_serialized,
-                )
-            except Exception as exc:
-                logger.warning("Failed to persist Console rail preference: {}", exc)
-                saved = False
+                    saved = False
+                if not saved:
+                    break
+                self._console_rail_seed_flush.pop(0)
+            else:
+                latest: Any = serialized
+                app_config = getattr(self.app_instance, "app_config", None)
+                if isinstance(app_config, Mapping):
+                    console_config = app_config.get("console")
+                    if isinstance(console_config, Mapping):
+                        rail_state_config = console_config.get("rail_state")
+                        if (
+                            isinstance(rail_state_config, Mapping)
+                            and key in rail_state_config
+                        ):
+                            latest = rail_state_config[key]
+                latest_serialized = serialize_console_rail_stored_preferences(latest)
+                try:
+                    saved = save_setting_to_cli_config(
+                        "console.rail_state",
+                        key,
+                        latest_serialized,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to persist Console rail preference: {}", exc)
+                    saved = False
         if not saved and notify_on_failure:
             self.app.call_from_thread(self._notify_console_rail_preference_save_failure)
 

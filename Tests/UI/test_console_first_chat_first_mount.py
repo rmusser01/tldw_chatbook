@@ -376,3 +376,76 @@ async def test_a_held_seed_the_user_edits_after_it_was_queued_keeps_the_edit(
 
             assert [value["model_open"] for _, value in writes] == [False, True]
             assert _saved_rail_layout()["model_open"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["false", "exception"])
+@private_profile_test
+async def test_failed_held_seed_blocks_the_record_and_retries_before_it(
+    monkeypatch, request, failure
+) -> None:
+    """Exercise the real threaded save worker and config file without startup jobs."""
+    from textual.app import App
+    from textual.widget import Widget
+
+    defaults = serialize_console_rail_stored_preferences(None)
+    key = build_console_rail_preference_key(
+        workspace_id="seed-failure", layout_scope="workspace"
+    ).value
+    edited = {**defaults, "model_open": True}
+    calls = []
+    notices = []
+
+    class RailSaveOwner(Widget):
+        _save_console_rail_preferences = ChatScreen._save_console_rail_preferences
+
+        def __init__(self, app):
+            super().__init__()
+            self.app_instance = app
+            self._console_rail_seed_flush = [(_SHARED_RAIL_KEY, defaults)]
+
+        def _notify_console_rail_preference_save_failure(self):
+            notices.append(True)
+
+    class RailSaveApp(App):
+        def __init__(self):
+            super().__init__()
+            self.app_config = {"console": {"rail_state": {key: edited}}}
+            self.owner = RailSaveOwner(self)
+
+        def compose(self):
+            yield self.owner
+
+    real_save = chat_screen_module.save_setting_to_cli_config
+
+    def fail_first_seed(section, saved_key, value):
+        calls.append(saved_key)
+        if len(calls) == 1:
+            assert saved_key == _SHARED_RAIL_KEY
+            if failure == "exception":
+                raise OSError("injected seed write failure")
+            return False
+        return real_save(section, saved_key, value)
+
+    monkeypatch.setattr(
+        chat_screen_module, "save_setting_to_cli_config", fail_first_seed
+    )
+    app = RailSaveApp()
+    async with app.run_test():
+        console = app.owner
+        await console._save_console_rail_preferences(
+            key, edited, notify_on_failure=True
+        ).wait()
+        assert calls == [_SHARED_RAIL_KEY]
+        assert _saved_rail_layout(key) == {}
+        assert console._console_rail_seed_flush == [(_SHARED_RAIL_KEY, defaults)]
+        assert notices == [True]
+
+        await console._save_console_rail_preferences(
+            key, edited, notify_on_failure=True
+        ).wait()
+        assert calls == [_SHARED_RAIL_KEY, _SHARED_RAIL_KEY, key]
+        assert _saved_rail_layout() == defaults
+        assert _saved_rail_layout(key) == edited
+        assert console._console_rail_seed_flush == []
+        assert notices == [True]
