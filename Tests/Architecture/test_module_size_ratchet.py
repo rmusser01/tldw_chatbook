@@ -286,10 +286,12 @@ _BUDGETS: dict[str, int] = {
     # says whether its no-match message still owes its counts, same decision:
     # +24 (1,491 -> 1,515), applied 2026-10-29.
     # Roleplay frame B2b: owner decision (expand limits, never contort code),
-    # TASK-33910.4, 2026-10-26: B2b changes it by +276 lines (1,297 -> 1,573).
+    # TASK-33910.4, 2026-10-26: B2b changes it by +281 lines (1,297 -> 1,578).
     # The row rises to the measurement, never squeezed code; applied
-    # 2026-10-30 after the final fix wave (B2b rows).
-    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1573,
+    # 2026-10-30 after the final fix wave (1,573), then +5 the same day for
+    # the wave's residual (a failed Retry refocuses only if the focus is
+    # still where the blank left it) (B2b rows).
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": 1578,
     # TASK-33007.8 (closes task-31202): pinned at its measured size after
     # model-config Phase 7 moved the Providers & Models card out (34,179 at
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
