@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-30 01:35'
-updated_date: '2026-10-31 01:27'
+updated_date: '2026-10-31 01:43'
 labels:
   - console
   - composer
@@ -50,4 +50,6 @@ TASK-37800 (owner ruling 2026-10-29, paste then Enter sends) made Enter expand a
 **Live** (real app, Anthropic claude-haiku-4-5 via the review proxy, isolated profile, null keyring, 160x45). Pre-change head: a leading-break paste could not be expanded by keys; Left then Enter sent it (1 request). Fix: 'Summarize: ' + a leading-break paste, Left, Ctrl+E expanded it in place (0 requests), then one Enter sent it (1 request, model replied); a pasted .md path became '📄 photosynthesis.md · 116 B | Ctrl+E expand' and Ctrl+E expanded it from after and from before; a click asked 'Expand pasted text (156 characters)? Ctrl+E: yes · Esc: no' and Ctrl+E expanded it; F1 lists 'Ctrl+E: expand the paste, file or prompt token beside the caret'. At 80x24 the longer chip wraps over three rows of the 26-column draft area. /prompt was not driven live (no saved prompt in the scratch profile); its real command is covered by the tests. Evidence: tools/evidence/bd5/U11/B0-BK*.
 
 **Docs.** User Guide console/chat-basics.md 'Large pastes' (no more 'must be clicked'), its key table (Enter never expands; new Ctrl+E row), and console/context-and-rag.md's /prompt line. Size rows: composer 7155 -> 7174 (owner rule, dated); ChatScreen 24332 -> 24330.
+
+**Merge evidence (2026-10-30, rebased onto dev 7536ac3b87).** Under the plain command on the rebased head: test_console_composer_token_enter.py 14 passed, test_console_composer_token_expand_key.py 18 passed, test_console_raw_cli_arm_in_place.py 5 passed, Tests/CI/test_ui_pr_gate_census_checker.py 80 passed; size ratchets: composer 7174 and ChatScreen 24334/737 (dev's row 24331 plus this branch's +3) pass, the same 8 module rows red as on dev, none touched here; ./scripts/preflight.sh passes; census floor 1168 (dev 1163 + 5). Live on the rebased head (claude-haiku-4-5, 160x45): a question typed in front of a leading-line-break paste sent on one Enter (1 request; reply named worker-2), and paste, ' why', Ctrl+E expanded the paste (no request). Evidence: tools/evidence/bd5/U11/BL-BN*.
 <!-- SECTION:NOTES:END -->
