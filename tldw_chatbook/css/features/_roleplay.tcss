@@ -199,6 +199,17 @@
     color: $ds-text-muted;
 }
 
+/* Frame slice B2b (spec 1.5.4): the no-match message, composed once and
+   updated in place, its "Also in:" targets, and the recovery row's Retry. */
+#personas-library-nomatch {
+    height: auto;
+}
+
+#personas-library-retry,
+.personas-library-also-in-target {
+    margin: $ds-space-0 $ds-space-1;
+}
+
 /* Frame slice B2a: the marks bar (spec 1.5.5), the items pane's bottom row
    while marks exist. Its words and actions size to their labels; the bar
    degrades its text by width (roleplay_frame_state.marks_bar_view), never by
@@ -217,4 +228,90 @@
     height: $ds-size-1;
     padding: $ds-space-0;
     margin: $ds-space-0;
+}
+
+/* Frame slice B2b: the one-row items toolbar (spec 1.5.1). The search box is
+   the boot dense-form input (.settings-compact-input): one row at rest and
+   focused, so focus never moves the list (RP-009). PersonasLibraryPane fits
+   the controls (roleplay_frame_state.fit_items_toolbar) and toggles the two
+   layout classes; the cells these rules spend are mirrored by its
+   CONTROL_GAP_CELLS and SEARCH_CHROME_CELLS. Each control is exactly its
+   label wide (an inline width), so the margin is the gap between them. */
+.roleplay-items-toolbar {
+    layout: horizontal;
+    width: $ds-width-fill;
+    height: auto;
+}
+
+/* Too narrow for the search beside the controls: the controls take the row
+   under it. */
+.roleplay-items-toolbar.roleplay-items-toolbar-wrapped {
+    layout: vertical;
+}
+
+.roleplay-items-controls {
+    layout: horizontal;
+    width: auto;
+    height: auto;
+}
+
+/* Too narrow for one row of controls (80x24): one control per row. */
+.roleplay-items-controls.roleplay-items-controls-stacked {
+    layout: vertical;
+}
+
+.roleplay-items-control {
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    border: none;
+}
+
+/* Frame slice B2b (RP-062): the search placeholder and typed text at AA,
+   painted on every measurable theme by Tests/UI/test_theme_contrast.py.
+   Textual paints the placeholder $text-disabled, under 4.5:1 on all 89
+   themes (2.12:1 on paradise_virtua): at rest it takes the placeholder
+   token. Focused, the dense form's translucent $ds-input-focus-bg over the
+   pane's $panel took the focus ink under 4.5:1 on five themes (4.12:1 on
+   catppuccin-frappe), so the box takes the house focus fill themes.py
+   guards for $panel, as the Workflows search does; Textual's own 5% tint
+   is dropped (with it, three themes stay under, 4.27:1 on
+   catppuccin-mocha). The left edge stays the dense form's. */
+.roleplay-items-search > .input--placeholder {
+    color: $ds-text-placeholder;
+}
+
+.roleplay-items-search:focus {
+    background: $tldw-focus-fill;
+    background-tint: transparent;
+}
+
+.roleplay-items-search:focus > .input--placeholder {
+    color: $ds-focus-fg;
+}
+
+/* Frame slice B2b: the one choice modal (the New chooser, "Import as:"),
+   Widgets/Persona_Widgets/roleplay_choice_modal.py. It is pushed only from
+   Roleplay, so this lazy sheet is always loaded while it shows. */
+.roleplay-items-chooser {
+    align: center middle;
+}
+
+#roleplay-items-chooser-box {
+    width: $ds-size-50;
+    max-width: $ds-width-full;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-surface-panel;
+    background: $ds-surface-raised;
+}
+
+#roleplay-items-chooser-options {
+    height: auto;
+}
+
+.roleplay-items-chooser-keys {
+    color: $ds-text-muted;
 }

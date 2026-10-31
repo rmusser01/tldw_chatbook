@@ -1458,7 +1458,8 @@ The list shows only `No lore books yet` (R25).
 | Selecting another item | Yes | **Yes** |
 | Kind switch (`c p l d [ ]`, rail rows, New… into another kind) | Yes (`switch_mode` clears; `PW/personas_state.py:54-65`) | **Yes** |
 | Start row, landing buttons, Recently edited, Continue rows | Yes | **Yes** |
-| Duplicate, New… in the same kind, Import… (asked before the picker opens), dictionary Revert… (guard first, then the revert confirm) | Yes (guarded today, `PS:7483-7517, 14747-14763`; Revert reloads Options with no draft guard today, `PS:6376-6440`) | **Yes** |
+| Duplicate, New… in the same kind, dictionary Revert… (guard first, then the revert confirm) | Yes (guarded today, `PS:7483-7517, 14747-14763`; Revert reloads Options with no draft guard today, `PS:6376-6440`) | **Yes** |
+| Import… | No: the import lands beside the draft; auto-select runs only when the aggregate predicate is clean and no newer intent arrived, else a literal toast names where (§1.4.6) | **No** (recorded deviation, owner decision D1 of 2026-10-26, frame slice B2b: dev asked the guard before the picker opened) |
 | Delete of the loaded item (alone or among marked rows) | Yes | **Yes**: the guard first, then the delete modal (today's order); the modal names it "(open · unsaved changes are discarded)" |
 | Delete of other rows only | No: the loaded item, its view, its draft and the session are untouched (§4.11) | **No** |
 | Chat now while dirty | — | **No dialog**: Chat now is disabled with `save first` |

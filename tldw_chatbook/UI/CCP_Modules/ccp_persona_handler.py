@@ -153,27 +153,8 @@ class CCPPersonaHandler:
             self.persona_list = []
             return self.persona_list
 
-        mode = self._current_mode()
-        records: List[Dict[str, Any]] = []
-        seen: set[str] = set()
-        offset = 0
         try:
-            for _page in range(PERSONA_PAGE_LIMIT):
-                payload = await service.list_persona_profiles(
-                    mode=mode, limit=PERSONA_PAGE_SIZE, offset=offset
-                )
-                raw = payload.get("items", []) if isinstance(payload, dict) else payload
-                raw_count = len(list(raw or []))
-                fresh = [
-                    record
-                    for record in self._normalize_persona_list(payload)
-                    if str(record.get("id")) not in seen
-                ]
-                seen.update(str(record.get("id")) for record in fresh)
-                records.extend(fresh)
-                if raw_count < PERSONA_PAGE_SIZE or not fresh:
-                    break
-                offset += raw_count
+            records = await self._page_persona_profiles(service)
         except ValueError:
             logger.opt(exception=True).debug("Persona list unavailable in current mode")
             if raise_on_unavailable:
@@ -193,6 +174,48 @@ class CCPPersonaHandler:
                 logger.opt(exception=True).debug("Sidebar persona list update skipped")
 
         return self.persona_list
+
+    async def list_all_persona_profiles(self) -> List[Dict[str, Any]]:
+        """Every persona profile in the current mode, paged as ``refresh_persona_list`` pages.
+
+        For a reader that must not replace this handler's list or push the
+        sidebar (frame slice B2b's ``Also in:`` counts).
+
+        Returns:
+            The normalized records.
+
+        Raises:
+            RuntimeError: When the scope service cannot list personas.
+            ValueError: When the current mode cannot list them.
+        """
+        service = getattr(self.app_instance, "character_persona_scope_service", None)
+        if service is None or not hasattr(service, "list_persona_profiles"):
+            raise RuntimeError("Persona service is unavailable.")
+        return await self._page_persona_profiles(service)
+
+    async def _page_persona_profiles(self, service: Any) -> List[Dict[str, Any]]:
+        """Page ``list_persona_profiles`` until a short page or a page of no new id."""
+        mode = self._current_mode()
+        records: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        offset = 0
+        for _page in range(PERSONA_PAGE_LIMIT):
+            payload = await service.list_persona_profiles(
+                mode=mode, limit=PERSONA_PAGE_SIZE, offset=offset
+            )
+            raw = payload.get("items", []) if isinstance(payload, dict) else payload
+            raw_count = len(list(raw or []))
+            fresh = [
+                record
+                for record in self._normalize_persona_list(payload)
+                if str(record.get("id")) not in seen
+            ]
+            seen.update(str(record.get("id")) for record in fresh)
+            records.extend(fresh)
+            if raw_count < PERSONA_PAGE_SIZE or not fresh:
+                break
+            offset += raw_count
+        return records
 
     async def load_persona(self, persona_id: str) -> None:
         """Load a persona profile by identifier via the mode-aware scope service."""

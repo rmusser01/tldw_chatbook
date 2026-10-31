@@ -2753,37 +2753,29 @@ PersonasInspectorPane #personas-export-include-tts:disabled .toggle--button {
 
 /* ===== WIDGET: PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py) ===== */
 
-
-PersonasLibraryPane #personas-library-toolbar Button,
-PersonasLibraryPane #personas-library-filterbar Button {
-    width: auto;
-    min-width: 0;
-    height: 1;
-    min-height: 1;
-    padding: 0 1;
-    border: none;
-    margin-right: 1;
+PersonasLibraryPane #personas-library-title {
+    width: 1fr;
 }
 
+PersonasLibraryPane .roleplay-items-search {
+    width: 1fr;
+    height: 1;
+    border: none;
+}
 
-PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar,
-PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar {
-    layout: vertical;
+PersonasLibraryPane .roleplay-items-controls {
+    width: auto;
     height: auto;
 }
 
-
-PersonasLibraryPane.personas-library-stacked-controls #personas-library-search {
-    height: 1;
-    min-height: 1;
-    border: none;
-    padding: 0 1;
+PersonasLibraryPane .roleplay-items-control {
+    min-width: 0;
+    margin-left: 1;
 }
 
-PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button,
-PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar Button {
-    width: 100%;
-    margin-right: 0;
+PersonasLibraryPane .roleplay-items-toolbar-wrapped,
+PersonasLibraryPane .roleplay-items-controls-stacked {
+    layout: vertical;
 }
 
 /* ===== WIDGET: PersonasLoreDetailWidget (Widgets/Persona_Widgets/personas_lore_detail.py) ===== */

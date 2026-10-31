@@ -18,6 +18,7 @@ from Tests.UI.roleplay_frame_harness import (
     list_state,
     painted_text,
     select_roleplay_item,
+    start_new,
 )
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
@@ -738,7 +739,6 @@ class TestLibraryMetaRows:
                     ),
                 ),
                 total=1,
-                noun="dictionaries",
             )
             await pilot.pause()
             item_list = screen.query_one("#personas-library-rows")
@@ -759,7 +759,6 @@ class TestLibraryMetaRows:
             await pane.update_rows(
                 (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
                 total=1,
-                noun="characters",
             )
             await pilot.pause()
             item = item_at(screen, 0)
@@ -784,7 +783,6 @@ class TestLibraryMetaRows:
                     ),
                 ),
                 total=1,
-                noun="dictionaries",
             )
             await pilot.pause()
             # SEMANTIC (D14-A): rows are option lines, so the geometry check
@@ -847,7 +845,8 @@ class TestDictionariesList:
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
             empty = screen.query_one("#personas-library-empty", Static)
-            assert "No dictionaries yet" in str(empty.renderable)
+            # The canonical noun (frame slice B2b); dev said "No dictionaries yet".
+            assert "No chat dictionaries yet" in str(empty.renderable)
 
 
 class DetailHarnessApp(ConsolidatedCSSApp):
@@ -1372,7 +1371,7 @@ class TestDictionaryNewDuplicate:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1380,7 +1379,7 @@ class TestDictionaryNewDuplicate:
             assert "Untitled dictionary" in names
             assert screen.state.selected_entity_name == "Untitled dictionary"
             # Second New must disambiguate against the first.
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1398,7 +1397,7 @@ class TestDictionaryNewDuplicate:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1431,19 +1430,23 @@ class TestDictionaryNewDuplicate:
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         """Task-443: Duplicate now also applies to characters (parity fix) -
-        only the Personas mode (profiles have no duplicate seam yet) hides
-        it."""
+        only personas (profiles have no duplicate seam yet) never show it.
+
+        Frame slice B2b (spec 5.3, interim until B5b-2): Duplicate is the
+        Inspector's button for the open item, so it follows the open item's
+        kind, not the mode. This fixture has no characters or personas; those
+        legs are test_roleplay_item_list_app.py's
+        test_the_inspector_duplicate_copies_the_loaded_item[characters] and
+        test_personas_have_no_duplicate.
+        """
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
-            screen = await _mounted(pilot)
-            dup = screen.query_one("#personas-library-duplicate", Button)
-            assert dup.display is True  # characters mode (task-443)
-            await pilot.click("#personas-mode-personas")
-            await pilot.pause()
-            assert dup.display is False
-            await pilot.click("#personas-mode-dictionaries")
-            await pilot.pause()
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            assert screen.query_one("#personas-inspector-actions").display
+            dup = screen.query_one("#personas-duplicate", Button)
             assert dup.display is True
+            assert dup.disabled is False
 
     async def test_duplicate_survives_failed_strategy_copy(
         self, mock_app_instance, stub_characters, fake_dict_service
@@ -1468,7 +1471,7 @@ class TestDictionaryNewDuplicate:
             fake_dict_service.update_dictionary = _failing_update
 
             # Click duplicate
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -2745,17 +2748,23 @@ class TestDictionaryImport:
         notifications = self._capture_notifications(app)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            # Simulate the user having navigated away while the import ran.
-            screen.state.active_mode = "characters"
-            await screen._import_dictionary_from_path(str(source))
+            # The picker opened in Dictionaries (frame slice B2b: the import
+            # carries the user's intent from then), and the user navigated
+            # away while the import ran.
+            intent = screen._import_intent_now()
+            await screen._apply_mode("characters")
+            await screen._import_dictionary_from_path(str(source), intent=intent)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Late Arrival" in names  # the import itself still succeeded
+            assert screen.state.active_mode == "characters"
             assert screen.state.selected_entity_kind != "dictionary"  # no yank-back
+            # The toast names where it went (dev: "open Dictionaries to see it").
             assert any(
-                "open Dictionaries" in message and severity == "information"
+                message == "Imported Late Arrival · in Chat dictionaries"
+                and severity == "information"
                 for message, severity in notifications
             )
 

@@ -43,6 +43,7 @@ from Tests.UI.roleplay_frame_harness import (
     seed_mock_characters,
     select_roleplay_item,
     settle,
+    start_new,
     visible_item_ids,
     wait_until,
 )
@@ -172,8 +173,10 @@ async def test_the_real_app_keeps_running_with_a_character_named_like_markup(
 async def test_a_character_name_tag_and_conversation_title(
     name, mock_app_instance, monkeypatch
 ):
-    """Library row, card, Inspector, conversation row, the Tag filter button,
-    a toast and the header's item label while editing."""
+    """Library row, card, Inspector, conversation row, a toast and the
+    header's item label while editing. The active tag is painted only by the
+    border title since frame slice B2b (dev's Tag button read "Tag: <tag>");
+    test_the_items_border_title_paints_the_tag_literally covers it."""
     seed_mock_characters(
         monkeypatch,
         [{"id": 1, "name": name, "description": "d", "tags": [name], "version": 1}],
@@ -189,11 +192,11 @@ async def test_a_character_name_tag_and_conversation_title(
         screen = app.screen
         assert screen.state.selected_entity_id == "1"
         assert f"Selected: {name}" in _painted(screen)
-        # The Tag filter button names the active tag. Checked, then cleared,
-        # so the click sweep below never opens the tag picker over the copies.
+        # The tag filter on, then off again, so the click sweep below never
+        # opens the tag picker over the copies: nothing it paints is a link.
         await screen._apply_tag_filter(name)
         await settle(pilot)
-        assert f"Tag: {name}" in _painted(screen)
+        assert screen.state.tag_filter == name
         assert click_meta_cells(screen) == []
         await screen._apply_tag_filter(None)
         await settle(pilot)
@@ -354,7 +357,7 @@ async def test_a_persona_save_that_fails_validation_keeps_the_app_running(
     async with app.run_test(size=SIZE, notifications=True) as pilot:
         await settle(pilot)
         await _enter_mode(pilot, "personas")
-        assert await pilot.click("#personas-library-new")
+        await start_new(pilot)
         await settle(pilot)
         screen = app.screen
         assert screen._edit_mode == "create"
@@ -561,3 +564,107 @@ async def test_the_delete_modal_names_marked_and_open_items_literally(
         await pilot.press("escape")
         await settle(pilot)
         assert app.screen is screen
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_import_toast_paints_a_hostile_card_name_literally(
+    name, mock_app_instance, monkeypatch, tmp_path
+):
+    """Frame slice B2b (AC#7): a real import of a card named like markup, beside
+    a draft, so the import lands without auto-select and its toast names the
+    card (spec 1.4.6, R33): ``Imported <name> · in Characters``, painted as
+    typed and inert."""
+    import json
+
+    from textual.widgets import Input
+
+    from Tests.UI.roleplay_frame_harness import fake_file_picker
+    from Tests.UI.roleplay_import_fixtures import card_v2
+
+    card = tmp_path / "hostile.json"
+    card.write_text(json.dumps(card_v2(name)), encoding="utf-8")
+    db = CharactersRAGDB(tmp_path / "hostile_import.db", "test-client")
+    db.add_character_card({"name": "Abel Host", "description": "seed"})
+    fake_file_picker(monkeypatch, card)
+    try:
+        async with open_styled_roleplay(
+            "mock",
+            mock_app_instance,
+            size=SIZE,
+            app_class=_RecordingStyledApp,
+            character_db=db,
+            notifications=True,
+        ) as pilot:
+            screen = pilot.app.screen
+            await start_new(pilot)
+            await wait_until(
+                pilot, lambda: screen._edit_mode == "create", what="the draft"
+            )
+            draft = screen.query_one("#personas-char-editor-name", Input)
+            draft.focus()
+            await pilot.press(*"Draft Hero")
+            await wait_until(
+                pilot, lambda: screen.state.has_unsaved_changes, what="the dirty draft"
+            )
+            assert await pilot.click("#personas-library-import")
+            toast = f"Imported {name} · in Characters"
+            await wait_until(
+                pilot,
+                lambda: any(toast in row for row in painted_rows(screen)),
+                what="the painted toast",
+            )
+            assert name in [row["name"] for row in db.list_character_cards()]
+            # The toast is the only copy: the draft keeps the screen.
+            await _assert_literal_and_inert(pilot, name, at_least=1)
+            assert screen._edit_mode == "create"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_no_match_line_and_also_in_row_paint_a_hostile_query_literally(
+    name, mock_app_instance, tmp_path
+):
+    """Frame slice B2b (AC#7, spec 1.5.4, R33): a search typed like markup is
+    echoed by the no-match line as typed (on one line, cut to 24 cells) and
+    inert, and the ``Also in:`` row under it (fixed words and a count) paints
+    whole beside it."""
+    from textual.widgets import Input
+
+    db = CharactersRAGDB(tmp_path / "hostile_query.db", "test-client")
+    db.add_character_card({"name": "Abel Host", "description": "seed"})
+    WorldBookManager(db).create_world_book(f"{name} atlas")
+
+    async def list_persona_profiles(**_kwargs):
+        return {"items": []}
+
+    mock_app_instance.character_persona_scope_service = SimpleNamespace(
+        list_persona_profiles=list_persona_profiles
+    )
+    mock_app_instance.chat_dictionary_scope_service = FakeDictScopeService([])
+    try:
+        async with open_styled_roleplay(
+            "mock",
+            mock_app_instance,
+            size=SIZE,
+            app_class=_RecordingStyledApp,
+            character_db=db,
+        ) as pilot:
+            screen = pilot.app.screen
+            screen.query_one("#personas-library-search", Input).value = name
+            # The echo as the line paints it: one line, cut to 24 cells.
+            echoed = frame_state.ellipsize_cells(
+                " ".join(name.split()), frame_state.NO_MATCH_ECHO_MAX_CELLS
+            )
+            await wait_until(
+                pilot,
+                lambda: (
+                    any(f'"{echoed}".' in row for row in painted_rows(screen))
+                    and any("Lore books 1 ›" in row for row in painted_rows(screen))
+                ),
+                what="the painted no-match line and Also in row",
+            )
+            await settle(pilot)
+            await _assert_literal_and_inert(pilot, f'"{echoed}".', at_least=1)
+    finally:
+        db.close_connection()

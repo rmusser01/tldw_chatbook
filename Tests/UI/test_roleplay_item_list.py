@@ -831,9 +831,7 @@ def _rows(first: int, last: int, kind: str = "character") -> tuple[LibraryRow, .
 
 async def _host(pilot, rows: tuple[LibraryRow, ...], *, total: int | None = None):
     pane = pilot.app.query_one(PersonasLibraryPane)
-    await pane.update_rows(
-        rows, total=len(rows) if total is None else total, noun="characters"
-    )
+    await pane.update_rows(rows, total=len(rows) if total is None else total)
     await pilot.pause()
     return pane, pane.item_list
 
@@ -944,7 +942,7 @@ async def test_a_mark_column_click_on_a_row_that_just_left_does_nothing():
     B2a (dev's ListView had no mark column); fixed here."""
     async with _PaneHost().run_test(size=(120, 36)) as pilot:
         pane, item_list = await _host(pilot, _rows(1, 3))
-        await pane.update_rows(_rows(1, 1), total=1, noun="characters")
+        await pane.update_rows(_rows(1, 1), total=1)
         await pilot.pause()
         x = item_list.gutter.left + frame_state.gutter_mark_columns().start
         y = item_list.gutter.top
@@ -1036,7 +1034,7 @@ async def test_the_cursor_comes_back_by_id_after_set_options():
     async with _PaneHost().run_test(size=(120, 36)) as pilot:
         pane, item_list = await _host(pilot, _rows(1, 50))
         await select_roleplay_item(pilot, pilot.app.screen, "character:30", load=False)
-        await pane.update_rows(_rows(10, 60), total=51, noun="characters")
+        await pane.update_rows(_rows(10, 60), total=51)
         await pilot.pause()
         assert highlighted_item_id(pilot.app.screen) == "character:30"
 
@@ -1101,7 +1099,7 @@ async def test_a_kind_switch_forgets_the_window_state():
         item_list.set_more_available(True)
         assert pane.mark_active_row("character", "300") is False
         pane.set_mode("lore")
-        await pane.update_rows(_rows(1, 5, kind="lore"), total=5, noun="lore books")
+        await pane.update_rows(_rows(1, 5, kind="lore"), total=5)
         await pilot.pause()
         assert not item_list.more_available
         item_list.focus()
@@ -1112,7 +1110,7 @@ async def test_a_kind_switch_forgets_the_window_state():
         assert highlighted_item_id(pilot.app.screen) == "lore:5"
         assert pilot.app.wanted == []
         pane.set_mode("characters")
-        await pane.update_rows(_rows(1, 200), total=348, noun="characters")
+        await pane.update_rows(_rows(1, 200), total=348)
         item_list.append_rows(_rows(201, 348))
         await pilot.pause()
         assert highlighted_item_id(pilot.app.screen) != "character:300"
@@ -1199,12 +1197,157 @@ async def test_prompts_are_rebuilt_once_per_settled_width_and_only_where_changed
         assert built == [long_name]  # the one cut row, once
 
 
-# ==== Moved from test_personas_library_pane_paging.py (deleted with paging, B2a) ====
-# The toolbar's Sort and Tag stay until frame slice B2b; their pager
-# assertions left with the pager.
+# ==== The one-row toolbar (frame slice B2b, spec 1.5.1; owner decision D2) ====
+# Dev's toolbar stacked one button per row at every design size (the first
+# item sat on row 19 at 120x36); B2b fits search, sort, Tag and + New on one
+# row at 160 columns and two at 120, with Import on the rail's title row.
+
+_MODES = ("characters", "personas", "lore", "dictionaries")
+#: The pane's content width at 120, 160 and 220 columns (measured, Survey 1).
+_DESIGN_WIDTHS = {120: 24, 160: 35, 220: 50}
+
+
+def _row_cells(fit: frame_state.ToolbarFit, mode: str) -> int:
+    """The cells the controls take on their row: a gap and the label each."""
+    return sum(
+        frame_state.CONTROL_GAP_CELLS + cell_len(fit.labels[control])
+        for control in frame_state.toolbar_controls(mode)
+    )
+
+
+@pytest.mark.parametrize(
+    "sort_key", ["name_asc", "relevance", "modified_desc", "created_desc", "server"]
+)
+@pytest.mark.parametrize("mode", _MODES)
+def test_the_toolbar_fits_one_row_at_160_and_two_at_120(mode, sort_key):
+    """AC#1: at most 2 rows at 120 columns and 1 at 160 and wider, in every
+    kind and with every sort label, and never a cut label: each one is its
+    sort's full or short form. The search keeps at least 14 cells beside the
+    controls (spec 1.5.1)."""
+    forms = frame_state.SORT_LABELS[sort_key]
+    assert set(frame_state.SORT_LABELS) == {
+        "name_asc",
+        "relevance",
+        "modified_desc",
+        "created_desc",
+        frame_state.SERVER_SORT_KEY,
+    }
+    for columns, width in _DESIGN_WIDTHS.items():
+        fit = frame_state.fit_items_toolbar(mode, width=width, sort_key=sort_key)
+        assert not fit.stacked, (columns, fit)
+        assert fit.rows <= (2 if columns == 120 else 1), (columns, fit)
+        assert set(fit.labels) == {
+            "search",
+            "import",
+            *frame_state.toolbar_controls(mode),
+        }
+        if "sort" in fit.labels:
+            assert fit.labels["sort"] in forms
+        if fit.rows == 1:
+            assert frame_state.TOOLBAR_SEARCH_MIN_CELLS + _row_cells(fit, mode) <= width
+        else:
+            assert _row_cells(fit, mode) <= width
+
+
+def test_labels_shorten_before_the_toolbar_takes_a_second_row():
+    """Spec 1.5.1: "labels shorten, never wrap". At 160 columns "Recent edit"
+    does not fit beside a 14-cell search, so it reads "Edited" on one row."""
+    narrow = frame_state.fit_items_toolbar(
+        "characters", width=35, sort_key="modified_desc"
+    )
+    wide = frame_state.fit_items_toolbar(
+        "characters", width=50, sort_key="modified_desc"
+    )
+    assert (narrow.rows, narrow.labels["sort"]) == (1, "Edited")
+    assert (wide.rows, wide.labels["sort"]) == (1, "Recent edit")
+
+
+def test_only_a_pane_too_narrow_for_one_row_of_controls_stacks_them():
+    """80x24 (12 cells): Name, Tag and + New cannot share a row, so each takes
+    its own and stays whole (TASK-33787 AC#4); two controls that fit share it."""
+    fit = frame_state.fit_items_toolbar("characters", width=12, sort_key="name_asc")
+    assert (fit.rows, fit.stacked) == (4, True)
+    for control in frame_state.toolbar_controls("characters"):
+        assert frame_state.CONTROL_GAP_CELLS + cell_len(fit.labels[control]) <= 12
+    personas = frame_state.fit_items_toolbar("personas", width=12, sort_key="name_asc")
+    assert (personas.rows, personas.stacked) == (2, False)
+
+
+def test_import_shortens_where_the_header_row_cannot_hold_it(ascii_mode):
+    """Deferred minor T7a: at 80x24 the pane has 12 cells and the header row
+    holds Import plus the 3-cell collapse button. In ASCII mode "Import..."
+    is 9 cells, so the row needed 13 and the collapse button spilled one
+    cell past the pane (new with B2b). The ladder's new rung shortens it to
+    "Import" there; "Import..." comes back one cell wider."""
+    tight = frame_state.fit_items_toolbar("characters", width=12, sort_key="name_asc")
+    assert tight.labels["import"] == "Import"
+    wider = frame_state.fit_items_toolbar("characters", width=13, sort_key="name_asc")
+    assert wider.labels["import"] == "Import..."
+    for fit in (tight, wider):
+        assert frame_state.CONTROL_GAP_CELLS + cell_len(
+            fit.labels["import"]
+        ) + frame_state.RAIL_COLLAPSE_CELLS <= (12 if fit is tight else 13)
+
+
+def test_the_unicode_import_label_fits_the_tightest_pane_whole():
+    """The control: "Import…" (7 cells) plus the collapse button fits 12 cells."""
+    fit = frame_state.fit_items_toolbar("characters", width=12, sort_key="name_asc")
+    assert fit.labels["import"] == "Import…"
+
+
+def test_the_rail_title_yields_to_import_below_about_100_columns():
+    """Owner decision D2: "Library" shows beside the interim Import… where
+    both fit whole (100 columns and wider), and yields below that."""
+    shown = {
+        width: frame_state.fit_items_toolbar(
+            "characters", width=width, sort_key="name_asc"
+        ).title
+        for width in (12, 19, 20, 24)
+    }
+    assert shown == {12: False, 19: False, 20: True, 24: True}
+
+
+@pytest.mark.parametrize("mode", _MODES)
+def test_the_search_placeholder_names_the_kind_and_carries_no_slash_hint(mode):
+    """Owner decision D4: no "/" hint until frame slice B3 binds the key; the
+    long form names the kind, and the fit falls back to "Search…" where the
+    long one does not fit."""
+    noun = frame_state.ITEM_KINDS[frame_state.KIND_FOR_MODE[mode]][1]
+    assert frame_state.search_placeholder(mode, short=False) == f"Search {noun}…"
+    assert frame_state.search_placeholder(mode, short=True) == "Search…"
+    for width in (12, 24, 35, 50):
+        fit = frame_state.fit_items_toolbar(mode, width=width, sort_key="name_asc")
+        assert "/" not in fit.labels["search"]
+        search_cells = width if fit.rows > 1 else width - _row_cells(fit, mode)
+        inside = search_cells - frame_state.SEARCH_CHROME_CELLS
+        assert (
+            cell_len(fit.labels["search"]) <= inside
+            or fit.labels["search"] == "Search…"
+        )
+
+
+def test_the_toolbar_follows_the_ascii_glyph_mode(ascii_mode):
+    """ASCII mode spells the ellipsis "...", so Import takes 9 cells: the fit
+    measures the words it paints."""
+    fit = frame_state.fit_items_toolbar("characters", width=20, sort_key="name_asc")
+    assert fit.labels["import"] == "Import..."
+    assert fit.labels["search"] == "Search..."
+    assert fit.title is False  # 20 - 1 - 9 - 3 leaves 7 cells; "Library" needs 9
+
+
+def test_the_sort_names_an_unknown_key_as_name_and_says_it_whole():
+    """Dev labelled an unknown key "Sort: Name"; the tooltip carries the whole
+    sort and the key, so a short label never hides which sort is on."""
+    assert frame_state.sort_label("bogus") == "Name"
+    assert frame_state.sort_label(frame_state.SERVER_SORT_KEY, short=True) == "Server"
+    assert frame_state.sort_tooltip("modified_desc") == (
+        "Sort: Recent edit. Click to change the order. (s)"
+    )
 
 
 class _ToolbarHost(ConsolidatedCSSApp):
+    """The pane alone on the unstyled tier (widget defaults only)."""
+
     def __init__(self) -> None:
         super().__init__()
         self.events: list[tuple[str, None]] = []
@@ -1219,13 +1362,21 @@ class _ToolbarHost(ConsolidatedCSSApp):
         self.events.append(("tag", None))
 
 
+class _StyledToolbarHost(_ToolbarHost):
+    """The pane alone, styled like the app; its width is the content width."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+
 async def test_sort_and_tag_buttons_post_intents():
+    """Clickable on the unstyled tier too: the pane's harness fallback keeps
+    every control on screen there."""
     app = _ToolbarHost()
     async with app.run_test() as pilot:
         app.query_one(PersonasLibraryPane).set_mode("characters")
         await pilot.pause()
-        await pilot.click("#personas-library-sort")
-        await pilot.click("#personas-library-tag")
+        assert await pilot.click("#personas-library-sort")
+        assert await pilot.click("#personas-library-tag")
         await pilot.pause()
         assert ("sort", None) in app.events and ("tag", None) in app.events
 
@@ -1250,14 +1401,99 @@ async def test_sort_and_tag_hidden_for_lore():
         assert app.query_one("#personas-library-tag").display is False
 
 
-async def test_set_sort_label_and_set_tag_label():
-    app = _ToolbarHost()
-    async with app.run_test():
+def _painted_label(app, selector: str) -> str:
+    """What the terminal shows inside one control's region."""
+    region = app.query_one(selector).region
+    return painted_rows(app.screen)[region.y][region.x : region.right]
+
+
+@pytest.mark.parametrize(
+    ("width", "label"), [(35, "Edited"), (50, "Recent edit")], ids=["35", "50"]
+)
+async def test_the_sort_button_paints_its_key_whole_and_the_tooltip_says_it(
+    width, label
+):
+    """The screen hands the pane a sort key, not words: the button paints the
+    label the fit chose, whole, and the tooltip names the sort whole. Dev's
+    button read "Sort: Recent edit", and a label that grew wrapped onto an
+    unpainted second line (Button.label never re-measured; fixed in T2)."""
+    app = _StyledToolbarHost()
+    async with app.run_test(size=(120, 36)) as pilot:
         pane = app.query_one(PersonasLibraryPane)
-        pane.set_sort_label("Sort: Recent")
-        pane.set_tag_label("Tag: villain")
-        assert str(app.query_one("#personas-library-sort").label) == "Sort: Recent"
-        assert str(app.query_one("#personas-library-tag").label) == "Tag: villain"
+        pane.styles.width = width
+        pane.set_mode("characters")
+        await pilot.pause()
+        pane.set_sort_label("modified_desc")
+        await pilot.pause()
+        button = app.query_one("#personas-library-sort")
+        assert str(button.label) == label
+        assert _painted_label(app, "#personas-library-sort") == label
+        assert (
+            str(button.tooltip) == "Sort: Recent edit. Click to change the order. (s)"
+        )
+
+
+async def test_the_tag_button_keeps_its_label_and_says_when_a_tag_narrows():
+    """The active tag is untrusted text; since B2b it shows only in the
+    literal border title (B2a), so the button's label and fit never change
+    (dev's read "Tag: <tag>"). Its tooltip says whether a tag is on."""
+    app = _StyledToolbarHost()
+    async with app.run_test(size=(120, 36)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        pane.styles.width = 35
+        await pilot.pause()
+        tag = app.query_one("#personas-library-tag")
+        pane.set_tag_active(True)
+        await pilot.pause()
+        assert str(tag.label) == "Tag"
+        assert _painted_label(app, "#personas-library-tag") == "Tag"
+        assert "Pick All to clear it" in str(tag.tooltip)
+        pane.set_tag_active(False)
+        assert str(tag.tooltip) == "Filter characters by tag."
+
+
+@pytest.mark.parametrize("width", [12, 24, 35, 50])
+async def test_the_toolbar_paints_what_its_fit_chose(width):
+    """The fit's cell constants mirror the lazy sheet: each control is exactly
+    its label wide, one gap after the previous part, and the search spends
+    SEARCH_CHROME_CELLS around its text. A CSS edit that forgets the
+    constants fails here instead of clipping a control."""
+    app = _StyledToolbarHost()
+    async with app.run_test(size=(120, 36)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        pane.styles.width = width
+        pane.set_mode("characters")
+        await pilot.pause()
+        await pilot.pause()
+        fit = frame_state.fit_items_toolbar(
+            "characters", width=width, sort_key="name_asc"
+        )
+        toolbar = app.query_one("#personas-library-toolbar")
+        search = app.query_one("#personas-library-search", Input)
+        assert toolbar.region.height == fit.rows
+        assert search.region.height == 1
+        assert search.region.width - search.content_region.width == (
+            frame_state.SEARCH_CHROME_CELLS
+        )
+        assert search.placeholder == fit.labels["search"]
+        # On one row the first control follows the search box.
+        previous = search.region if fit.rows == 1 else None
+        for control in frame_state.toolbar_controls("characters"):
+            selector = f"#personas-library-{control}"
+            region = app.query_one(selector).region
+            assert _painted_label(app, selector) == fit.labels[control]
+            assert region.width == cell_len(fit.labels[control])
+            if fit.stacked or previous is None:
+                assert region.x == pane.content_region.x + frame_state.CONTROL_GAP_CELLS
+            else:
+                assert region.x == previous.right + frame_state.CONTROL_GAP_CELLS
+            if not fit.stacked:
+                previous = region
+        if fit.rows == 1:
+            assert search.region.width == width - _row_cells(fit, "characters")
+        title = app.query_one("#personas-library-title")
+        assert title.display is fit.title
+        assert _painted_label(app, "#personas-library-import") == fit.labels["import"]
 
 
 # ==== Marks by id and the marks bar (spec 1.5.5; B2a plan Task 5) ====
@@ -1303,11 +1539,11 @@ async def test_marks_survive_a_search_and_count_the_hidden_ones():
         pane, item_list = await _host(pilot, _rows(1, 10))
         item_list.focus()
         await _mark(pilot, "character:1", "character:2", "character:3")
-        await pane.update_rows(_rows(3, 10), total=10, noun="characters", filtered=True)
+        await pane.update_rows(_rows(3, 10), total=10, filtered=True)
         await pilot.pause()
         assert _bar_text(pilot).startswith("✓ 3 marked (2 hidden) · Export…")
         assert item_at(pilot.app.screen, "character:3").marked
-        await pane.update_rows(_rows(1, 10), total=10, noun="characters")
+        await pane.update_rows(_rows(1, 10), total=10)
         await pilot.pause()
         assert _bar_text(pilot).startswith("✓ 3 marked · Export…")
         assert [item_at(pilot.app.screen, i).marked for i in range(4)] == [
@@ -1339,12 +1575,12 @@ async def test_marks_are_kept_per_kind_across_a_kind_switch():
         item_list.focus()
         await _mark(pilot, "character:4")
         pane.set_mode("lore")
-        await pane.update_rows(_rows(1, 3, kind="lore"), total=3, noun="lore books")
+        await pane.update_rows(_rows(1, 3, kind="lore"), total=3)
         await pilot.pause()
         assert _bar_text(pilot) == ""
         assert pilot.app.marks[-1] == ()
         pane.set_mode("characters")
-        await pane.update_rows(_rows(1, 10), total=10, noun="characters")
+        await pane.update_rows(_rows(1, 10), total=10)
         await pilot.pause()
         assert _bar_text(pilot).startswith("✓ 1 marked")
         assert pilot.app.marks[-1] == (("character", "4", "Row 0004"),)
@@ -1472,3 +1708,456 @@ def test_a_landing_owed_on_another_list_is_dropped_when_that_list_can_never_land
     window.want("end", read=False)
     window.landed_elsewhere(_search_fence(query="newer"))
     assert window.intent is not None and window.intent.reason == "end"
+
+
+# ---- The New chooser (frame slice B2b, spec 1.4.1 "New…", 1.4.6) ----
+
+_CHOOSER_ORDER = [
+    "character:blank",
+    "character:concept",
+    "character:portrait",
+    "persona:blank",
+    "persona:portrait",
+    "lore",
+    "dictionary",
+]
+
+
+def test_the_actor_pack_import_message_and_create_action_are_gone():
+    """Final review F4: after B2b's rework nothing posts
+    ``ActorPackImportRequested`` (the one Import picker routes packs by
+    extension) or the action ``"create_actor_pack"`` (the New chooser calls
+    ``_begin_create_actor_pack`` itself), yet the screen kept a handler, a
+    branch, the message class and the literal. Both leave with B2b."""
+    import typing
+
+    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
+    from tldw_chatbook.Widgets.Persona_Widgets import personas_messages
+
+    assert not hasattr(personas_messages, "ActorPackImportRequested")
+    assert "create_actor_pack" not in typing.get_args(personas_messages.PersonaAction)
+    assert not hasattr(PersonasScreen, "_handle_actor_pack_import")
+    assert hasattr(PersonasScreen, "_begin_create_actor_pack")  # the chooser's
+
+
+@pytest.mark.parametrize(
+    ("mode", "blank"),
+    [
+        ("characters", "character:blank"),
+        ("personas", "persona:blank"),
+        ("lore", "lore"),
+        ("dictionaries", "dictionary"),
+    ],
+)
+def test_new_chooser_lists_every_create_variant_with_the_current_blank_preselected(
+    mode, blank
+):
+    options = frame_state.new_chooser_options(
+        mode, local_characters=True, local_runtime=True
+    )
+    assert [option.choice_id for option in options] == _CHOOSER_ORDER
+    assert [option.choice_id for option in options if option.preselected] == [blank]
+    assert all(option.enabled and option.reason is None for option in options)
+    by_id = {option.choice_id: option for option in options}
+    assert (
+        by_id["character:portrait"].label == "Character · From a portrait (Actor Pack)"
+    )
+    assert by_id["persona:portrait"].mode == "personas"
+    assert (by_id["lore"].mode, by_id["dictionary"].mode) == ("lore", "dictionaries")
+
+
+def test_new_chooser_disables_local_only_variants_under_the_server_runtime_and_says_why():
+    options = frame_state.new_chooser_options(
+        "personas", local_characters=False, local_runtime=False
+    )
+    off = {option.choice_id: option.reason for option in options if not option.enabled}
+    assert off == {
+        "character:blank": frame_state.SERVER_CHARACTERS_READ_ONLY,
+        "character:concept": frame_state.SERVER_CHARACTERS_READ_ONLY,
+        "character:portrait": frame_state.SERVER_CHARACTERS_READ_ONLY,
+        "persona:portrait": frame_state.PORTRAIT_NEEDS_LOCAL,
+    }
+    assert [option.choice_id for option in options if option.preselected] == [
+        "persona:blank"
+    ]
+    # The screen's server read-only tooltip is the same words.
+    assert (
+        personas_screen_module._SERVER_READ_ONLY_TOOLTIP
+        == frame_state.SERVER_CHARACTERS_READ_ONLY
+    )
+    # Characters' own Blank is off there: the first row that runs is picked.
+    options = frame_state.new_chooser_options(
+        "characters", local_characters=False, local_runtime=False
+    )
+    assert [option.choice_id for option in options if option.preselected] == [
+        "persona:blank"
+    ]
+
+
+def test_new_chooser_rows_follow_the_ascii_glyph_mode(ascii_mode):
+    options = frame_state.new_chooser_options(
+        "characters", local_characters=True, local_runtime=True
+    )
+    assert options[0].label == "Character - Blank"
+
+
+class _ChooserHost(ConsolidatedCSSApp):
+    """Pushes one ``RoleplayChoiceModal`` and keeps what it returns."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def __init__(self, modal) -> None:
+        super().__init__()
+        self._modal = modal
+        self.results: list[str | None] = []
+
+    def on_mount(self) -> None:
+        self.push_screen(self._modal, self.results.append)
+
+
+def _chooser(title: str, name: str):
+    from tldw_chatbook.Widgets.Persona_Widgets.roleplay_choice_modal import (
+        ChoiceOption,
+        RoleplayChoiceModal,
+    )
+
+    # Each row fits the 50-cell box on one line, so a row reads back whole.
+    return RoleplayChoiceModal(
+        title,
+        [
+            ChoiceOption("card", f"Card {name}"),
+            ChoiceOption("hinted", "Hinted", hint=name),
+            ChoiceOption("lore", "Off", enabled=False, reason=name),
+            ChoiceOption("dictionary", "Chat dictionary"),
+        ],
+        preselect="dictionary",
+    )
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_choice_modal_paints_literally_and_escape_returns_none(name):
+    app = _ChooserHost(_chooser(f"Import {name} as:", name))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        rows = painted_rows(pilot.app.screen)
+        for text in (
+            f"Import {name} as:",
+            f"Card {name}",
+            f"Hinted  {name}",
+            f"Off  {name}",
+            "enter picks · esc cancels",
+        ):
+            assert any(text in row for row in rows), (text, rows)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.results == [None]
+
+
+async def test_the_choice_modal_opens_on_its_preselect_and_enter_returns_that_id():
+    app = _ChooserHost(_chooser("New", "x"))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.results == ["dictionary"]
+
+
+async def test_a_disabled_choice_cannot_be_picked():
+    app = _ChooserHost(_chooser("New", "x"))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.pause()
+        await pilot.press("up", "enter")
+        await pilot.pause()
+        # Up from Chat dictionary skips the disabled row.
+        assert app.results == ["hinted"]
+
+
+# ---- Where an import lands (frame slice B2b, spec 1.4.6) ----
+#
+# Auto-select runs only when every Roleplay draft is clean (R24's aggregate),
+# no newer intent arrived since the import began, and the screen still shows
+# (attached, on top). Otherwise the import still lands and a literal toast
+# names where. On dev characters auto-selected whenever Characters showed
+# (a draft started during the import was replaced, survey PROBE2), lore and
+# dictionaries whenever their kind showed, and a mode switch left a character
+# import silent (PROBE3).
+
+
+@pytest.mark.parametrize(
+    ("clean", "intent_current", "presentation_current"),
+    [(c, i, p) for c in (True, False) for i in (True, False) for p in (True, False)],
+    ids=lambda flag: "yes" if flag else "no",
+)
+def test_import_landing_selects_only_when_clean_current_and_unchanged(
+    clean, intent_current, presentation_current
+):
+    landing = frame_state.import_landing(
+        clean=clean,
+        intent_current=intent_current,
+        presentation_current=presentation_current,
+    )
+    expected = (
+        "select" if clean and intent_current and presentation_current else "toast"
+    )
+    assert landing == expected
+
+
+@pytest.mark.parametrize(
+    ("kind", "toast"),
+    [
+        ("character", "Imported Wren Halloway · in Characters"),
+        ("persona", "Imported Wren Halloway · in Personas"),
+        ("lore", "Imported Wren Halloway · in Lore books"),
+        ("dictionary", "Imported Wren Halloway · in Chat dictionaries"),
+    ],
+)
+def test_the_landing_toast_names_the_item_and_its_kind(kind, toast):
+    assert frame_state.import_landed_toast("Wren Halloway", kind) == toast
+    assert frame_state.MODE_FOR_KIND[kind] in frame_state.KIND_FOR_MODE
+    assert frame_state.KIND_FOR_MODE[frame_state.MODE_FOR_KIND[kind]] == kind
+
+
+def test_the_landing_toast_keeps_names_on_one_line_and_follows_the_glyph_mode(
+    ascii_mode,
+):
+    assert (
+        frame_state.import_landed_toast("Wren\nHalloway\t ", "lore")
+        == "Imported Wren Halloway - in Lore books"
+    )
+    assert (
+        frame_state.import_landed_toast("Wren", "character", existed=True)
+        == "Wren already existed - in Characters"
+    )
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+def test_the_landing_toast_carries_a_hostile_name_unchanged(name):
+    """The toast is painted with markup off (``_notify``), so the name goes in as typed."""
+    assert frame_state.import_landed_toast(name, "character") == (
+        f"Imported {name} · in Characters"
+    )
+
+
+def test_every_user_move_counts_toward_the_import_intent():
+    """The list's cursor moves and selections end an import's claim to the cursor."""
+    state = frame_state.ListWindowState()
+    assert state.moves == 0
+    state.user_moved()
+    state.user_moved()
+    assert state.moves == 2
+    state.kind_switched()
+    state.reload_started()
+    assert state.moves == 2
+
+
+# ---- Empty, no match, loading (frame slice B2b, spec 1.5.4; TASK-33788) ----
+
+
+@pytest.mark.parametrize(
+    ("kind", "found"),
+    [
+        ("character", 'No characters match "kepler".'),
+        ("persona", 'No personas match "kepler".'),
+        ("lore", 'No lore books match "kepler".'),
+        ("dictionary", 'No chat dictionaries match "kepler".'),
+    ],
+)
+def test_no_match_view_names_the_query_the_total_and_how_to_clear(kind, found):
+    """TASK-33788 AC#1: what found nothing, the total, and the way out. On dev
+    every kind said "No <kind> yet - use New or Import to add one." here."""
+    view = frame_state.no_match_view(kind, query="kepler", tag=None, total=28)
+    assert view.lines == (found, "28 in total · esc clears the search")
+
+
+def test_a_tag_only_no_match_names_the_tag():
+    assert frame_state.no_match_view(
+        "character", query="", tag="fantasy", total=28
+    ).lines == (
+        'No characters have the tag "fantasy".',
+        "28 in total · esc clears the tag",
+    )
+    assert frame_state.no_match_view(
+        "character", query="zzqx", tag="fantasy", total=28
+    ).lines == (
+        'No characters match "zzqx" with the tag "fantasy".',
+        "28 in total · esc clears the search and tag",
+    )
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["kepler\nevil\tline", "a" * 60, "界" * 30, "[b]x\n[/]"],
+    ids=["multiline", "long", "wide", "markup"],
+)
+def test_a_long_or_multiline_query_is_cut_to_one_line_literally(query):
+    """The query is untrusted (R33): one line, at most 24 cells, as typed."""
+    found = frame_state.no_match_view(
+        "character", query=query, tag=None, total=3
+    ).lines[0]
+    echoed = found.removeprefix('No characters match "').removesuffix('".')
+    assert "\n" not in found and "\t" not in found
+    assert cell_len(echoed) <= frame_state.NO_MATCH_ECHO_MAX_CELLS
+    one_line = " ".join(query.split())
+    if cell_len(one_line) <= frame_state.NO_MATCH_ECHO_MAX_CELLS:
+        assert echoed == one_line
+    else:
+        assert echoed.endswith("…") and one_line.startswith(echoed[:-1])
+
+
+def test_unknown_total_omits_in_total(ascii_mode):
+    """A server search has no unfiltered total (OQ14): no "N in total"."""
+    assert frame_state.no_match_view(
+        "character", query="kepler", tag=None, total=None
+    ).lines == ('No characters match "kepler".', "esc clears the search")
+    assert frame_state.no_match_view("lore", query="kepler", tag=None, total=2).lines[
+        1
+    ] == ("2 in total - esc clears the search")
+
+
+async def test_empty_kind_copy_only_when_the_unfiltered_total_is_zero():
+    """TASK-33788 AC#2: "No X yet" only for a kind that holds nothing; a search
+    or tag that empties the list says what it searched instead."""
+    app = _ToolbarHost()
+    async with app.run_test(size=(60, 30)) as pilot:
+        pane = app.query_one(PersonasLibraryPane)
+        await pane.update_rows((), total=0)
+        assert _status_lines(pane) == (
+            "empty",
+            ("No characters yet - use New or Import to add one.",),
+        )
+        await pane.update_rows((), total=12, filtered=True, query="zzqx")
+        assert _status_lines(pane) == (
+            "no_match",
+            ('No characters match "zzqx".', "12 in total · esc clears the search"),
+        )
+        pane.set_mode("dictionaries")
+        await pane.update_rows((), total=0)
+        assert _status_lines(pane) == (
+            "empty",
+            ("No chat dictionaries yet - use New or Import to add one.",),
+        )
+        await pane.update_rows(_rows(1, 2, kind="dictionary"), total=2)
+        await pilot.pause()
+        assert _status_lines(pane) == ("rows", ())
+
+
+def test_loading_copy_names_the_kind(ascii_mode):
+    assert frame_state.loading_text("lore") == "Loading lore books..."
+    set_ascii_glyph_mode(False)
+    assert frame_state.loading_text("character") == "Loading characters…"
+    assert frame_state.LOADING_DELAY_SECONDS == 0.25
+
+
+def _status_lines(pane) -> tuple[str, tuple[str, ...]]:
+    """Which status the pane shows beside its list, and its painted lines."""
+    status = pane.query_one("#personas-library-status")
+    no_match = pane.query_one("#personas-library-nomatch")
+    if status.display and status.children:
+        static = status.children[0]
+        state = "empty" if static.id == "personas-library-empty" else "recovery"
+        return state, (str(static.render()),)
+    if no_match.display:
+        return "no_match", tuple(
+            str(pane.query_one(f"#personas-library-nomatch-{part}").render())
+            for part in ("line", "hint")
+        )
+    return "rows", ()
+
+
+def test_also_in_lists_matching_kinds_in_rail_order_and_drops_zero_and_failed():
+    """Spec 1.5.4: ``Also in:`` names only the kinds that match, in the rail's
+    order (characters, personas, lore books, chat dictionaries); a kind whose
+    count is 0 or failed is not listed, and nothing is listed while counting."""
+    view = frame_state.no_match_view(
+        "character",
+        query="kepler",
+        tag=None,
+        total=28,
+        counts={"dictionary": 2, "lore": 1, "persona": 0},
+    )
+    assert [(t.kind, t.count, t.label) for t in view.targets] == [
+        ("lore", 1, "Lore books 1 ›"),
+        ("dictionary", 2, "Chat dictionaries 2 ›"),
+    ]
+    assert view.none_text is None
+    some_failed = frame_state.no_match_view(
+        "lore",
+        query="kep",
+        tag=None,
+        total=3,
+        counts={"character": 4, "persona": 1, "dictionary": 9},
+        failed={"dictionary"},
+    )
+    assert [t.label for t in some_failed.targets] == ["Characters 4 ›", "Personas 1 ›"]
+    counting = frame_state.no_match_view("lore", query="kep", tag=None, total=3)
+    assert (counting.targets, counting.none_text) == ((), None)
+
+
+def test_also_in_follows_the_ascii_glyph_mode(ascii_mode):
+    view = frame_state.no_match_view(
+        "persona", query="kep", tag=None, total=2, counts={"character": 3}
+    )
+    assert [t.label for t in view.targets] == ["Characters 3 >"]
+
+
+def test_a_capped_count_reads_as_a_lower_bound():
+    """Deferred minor T10a: a server character search answers at most 100
+    rows with no total (its list says ``100+``), so an Also in count at that
+    cap is a lower bound and reads "Characters 100+ ›", never an exact
+    "Characters 100 ›" (the exact form was new with B2b)."""
+    view = frame_state.no_match_view(
+        "lore",
+        query="remote",
+        tag=None,
+        total=None,
+        counts={"character": 100, "persona": 0, "dictionary": 2},
+        capped={"character"},
+    )
+    assert [t.label for t in view.targets] == [
+        "Characters 100+ ›",
+        "Chat dictionaries 2 ›",
+    ]
+    assert [(t.kind, t.count) for t in view.targets] == [
+        ("character", 100),
+        ("dictionary", 2),
+    ]
+
+
+def test_not_found_elsewhere_only_when_every_count_succeeded_with_zero():
+    zero = {"persona": 0, "lore": 0, "dictionary": 0}
+    view = frame_state.no_match_view(
+        "character", query="zzqx", tag=None, total=28, counts=zero
+    )
+    assert (view.targets, view.none_text) == ((), "Not found in other kinds either.")
+    failed = frame_state.no_match_view(
+        "character", query="zzqx", tag=None, total=28, counts=zero, failed={"lore"}
+    )
+    assert failed.none_text is None
+    uncounted = frame_state.no_match_view(
+        "character", query="zzqx", tag=None, total=28, counts={"persona": 0}
+    )
+    assert uncounted.none_text is None
+
+
+# ---- The persona marker the list never paints (frame slice B2b, OQ15) ----
+
+
+@pytest.mark.parametrize("ascii_glyphs", [False, True], ids=["unicode", "ascii"])
+async def test_a_persona_row_paints_no_active_marker(ascii_glyphs):
+    """The proof that runs for B2a's carry-over: the human-identity marker
+    (``●``, ASCII ``[*]``) is absent from what a persona row paints, gutter
+    included (the workbench's own check reads the same painted prompt, but
+    its class errors at setup on dev, so it never ran)."""
+    set_ascii_glyph_mode(ascii_glyphs)
+    try:
+        async with _PaneHost().run_test(size=(120, 36)) as pilot:
+            pane, _item_list = await _host(
+                pilot, (LibraryRow(item_id="p-1", kind="persona", name="Archivist"),)
+            )
+            pane.mark_active_row("persona", "p-1")
+            await pilot.pause()
+            row = item_at(pilot.app.screen, "persona:p-1")
+            assert not any(marker in row.painted for marker in ("●", "[*]"))
+            assert row.active and row.lines[0].startswith("Archivist")
+    finally:
+        set_ascii_glyph_mode(False)

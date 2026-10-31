@@ -5,6 +5,38 @@ known, expensive to rediscover. Every entry states the incident that produced it
 
 ---
 
+## `git grep -E` has no `\b`: a zero-hit id sweep is a bug, not a clearance (TASK-33910.4 B2b Task 15, 2026-10-29)
+
+**Incident.** B2b Task 15 swept every ref for the follow-up task ids it was
+about to assign, with `git grep -E` and `\b` word boundaries. The first sweep
+returned zero hits silently and read as "all 303 ids free". POSIX ERE has no
+`\b`, so the pattern matched nothing; a sanity check on an id known to exist
+also returned nothing. One alternation grep over all refs (one pattern listing
+every id, without the boundary, or with `-P`) replaced 303 per-id greps that
+took minutes each.
+
+**What to do.** Sanity-check any zero-hit sweep on a value you know is present
+before reading zero as clear. Prefer one alternation pattern over a loop of
+per-id greps, and avoid `\b` in `-E` patterns (use `-P`, or match the delimiter
+explicitly).
+
+---
+
+## Autosquash with the shared rerere cache replays other sessions' resolutions (TASK-33910.4 B2b plan dry run, 2026-10-27)
+
+**Incident.** The B2b plan's dry-run rebase used `--autosquash` in a worktree
+whose `.git` shares the main checkout's rerere cache. The rebase replayed 1,119
+recorded resolutions from other sessions' conflicts into this branch's
+conflicts, silently, before any file was inspected.
+
+**What to do.** Disable rerere for a rebase in a shared-`.git` worktree
+(`git -c rerere.enabled=false rebase ...`) unless the recorded resolutions are
+yours, and read `git rerere status` before trusting an automatically resolved
+conflict. A conflict that resolves itself in a shared cache was resolved by
+someone else, for some other branch.
+
+---
+
 ## A removed worktree path can make Git operate on a parent checkout (TASK-31985, 2026-09-07)
 
 **Incident.** A broad worktree cleanup stashed active TASK-31985 packaging changes
