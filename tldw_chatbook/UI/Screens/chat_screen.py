@@ -7045,13 +7045,13 @@ class ChatScreen(BaseAppScreen):
         self._pending_conversation_settings_return_target = None
         self._conversation_settings_return_restore_in_progress = False
         self._pending_console_launch_auto_open_inspector = False
-        # PR-4/task-1: source count of the evidence the LAST send consumed,
-        # kept only until the next thing happens (a new send, new staging, or
-        # an un-stage). It drives the strip's one-send "Evidence sent with
-        # this message" line, which is the only round-trip confirmation an
-        # unpersisted session gets -- the transcript's "Sources (N)" row
-        # needs a persisted conversation. Deliberately NOT a timer: a timed
-        # clear races the strip's own recompose.
+        # PR-4/task-1 + TASK-33620.7: the LAST send's source count is a
+        # per-chat ConsoleRuntime receipt, kept until that chat admits its
+        # next turn (or new staging / an un-stage). It drives Inspect's Run
+        # card ("sent with the last message"); the reply carries "Sources
+        # (N) · sent with this turn"; the strip shows only the NEXT send.
+        # Deliberately NOT a timer: a timed clear races the surfaces' own
+        # recompose.
         # TASK-259: dedupe guard for the scheduled inspector-rail card swap
         # (rapid searching->staged staging would otherwise remove+remount
         # the card once per stage; each swap re-reads the current context).
@@ -9407,9 +9407,9 @@ class ChatScreen(BaseAppScreen):
     ) -> int:
         """Return how many sources this send actually put in front of the model.
 
-        The "Evidence sent with this message" line is a claim about what
-        reached the provider, so it must never report the staged total: the
-        capture prompts only available, locally-owned references.
+        The reply's "Sources (N)" line and Inspect's sent-sources receipt
+        claim what reached the provider, so they must never report the
+        staged total: the capture prompts only available, local references.
 
         Preference order:
 

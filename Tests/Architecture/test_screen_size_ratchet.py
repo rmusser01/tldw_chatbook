@@ -216,10 +216,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24331/737 -> 24322/737.
-    #: 2026-10-30, TASK-33620.7 (owner rule: a fix over a size ratchet raises
-    #: the row by its own lines): 24322 -> 24324 (+2), the Inspect live-work
-    #: card swap returns while its viewport is still mounting.
+    #: 2026-10-30, TASK-33620.7 (owner rule: the row is the exact
+    #: measurement): 24331/737 -> 24324/737, this branch's net -7 on dev
+    #: 7536ac3b87 (the +2 within it: the Inspect live-work card swap returns
+    #: while its viewport is still mounting).
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24324, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from

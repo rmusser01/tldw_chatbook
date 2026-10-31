@@ -1056,12 +1056,14 @@ this turn** line with the number of sources that went with it, and
 Inspect's Run card says "sources sent with the last message · N" until
 your next send. A send with nothing staged claims no sources anywhere.
 Un-stage on a strip whose evidence was already sent just hides the strip.
+Retrying a failed reply does not send the evidence again, so the retried
+reply drops its **Sources (N)** line.
 
 Staged evidence belongs to the chat you staged it in. A new tab
 (Ctrl+T), another open chat, or a newly entered workspace chat starts
 with nothing staged and clean Inspect source cards. Switching back to
 the first chat shows its staging again, and a send in another chat never
-uses it.
+uses it. Closing a chat's tab discards whatever is staged in it.
 
 Staged evidence also survives leaving Console and coming back: navigating
 to Library (or anywhere else) and returning still shows the same bundle

@@ -2538,7 +2538,7 @@ def test_console_live_work_presentation_failure_keeps_owned_claim_settled(
 
 @pytest.mark.asyncio
 async def test_console_armed_sent_notice_round_trips_to_a_fresh_screen():
-    """D3: the one-send "Evidence sent with this message" memory
+    """D3: the one-send sent-sources receipt
     (``_console_evidence_sent_notice``) must also survive screen
     re-creation, independent of any staged launch.
 
