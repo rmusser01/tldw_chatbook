@@ -11,8 +11,10 @@ type into the draft; Ctrl+O, Ctrl+G, Ctrl+K, Ctrl+T, Ctrl+Y and Ctrl+Z are
 Console actions; Ctrl+C/V/X/S/D/A/R/W are reserved or terminal-convention
 keys; Alt chords type characters on macOS terminals; Ctrl+Shift+<letter>
 reaches the app as plain Ctrl+<letter> without the Kitty protocol. Ctrl+E is
-bound nowhere in the Console, its "E" is the chip's "expand", and it reaches
-the app as the C0 byte 0x05 in every terminal and in tmux.
+bound nowhere in the Console, its "E" is the chip's "expand", and terminals
+and tmux send it as the C0 byte 0x05. An editor's built-in terminal can keep
+it for itself (VS Code on Windows and Linux binds it to Quick Open); a click
+still expands a token there.
 
 Before this decision a paste that starts with a line break could be
 expanded only by a click (TASK-37870): its break is drawn outside the chip,
@@ -238,6 +240,59 @@ async def test_the_expand_key_expands_the_nearest_token_when_none_touches_the_ca
         assert shown.endswith(f" and a longer middle {second} why")
         assert composer.draft_text() == draft
         assert composer.cursor_index == len(draft)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expand", ["expand_key", "second_click"])
+async def test_undo_right_after_an_expand_collapses_the_token_and_keeps_the_typing(
+    expand,
+):
+    """Ctrl+Z after an expand puts the chip back; what was typed stays.
+
+    Readline users press Ctrl+E for end-of-line, and with no token beside the
+    caret it expands the nearest one, so an accidental expand must be cheap to
+    take back. An expand is its own undo step: one Ctrl+Z collapses the token
+    again and keeps " why"; redo expands it again. Before this the expand
+    recorded nothing, and Ctrl+Z reverted the typed run before it instead.
+    """
+    _, host = _ready_host()
+    async with host.run_test(size=APP_SIZE) as pilot:
+        composer = await _focused_composer(host, pilot)
+        pasted = "P" * (composer.paste_collapse_threshold + 1)
+        composer.insert_pasted_text(pasted)
+        await pilot.pause()
+        await pilot.press("space", "w", "h", "y")
+        await pilot.pause()
+        draft = pasted + " why"
+        assert composer.draft_text() == draft
+        collapsed = composer._display_draft_text()
+        assert collapsed.endswith(" why") and pasted not in collapsed
+
+        if expand == "expand_key":
+            await pilot.press("ctrl+e")
+        else:
+            await pilot.click("#console-command-visible-text", offset=(4, 0))
+            await pilot.pause()
+            assert composer.has_pending_paste_confirmation()
+            await pilot.click("#console-command-visible-text", offset=(4, 0))
+        await pilot.pause()
+        assert composer._display_draft_text() == draft
+
+        await pilot.press("ctrl+z")
+        await pilot.pause()
+
+        assert composer.draft_text() == draft, "undo lost the typed run"
+        assert composer._display_draft_text() == collapsed
+        assert not composer.has_pending_paste_confirmation()
+
+        await pilot.press("ctrl+shift+z")
+        await pilot.pause()
+        assert composer._display_draft_text() == draft
+
+        await pilot.press("ctrl+z", "ctrl+z")
+        await pilot.pause()
+        assert composer.draft_text() == pasted
+        assert pasted not in composer._display_draft_text()
 
 
 @pytest.mark.asyncio

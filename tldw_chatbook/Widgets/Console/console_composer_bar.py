@@ -6000,16 +6000,15 @@ class ConsoleComposerBar(Horizontal):
         return True
 
     def _caret_token(self) -> _DraftSegment | None:
-        """Return the collapsed or confirm token beside the caret.
+        """Return a pending confirm at either caret edge, else the token after it.
 
         Owner decision 2026-10-30 (TASK-37870/37871): the caret never sits
-        inside a token, so beside it means either edge, line breaks drawn
-        outside a chip included. A pending confirm wins, then the token right
-        after the caret (under it), then the one right before it.
+        inside a token. A token right before the caret is the nearest one in
+        `_expand_target`'s fallback (gap 0), so it needs no branch here.
         """
         cursor = self._cursor_index
         start = 0
-        pending = under = behind = None
+        pending = under = None
         for segment in self._segments:
             end = start + len(segment.text)
             if segment.collapse_state in {"collapsed", "confirm"}:
@@ -6017,10 +6016,8 @@ class ConsoleComposerBar(Horizontal):
                     pending = pending or segment
                 if cursor == start:
                     under = under or segment
-                elif cursor == end:
-                    behind = segment
             start = end
-        return pending or under or behind
+        return pending or under
 
     def _expand_target(self) -> _DraftSegment | None:
         """Return the token beside the caret, else the nearest collapsed one."""
@@ -6041,9 +6038,18 @@ class ConsoleComposerBar(Horizontal):
 
     def _advance_paste_token(self, segment: _DraftSegment) -> None:
         """Step one token collapsed -> confirm -> expanded; one confirm at a time."""
-        target = "expanded" if segment.collapse_state == "confirm" else "confirm"
+        if segment.collapse_state == "confirm":
+            self._expand_token(segment)
+            return
         self._reset_pending_unfurl_state()
-        segment.collapse_state = target
+        segment.collapse_state = "confirm"
+        self._refresh_visible_draft()
+
+    def _expand_token(self, segment: _DraftSegment) -> None:
+        """Expand one token as its own undo step, so Ctrl+Z collapses it again."""
+        self._reset_pending_unfurl_state()
+        self._record_undo_snapshot(coalesce=False)
+        segment.collapse_state = "expanded"
         self._refresh_visible_draft()
 
     def expand_token_at_caret(self) -> bool:
@@ -6060,9 +6066,7 @@ class ConsoleComposerBar(Horizontal):
         segment = self._expand_target() if self._segments_initialized else None
         if segment is None:
             return False
-        self._reset_pending_unfurl_state()
-        segment.collapse_state = "expanded"
-        self._refresh_visible_draft()
+        self._expand_token(segment)
         return True
 
     def _display_index_at(

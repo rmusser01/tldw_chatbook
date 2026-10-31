@@ -600,7 +600,10 @@ _BUDGETS: dict[str, int] = {
     # Owner decision 2026-10-30: Enter always sends; Ctrl+E (EXPAND_TOKEN_KEY)
     # expands the token beside the caret, or the nearest one, and every chip
     # and click confirm names it.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7174,
+    # 2026-10-30, TASK-37870 review fix (same owner rule): 7174 -> 7178 (+4).
+    # An expand (Ctrl+E or a second click) is its own undo step, so Ctrl+Z
+    # collapses the token again instead of dropping the typed run before it.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7178,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
