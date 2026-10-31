@@ -167,17 +167,6 @@ def describe_stream_failure(exc: BaseException) -> str:
     return summary
 
 
-def describe_console_stream_failure(exc: BaseException) -> str:
-    """Return gateway-sanitized copy at the Console's visible failure surfaces.
-
-    Durable agent summaries continue to use the unchanged diagnostic helper.
-    Other errors keep their existing description.
-    """
-    if isinstance(exc, ChatAPIError) and exc.console_copy:
-        return exc.console_copy
-    return describe_stream_failure(exc)
-
-
 def console_failure_copy(exc: BaseException, lead_in: str) -> str:
     """Return one Console failure sentence for ``exc`` (TASK-33621.11 AC#4).
 
