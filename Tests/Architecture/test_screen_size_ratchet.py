@@ -238,7 +238,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: every width, says the next send pauses for compaction (+2) with the
     #: summary's own copy constant (+1 import). Live at 80x24 the header badge
     #: drops to "Ready" there.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24347, 738),
+    #: Lowered 24347/738 -> 24345/738 2026-10-30 after rebasing onto dev
+    #: 1eaa6a9429 (owner rule: the row is the exact measurement). Dev's file
+    #: measures 24327/737; this branch adds 18 lines and one method.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24345, 738),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
