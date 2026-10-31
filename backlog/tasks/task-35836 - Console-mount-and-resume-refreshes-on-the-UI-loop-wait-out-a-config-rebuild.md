@@ -34,6 +34,11 @@ While a config rebuild holds the config locks, a Console refresh that runs at mo
 3. Move each waiting read onto owned display data or a deferral, as TASK-35645 did; action reads stay live.
 4. Pin it: a test that holds the rebuild lock from the start of on_mount and across a resume, failing on dev and when each fix is reverted.
 5. Re-run the TASK-35645 pin without its skill-discovery settle, and drop that wait if it passes.
+Repair plan (2026-10-31): rebase onto dev 198eca8b93, preserve the entire census prefix and append four new nodes; pin stale deferred arguments and the nonblocking native-lock lifetime, then apply the smallest correction. Retain skill discovery owner/source boundaries and run only response-rule, discovery, readiness, rail-width, census and size-ratchet controls.
+
+ADR required: no
+ADR path: N/A
+Reason: Routine repair implementing TASK-35645's existing screen-by-screen deferral decision, retaining action reads and native ownership boundaries (ADR-230/231).
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

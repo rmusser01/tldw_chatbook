@@ -902,8 +902,69 @@ def test_a_deferred_refresh_runs_once_with_its_latest_call(monkeypatch):
     assert calls == ["latest"] and not timers and not screen._console_config_retries
     refresh(screen, "now")
     assert calls == ["latest", "now"]
+    # A fresh call after unlock must retire the older queued arguments.
+    would_wait[0] = True
+    refresh(screen, "stale")
+    would_wait[0] = False
+    refresh(screen, "fresh")
+    timers.pop()[1]()
+    assert calls == ["latest", "now", "fresh"]
     screen._closing = True  # a torn-down screen's retry renders nothing
     would_wait[0] = True
     refresh(screen, "late")
     timers.pop()[1]()
-    assert calls == ["latest", "now"]
+    assert calls == ["latest", "now", "fresh"]
+
+    # A rebuild may win after the optimistic cache/probe check. The actual
+    # render must acquire both native locks without waiting and retain them.
+    import threading
+
+    locks = (threading.RLock(), threading.RLock())
+    monkeypatch.setattr(config, "_settings_rebuild_lock", lambda: locks[0])
+    monkeypatch.setattr(config, "_config_file_lock", lambda: locks[1])
+    would_wait[0] = False
+    screen._closing = False
+    held, release = threading.Event(), threading.Event()
+
+    def hold_file_lock():
+        with locks[1]:
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_file_lock)
+    holder.start()
+    try:
+        assert held.wait(3)
+        refresh(screen, "raced")
+        assert calls == ["latest", "now", "fresh"]
+        assert len(timers) == 1
+        assert not locks[0]._is_owned(), "partial acquisition leaked"
+    finally:
+        release.set()
+        holder.join(3)
+    assert not holder.is_alive()
+    timers.pop()[1]()
+    assert calls == ["latest", "now", "fresh", "raced"]
+
+    acquired_during_render = []
+
+    def try_rebuild():
+        for lock in locks:
+            acquired = lock.acquire(blocking=False)
+            acquired_during_render.append(acquired)
+            if acquired:
+                lock.release()
+
+    @retry_after_config_rebuild
+    def protected_refresh(screen):
+        contender = threading.Thread(target=try_rebuild)
+        contender.start()
+        contender.join(3)
+        assert not contender.is_alive()
+
+    protected_refresh(screen)
+    assert acquired_during_render == [False, False]
+    contender = threading.Thread(target=try_rebuild)
+    contender.start()
+    contender.join(3)
+    assert acquired_during_render == [False, False, True, True]

@@ -11,7 +11,7 @@ import weakref
 from _thread import LockType
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial, wraps
 from inspect import getattr_static
@@ -1007,9 +1007,21 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
 
     @wraps(function)
     def wrapped(screen, *args, **kwargs):
-        if not _tldw_config.config_read_would_wait():
-            return function(screen, *args, **kwargs)
         pending = getattr(screen, "_console_config_retries", None)
+        with ExitStack() as acquired:
+            if not _tldw_config.config_read_would_wait():
+                # Retain both locks through this synchronous render: a rebuild
+                # can start after the optimistic cache/probe check above.
+                for lock in (
+                    _tldw_config._settings_rebuild_lock(), _tldw_config._config_file_lock()
+                ):
+                    if not lock.acquire(blocking=False):
+                        break
+                    acquired.callback(lock.release)
+                else:
+                    if pending is not None:
+                        pending.pop(function.__name__, None)
+                    return function(screen, *args, **kwargs)
         if pending is None:
             pending = screen._console_config_retries = {}
         first = function.__name__ not in pending
@@ -1017,9 +1029,11 @@ def retry_after_config_rebuild(function: Callable) -> Callable:
         if first:
 
             def retry() -> None:
-                retry_args, retry_kwargs = pending.pop(function.__name__)
-                if not (getattr(screen, "_closing", False) or getattr(screen, "_closed", False)):
-                    wrapped(screen, *retry_args, **retry_kwargs)
+                call = pending.pop(function.__name__, None)
+                if call is not None and not (
+                    getattr(screen, "_closing", False) or getattr(screen, "_closed", False)
+                ):
+                    wrapped(screen, *call[0], **call[1])
 
             screen.set_timer(0.2, retry)
         return None
