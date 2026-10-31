@@ -404,7 +404,11 @@ Screen-level keys only — global keys live in the [guide index](index.md).
   modes moved to **c / p / d / l**).
 - **+ New, Duplicate and Tag are greyed out in Characters mode.**
   You're on a server runtime, where characters are read-only, and the sort
-  button reads "Server". Import stays on, but a character card or a Buddy
+  button reads "Server order" (the short form "Server" only where the
+  one-row toolbar is tight, at a 160-column terminal). **Ctrl+N** does
+  nothing there either: it opens no chooser and creates nothing (the same
+  rule as + New; switch to Personas, Lore or Dictionaries to create those).
+  Import stays on, but a character card or a Buddy
   pack is refused ("Server characters are read-only here. {file} was not
   imported."); lore books, dictionaries and Actor Packs are not refused.
   Export, Edit, and Delete are disabled for the same reason. Switch to a

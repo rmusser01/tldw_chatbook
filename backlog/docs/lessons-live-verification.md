@@ -37,6 +37,18 @@ caret cell (`▌`; it blinks, so one capture may not show it). Text after the ca
 when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
 bright-black run) or by the message the transcript shows after the send, not by
 the `.txt` row.
+## A boot-bundle-only capture script cannot drive a lazy-CSS screen (TASK-33910.4 B2b Task 12, 2026-10-29)
+
+**Incident.** B2b's screenshot capture script loaded only the boot CSS bundle.
+Roleplay's rules load lazily (`screen_feature_roleplay.tcss`), so the toolbar it
+drove was laid out by the defaults: the scripted `+ New` click landed on the
+conversations ListView under it, and the captures showed the wrong thing until
+the script loaded the feature sheet too.
+
+**What to do.** A capture or probe script that drives a screen must load the
+same sheets the app loads for it, lazy ones included, before it clicks by
+coordinates or reads geometry. Check one known region (a button's `region`)
+against the app's own layout before trusting a scripted click.
 
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 

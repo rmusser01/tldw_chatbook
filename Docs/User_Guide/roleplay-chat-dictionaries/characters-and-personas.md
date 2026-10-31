@@ -478,7 +478,8 @@ nav label, press **Ctrl+P**, or use any Ctrl+digit chord.
   empty greeting simply does nothing in a chat.
 - **Connected to a server, the character actions go quiet.** + New, Tag,
   Duplicate, Edit, Export and Delete disable themselves (the Inspector's
-  buttons say why in their tooltips). Import stays on, but a character card or a Buddy
+  buttons say why in their tooltips), and **Ctrl+N** does nothing in
+  Characters mode there: no chooser opens and nothing is created. Import stays on, but a character card or a Buddy
   pack is refused ("Server characters are read-only here. {file} was not
   imported."). Nothing is broken — those actions are local-only.
 - **Alternate greetings are a list, not a text box** — several typed in at
