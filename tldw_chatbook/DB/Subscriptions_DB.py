@@ -2084,9 +2084,11 @@ class SubscriptionsDB(BaseDB):
             transaction rather than starting its own.
 
         Raises:
-            Exception: Whatever the body raises, re-raised unchanged after the
-                OUTERMOST block rolls back. An inner block does not roll back;
-                the exception propagates so the outermost can.
+            BaseException: Whatever the body raises (including
+                KeyboardInterrupt/SystemExit/GeneratorExit), re-raised
+                unchanged after the OUTERMOST block rolls back. An inner
+                block does not roll back; the exception propagates so the
+                outermost can.
         """
         conn = self.conn
         if not hasattr(self._local, "transaction_depth"):
@@ -2108,7 +2110,11 @@ class SubscriptionsDB(BaseDB):
                 conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
-        except Exception:
+        # BaseException, not Exception: KeyboardInterrupt/SystemExit/
+        # GeneratorExit must also roll back, or the thread-local connection
+        # stays inside the transaction after the depth counter resets and
+        # the next caller commits (or trips over) the abandoned writes.
+        except BaseException:
             conn.rollback()
             raise
         finally:
