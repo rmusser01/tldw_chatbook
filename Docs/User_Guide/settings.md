@@ -318,9 +318,19 @@ replace the new form’s results or Model value.
 For koboldcpp at its shipped endpoint, KoboldAI's native
 `http://localhost:5001/api/v1/generate`, **Discover models** lists what the
 server serves at `http://localhost:5001/v1/models`, the list Switch model
-shows; the endpoint you send to stays the native one. An endpoint with an API
-path before `/api/v1/generate` (such as `/v1/api/v1/generate`) is ambiguous
-and is not discovered.
+shows; the endpoint you send to stays the native one. For other koboldcpp
+endpoints that pass discovery's URL checks, **Discover models** lists from the
+URL Switch model checks: a bare root such as `http://localhost:5001` lists at
+`http://localhost:5001/v1/models`, and a root under a path such as
+`http://localhost:5001/kobold` lists at `http://localhost:5001/kobold/v1/models`.
+Discovery's URL checks still refuse a few paths Switch model checks, such as one
+over 2,000 characters or one with a request path in the middle
+(`/chat/completions/x`). An endpoint Switch model cannot check is not
+discovered either, and the line beside **Discover models** gives the reason and
+a fix. For an API path before `/api/v1/generate` (such as
+`/v1/api/v1/generate`) it reads "Endpoint path has ambiguous API suffixes. Use
+the server's /api/v1/generate route, such as
+http://localhost:5001/api/v1/generate."
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
