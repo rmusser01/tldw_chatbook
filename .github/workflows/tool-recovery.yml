@@ -7,8 +7,10 @@ on:
       - .github/workflows/tool-recovery.yml
       - tldw_chatbook/Agents/**
       - Tests/Agents/**
-      - tldw_chatbook/Tools/file_operation_tools.py
-      - Tests/Tools/test_file_tools_workspace_roots.py
+      - tldw_chatbook/Tools/**
+      - tldw_chatbook/Utils/windows_files.py
+      - Tests/Tools/**
+      - Tests/CI/test_cli_recovery_workflow.py
       - Tests/hooks_v2_process_support.py
       - Tests/conftest.py
       - Tests/UI/test_console_turn_resend_ui.py
@@ -45,6 +47,34 @@ jobs:
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
       - name: Record Linux runtime
         run: python -c "import platform; print(platform.platform()); print(platform.python_version())"
+      - name: Verify CLI regression routing
+        run: python -m pytest Tests/CI/test_cli_recovery_workflow.py --confcutdir=Tests/CI -q -o addopts=
+      # Keep agent admission/profile tests in their own invocation.
+      - name: Run raw shell agent recovery contracts
+        run: >-
+          python -m pytest
+          Tests/Agents/test_raw_shell_recovery.py
+          Tests/Agents/test_raw_shell_tool_provider.py
+          Tests/Agents/test_raw_shell_integration.py
+          -q -o addopts= --timeout=120 --junitxml=cli-agent-results.xml
+      - name: Run real CLI worker and virtual listing contracts
+        run: >-
+          python -m pytest
+          Tests/Tools/test_virtual_cli_listing_recovery.py
+          Tests/Tools/test_virtual_cli_impls.py
+          Tests/Tools/test_workspace_atomic_writes.py
+          Tests/Tools/test_remote_worker_bundle.py
+          Tests/Tools/test_raw_cli_executor_process.py
+          Tests/Tools/test_raw_cli_executor_contract.py
+          Tests/Tools/test_remote_executor_loopback.py::test_fs_list_long_roundtrip_retains_exclusions_and_plain_output
+          -q -o addopts= --timeout=120 --junitxml=cli-worker-results.xml
+      - name: Check generated CLI worker bundle
+        run: |
+          python -m tldw_chatbook.Tools.build_remote_worker_bundle --check
+          python -m pytest \
+            'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Tools/remote_worker_bundle.py]' \
+            'Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Tools/remote_worker_bundle.py]' \
+            --confcutdir=Tests/Architecture -q -o addopts=
       - name: Run recovery and real command contracts
         run: >-
           python -m pytest
@@ -79,5 +109,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-tool-recovery-${{ matrix.python-version }}-results
-          path: tool-recovery-results.xml
+          path: |
+            tool-recovery-results.xml
+            cli-agent-results.xml
+            cli-worker-results.xml
           if-no-files-found: warn

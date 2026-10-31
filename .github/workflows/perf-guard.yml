@@ -18,6 +18,7 @@ on:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
       - 'Tests/Performance/**'
+      - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
       # installs from pyproject.toml -- a dependency bump (e.g. the pinned
       # Textual version) or a change to those tests must not merge without
@@ -33,6 +34,7 @@ on:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
       - 'Tests/Performance/**'
+      - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
       # installs from pyproject.toml -- a dependency bump (e.g. the pinned
       # Textual version) or a change to those tests must not merge without
@@ -106,6 +108,7 @@ jobs:
       - name: Run boot budget ratchets
         run: |
           pytest Tests/Performance/test_app_import_weight.py \
+            Tests/Packaging/test_console_rename_import_closure.py \
             Tests/Performance/test_ui_ready_module_census.py \
             Tests/Performance/test_boot_worker_census.py \
             Tests/Performance/test_textual_css_fastpath.py \
