@@ -8844,7 +8844,7 @@ class ConsoleChatController:
         )
         if not callable(accept_turn) or not callable(staged_evidence_snapshot):
             raise RuntimeError("Console runtime custody is unavailable.")
-        staged_evidence_launch, _, _ = staged_evidence_snapshot()
+        staged_evidence_launch, _, _ = staged_evidence_snapshot(session_id)
         inputs = self.store.session_input_snapshot(session_id)
         request = ConsoleTurnCustodyRequest(
             turn_id=str(uuid4()),

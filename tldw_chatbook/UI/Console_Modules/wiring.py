@@ -592,7 +592,7 @@ def receive_console_visible_intent(
         inputs = store.session_input_snapshot(session_id)
     else:
         inputs = _captured_inputs
-    launch, revision, _notice = runtime.snapshot_console_staged_evidence()
+    launch, revision, _notice = runtime.snapshot_console_staged_evidence(session_id)
     if config.current_config_identity() != config_identity:
         raise RuntimeError("Console configuration changed; Send again.")
     intent = ConsoleReceivedTurnIntent(
@@ -675,7 +675,7 @@ def _admit_console_turn_to_runtime(
                 ),
                 one_shot_prefill=one_shot_prefill,
                 one_shot_prefill_revision=one_shot_prefill_revision,
-                staged_evidence_launch=runtime.snapshot_console_staged_evidence()[0],
+                staged_evidence_launch=runtime.snapshot_console_staged_evidence(session_id)[0],
                 draft_revision=store.session_input_snapshot(session_id).draft_revision,
             )
         request = replace(
@@ -3779,6 +3779,7 @@ def console_view_hooks(self) -> dict[str, Any]:
         "project_project_instruction_binding": (
             self._session._project_project_instruction_binding
         ),
+        "staged_evidence": self._sync_console_pending_launch_surfaces,
         "project_project_instruction_dispatch": (
             self._session._project_project_instruction_dispatch
         ),
