@@ -169,7 +169,9 @@ _BUDGETS: dict[str, int] = {
     # resend asks console_compaction_gate before it forks (+6), and the
     # admission check refuses a send with no preparation ("$" or "/" while
     # capture is off) at the Ask trigger (+18); both were marked Failed.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-30: rebased onto dev 7536ac3b87, which measures 29,038; the
+    # TASK-33621.4 lines above (+1 +13 +17 +4 +24 = +59) give 29,097.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29097,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     # 2026-10-29 (TASK-33621.4): the queued-send refusal names /compact: -1.
