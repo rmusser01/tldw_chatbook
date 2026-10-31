@@ -12,7 +12,7 @@ references:
 documentation:
 - backlog/decisions/166-agent-assisted-archive-recovery.md
 - backlog/decisions/228-sqlite-store-kernel.md
-updated_date: 2026-10-31 20:06
+updated_date: 2026-10-31 20:11
 ---
 
 ## Description
@@ -47,6 +47,14 @@ Reason: preserve approved archive, SQLite custody and predecessor recovery bound
 3. Review diagnostic statement differences before regenerating the inventory, rebuild CSS from source, and append only the two new archive UI files to the unchanged current census prefix after they pass.
 4. Under the explicit 2026-10-31 user instruction to ignore size limits, pin affected size rows to exact final measurements and remove the duplicate controller row; do not contort source for budgets.
 5. Commit the local review-ready correction/evidence with task In Progress. Root owns final current-dev rebase, independent requesting-code-review in place of Qodo, publication and merge. No full-suite run or new live requests; original30/30 endpoint cap remains consumed.
+2026-10-31 final current-dev integration onto 0d05d27fa1d569f1edebbc2346d43f8c03da9911.
+ADR required: no
+ADR path: backlog/decisions/166-agent-assisted-archive-recovery.md; backlog/decisions/228-sqlite-store-kernel.md
+Reason: compatibility rebase preserving the existing archive and native custody contracts.
+1. Replay the clean local head3f9676738c onto the fixed current dev tip; preserve landed Plugins, OS notifications, approval-profile authority, Kanban F9 and schema85/10.
+2. Resolve conflicts, inspect range-diff, reconcile canonical CSS and reviewed diagnostic entries, retain the current1174 census prefix and append only the verified archive cards file (1175).
+3. Measure only affected size rows under the dated user waiver; run narrowly scoped conflict/static checks without repeating known mounted failures or broader tests.
+4. Record remaining mounted-agent and stock received-send qualification blockers, commit a clean local handoff, and leave task In Progress. Root owns fresh independent review and remote actions; no full suite or live calls.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
