@@ -1459,7 +1459,10 @@ to raise an existing limit, and ADR-097 needs the owner's explicit sign-off for
 every raise. The pre-merge review caught it by tracing the AC to the agent's
 commit. Before you cite a task line as an owner decision, check who wrote it
 (`git log -S` on the line). If an agent wrote it, mark the decision PENDING in the
-comment and the ledger row, leave the AC unchecked, and ask the owner.
+comment and the ledger row, leave the AC unchecked, and ask the owner. Here the
+question mattered: asked on 2026-10-31, the owner declined the raise ("Don't raise
+it": 0.5-3.6 ms was not worth breaking the rule), and the warm-up the agent-filed AC
+had asked for was dropped before merge.
 
 
 
