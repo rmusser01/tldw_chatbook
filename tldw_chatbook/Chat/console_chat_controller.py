@@ -115,7 +115,7 @@ from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.answer_citations import (
     CONSOLE_CITATION_INSTRUCTIONS,
-    format_console_evidence_for_cited_answer,
+    format_console_evidence_without_labels,
 )
 from tldw_chatbook.Chat.console_chat_store import (
     CapturePurgeStaleError,
@@ -3727,6 +3727,7 @@ class ConsoleChatController:
         chat_dictionary_applier: "Callable[[str | None, str], str] | None" = None,
         world_info_applier: "Callable[[str | None, str, list], str] | None" = None,
         rag_capture_provider: "Callable[..., Awaitable[Any]] | None" = None,
+        automatic_evidence_capture: "Callable[..., Awaitable[Any]] | None" = None,
         default_session_settings: "Callable[[], ConsoleSessionSettings] | None" = None,
         library_provider_factory: "Callable[..., Any | None] | None" = None,
         global_user_display_name: Callable[[], str] | None = None,
@@ -3801,6 +3802,7 @@ class ConsoleChatController:
         self._chat_dictionary_applier = chat_dictionary_applier
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
+        self._automatic_evidence_capture = automatic_evidence_capture  # TASK-33620.8
         self._staged_evidence_provider = staged_evidence_provider
         # TASK-34352: the staged-evidence owner's freeze and exact-launch
         # capture, passed explicitly. They used to be found by private name
@@ -10631,8 +10633,16 @@ class ConsoleChatController:
                 preparation_outcome is not None
                 and preparation_outcome.evidence_bundle is not None
             ):
-                citation_context = format_console_evidence_for_cited_answer(
-                    preparation_outcome.evidence_bundle
+                # TASK-33620.8: Automatic evidence gets the staged capture.
+                from .console_library_search import capture_automatic_evidence
+
+                (
+                    citation_context,
+                    citation_trace_builder,
+                    prompt_evidence_set_id,
+                    citation_repair_contract,
+                ) = await capture_automatic_evidence(
+                    self, clean_draft, preparation_outcome.evidence_bundle, session
                 )
             elif origin not in (
                 ConsoleSubmissionOrigin.AGENT_WAKE,
@@ -13115,7 +13125,7 @@ class ConsoleChatController:
                 )
                 provider_messages = self._prepend_evidence_context(
                     provider_messages,
-                    format_console_evidence_for_cited_answer(bundle),
+                    format_console_evidence_without_labels(bundle),  # no record
                 )
         return _DispatchRetryContext(
             resolution=resolution,

@@ -363,10 +363,79 @@ class _HeldRagService(_RagService):
         return self.result
 
 
-def _row(content: str = "sealed evidence") -> LibraryRagResultRow:
+class _ExistingNotesDouble:
+    """``app.chachanotes_db`` existence seam for prompt-time authorization.
+
+    TASK-33620.8: Automatic evidence is now re-authorized against current
+    sources before it reaches the prompt, exactly like staged evidence. The
+    module path starts with ``Tests.``, so ``_sensitive_fetchall`` accepts
+    ``execute_query`` from it.
+    """
+
+    is_memory_db = True
+
+    def __init__(self, *note_ids: str) -> None:
+        self.note_ids = set(note_ids)
+
+    def execute_query(self, _query, params):
+        import json
+
+        requested = set(json.loads(params[0]))
+        rows = [("notes", note_id) for note_id in sorted(requested & self.note_ids)]
+        return SimpleNamespace(fetchall=lambda: rows)
+
+
+def _capture_app(service, *note_ids: str) -> SimpleNamespace:
+    """App seams the canonical Automatic capture reads (TASK-33620.8).
+
+    The capture authorizes against the turn's own session, whose workspace
+    scope comes from the registry, and checks each source still exists.
+    """
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.registry_service import (
+        LocalWorkspaceRegistryService,
+    )
+
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(":memory:", client_id="automatic-capture")
+    )
+    registry.ensure_default_workspace()  # the app does this at boot
+    return SimpleNamespace(
+        library_rag_search_service=service,
+        chachanotes_db=_ExistingNotesDouble(*note_ids),
+        workspace_registry_service=registry,
+    )
+
+
+def _capturing_controller(store, gateway, app) -> ConsoleChatController:
+    """A controller wired with the runtime's Automatic capture seam.
+
+    ``ConsoleRuntime`` passes ``automatic_evidence_capture`` (TASK-33620.8);
+    this binds the same capture function to the app double.
+    """
+    from functools import partial
+
+    from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
+        capture_console_prepared_evidence_for_chat,
+    )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        automatic_evidence_capture=partial(
+            capture_console_prepared_evidence_for_chat, app
+        ),
+    )
+    controller.app = app
+    return controller
+
+
+def _row(
+    content: str = "sealed evidence", source_id: str = "note-1"
+) -> LibraryRagResultRow:
     return LibraryRagResultRow.from_result(
         {
-            "source_id": "note-1",
+            "source_id": source_id,
             "chunk_id": "chunk-1",
             "title": "Exact note",
             "content": content,
@@ -933,8 +1002,7 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
     service = _RagService(
         {"runtime_backend": "local", "results": [_row("needle body")]}
     )
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    controller = _capturing_controller(store, gateway, _capture_app(service, "note-1"))
 
     result = await controller.submit_draft("exact user text")
 
@@ -944,8 +1012,49 @@ async def test_success_injects_the_sealed_bundle_into_the_same_dispatched_reques
         row for row in reversed(gateway.messages) if row["role"] == "user"
     )
     assert "needle body" in final_user["content"]
+    # TASK-33620.8 (AC#4): this app has no citation repository, so no record
+    # can cover the reply and the evidence carries no [S#] labels.
+    assert "[S1]" not in final_user["content"].replace("such as [S1]", "")
+    assert "not saved as citations for this reply" in final_user["content"]
     assert store.preparation_for_session(result.session_id) is None
     assert controller._preparation_outcomes == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_automatic_capture_sends_no_evidence():
+    """TASK-33620.8 review: a capture that raises fails closed, as staged does.
+
+    The staged path sends no evidence when its capture raises. The Automatic
+    path used to send the bundle anyway, unlabelled and never re-authorized
+    against current sources. Now the turn goes out with the user's text only.
+    """
+
+    async def failing_capture(*_args, **_kwargs):
+        raise RuntimeError("capture failed")
+
+    store = ConsoleChatStore()
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    gateway = _StreamingFence()
+    service = _RagService(
+        {"runtime_backend": "local", "results": [_row("needle body")]}
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        automatic_evidence_capture=failing_capture,
+    )
+    controller.app = _capture_app(service, "note-1")
+
+    result = await controller.submit_draft("exact user text")
+
+    assert result.accepted
+    assert len(service.calls) == 1
+    assert gateway.provider_calls == 1
+    final_user = next(
+        row for row in reversed(gateway.messages) if row["role"] == "user"
+    )
+    assert "exact user text" in final_user["content"]
+    assert "needle body" not in final_user["content"]
 
 
 @pytest.mark.asyncio
@@ -1187,8 +1296,7 @@ async def test_manual_recovery_continues_same_frozen_send_without_second_submit(
         ("http://127.0.0.1:9099", "http://127.0.0.1:9099")
     )
     service = _RagService(error=RuntimeError("first search failed"))
-    controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    controller = _capturing_controller(store, gateway, _capture_app(service, "note-1"))
 
     first = await controller.submit_draft(
         "frozen admitted draft", session_id=session.id

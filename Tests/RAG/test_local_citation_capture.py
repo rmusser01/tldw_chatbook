@@ -60,6 +60,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     SEMANTIC_SCORE_KIND_KEY,
     SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY,
     format_local_evidence_context,
+    format_unrecorded_console_evidence,
     normalize_local_result,
 )
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
@@ -593,6 +594,34 @@ def test_formatter_truncates_multibyte_snapshot_inside_utf8_and_character_budget
     assert len(snapshot.encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
     assert formatted.entries[0].transformations == ("content_truncated",)
     assert formatted.omitted_candidate_ranks == ()
+
+
+def test_unrecorded_evidence_keeps_the_canonical_per_block_byte_cap():
+    """TASK-33620.8: an unlabelled send carries no more than a labelled one.
+
+    With no citation record (records off, or no key), evidence goes out
+    without [S#] headers. Each block keeps the canonical formatter's UTF-8
+    cap, truncated on a whole codepoint with an ellipsis.
+    """
+    header = "MEDIA — Title\n"
+    at_cap = _multibyte_content_for_snapshot_bytes(header, SNAPSHOT_TEXT_UTF8_BYTES_MAX)
+    exact = normalize_local_result(_result(content=at_cap), candidate_rank=1)
+    oversized = normalize_local_result(
+        _result(result_id="m2", content=at_cap + ("é" * 2048)), candidate_rank=2
+    )
+    small = normalize_local_result(
+        _result(result_id="m3", title="Other", content="short body"), candidate_rank=3
+    )
+
+    text = format_unrecorded_console_evidence([exact, oversized, small])
+
+    blocks = text.split("\n\n", 1)[1].split("\n---\n")
+    assert blocks[0] == header + at_cap  # exactly at the cap: kept whole
+    assert len(blocks[0].encode("utf-8")) == SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert len(blocks[1].encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert blocks[1].startswith(header) and blocks[1].endswith("…")
+    assert blocks[2] == "MEDIA — Other\nshort body"
+    assert not any(block.startswith("[S") for block in blocks)
 
 
 @pytest.mark.parametrize(
@@ -1439,7 +1468,9 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
             ).to_payload(),
         },
     )
-    app = _CaptureApp(media_ids=())
+    # TASK-33620.8: [S#] ordinals (and the repair contract) exist only when a
+    # citation record can cover the reply, so this send has a repository.
+    app = _CaptureApp(media_ids=(), repository=_CaptureRepository())
     media_db = _InMemoryMediaDB("m2")
     app.media_db = media_db
     try:
@@ -1592,7 +1623,12 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
 
 
 @pytest.mark.asyncio
-async def test_console_builder_unavailable_returns_exact_repair_contract():
+async def test_console_builder_unavailable_sends_evidence_without_labels():
+    """TASK-33620.8 (AC#4): no citation record can cover this reply.
+
+    The evidence still goes to the model, by title and without [S#] labels
+    nobody could trace, and no repair contract asks for markers.
+    """
     title = "Legacy staged source"
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -1624,17 +1660,15 @@ async def test_console_builder_unavailable_returns_exact_repair_contract():
         user_message="ordinary prompt",
     )
 
+    from tldw_chatbook.Chat.answer_citations import unrecorded_evidence_text
+
     assert captured == cre.LocalRagContextResult(
-        context="[S1] MEDIA — Legacy staged source\nlegacy body",
+        context=unrecorded_evidence_text(["MEDIA — Legacy staged source\nlegacy body"]),
         citation_builder=None,
-        citation_repair_contract=CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=(1,),
-            evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
-            require_markers=False,
-        ),
+        citation_repair_contract=None,
     )
+    assert "[S1] MEDIA" not in captured.context
+    assert "not saved as citations for this reply" in captured.context
     assert captured.prompt_evidence_set_id is None
 
 

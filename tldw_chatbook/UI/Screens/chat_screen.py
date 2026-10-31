@@ -16739,7 +16739,7 @@ class ChatScreen(BaseAppScreen):
                 continue
             count = counts.get(native_message_id, 0)
             self._console_citation_counts[native_message_id] = (
-                count if type(count) is int and count >= 0 else 0
+                count if type(count) is int and count >= -1 else 0  # -1: unverifiable
             )
             self._console_citation_resolved_signatures[native_message_id] = item
         return True
@@ -16767,6 +16767,7 @@ class ChatScreen(BaseAppScreen):
             self._read_console_citation_counts,
             queried,
         )
+        shown = {item for item in self._console_citation_counts.items() if item[1]}
         if not self._apply_console_citation_counts(
             signature,
             generation,
@@ -16775,6 +16776,8 @@ class ChatScreen(BaseAppScreen):
             repository_token,
         ):
             return
+        if shown != {item for item in self._console_citation_counts.items() if item[1]}:
+            self._console_transcript_sync_token = None  # past TASK-34958's gate
         await self._sync_native_console_chat_ui()
 
     def _native_console_transcript_fingerprint(
@@ -17064,7 +17067,7 @@ class ChatScreen(BaseAppScreen):
             visible_citation_counts = {
                 message_id: count
                 for message_id, count in self._console_citation_counts.items()
-                if type(count) is int and count > 0
+                if type(count) is int and count != 0
             }
             transcript.set_citation_counts(visible_citation_counts)
             visible_library_activity_counts = self._library_activity.sync_transcript(

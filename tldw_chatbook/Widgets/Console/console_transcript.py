@@ -4867,7 +4867,7 @@ class ConsoleTranscript(VerticalScroll):
             if isinstance(message_id, str)
             and message_id
             and type(count) is int
-            and count > 0
+            and count != 0  # -1: a saved record that can't be verified
         }
 
     def set_library_activity_counts(self, counts: Mapping[str, int]) -> None:
@@ -7019,14 +7019,15 @@ class ConsoleTranscript(VerticalScroll):
                     )
                 )
             citation_count = self._citation_counts.get(message.id, 0)
-            if citation_count > 0:
+            if citation_count != 0:  # TASK-33620.8: -1 is an unverifiable record
+                label = f"({citation_count})" if citation_count > 0 else "unavailable"
                 rows.append(
                     _TranscriptRow(
                         key=f"citations:{message.id}",
                         kind="citations",
                         signature=("citations", message.id, citation_count),
                         message=message,
-                        renderable=f"Cited sources ({citation_count})",
+                        renderable=f"Cited sources {label}",
                     )
                 )
             library_activity_count = self._library_activity_counts.get(message.id, 0)

@@ -111,7 +111,11 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3690,
+    # 2026-10-29, TASK-33620.8 (owner decision 2026-10-04, expand limits):
+    # 3690 -> 3692 (+2) -- both boot compositions defer the citation
+    # fingerprint key to its first use (``defer_key=True``), so boot never
+    # touches the system keyring now that citation records ship on.
+    "tldw_chatbook/app_service_wiring.py": 3692,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -149,11 +153,24 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-29 (TASK-33620.8, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): +8 -- the Automatic branch now
+    # unpacks the staged path's four-part canonical capture
+    # (``capture_automatic_evidence`` in console_library_search) instead of
+    # formatting the bundle straight into the prompt.
+    # 2026-10-30 (TASK-33620.8 review, owner decision 2026-10-04): +2 -- the
+    # runtime passes that capture in (``automatic_evidence_capture``), so the
+    # Chat layer no longer imports the event handlers (layer-direction test).
+    # 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 29038 -> 29048.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29048,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    # 2026-10-29 (TASK-33620.8, owner decision 2026-10-04: expand limits):
+    # 22338 -> 22351 (+13) -- a citation-sealed reply now settles its own
+    # durable dispatch checkpoint before attaching the trace; without it the
+    # next send in that chat was refused once citation records shipped on.
+    "tldw_chatbook/Chat/console_chat_store.py": 22351,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -427,7 +444,8 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8380,
+    # 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8380 -> 8381.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8381,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -584,7 +602,12 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    # 2026-10-30 (TASK-33620.8 review, owner decision 2026-10-04: raise the
+    # row rather than squeeze unrelated code): 6686 -> 6704 (+18). The
+    # runtime owns the Automatic evidence capture beside the staged one and
+    # hands it to the controller, keeping Chat -> Event_Handlers out of the
+    # layer map (Tests/Architecture/test_layer_direction.py).
+    "tldw_chatbook/Chat/console_runtime.py": 6704,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
@@ -603,7 +626,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
+    # 2026-10-29 (TASK-33620.8, owner decision 2026-10-04: expand limits):
+    # 4719 -> 4772 (+53) -- the fingerprint key moves to first use: the
+    # repository holds its key provider, one idempotent thread-safe
+    # ``ensure_local_fingerprint_key`` and the two bounded state reads the
+    # honest Sources copy needs. The acquisition protocol itself lives in
+    # the new Chat/citation_key_first_use.py.
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4772,
     "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,

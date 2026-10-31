@@ -1224,6 +1224,11 @@ class CitationLegacyMigrationService:
     def migrate_idle_unit(self) -> LegacyMigrationBatchResult:
         """Run at most one conversation batch after application readiness."""
 
+        # TASK-33620.8: the app defers the key to first use; migrating a
+        # legacy sidecar is one. Without a sidecar there is nothing to migrate.
+        ensure_key = getattr(self.repository, "ensure_local_fingerprint_key", None)
+        if callable(ensure_key) and os.path.lexists(self.sidecar_path):
+            ensure_key()
         if not self.ready:
             return LegacyMigrationBatchResult(state=LegacyMigrationState.PENDING)
         try:
