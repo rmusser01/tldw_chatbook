@@ -179,10 +179,10 @@ _BUDGETS: dict[str, int] = {
     # _continuation_binding; rows below re-pinned at their measured sizes.
     # 2026-10-29 (TASK-33621.17, owner decision 2026-10-04: raise the row
     # rather than squeeze unrelated code): +5, Save & Send's promoted Library
-    # identity in _capture_turn_library_authority.
     # identity in _capture_turn_library_authority; +6, a Temporary chat's
     # Capture Off default at both capture resolutions (owner decision
     # 2026-10-27).
+    # 2026-10-27). Rebased 2026-10-30 onto dev 7536ac3b87 (29,038): 29,049.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
