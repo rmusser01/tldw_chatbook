@@ -22,6 +22,7 @@ from textual.widgets import Button, Input, OptionList, Static
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
 import tldw_chatbook.Widgets.Console.console_model_popover as popover_module
 from Tests.private_profile import private_profile_test
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_model_switcher import (
     SwitcherHarness,
     _draft,
@@ -1027,6 +1028,9 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
     async with harness.run_test(size=(211, 44)) as pilot:
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
+        # TASK-35574/36389: the poll returns at its attach gate until the
+        # attach reconcile ends, which the mounted summary does not imply.
+        await console_attach_ended(console)
         console._stop_console_credential_poll_timer()
         console._poll_console_credential_readiness()
         settings, _readiness = console._active_console_settings_readiness()

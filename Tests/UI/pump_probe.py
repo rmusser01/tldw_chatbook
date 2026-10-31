@@ -86,6 +86,52 @@ async def pump_runs(pump, seconds: float = 2.0) -> bool:
     return True
 
 
+async def console_attach_ended(console, seconds: float = 5.0) -> None:
+    """Return once ``console``'s attach reconcile has ENDED and its queue drained.
+
+    TASK-35833/TASK-36389. A reopened cached Console's reconcile skips the view
+    start, and what it arms can still be queued when the flag flips (the wake
+    hook's ``call_later`` poll arm). The reconcile also runs on the Console's
+    own pump, so events queued behind it land late. That includes the suspend
+    that resets the flag: until it is handled, the previous visit's flag still
+    reads as ended. So drain the queue first, then wait for the reconcile to
+    end, then drain once more. The queue is FIFO, so each drain runs after
+    everything posted before it. A ``set_timer`` or ``call_after_refresh`` the
+    reconcile queued may still be pending.
+
+    Raises:
+        AssertionError: naming the stage that timed out, with the flags.
+    """
+
+    def flags() -> str:
+        return (
+            f"reconciled={console._console_attach_reconciled}, "
+            f"running={console._console_attach_reconcile_running}"
+        )
+
+    if not await pump_runs(console, seconds):
+        raise AssertionError(
+            "the Console never ran a callback posted before its attach "
+            f"reconcile was awaited ({flags()})"
+        )
+    if not await until(
+        lambda: (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        ),
+        seconds,
+    ):
+        raise AssertionError(
+            "Console attach reconcile never ended (_console_attach_reconciled "
+            f"and not _console_attach_reconcile_running): {flags()}"
+        )
+    if not await pump_runs(console, seconds):
+        raise AssertionError(
+            "the Console never ran a callback posted after its attach "
+            f"reconcile ended ({flags()})"
+        )
+
+
 def await_chain(task: asyncio.Task) -> list[str]:
     """The functions a suspended task is waiting inside, outermost first.
 

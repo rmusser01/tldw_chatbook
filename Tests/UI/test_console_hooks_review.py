@@ -6,6 +6,7 @@ import pytest
 
 from Tests.Agents.test_hook_permissions import _approve
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_workbench_contract import (
     ConsoleHarness,
     _configure_native_ready_console,
@@ -148,6 +149,9 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v
         await pilot.press("escape")
         assert not await first.wait()
         assert composer.draft_text() == "retained draft" and calls == []
+        # TASK-36389: each dismissal reattaches the Console. A Send started
+        # before that attach ends was refused when the attach ran late.
+        await console_attach_ended(console)
         second = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
@@ -162,6 +166,7 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v
         await pilot.click("#console-hooks-allow-all")
         assert await second.wait()
         assert calls == ["retained draft"]
+        await console_attach_ended(console)
         third = await console._dispatch_console_draft_send("retained draft")
         assert third and calls == ["retained draft", "retained draft"]
         assert host.screen is console
