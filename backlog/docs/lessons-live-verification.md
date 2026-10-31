@@ -1,5 +1,26 @@
 # Lessons: verifying against the real thing
 
+## The run projection's cost grows with the chat: pair launch by launch and record the chat length (TASK-36571, 2026-10-30)
+
+**Incident.** TASK-36571's bound (32.6 ms of projection per send window) was
+set from an earlier round's figure. Re-measured on dev 7536ac3b87 with
+roots-only timers (`sys.monitoring` events on the projection's three entry
+points; Anthropic haiku, 160x45, load 2-12), one growing chat per arm, four
+sends per launch: the same build's projection rose from 45.5 ms of thread
+CPU per window at launch 4 (about 30 messages) to 63.3 ms at launch 13
+(about 100), with nothing else changed; the first launch of an earlier
+round, in a new chat, had put dev at 40 ms of wall. Launches that also timed about 70 inner code objects
+(to rank components) sat 2-20% above their roots-only neighbours, which is
+small next to the chat-length drift.
+
+**What to do.** Compare arms launch by launch (interleaved, same message
+count in each arm's chat), and report the chat length beside any absolute
+per-window figure; an absolute bound measured on a different chat length is
+not comparable. Rank components with inner timers, but quote totals from
+roots-only launches. `sys.monitoring` local events time identity-checked
+methods without replacing them; register PY_UNWIND globally so a raise
+does not leave a frame open.
+
 ## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
 
 **Incident.** The Library outcome line passed two review rounds: every test read
