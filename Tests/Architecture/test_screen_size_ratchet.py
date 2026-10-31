@@ -222,6 +222,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: are the screen-owned half of the Review reports key: the `u` Binding,
     #: its workbench-shortcut legend entry, the action attribute and the
     #: `wiring` import that supplies it; the presenter lives in wiring.py.
+    #: 2026-10-30, TASK-33621.11: the exact measurement (owner rule), 24331/737
+    #: -> 24328/737.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
