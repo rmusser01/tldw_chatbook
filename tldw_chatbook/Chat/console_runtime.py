@@ -137,7 +137,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
 )
-from tldw_chatbook.Chat.console_display_state import console_prompted_source_count
+from tldw_chatbook.Chat.console_display_state import console_sent_source_count
 from tldw_chatbook.Chat.console_hook_review import HookReviewResult
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
@@ -443,7 +443,7 @@ class ConsoleTurnRecoveryEntry:
 
 @dataclass(slots=True)
 class _ConsoleStagedEvidenceState:
-    """One app-owned staged-evidence value with a monotonic ownership fence."""
+    """One chat's staged evidence and its last send's receipt (TASK-33620.7)."""
 
     launch: Any | None = field(default=None, repr=False)
     revision: int = 0
@@ -1203,7 +1203,11 @@ class ConsoleRuntime:
         #: turns are off the shelf, so one send is never offered twice.
         self._card_held_preparations: set[str] = set()
         self._recovery_order = 0
-        self._staged_evidence = _ConsoleStagedEvidenceState()
+        #: TASK-33620.7: one state per chat (key None: staged before any chat
+        #: was active). A single app-wide value leaked into every other chat.
+        self._staged_evidence: dict[str | None, _ConsoleStagedEvidenceState] = {}
+        #: One revision fence across chats, so no chat matches another's.
+        self._staged_evidence_revision = 0
         self._prompt_history: Any | None = None
         self._admission_fenced_sessions: set[str] = set()
         self._project_decision_lock = threading.RLock()
@@ -1560,6 +1564,22 @@ class ConsoleRuntime:
         except Exception:  # noqa: BLE001 -- not in the stack: not on screen
             return False
         return all(isinstance(screen, ModalScreen) for screen in stack[index + 1 :])
+
+    def _project_staged_evidence_change(self) -> None:
+        """Have the attached view redraw the active chat's staged evidence.
+
+        TASK-33620.7: the strip, Sources chip and Inspect cards project the
+        active chat's state, so a chat switch must redraw them. Posted to the
+        view's own pump: it may run off the turn's task or a store callback.
+        """
+        provider = getattr(self.view, "console_view_hooks", None)
+        sync = (provider() if callable(provider) else {}).get("staged_evidence")
+        call_later = getattr(self.view, "call_later", None)
+        if callable(sync) and callable(call_later):
+            try:
+                call_later(sync)
+            except RuntimeError:  # a closing view redraws nothing
+                pass
 
     def _request_visible_receipt_render(self) -> None:
         """Re-arm the on-screen view's transcript sync (thread-safe post)."""
@@ -2113,6 +2133,8 @@ class ConsoleRuntime:
         if callable(callback):
             callback()
         self._schedule_project_instruction_projection()
+        self._prune_staged_evidence()
+        self._project_staged_evidence_change()
 
     def ensure_prompt_history(self) -> Any:
         """Return the app-owned prompt-history sink shared by every view."""
@@ -2490,19 +2512,41 @@ class ConsoleRuntime:
 
     # -- app-owned staged evidence --------------------------------------
 
-    def snapshot_console_staged_evidence(self) -> tuple[Any | None, int, int | None]:
-        """Return the exact staged launch, revision, and projection notice."""
-        state = self._staged_evidence
+    def _staged_evidence_state(
+        self, session_id: str | None = None, *, create: bool = False
+    ) -> _ConsoleStagedEvidenceState | None:
+        """Return one chat's staged-evidence state; the active chat by default."""
+        active = getattr(self._chat_store, "active_session_id", None)
+        key = active if session_id is None else session_id
+        states = self._staged_evidence
+        state = states.get(key)
+        if state is None and key is not None and key == active and None in states:
+            # Staged before any chat was active (a cold Console's handoff).
+            state = states[key] = states.pop(None)
+        if state is None and create:
+            state = states[key] = _ConsoleStagedEvidenceState()
+        return state
+
+    def snapshot_console_staged_evidence(
+        self, session_id: str | None = None
+    ) -> tuple[Any | None, int, int | None]:
+        """Return one chat's exact staged launch, revision, and receipt."""
+        state = self._staged_evidence_state(session_id)
+        if state is None:
+            return None, 0, None
         return state.launch, state.revision, state.sent_source_count
 
-    def _has_staged_evidence(self, _session_id: str | None = None) -> bool:
+    def _has_staged_evidence(self, session_id: str | None = None) -> bool:
         """Return whether runtime-owned evidence is staged for the next turn."""
-        return self._staged_evidence.launch is not None
+        return self.snapshot_console_staged_evidence(session_id)[0] is not None
 
-    def stage_console_staged_evidence(self, launch: Any | None) -> int:
-        """Replace the staged launch and return its new ownership revision."""
-        state = self._staged_evidence
-        state.revision += 1
+    def stage_console_staged_evidence(
+        self, launch: Any | None, session_id: str | None = None
+    ) -> int:
+        """Replace one chat's staged launch and return its new revision."""
+        state = self._staged_evidence_state(session_id, create=True)
+        self._staged_evidence_revision += 1
+        state.revision = self._staged_evidence_revision
         state.launch = launch
         state.sent_source_count = None
         return state.revision
@@ -2513,26 +2557,37 @@ class ConsoleRuntime:
         *,
         revision: int,
         sent_source_count: int | None,
+        session_id: str | None = None,
     ) -> bool:
         """Restore a navigation projection only when it is not stale."""
-        state = self._staged_evidence
-        if revision < state.revision:
-            return False
-        if revision == state.revision:
-            return state.launch is launch
+        current, current_revision, _notice = self.snapshot_console_staged_evidence(
+            session_id
+        )
+        if revision <= self._staged_evidence_revision:
+            # This runtime issued that revision; its own state is current.
+            return current_revision == revision and current is launch
+        state = self._staged_evidence_state(session_id, create=True)
         state.launch = launch
-        state.revision = revision
+        state.revision = self._staged_evidence_revision = revision
         state.sent_source_count = sent_source_count
         return True
 
-    def set_console_staged_evidence_notice(self, count: int | None) -> None:
-        """Set the source-count receipt without changing launch ownership."""
-        self._staged_evidence.sent_source_count = count
+    def set_console_staged_evidence_notice(
+        self, count: int | None, session_id: str | None = None
+    ) -> None:
+        """Set one chat's source-count receipt without changing its launch."""
+        state = self._staged_evidence_state(session_id, create=count is not None)
+        if state is not None:
+            state.sent_source_count = count
 
-    def _staged_evidence_lease_revision(self, launch: Any | None) -> int | None:
+    def _staged_evidence_lease_revision(
+        self, launch: Any | None, session_id: str | None = None
+    ) -> int | None:
         """Return the opaque revision that owns this exact admitted launch."""
-        state = self._staged_evidence
-        return state.revision if launch is not None and state.launch is launch else None
+        state = self._staged_evidence_state(session_id)
+        if launch is None or state is None or state.launch is not launch:
+            return None
+        return state.revision
 
     def release_console_staged_evidence(
         self,
@@ -2540,31 +2595,32 @@ class ConsoleRuntime:
         result: Any,
         *,
         revision: int | None,
+        session_id: str | None = None,
     ) -> bool:
         """Release a captured launch only after context reached acceptance."""
         context = getattr(result, "context", None)
-        state = self._staged_evidence
+        state = self._staged_evidence_state(session_id)
         if (
-            revision is None
+            state is None
+            or revision is None
             or state.revision != revision
             or state.launch is not launch
             or not isinstance(context, str)
             or not context.strip()
         ):
             return False
-        ordinals = getattr(
-            getattr(result, "citation_repair_contract", None),
-            "allowed_ordinals",
-            None,
-        )
         state.launch = None
-        state.revision += 1
-        state.sent_source_count = (
-            len(ordinals)
-            if isinstance(ordinals, tuple) and ordinals
-            else console_prompted_source_count(launch)
-        )
+        self._staged_evidence_revision += 1
+        state.revision = self._staged_evidence_revision
+        state.sent_source_count = console_sent_source_count(launch, result)
         return True
+
+    def _prune_staged_evidence(self) -> None:
+        """Drop closed chats' staged evidence; its owner can never send it."""
+        live = {session.id for session in getattr(self._chat_store, "sessions", tuple)()}
+        for key in tuple(self._staged_evidence):
+            if key is not None and key not in live:
+                del self._staged_evidence[key]
 
     # -- accepted-turn custody -------------------------------------------
 
@@ -2716,7 +2772,9 @@ class ConsoleRuntime:
             record = self._register_custody(
                 request,
                 attachments,
-                self._staged_evidence_lease_revision(request.staged_evidence_launch),
+                self._staged_evidence_lease_revision(
+                    request.staged_evidence_launch, request.session_id
+                ),
                 store=store,
                 received_claim=claim,
             )
@@ -2939,6 +2997,7 @@ class ConsoleRuntime:
                         staged_evidence_release=functools.partial(
                             self.release_console_staged_evidence,
                             revision=record.inputs.staged_evidence_revision,
+                            session_id=record.session_id,
                         ),
                         custody_acceptance_hook=mark_durable_acceptance,
                     )
@@ -3038,12 +3097,15 @@ class ConsoleRuntime:
         owner's live capture: consume the launch staged now, and release it
         once it produced context.
         """
-        launch, revision, _notice = self.snapshot_console_staged_evidence()
+        session_id = getattr(turn_context, "session_id", None)
+        launch, revision, _notice = self.snapshot_console_staged_evidence(session_id)
         result = await self._capture_frozen_console_staged_rag(
             draft, turn_context, launch
         )
         if launch is not None:
-            self.release_console_staged_evidence(launch, result, revision=revision)
+            self.release_console_staged_evidence(
+                launch, result, revision=revision, session_id=session_id
+            )
         return result
 
     async def _capture_frozen_console_staged_rag(

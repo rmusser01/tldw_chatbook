@@ -584,7 +584,11 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
+    # 2026-10-30, TASK-33620.7 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 6686 -> 6748 (+62). Staged evidence and its receipt are kept per chat
+    # under one revision fence, and a chat switch redraws the view's copy.
+    "tldw_chatbook/Chat/console_runtime.py": 6748,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,

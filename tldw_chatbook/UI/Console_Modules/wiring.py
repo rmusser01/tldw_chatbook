@@ -549,7 +549,7 @@ def receive_console_visible_intent(
         )
         return ""
     inputs = store.session_input_snapshot(session_id)
-    launch, revision, _notice = runtime.snapshot_console_staged_evidence()
+    launch, revision, _notice = runtime.snapshot_console_staged_evidence(session_id)
     intent = ConsoleReceivedTurnIntent(
         str(uuid4()),
         session_id,
@@ -602,9 +602,9 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
             ),
             one_shot_prefill=one_shot_prefill,
             one_shot_prefill_revision=one_shot_prefill_revision,
-            staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence()[
-                0
-            ],
+            staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence(
+                session_id
+            )[0],
             draft_revision=store.session_input_snapshot(session_id).draft_revision,
         )
         # TASK-33620.5: an acknowledged Enter's "Sending…" row lives until the

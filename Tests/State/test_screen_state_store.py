@@ -17,10 +17,7 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_runtime import (
-    ConsoleRuntime,
-    _ConsoleStagedEvidenceState,
-)
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
@@ -115,6 +112,7 @@ class _BareRuntime(SimpleNamespace):
     are ConsoleRuntime's own, not stand-ins (TASK-33006.8 AC#2).
     """
 
+    _staged_evidence_state = ConsoleRuntime._staged_evidence_state
     snapshot_console_staged_evidence = ConsoleRuntime.snapshot_console_staged_evidence
     stage_console_staged_evidence = ConsoleRuntime.stage_console_staged_evidence
     set_console_staged_evidence_notice = (
@@ -155,7 +153,11 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
             set_chat_store=lambda value: setattr(
                 screen._console_runtime_ref, "chat_store", value
             ),
-            _staged_evidence=_ConsoleStagedEvidenceState(),
+            # TASK-33620.7: staged evidence is kept per chat, fenced by
+            # one app-wide revision, and read for the store's active chat.
+            _chat_store=store,
+            _staged_evidence={},
+            _staged_evidence_revision=0,
         )
         screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
         screen._stash_console_pending_attachments = lambda _store: None

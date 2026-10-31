@@ -9357,6 +9357,7 @@ class ChatScreen(BaseAppScreen):
             "dismiss_project_instruction_decision": (
                 self._session._dismiss_project_instruction_decision_projection
             ),
+            "staged_evidence": self._sync_console_pending_launch_surfaces,
         }
 
     def _release_consumed_console_launch(

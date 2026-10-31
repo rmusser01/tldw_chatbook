@@ -950,7 +950,9 @@ def preparing_poll_record(self):
         for target, name, original in adapters
     ):
         return None
-    launch, launch_revision, _ = runtime.snapshot_console_staged_evidence()
+    launch, launch_revision, _ = runtime.snapshot_console_staged_evidence(
+        intent.session_id
+    )
     if (
         launch is not intent.staged_evidence_launch
         or launch_revision != intent.staged_evidence_revision

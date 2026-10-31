@@ -1122,6 +1122,28 @@ def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     return len(formatted.entries) if formatted is not None else 0
 
 
+def console_sent_source_count(launch: ConsoleLiveWorkLaunch | None, result: Any) -> int:
+    """Return how many sources a capture of ``launch`` put in the prompt.
+
+    The capture's repair contract has one ordinal per formatted prompt entry,
+    so it is exact; the formatted pre-authority estimate covers a capture
+    that could not build one.
+
+    Args:
+        launch: The staged launch the send captured.
+        result: The capture's ``LocalRagContextResult``.
+
+    Returns:
+        The number of evidence entries carried into the prompt.
+    """
+    ordinals = getattr(
+        getattr(result, "citation_repair_contract", None), "allowed_ordinals", None
+    )
+    if isinstance(ordinals, tuple) and ordinals:
+        return len(ordinals)
+    return console_prompted_source_count(launch)
+
+
 def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
     """Return the zero-I/O formatted pre-authority evidence estimate.
 
