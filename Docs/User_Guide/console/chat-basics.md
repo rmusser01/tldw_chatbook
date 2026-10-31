@@ -339,27 +339,26 @@ as its block format.
 ### Large pastes
 
 Pasting more than 50 characters (configurable) collapses the paste into a
-single token reading "Pasted text | N characters | Expand". A text file you
-insert and a large `/prompt` insert become tokens too; a file's token shows
-its name, for example "📄 notes.md · 4 KB | Expand". Nothing collapses inside
-a raw CLI command (see Raw CLI user commands below).
+single token reading "Pasted text | N characters | Ctrl+E expand". A text file
+you insert and a large `/prompt` insert become tokens too; a file's token shows
+its name, for example "📄 notes.md · 4 KB | Ctrl+E expand". Nothing collapses
+inside a raw CLI command (see Raw CLI user commands below).
 
-Enter sends the draft, every token in full, unless the caret is on a token,
-which means right before it. A caret right after a token is not on it, so
-paste then Enter sends, and so does Enter straight after a question and a
-paste, a `/prompt` insert, or an inserted file. To expand a token from the
-keyboard, put the caret right before it (Left from the end of the draft
-reaches a token that ends it) and press Enter. A paste that starts with a
-line break keeps that break outside its token, so the caret can never sit
-right before that token; click it instead. With the caret on a token, Enter
-expands that token in two steps: the first Enter asks "Expand pasted text (N
-characters)? Enter: yes · Esc: no" (a file's question names the file), and a
-second Enter puts the full text in place. While the question shows, Enter
-with the caret right before or right after that token answers yes. Esc, or
-moving the caret anywhere else, answers no and puts the collapsed token
-back. Clicking a token asks the same question and leaves the caret right
-after it, so the next Enter answers it. The **Send** button always
-sends, wherever the caret is. Whatever the display
+**Enter always sends** the draft, every token in full, wherever the caret is
+and whatever a token is showing: paste then Enter, a question then a paste, a
+question typed in front of a paste, a `/prompt` insert or an inserted file each
+send on one Enter. Enter never expands a token. To expand one from the
+keyboard, press **Ctrl+E**: it puts the full text of the token right before or
+right after the caret in place at once (between two tokens, the one after the
+caret). With no token beside the caret, Ctrl+E expands the nearest one, so
+paste, type a question, Ctrl+E works too. A paste that starts or ends with a
+line break draws that break outside its token; Ctrl+E reaches it all the same.
+Clicking a token still expands it: the first click asks "Expand pasted text (N
+characters)? Ctrl+E: yes · Esc: no" (a file's question names the file) and puts
+the caret right after that token, and a second click or Ctrl+E puts the full
+text in place. Esc, or moving the caret off the token, answers no and puts the
+collapsed token back. Enter while the question shows sends the draft, the
+token in full. The **Send** button always sends too. Whatever the display
 state, **the full pasted text is always what sends** — collapsing is purely
 visual. While the draft contains a paste token, slash-command parsing is
 skipped and the draft sends as plain text. The collapse behavior is set by
@@ -849,7 +848,8 @@ Composer:
 
 | Key | Action |
 |---|---|
-| Enter | Send now, queue after an accepted turn, or expand a paste, file or `/prompt` token that the caret is on or that is asking to expand (see Large pastes) |
+| Enter | Send now or queue after an accepted turn, whatever the caret is on; it never expands a collapsed token (see Large pastes) |
+| Ctrl+E | Expand the collapsed paste, file or `/prompt` token beside the caret, or the nearest one |
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |
