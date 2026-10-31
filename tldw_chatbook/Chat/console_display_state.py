@@ -23,6 +23,10 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_ROW_EVIDENCE,
+    CONSOLE_ROW_PROVIDER,
+)
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.RAG_Search.local_citation_capture import (
@@ -416,6 +420,7 @@ class ConsoleDisplayRow:
     value: Any
     status: str = "ready"
     recovery: str = ""
+    code: str = ""
 
     @property
     def text(self) -> str:
@@ -1763,6 +1768,7 @@ class ConsoleInspectorState:
                 provider_status,
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
+                code=CONSOLE_ROW_PROVIDER,
             ),
             # TASK-24610: "Retrieval", not "Sources". This row reports whether
             # RETRIEVAL has anything to read; the tray heading, the pinned
@@ -1801,6 +1807,7 @@ class ConsoleInspectorState:
                     _clean(evidence_summary, ""),
                     status=_clean(evidence_status, "ready"),
                     recovery=_clean(evidence_recovery, ""),
+                    code=CONSOLE_ROW_EVIDENCE,
                 )
             )
         if _clean(evidence_authority, ""):
