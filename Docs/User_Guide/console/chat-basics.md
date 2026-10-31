@@ -121,8 +121,14 @@ sends it with the current settings.
 A failed reply quotes the provider's own reason, prefixed with its name, and
 says what to do: for example "Provider error from OpenRouter: authentication
 failed. Status: 401. OpenRouter says: “API key expired.” Update the API key in Settings ▸ Providers & Models,
-or run Ctrl+P ▸ Setup: Run setup wizard." A model the provider no longer
-serves (a 404) names **Alt+M: Switch model**. Only the provider's one-line
+or run Ctrl+P ▸ Setup: Run setup wizard." That sentence is the whole System
+row: it is not prefixed with "Agent run failed:". Advice follows only from
+what the provider's answer established. A model the provider no longer
+serves (a 404, or an explicit `model_not_found`) names **Alt+M: Switch
+model**; any other 400 offers no model advice. When the provider refuses an
+image (a 400, 413, 415 or 422 whose message is about the image) and the
+conversation holds one, the row adds how to switch to a vision-capable model
+or **/rewind** past the image. A 401 never gets either hint. Only the provider's one-line
 message is shown, capped at 200 characters and with anything shaped like a
 key hidden. A provider that stops sending mid-reply reads "no reply for 90 s
 — the provider stopped sending. Retry, or wait longer by raising

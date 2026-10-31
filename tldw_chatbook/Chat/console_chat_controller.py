@@ -515,8 +515,10 @@ from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandServ
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
+    IMAGE_REFUSAL_HINT,
     console_failure_copy,
     describe_stream_failure,
+    image_refusal_hint,
 )
 from tldw_chatbook.Chat.console_cost_tracker import (
     PayloadFingerprint,
@@ -22627,11 +22629,7 @@ class ConsoleChatController:
                 "Prompt-history recording failed for an accepted send."
             )
 
-    _IMAGE_REJECTION_RECOVERY_HINT = (
-        " This conversation includes an image attachment; if the model can't accept "
-        "images, switch to a vision-capable model, or type /rewind and restore to the "
-        "prompt that added the image (nothing is deleted; later turns stay a branch)."
-    )
+    _IMAGE_REJECTION_RECOVERY_HINT = IMAGE_REFUSAL_HINT
 
     def _session_history_carries_images(self, session_id: str) -> bool:
         """Return whether any message in the session carries an image.
@@ -25696,6 +25694,9 @@ class ConsoleChatController:
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.
             visible_copy = console_failure_copy(exc, "Provider stream failed")
+            visible_copy += image_refusal_hint(
+                exc, lambda: self._session_history_carries_images(owner_id)
+            )
             self.store.record_trajectory_timing(
                 assistant_message_id, model_status="failed"
             )
@@ -27072,10 +27073,9 @@ class ConsoleChatController:
             # preserves whatever partial content already streamed
             # otherwise).
             visible_copy = console_failure_copy(exc, "Agent run failed")
-            if getattr(
-                getattr(exc, "response", None), "status_code", None
-            ) is not None and self._session_history_carries_images(session_id):
-                visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
+            visible_copy += image_refusal_hint(  # TASK-33621.11 AC#3: typed
+                exc, lambda: self._session_history_carries_images(session_id)
+            )
             try:
                 self.store.mark_message_failed(assistant_message_id)
             except KeyError:
@@ -27384,10 +27384,9 @@ class ConsoleChatController:
         ``_record_run_assistant_message``).
         """
         visible_copy = self._agent_failure_visible_copy(outcome)
-        if "provider returned HTTP" in visible_copy and (
-            self._session_history_carries_images(session_id)
-        ):
-            visible_copy += self._IMAGE_REJECTION_RECOVERY_HINT
+        visible_copy += image_refusal_hint(  # TASK-33621.11 AC#3: typed
+            outcome, lambda: self._session_history_carries_images(session_id)
+        )
         placeholder = self._ensure_assistant_placeholder(
             assistant_message_id, session_id
         )
