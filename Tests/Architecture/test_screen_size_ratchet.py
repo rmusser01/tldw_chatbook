@@ -226,7 +226,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: and Enter no longer steps collapsed tokens (-2; owner decision
     #: 2026-10-30: Enter always sends, Ctrl+E expands in the composer), so
     #: 24334/737, the exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24334, 737),
+    #: Raised 24334 -> 24338 (methods unchanged) 2026-10-30 by the TASK-37870
+    #: review fix, same owner rule: F1's Ctrl+E row adds "or the nearest one",
+    #: as the composer does and the User Guide says (the row now wraps).
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24338, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

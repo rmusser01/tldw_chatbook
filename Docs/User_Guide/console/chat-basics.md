@@ -349,10 +349,13 @@ and whatever a token is showing: paste then Enter, a question then a paste, a
 question typed in front of a paste, a `/prompt` insert or an inserted file each
 send on one Enter. Enter never expands a token. To expand one from the
 keyboard, press **Ctrl+E**: it puts the full text of the token right before or
-right after the caret in place at once (between two tokens, the one after the
-caret). With no token beside the caret, Ctrl+E expands the nearest one, so
-paste, type a question, Ctrl+E works too. A paste that starts or ends with a
-line break draws that break outside its token; Ctrl+E reaches it all the same.
+right after the caret in place at once. With no token beside the caret, Ctrl+E
+expands the nearest one, so paste, type a question, Ctrl+E works too. A paste
+that starts or ends with a line break draws that break outside its token;
+Ctrl+E reaches it all the same. **Ctrl+Z** right after an expand puts the
+collapsed token back and keeps everything you typed. Some editors' built-in
+terminals keep Ctrl+E for themselves (VS Code on Windows and Linux opens Quick
+Open with it); there, click the token instead.
 Clicking a token still expands it: the first click asks "Expand pasted text (N
 characters)? Ctrl+E: yes · Esc: no" (a file's question names the file) and puts
 the caret right after that token, and a second click or Ctrl+E puts the full

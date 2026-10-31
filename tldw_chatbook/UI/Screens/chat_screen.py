@@ -1263,7 +1263,11 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         "Composer",
         (
             ("Enter", "send now or queue after an accepted turn"),
-            ("Ctrl+E", "expand the paste, file or prompt token beside the caret"),
+            (
+                "Ctrl+E",
+                "expand the paste, file or prompt token beside the caret, "
+                "or the nearest one",
+            ),
             ("Ctrl+G", "stop this tab's run (shown while one is running)"),
             ("Queue shelf", "manage, pause, resume, and recover queued prompts"),
             ("Ctrl+J", "insert a newline (works in any terminal)"),
