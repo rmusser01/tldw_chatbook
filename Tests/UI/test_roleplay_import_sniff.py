@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
 import pathlib
+import threading
 import time
 import zipfile
 
@@ -266,6 +268,61 @@ def test_keys_past_the_prefix_ask_rather_than_refuse(tmp_path):
     path.write_text(json.dumps(card), encoding="utf-8")
     result = sniff.sniff_import_file(path, max_bytes=CAP)
     assert (result.verdict, result.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+def test_the_root_key_rules_decide_each_kind_without_entries(tmp_path):
+    """Deferred minor T3c: ``_LORE_KEYS``, ``_DICTIONARY_KEYS`` and
+    ``_CARD_KEYS`` had no failing test, because every fixture's entries
+    decided the kind as well. These files carry no deciding entry: a tldw
+    lore export with ``"entries": []``, a flat dictionary with none, and a
+    V1-style card with only a card root key."""
+    cases = {
+        "lore": {"name": "Atlas", "scan_depth": 3, "entries": []},
+        "dictionary": {"name": "Dict", "strategy": "sorted_evenly", "entries": []},
+        "character": {"name": "Corwin", "char_persona": "A quiet smith."},
+    }
+    for kind, payload in cases.items():
+        path = tmp_path / f"{kind}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        result = sniff.sniff_import_file(path, max_bytes=CAP)
+        assert (result.verdict, result.kinds) == ("decided", (kind,)), kind
+    # No root key and no deciding entry: inconclusive, so "Import as:" asks
+    # (the module's rule: a strict sniff would refuse files dev accepts).
+    nothing = sniff.classify(".json", b'{"name": "Nothing", "entries": []}')
+    assert (nothing.verdict, nothing.kinds) == ("ask", sniff.TEXT_KINDS)
+
+
+def test_a_fifo_is_refused_without_blocking(tmp_path):
+    """Deferred minor T3a: a FIFO picked as ``x.json`` blocked the sniff's
+    worker in ``open()`` until a writer appeared (on dev its ``read_bytes``
+    blocks the same way; not fixed there). The sniff now refuses anything
+    but a regular file on the ``stat`` it already takes, with the same
+    OSError the screen turns into "{file} could not be imported: …". A
+    regression fails here instead of hanging: the sniff runs on a daemon
+    thread with a deadline, and a writer unblocks a stuck reader."""
+    path = tmp_path / "x.json"
+    os.mkfifo(path)
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            outcome["result"] = sniff.sniff_import_file(path, max_bytes=CAP)
+        except Exception as exc:  # noqa: BLE001 - the verdict under test
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    if worker.is_alive():
+        # Unblock the reader stuck in open() so the thread can end.
+        writer = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        os.close(writer)
+        worker.join(timeout=5)
+        pytest.fail("the sniff blocked on a FIFO instead of refusing it")
+    assert "result" not in outcome, outcome
+    error = outcome["error"]
+    assert isinstance(error, OSError) and not isinstance(error, ValueError)
+    assert "not a regular file" in str(error)
 
 
 def test_markdown_that_fits_two_kinds_asks():

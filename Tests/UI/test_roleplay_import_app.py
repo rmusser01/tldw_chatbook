@@ -673,6 +673,53 @@ def _chooser_title(pilot) -> str:
     return ""
 
 
+# ---- The router's error branches (deferred minor T4a) ----
+
+
+@pytest.mark.parametrize(
+    "exc, toast",
+    [
+        (
+            PermissionError(13, "denied"),
+            "card_v2.json could not be imported: [Errno 13] denied",
+        ),
+        (RuntimeError("boom [b]x"), "Import failed: boom [b]x"),
+    ],
+    ids=["os-error", "unexpected"],
+)
+async def test_a_sniff_that_raises_toasts_literally_and_frees_the_picker(
+    exc, toast, import_env, mock_app_instance, monkeypatch
+):
+    """Deferred minor T4a: the router's two error branches on the mounted
+    screen. An OSError or ValueError from the sniff (a path the validator
+    refuses, a file that cannot be stat'ed or read) is "{file} could not be
+    imported: {exc}"; anything else reaches the worker's ``except Exception``
+    and is "Import failed: {exc}". Both are painted literally, the app stays
+    up, and the picker's slot is freed."""
+
+    def raising(path, *, max_bytes):
+        raise exc
+
+    monkeypatch.setattr(sniff_module, "sniff_import_file", raising)
+    fake_file_picker(monkeypatch, import_env.files["card_v2.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        notices = _record_app_notices(pilot.app)
+        await _press_import(pilot)
+        await wait_until(pilot, lambda: bool(notices), what="the toast", timeout=8.0)
+        await wait_until(pilot, lambda: _import_idle(screen), what="the slot freed")
+        assert [(m, kwargs["markup"]) for m, kwargs in notices] == [(toast, False)]
+        assert not screen._roleplay_import_running
+        assert pilot.app.is_running and pilot.app.return_code is None
+        # The picker opens again.
+        await _press_import(pilot)
+        await wait_until(pilot, lambda: len(notices) == 2, what="the second toast")
+        await wait_until(pilot, lambda: _import_idle(screen), what="the slot freed")
+    assert import_env.characters() == import_env.seeded
+
+
 # ---- AC#7: a hostile file name stays literal ----
 
 
