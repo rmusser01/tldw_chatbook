@@ -58,6 +58,28 @@ The rotating application log file uses the same credential/PII redaction policy
 under [ADR-029](../../backlog/decisions/029-local-private-data-boundary.md).
 Existing retention limits and private-file permission checks still apply.
 
+## Console sends that stop blocked
+
+A Console send that stops before the provider replies shows its cause in the
+transcript, for example the **Trace capture blocked** callout with **Retry
+capture**, **Send without capture** and **Cancel send**. The log names the same
+cause. Look for `Console submit requires attention` in Logs. Its `blocker=`
+field holds a fixed code:
+
+| `blocker=` | What stopped the send |
+|---|---|
+| `trace_provenance` | The send's trace record could not be saved |
+| `trace_call` | Trace capture for the provider call could not start |
+| `delivery_unknown` | A retry could not confirm whether the provider already received the send |
+| `dispatch_settlement` | The send was held before dispatch (for example by a hook) and kept for Retry or Discard |
+| `settlement_failed` | Saving the send's outcome failed; it is kept for Retry or Discard |
+| `owner_changed` | Another action took over the saved send; it is kept for recovery |
+
+The rotating application log's `phase=controller_submit status=blocked` line
+carries the same code as `error_category=`. Refused and failed sends log
+`blocker=-`; the transcript or the unsent-turn shelf states their reason.
+Include the line in a bug report. It contains no message text.
+
 ## Local transcription failures
 
 When a Parakeet ONNX or transcribe.cpp import fails in the local STT executor,
