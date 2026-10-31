@@ -106,6 +106,15 @@ class _PendingSend:
     admitted: bool = False
 
 
+@dataclass(frozen=True)
+class _StandIn:
+    """A released send's row, shown in place of its echo (TASK-33620.15.20)."""
+
+    token: object
+    echo_id: str
+    row: ConsoleChatMessage
+
+
 class ConsoleSendAcknowledgement:
     """Each session's Enter send acknowledged ahead of its store echo."""
 
@@ -123,6 +132,7 @@ class ConsoleSendAcknowledgement:
                 per acknowledged send, as its turn is handed to the runtime.
         """
         self._pending: dict[str, _PendingSend] = {}
+        self._standing_in: dict[str, _StandIn] = {}
         self._on_release = on_release
         self._message_ids = message_ids
 
@@ -214,30 +224,68 @@ class ConsoleSendAcknowledgement:
         it, so a USER row another action adds (an Edit & resend sibling)
         leaves the pending row in place.
 
+        TASK-33620.15.20: once the echo lands, the send is no longer pending
+        (Send, the Run chip and the tab read the turn's own state), but its
+        row still stands in for the echo until the echo's turn writes its
+        next row (the reply placeholder, a hook or block notice), the echo
+        stops being a plain row, or the turn's custody ends. The echo has no
+        "Sending…" line, so swapping it in alone moved every row above it,
+        and the placeholder moved them all again 120-150 ms later (headless,
+        160x45): now both land in one layout pass.
+
         Args:
             session_id: The session the rows belong to.
             messages: That session's transcript rows, in order.
 
         Returns:
-            The rows, with the pending row last until its echo is among them.
+            The rows, with the pending row last until its echo is among them
+            with a row after it.
         """
         rows = list(messages)
         pending = self._pending.get(session_id)
-        if pending is None:
-            return rows
-        handoff_ids = pending.handoff_ids
-        if (
-            pending.admitted
-            and handoff_ids is not None
-            and any(
-                row.role is ConsoleMessageRole.USER and row.id not in handoff_ids
-                for row in rows
+        if pending is not None:
+            handoff_ids = pending.handoff_ids
+            echo = (
+                next(
+                    (
+                        row
+                        for row in rows
+                        if row.role is ConsoleMessageRole.USER
+                        and row.id not in handoff_ids
+                    ),
+                    None,
+                )
+                if pending.admitted and handoff_ids is not None
+                else None
             )
-        ):
+            if echo is None:
+                return [*self._with_stand_in(session_id, rows), pending.row]
             # The echo is in this very projection: no resync is owed.
             del self._pending[pending.session_id]
+            self._standing_in[session_id] = _StandIn(
+                pending.token, echo.id, pending.row
+            )
+        return self._with_stand_in(session_id, rows)
+
+    def _with_stand_in(
+        self, session_id: str | None, rows: list[ConsoleChatMessage]
+    ) -> list[ConsoleChatMessage]:
+        """Show a released send's row in place of its echo while it stands in."""
+        stand_in = self._standing_in.get(session_id)
+        if stand_in is None:
             return rows
-        return [*rows, pending.row]
+        echo_at = next(
+            (index for index, row in enumerate(rows) if row.id == stand_in.echo_id),
+            None,
+        )
+        if (
+            echo_at is None
+            or echo_at + 1 < len(rows)
+            or rows[echo_at].status != "complete"
+        ):
+            del self._standing_in[session_id]
+            return rows
+        return [*rows[:echo_at], stand_in.row]
 
     @contextlib.contextmanager
     def dispatching(self, token: object | None) -> Iterator[None]:
@@ -299,15 +347,26 @@ class ConsoleSendAcknowledgement:
             self.release(token)
 
     def release(self, token: object) -> None:
-        """Drop ``token``'s pending row and request a repaint.
+        """Drop ``token``'s pending or standing-in row and request a repaint.
 
         Args:
             token: The send to release; a stale token releases nothing.
         """
         pending = self._by_token(token)
-        if pending is None:
-            return
-        del self._pending[pending.session_id]
+        if pending is not None:
+            del self._pending[pending.session_id]
+        else:
+            session_id = next(
+                (
+                    key
+                    for key, stand_in in self._standing_in.items()
+                    if stand_in.token is token
+                ),
+                None,
+            )
+            if session_id is None:
+                return
+            del self._standing_in[session_id]
         self._on_release()
 
     def _dispatching_send(self, session_id: str) -> _PendingSend | None:
@@ -517,6 +576,12 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
     if request.guard is not None and not request.guard():
         screen._console_pending_send = None
         return
+    # TASK-33620.15.26: the composer keeps showing this draft until the send
+    # takes it out; meanwhile its reason strip must not narrow it. Marked
+    # before admission, which can already sync the composer to Preparing.
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        composer.note_draft_sending(request.stash)
     # A stock plain send can acquire runtime custody immediately. Its resident
     # Preparing projection then owns feedback; the existing acknowledgement is
     # still needed by custom, command and queue dispatch below.
@@ -534,6 +599,8 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
             )
             received = ""
         if received is not None:
+            if not received and composer is not None:
+                composer.note_draft_sending(None)  # Refused: the draft stays.
             if screen._console_pending_send is pending_send:
                 screen._console_pending_send = None
             return

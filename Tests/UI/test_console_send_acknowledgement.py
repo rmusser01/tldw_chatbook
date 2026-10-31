@@ -449,9 +449,16 @@ def test_acknowledgement_row_stands_in_until_the_store_echo_lands():
 
     _admit(ack, token)
     echo = _message(Role.USER, "echo")
-    assert ack.project("s1", [old, echo]) == [old, echo]
+    # TASK-33620.15.20: the echo alone releases the send (Send, the Run chip
+    # and the tab read the turn's own state), but its row stands in for the
+    # echo until the turn writes its next row, so both land in one layout.
+    assert ack.project("s1", [old, echo]) == [old, pending[-1]]
     assert not ack.active_for("s1")
-    assert released == []  # the projection that saw the echo renders it
+    assert released == []  # nothing is owed: the projection renders it
+    reply = _message(Role.ASSISTANT, "reply")
+    assert ack.project("s1", [old, echo, reply]) == [old, echo, reply]
+    assert ack.project("s1", [old, echo]) == [old, echo]  # it stood in once
+    assert released == []
 
 
 def test_only_the_sends_own_echo_releases_its_row():
@@ -475,8 +482,50 @@ def test_only_the_sends_own_echo_releases_its_row():
     # Admitted, its echo not written yet: the sibling is still not it.
     assert ack.project("s1", [sibling])[-1].status == "pending"
     echo = _message(Role.USER, "echo")
-    assert ack.project("s1", [sibling, echo]) == [sibling, echo]
+    reply = _message(Role.ASSISTANT, "reply")
+    assert ack.project("s1", [sibling, echo, reply]) == [sibling, echo, reply]
     assert not ack.active_for("s1") and released == []
+
+
+def test_a_standing_in_row_leaves_when_its_echo_fails_goes_or_custody_ends():
+    """TASK-33620.15.20: the stand-in never outlives what it stands in for.
+
+    It goes once the echo is no longer a plain row (a send-blocked echo shows
+    at once), once the echo is gone, and once the turn's custody ends with
+    the echo still alone (a refusal after the echo); only that last release
+    is outside a projection, so only it asks for a repaint.
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole as Role
+
+    old = _message(Role.USER, "old-user")
+    echo = _message(Role.USER, "echo")
+
+    def standing_in():
+        ack, released = _ack({"s1": ["old-user"]})
+        token = ack.begin("s1", DRAFT)
+        callback = _admit(ack, token)
+        stand_in = ack.project("s1", [old, echo])[-1]
+        assert stand_in.status == "pending" and stand_in.content == DRAFT
+        return ack, released, callback
+
+    ack, released, _ = standing_in()
+    failed = replace(echo, status="failed")
+    assert ack.project("s1", [old, failed]) == [old, failed]
+    assert ack.project("s1", [old, echo]) == [old, echo] and released == []
+
+    ack, released, _ = standing_in()
+    assert ack.project("s1", [old]) == [old]
+    assert ack.project("s1", [old, echo]) == [old, echo] and released == []
+
+    ack, released, callback = standing_in()
+    assert ack.project("other-session", [old, echo]) == [old, echo]
+    callback(False)
+    assert released == [1]
+    assert ack.project("s1", [old, echo]) == [old, echo]
+    callback(False)
+    assert released == [1]  # a stale token releases nothing
 
 
 def test_acknowledgement_released_when_custody_ends_without_an_echo():
