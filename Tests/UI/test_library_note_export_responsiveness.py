@@ -42,7 +42,7 @@ from tldw_chatbook.UI.Library_Modules import library_file_export
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_MARKDOWN = (
-    b"---\ntitle: Q3 retro\ndate: 2026-10-28 12:34:56\nkeywords: \n"
+    b"---\ntitle: Q3 retro\ndate: '2026-10-28 12:34:56'\ntags: []\n"
     b"note_id: n-1\n---\n\n# Q3 retro\n\nalpha budget line"
 )
 # This task preserves the existing atomic writer's native newline policy;

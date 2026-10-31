@@ -355,6 +355,10 @@ FAST_LANE_TARGETS = (
     "Tests/LLM_Calls/test_summarization_credential_source.py",
     "Tests/Chat/test_legacy_api_key_credential_source.py",
     "Tests/LLM_Calls/test_dispatch_local_argument_routing.py",
+    # Current-dev startup/shutdown riders remain exact members after backlog integration.
+    "Tests/Chat/test_console_shutdown_after_done_finalization.py",
+    "Tests/Utils/test_startup_errors.py",
+    "Tests/test_cli_startup_private_path.py",
     # Phase 9's whole-PR review, round 1 (2026-10-18): sandboxed model-config
     # tests that are the only evidence for ticked criteria and ran in no PR
     # lane, each 3 of 3 serial in this job's install set (about 50 s together).

@@ -22950,7 +22950,7 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
         await host.workers.wait_for_complete()
         written = destination.read_text(encoding="utf-8")
         assert "title: Q3 retro" in written
-        assert "keywords: alpha, beta" in written
+        assert "tags:\n- alpha\n- beta\n" in written
         assert "note_id: n-1" in written
         assert written.endswith("alpha budget line")
         app.notify.assert_called_once()
