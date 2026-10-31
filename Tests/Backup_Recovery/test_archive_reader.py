@@ -479,6 +479,7 @@ def test_compression_review_retry_inside_handler_retains_sealed_bytes(tmp_path):
         b"hello",
         b"".join(hashlib.sha256(str(i).encode()).digest() for i in range(8192)),
     ],
+    ids=("empty", "small", "multiple-input-chunks"),
 )
 def test_complete_deflate_validation_accepts_empty_and_multiple_input_chunks(
     tmp_path, data
