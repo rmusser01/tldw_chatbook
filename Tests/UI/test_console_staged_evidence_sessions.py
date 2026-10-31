@@ -280,6 +280,13 @@ def _console_app(gateway):
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
+    # A second turn in a saved chat reads its archive state, and the factory
+    # app has no service for it (`_allow_second_turns` in
+    # test_console_send_admission_off_pump.py; lessons-testing-evidence.md).
+    app.local_chat_conversation_service = SimpleNamespace(
+        db=SimpleNamespace(is_memory_db=True),
+        get_conversation_archive_states=lambda _ids: {},
+    )
     return app
 
 
@@ -317,15 +324,20 @@ async def test_a_send_in_one_chat_leaves_another_chats_staging_alone(
 
 
 @pytest.mark.asyncio
-async def test_a_saved_chats_send_shows_its_staged_sources_on_its_reply(
+async def test_a_temporary_chats_send_shows_its_staged_sources_on_its_reply(
     capture,
 ) -> None:
-    """Stage -> send in a saved chat: the reply, not the strip, says it."""
+    """A Temporary chat accepts its turn on the non-durable path; same claim."""
     gateway = CapturingGateway()
     host = ConsoleHarness(_console_app(gateway))
     async with host.run_test(size=(200, 56)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        store = console._ensure_console_chat_store()
+        saved_chat = store.active_session_id
+        console.action_new_temporary_console_tab()
+        await _wait_for_new_chat(store, pilot, saved_chat)
         await _select_llamacpp_console(console)
         await _open_inspect(console, pilot)
 
@@ -345,25 +357,16 @@ async def test_a_saved_chats_send_shows_its_staged_sources_on_its_reply(
 
 @pytest.mark.asyncio
 async def test_staged_evidence_follows_one_turn_and_one_chat(capture) -> None:
-    """Stage -> send -> sourceless send -> new tab -> workspace chat.
-
-    A Temporary chat, because this harness's in-memory database cannot
-    complete a SECOND send in a saved chat ("Local conversation storage is
-    unavailable." on dev too); the saved chat's send is pinned above.
-    """
+    """Stage -> send -> sourceless send -> new tab -> workspace chat."""
     gateway = CapturingGateway()
     host = ConsoleHarness(_console_app(gateway))
     async with host.run_test(size=(200, 56)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         await _select_llamacpp_console(console)
-        store = console._ensure_console_chat_store()
-        saved_chat = store.active_session_id
-        console.action_new_temporary_console_tab()
-        await _wait_for_new_chat(store, pilot, saved_chat)
-        first_chat = store.active_session_id
-        await _select_llamacpp_console(console)
         await _open_inspect(console, pilot)
+        store = console._ensure_console_chat_store()
+        first_chat = store.active_session_id
 
         launch = _launch(2)
         console._retrieval._stage_console_library_rag_launch(launch)
