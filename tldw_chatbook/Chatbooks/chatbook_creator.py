@@ -47,6 +47,7 @@ from ..config import load_console_library_migration_seed
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Client_Media_DB_v2 import MediaDatabase, fetch_keywords_for_media_batch
 from ..DB.Prompts_DB import PromptsDatabase
+from ..Notes.note_frontmatter import render_note_frontmatter
 from ..Prompt_Management.prompt_chatbook_record import encode_chatbook_prompt_record
 from ..STT.persistence import load_transcription_provenance_document
 from ..Utils.input_validation import sanitize_string
@@ -1527,20 +1528,31 @@ class ChatbookCreator:
                 # Write markdown file
                 note_file = notes_dir / f"{sanitize_filename(note['title'])}.md"
                 with open(note_file, "w", encoding="utf-8") as f:
-                    # Write frontmatter
-                    f.write("---\n")
-                    f.write(f"id: {note['id']}\n")
-                    f.write(f"title: {note['title']}\n")
-                    f.write(f"created_at: {note_data['created_at']}\n")
-                    f.write(f"updated_at: {note_data['updated_at']}\n")
+                    # Frontmatter through the one YAML renderer (TASK-34000.31):
+                    # a title with a colon or a leading ``*``/``#`` is quoted,
+                    # tags are a list, and the importer reads it back with the
+                    # same ``split_frontmatter`` Add from files… uses.
+                    fields: dict[str, object] = {
+                        "id": note["id"],
+                        "title": note["title"],
+                        "created_at": note_data["created_at"],
+                        "updated_at": note_data["updated_at"],
+                    }
+                    # ``_frontmatter_safe_keyword`` stays: the dumper would
+                    # quote a keyword holding ``---`` or a line break into
+                    # valid YAML, but a reader that still splits on the first
+                    # fence -- the pre-fix importer, a foreign tool -- would
+                    # cut the body there. The manifest is the record, so the
+                    # keyword loses nothing by staying off this block.
                     frontmatter_tags = [
                         tag
                         for tag in note_data["tags"]
                         if self._frontmatter_safe_keyword(tag)
                     ]
                     if frontmatter_tags:
-                        f.write(f"tags: {', '.join(frontmatter_tags)}\n")
-                    f.write("---\n\n")
+                        fields["tags"] = list(frontmatter_tags)
+                    f.write(render_note_frontmatter(fields))
+                    f.write("\n")
 
                     # Write content
                     f.write(note["content"])

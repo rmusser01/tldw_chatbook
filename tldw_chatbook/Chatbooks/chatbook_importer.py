@@ -66,6 +66,7 @@ from ..DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..DB.Prompts_DB import PromptsDatabase
 from ..model_capabilities import moonshot_model_returns_reasoning_content
+from ..Notes.note_import_parsers import split_frontmatter
 from ..Prompt_Management.prompt_chatbook_record import (
     PromptChatbookRecordError,
     decode_chatbook_prompt_record,
@@ -2698,17 +2699,7 @@ class ChatbookImporter:
                     content = f.read()
 
                 # Extract frontmatter if present
-                frontmatter_tags: list[str] = []
-                if content.startswith("---"):
-                    parts = content.split("---", 2)
-                    if len(parts) >= 3:
-                        # Parse frontmatter
-                        frontmatter_tags = self._frontmatter_tags(parts[1])
-                        note_content = parts[2].strip()
-                    else:
-                        note_content = content
-                else:
-                    note_content = content
+                frontmatter_tags, note_content = self._split_note_frontmatter(content)
                 # TASK-34000.19: the manifest item's ``tags`` is the record
                 # (ADR-057's canonical membership); the frontmatter ``tags:``
                 # line is the fallback for a hand-edited bundle whose
@@ -2766,20 +2757,59 @@ class ChatbookImporter:
                 )
 
     @staticmethod
-    def _frontmatter_tags(frontmatter: str) -> list[str]:
-        """Return the comma-separated ``tags:`` line of a note's frontmatter.
+    def _split_note_frontmatter(content: str) -> tuple[list[str], str]:
+        """Return a bundle note file's frontmatter tags and its body.
 
-        The creator writes ``tags: a, b`` only when the note has keywords;
-        a bundle without the line yields ``[]``.
+        TASK-34000.31: the creator renders the block with a real YAML dumper,
+        so it is read with the same ``split_frontmatter`` **Add from files…**
+        uses -- a quoted title may legitimately hold ``---``, which the old
+        ``content.split("---", 2)`` cut the body on. A bundle written BEFORE
+        that fix may carry a block no parser reads (an unquoted
+        ``title: Trip planning: Lisbon``): for those the old fence split is
+        kept so the body still comes back without the raw block, and its
+        legacy ``tags: a, b`` line is read as before.
+
+        Args:
+            content: The note file's text.
+
+        Returns:
+            ``(tags, body)``; ``tags`` is ``[]`` when the file carries none.
         """
-        for line in frontmatter.splitlines():
-            if line.startswith("tags:"):
-                return [
-                    tag.strip()
-                    for tag in line[len("tags:") :].split(",")
-                    if tag.strip()
-                ]
-        return []
+        metadata, body = split_frontmatter(content)
+        if metadata is not None:
+            return ChatbookImporter._tags_from_metadata(metadata), body.strip()
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                legacy_tags: list[str] = []
+                for line in parts[1].splitlines():
+                    if line.startswith("tags:"):
+                        legacy_tags = ChatbookImporter._tags_from_metadata(
+                            {"tags": line[len("tags:") :]}
+                        )
+                        break
+                return legacy_tags, parts[2].strip()
+        return [], content
+
+    @staticmethod
+    def _tags_from_metadata(metadata: Mapping[Any, Any] | None) -> list[str]:
+        """Return the ``tags`` of a parsed frontmatter mapping as a list.
+
+        Accepts the YAML list this creator writes AND the comma string the
+        old creator wrote (``tags: a, b``), so bundles already in the wild
+        keep their fallback. Anything else -- no key, ``null``, a number --
+        yields ``[]``; the manifest item's tags are the record anyway.
+        """
+        if not metadata:
+            return []
+        value = metadata.get("tags")
+        if isinstance(value, str):
+            raw = value.split(",")
+        elif isinstance(value, list):
+            raw = [item for item in value if isinstance(item, str)]
+        else:
+            return []
+        return [tag.strip() for tag in raw if tag.strip()]
 
     @staticmethod
     def _ensure_chachanotes_keyword(db: CharactersRAGDB, text: str) -> Optional[int]:

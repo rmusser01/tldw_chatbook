@@ -4419,6 +4419,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "ba7c6121355cfdd001e9",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Library/library_note_folder_dialog.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "eb35d5865a9a448028ff",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Library/library_note_link_picker.py",

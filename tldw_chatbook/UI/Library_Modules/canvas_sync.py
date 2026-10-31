@@ -143,6 +143,68 @@ def _adjacent_library_list_row(focused: Widget | None, key: str) -> Widget | Non
     return None
 
 
+def _previous_folder_row_above(row: Widget) -> Widget | None:
+    """The Notes tree folder row that is ``row``'s parent, or None.
+
+    TASK-34000.28 (N-22): Left on a focused folder row that is already
+    collapsed moves focus to its parent folder. The tree is a flat list of
+    sibling rows under ``#library-notes-list`` in visual order, each stamped
+    with its ``tree_depth`` (``LibraryNotesCanvas._set_tree_row_metadata``),
+    so the parent is the nearest EARLIER sibling carrying
+    ``library-notes-folder-row`` with a smaller depth -- a sibling folder at
+    the same depth and the note rows in between are passed over. None for a
+    root row (nothing shallower above it), a row without a parent container,
+    or one not among its parent's children.
+
+    Args:
+        row: A Notes tree row Button (any kind; only its depth is read).
+    """
+    parent = row.parent
+    if parent is None:
+        return None
+    try:
+        index = list(parent.children).index(row)
+    except ValueError:
+        return None
+    depth = int(getattr(row, "tree_depth", 0) or 0)
+    for sibling in reversed(list(parent.children)[:index]):
+        if not sibling.has_class("library-notes-folder-row"):
+            continue
+        if int(getattr(sibling, "tree_depth", 0) or 0) < depth:
+            return sibling
+    return None
+
+
+def _move_library_choice_strip_focus(focused: Widget, key: str) -> None:
+    """Move focus to the previous/next option of ``focused``'s choice strip.
+
+    TASK-34000.28 fix round 1 (I-2): with the Notes Sort strip open and a
+    choice focused, Left/Right did nothing -- only Tab moved. A strip's
+    options are Button siblings in one row carrying ``library-choice-option``
+    (``library_choice_strip``), so the walk is that row in display order. No
+    wrap at either end, and moving never presses: Enter chooses.
+
+    Args:
+        focused: The focused strip option.
+        key: ``"left"`` or ``"right"``.
+    """
+    parent = focused.parent
+    if parent is None:
+        return
+    options = [
+        child
+        for child in parent.children
+        if child.has_class("library-choice-option") and child.focusable
+    ]
+    try:
+        index = options.index(focused)
+    except ValueError:
+        return
+    new_index = index + (1 if key == "right" else -1)
+    if 0 <= new_index < len(options):
+        options[new_index].focus(scroll_visible=False)
+
+
 # --- task-252: targeted (non-recompose) selection-interaction updates ------
 #
 # Docs/Design/2026-07-16-performance-audit.md §P1 B2: library_screen.py

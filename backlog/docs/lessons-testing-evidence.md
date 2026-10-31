@@ -677,6 +677,12 @@ sample indexes do not establish elapsed blank time. Hold native Unmount, use the
 production interval callback, and always release/drain in `finally`; retain the
 original end-to-end allowance and cancellation-safe `finish_removal` contract.
 
+## A keyboard-walk change must run every test that walks the same list (PR #3259, 2026-10-26)
+
+**Incident.** TASK-34000.28 (N-22) added the Notes tree's folder rows and its "more" pager to `_LIBRARY_LIST_ROW_CLASSES`, the one table the Library's Up/Down walk reads. Its task reviews and the final whole-branch review ran the census files the branch added or changed. `Tests/UI/test_library_notes_tree_scrolls_wide.py`, a census file the branch never touched, pressed Down 30 times from the first note row and asserted a note row held focus; with the pager now the walk's last stop, it was red 10 of 10 on the branch head and green 10 of 10 on dev. UI Fast Lane shard 5 found it, after the PR opened.
+
+**What to do.** When a change alters which widgets a shared key walk visits, grep `Tests/` for the walk's row classes together with the keys (`rg -l 'library-notes-row|library-notes-folder-row|library-notes-tree-pager' Tests | xargs rg -l '"down"|"up"'`) and run every hit, census file or not, before review. A test the diff does not touch still pins the old walk.
+
 ## set_timer and set_interval run their callbacks in different tasks (TASK-34982, 2026-10-18)
 
 **Incident.** A test meant to stop the Console poll's timer in the middle of a row removal passed on the unfixed code twice. Both versions drove the paint with `app.set_timer(...)`, and in Textual 8.2.8 `set_timer` wraps its callback in `call_next`, so the paint ran on the app's own pump and stopping the timer cancelled nothing. In the first, the removal was not even the timer's: `set_messages` had already queued its own refresh on the transcript's pump, which removed the row first. The poll uses `set_interval`, which runs the callback inside the timer's own task; only then did the test fail on dev. A `pilot.pause()` while the row's Unmount was held also hung the test for 30 s, because Pilot waits for a callback from every mounted pump.
@@ -4146,6 +4152,20 @@ the SQL with `set_trace_callback` (expect `BEGIN IMMEDIATE`), not from a race. A
 test of a worker-thread DB write needs a file-backed DB, and it needs runs 8 at a
 time as well as serial ones: one serial pass says nothing about lock upgrades.
 
+## A full `TldwCli` Pilot boot writes into the test's own database after first paint (TASK-34000.28, 2026-10-26)
+
+**Incident (polish-1a task 3).** The folder-picker Pilot file was first written on `_library_app` (the production app booted straight into Library) over a seeded `_NotesProfile` database. Two arms went flaky in different ways. The picker's total read "5 folders" on one open and "6 folders" on the next, because the app's deferred Notes wiring (`app_service_wiring._wire_notes_sync_services`) seeds its own `Agent_Lessons` root into that same database at no fixed moment after first paint; the tree had already loaded without it. And about one folder mutation in five failed with the false "That folder changed elsewhere" notice (N-24, SQLITE_BUSY_SNAPSHOT, code 517). A write probe on `TransactionContextManager` showed the deferred boot writers — the `Agent_Lessons` seed, and after that was pre-seeded, actor-pack recovery's `Persona_Buddy` publish — committing a second or two before every failing move, and nothing else. Pre-seeding `Agent_Lessons` only moved the race to the next boot writer. Retrying a failed move did not fix it either: in one run all three attempts failed.
+
+**What to do.** For a Library assertion about counts, or about a folder or note mutation, mount the real `LibraryScreen` in `LibraryProductionCSSHarness` (the Task 2 `test_library_notes_tree_keys.py` pattern). It runs no boot writers, and each arm took about half as long here (5-9 s against 13-15 s). Keep full-app boots for behaviour that only the app owns: global bindings, navigation, and the live walk. If a full-app arm must count rows, read the expected list back from the database rather than hard-coding it. Note that the harness does not make N-24 go away. With no boot writer at all it still failed 1 move in 8 in an A/B, so a mutation arm needs its own recorded tolerance until N-24 is fixed.
+
+**Correction (2026-10-26, polish-1a task 4).** The N-24 half of this incident was not the boot writers. A statement trace found no other write at all: other threads' finite workers closing their connections with `PRAGMA wal_checkpoint(TRUNCATE)` restarted the WAL under the move's deferred transaction. See the next entry, "Another connection's close-time `wal_checkpoint(TRUNCATE)`…". The tolerance is gone now that the mutations take `BEGIN IMMEDIATE`; the `Agent_Lessons` half above still stands.
+
+## Another connection's close-time `wal_checkpoint(TRUNCATE)` fails a deferred read-then-write with SQLITE_BUSY_SNAPSHOT — no other writer needed (TASK-34000.28, 2026-10-26)
+
+**Incident (polish-1a task 4, N-24).** "Move note" failed with the false "That folder changed elsewhere" notice: 7 false conflicts in 37 attempts over three 10-move Pilot runs on the base commit, six with SQLITE_BUSY_SNAPSHOT (517) and one with plain SQLITE_BUSY (5), all from `_raise_mutation_operational_error` in `LocalNoteFolderRepository.attach_manual`. Task 3's write probe on `TransactionContextManager` had blamed the deferred boot writers that committed a second or two before each failure, and pre-seeding them only moved the race. A trace of every statement on every connection (`set_trace_callback`, wrapped around `connect_private_sqlite`) taken at the failing move showed no write from any other connection at all. What it did show: other finite workers retiring their thread's connection (`run_finite_local_worker` → `close_connection`) with `PRAGMA wal_checkpoint(TRUNCATE)`, 0.1 ms before the failing INSERT. A TRUNCATE checkpoint restarts the WAL header. A DEFERRED transaction that has already read then holds a stale header, and its first write gets 517. SQLite never asks the busy handler about that code, so the 15 s `busy_timeout` the connection already had (`timeout=15`) could not help. A deferred read-to-write upgrade while the checkpointer holds the write lock gets plain BUSY, also without the handler.
+
+**What to do.** Any read-then-write transaction on a WAL database that other threads open and close connections against takes the write lock first: `db.transaction(immediate=True)`. A busy timeout or a retry only covers the BUSY it can see. Pin the cause, not a race. A trace callback on the connection under test runs `PRAGMA wal_checkpoint(TRUNCATE)` from a second `timeout=0` connection right after the transaction's first read. That is RED 517 on a deferred BEGIN, every time. It is GREEN on `BEGIN IMMEDIATE`, because the checkpointer cannot take the write lock and falls back to passive (`Tests/Notes/test_note_folder_repository.py::test_a_wal_restart_after_the_first_read_cannot_fail_a_mutation`). A probe that only watches commits will name the wrong writer: trace the PRAGMAs too. The same exposure stands for every other DEFERRED read-then-write transaction on ChaChaNotes, which this task did not audit.
+
 ---
 
 ## An empty WAL reader can invalidate a content-free negative cache forever
@@ -4684,6 +4704,17 @@ testing caught them:
 **What to do.** After writing a guard, break the thing it guards and confirm the test
 fails. If it still passes, the guard is decorative. Prefer **recording and asserting
 after the fact** over raising inside code that catches broadly.
+
+### Undo a mutation from the bytes you saved, never by replacing the mutant back (TASK-34000.40, 2026-10-26)
+
+A mutation harness swapped `draft if draft not in (…) else None` for a bare
+`            None` (12-space indent), ran the test, then "restored" with
+`text.replace(mutant, original)`. That 16-character mutant was also the tail
+of two unrelated lines -- `            None.` in a docstring and
+`                    None,` in a tuple -- so all three became the original
+expression. The harness's own sha256 check raised `RESTORE MISMATCH`; the two
+lines were put back by hand against `git show HEAD:`. Capture the file's bytes
+before mutating, write those bytes back, and assert the digest.
 
 ---
 
@@ -5276,6 +5307,27 @@ monkeypatch.setitem(sys.modules, "nltk", fake_nltk)      # _ensure_nltk() still 
 
 Corollary: a probe re-run in the same broken environment is not independent evidence.
 Vary the thing you suspect — here, install the package — and see if the symptom moves.
+
+---
+
+## A hand-picked hazard table is not a round-trip proof -- `yaml.safe_dump(allow_unicode=True)` does not read back a NEL (TASK-34000.31, 2026-10-24)
+
+**Incident.** The task's AC listed the characters that break YAML front matter
+(`:`, a leading `*`/`#`/`-`/`?`, quotes, brackets, CJK, emoji, date- and
+bool-shaped strings) and the twelve-row table in
+`Tests/Chatbooks/test_note_frontmatter_round_trip.py` went green on the first
+dumper-based renderer. The Hypothesis sibling found `title='0\x85'` within
+its first 300 examples: PyYAML's emitter writes U+0085 (NEL) raw inside a
+quoted scalar when `allow_unicode=True` and treats it as a line break, so its
+own `safe_load` reads the title back as `'0 '`. U+2028/U+2029 survive; only
+NEL does not. The table could not have found it -- nobody puts NEL in a table.
+
+**What to do.** When the requirement is "what we write reads back", the
+renderer's promise is the round trip, not the dumper call: read the block back
+inside the renderer and re-dump escaped (`allow_unicode=False`) when it does
+not match, and keep the generated-input property beside the table (outside
+the fast lane, which installs no Hypothesis). Pin the found example in the
+table file too, so the lane catches a regression without Hypothesis.
 
 ---
 
