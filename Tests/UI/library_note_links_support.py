@@ -20,6 +20,8 @@ import webbrowser
 from textual import events
 from textual.widgets import Button, Static, TextArea
 
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import (
     _armed_editor,
@@ -111,12 +113,18 @@ def _painted(app, screen, selector: str) -> str:
 
 async def _until_painted(app, screen, pilot, selector, needle, *, timeout=15.0):
     def _found() -> bool:
-        return bool(screen.query(selector)) and needle in _painted(app, screen, selector)
+        return bool(screen.query(selector)) and needle in _painted(
+            app, screen, selector
+        )
 
     try:
-        await _until(pilot, _found, f"{needle!r} painted in {selector}", timeout=timeout)
+        await _until(
+            pilot, _found, f"{needle!r} painted in {selector}", timeout=timeout
+        )
     except AssertionError as exc:
-        current = _painted(app, screen, selector) if screen.query(selector) else "<absent>"
+        current = (
+            _painted(app, screen, selector) if screen.query(selector) else "<absent>"
+        )
         raise AssertionError(f"{exc}; {selector} paints: {current!r}") from None
 
 
@@ -142,12 +150,13 @@ def _picker_open(screen) -> bool:
 
 
 async def _open_notes(screen, pilot) -> None:
-    """Press the rail's Notes row (``Button.press()``, as the quit-guard
-    support does). NOT ``pilot.click``: from inside an open note the rail
-    row is not displayed, its region is empty, and a click on an empty
-    region lands at the screen origin -- the nav bar's Home tab (measured:
-    the app switched to ``HomeScreen`` mid-test)."""
-    screen.query_one("#library-row-browse-notes", Button).press()
+    """Finish preparatory navigation before querying retained note rows.
+
+    The rail can be hidden inside an editor; posting a button press and
+    finding an existing row does not establish that navigation completed.
+    The link actions under test still use real painted mouse targets.
+    """
+    await screen._select_library_rail_row(LIBRARY_ROW_BROWSE_NOTES)
     await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
 
 
@@ -181,8 +190,17 @@ async def _preview(screen, pilot, needle: str, app) -> None:
 
 
 async def _click_preview_link(app, screen, pilot, label: str) -> None:
-    region = screen.query_one("#library-note-preview-body").region
-    offset = _painted_offset(app, region, label)
+    offset = None
+
+    def _link_is_painted() -> bool:
+        nonlocal offset
+        preview = screen.query("#library-note-preview-body")
+        if not preview:
+            return False
+        offset = _painted_offset(app, preview.first().region, label)
+        return offset is not None
+
+    await _until(pilot, _link_is_painted, f"{label!r} painted for clicking")
     assert offset is not None, f"{label!r} is not painted in the preview body"
     await pilot.click(offset=offset)
 
@@ -231,6 +249,12 @@ def _send_key(app, key: str, character: str | None = None) -> None:
 def _burst(app, text: str, *trailing: str) -> None:
     """Send ``text`` one key per character, then ``trailing`` keys, as one burst."""
     for char in text:
-        _send_key(app, "left_square_bracket" if char == "[" else ("space" if char == " " else char), char)
+        _send_key(
+            app,
+            "left_square_bracket"
+            if char == "["
+            else ("space" if char == " " else char),
+            char,
+        )
     for key in trailing:
         _send_key(app, key, None)
