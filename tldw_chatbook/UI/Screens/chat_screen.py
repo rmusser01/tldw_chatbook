@@ -7278,6 +7278,7 @@ class ChatScreen(BaseAppScreen):
         self._last_console_rail_state: ConsoleRailState | None = None
         #: TASK-36385: see `take_console_rail_seed_flush`.
         self._console_rail_unsaved_seeds: dict[str, dict[str, bool]] = {}
+        self._console_rail_first_use_seeds: dict[str, dict[str, bool]] = {}
         self._console_rail_seed_flush: list[tuple[str, dict[str, bool]]] = []
         # TASK-2154.1: last width band seen by the resize hook; a rebuild of
         # the (expensive) effective rail state only happens when the band
@@ -11694,6 +11695,12 @@ class ChatScreen(BaseAppScreen):
         if not isinstance(rail_state_config, dict):
             rail_state_config = {}
             console_config["rail_state"] = rail_state_config
+        # Explicit config records win; UI state retains only first-use defaults.
+        for key, seed in self._console_rail_first_use_seeds.items():
+            if key not in rail_state_config:
+                restored = dict(seed)
+                rail_state_config[key] = restored
+                self._console_rail_unsaved_seeds[key] = restored
         return rail_state_config
 
     @work(thread=True)
@@ -12028,11 +12035,15 @@ class ChatScreen(BaseAppScreen):
         )
         serialized = serialize_console_rail_stored_preferences(source)
         rail_state_config[selected_key.value] = serialized
-        # TASK-36385: saving defaults here rewrote config.toml on a launch that
-        # changed nothing; the next rail save writes them first instead. A
-        # copied source record is the one-time migration and still saves.
+        # Retain first use through the existing UI-state writer, preserving the
+        # commented config until an explicit edit or source-record migration.
         if source is None:
             self._console_rail_unsaved_seeds[selected_key.value] = serialized
+            if persist:
+                self._console_rail_first_use_seeds[selected_key.value] = dict(
+                    serialized
+                )
+                self._schedule_sidebar_state_save()
         elif persist:
             self._console_rail_seed_flush += take_console_rail_seed_flush(
                 rail_state_config, self._console_rail_unsaved_seeds, selected_key.value
@@ -24019,6 +24030,15 @@ class ChatScreen(BaseAppScreen):
                 except FileNotFoundError:
                     return
                 sidebar_data = data.get("sidebar", {})
+                seeds = sidebar_data.get("console_rail_seeds", {})
+                if isinstance(seeds, Mapping):
+                    self._console_rail_first_use_seeds = {
+                        key: serialize_console_rail_stored_preferences(value)
+                        for key, value in seeds.items()
+                        if isinstance(key, str)
+                        and key.startswith("console_rail_state:")
+                        and isinstance(value, Mapping)
+                    }
                 self.ui_state.collapsible_states = sidebar_data.get(
                     "collapsible_states", {}
                 )
@@ -24051,6 +24071,10 @@ class ChatScreen(BaseAppScreen):
         so a toggle arriving while that write is in flight cannot race it.
         """
         return {
+            "console_rail_seeds": {
+                key: dict(value)
+                for key, value in self._console_rail_first_use_seeds.items()
+            },
             "collapsible_states": dict(self.ui_state.collapsible_states),
             "search_query": self.ui_state.sidebar_search_query,
             "last_active_section": self.ui_state.last_active_section,

@@ -29,19 +29,21 @@ Found by TASK-35835 (PR #3216, 2026-10-22). Once TASK-35835 lands, a quit no lon
 - [x] #1 An ordinary launch that changes no setting leaves config.toml byte-identical
 - [x] #2 A rail-state change the user makes is still persisted
 - [x] #3 A test pins both
+- [x] #4 An untouched workspace retains its first-use layout across app restarts and later Global layout edits, without a config.toml write on ordinary first use.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Why the mount writes: `_ensure_console_rail_scope_seed` (a0d61d9957, scoped rail layouts, plan 2026-08-24) seeds an absent layout scope once. With a source record (the active workspace's `:layout`, its legacy `:global`, or the shared layout) it copies that record to the new key: a lossless one-time migration, which stays. With no source it serialized product defaults and saved them; only recovered profiles skipped that (`unchanged_selected_config`, TASK-32628).
-2. Fix: never persist the no-source default seed. An absent record already reads back as those defaults, so the in-memory latch is enough. The recovered-profile check becomes redundant and goes. Real edits still go through `_set_console_rail_preference`, which writes.
+2. Initial fix (superseded by step 6 for cross-session defaults): never persist the no-source default seed. An absent record already reads back as those defaults, so the in-memory latch is enough. The recovered-profile check becomes redundant and goes. Real edits still go through `_set_console_rail_preference`, which writes.
 3. Tests: the real-app boot + quit test (`Tests/ProductionApp/test_config_profile_isolation.py`) compares a commented config across the whole session; a census-listed mounted Console test pins that the first mount leaves a commented file byte-identical and a real rail toggle is persisted. Both red at dev where applicable. Update the two unit pins of the old default write.
 4. List the other startup writes through the same writer; fix none unless the same guard applies.
 5. 2026-10-31 backlog repair: mechanically rebase onto current dev; retain both ratchet histories. Verify rail-state and real mounted/boot behavior. Independent review reproduced False/exception seed writes being discarded while the dependent record saves: add mounted worker regressions, retain failed seeds, block dependent writes and notify the user; retry prerequisites first.
-ADR required: no new ADR
+6. Owner decision 2026-10-31: retain first-use layout across restarts. Extend the existing profile-owned ui_state.toml sidebar payload with immutable default seeds, load them before rail selection, and preserve explicit config records as authoritative. Reuse admitted background writes, dirty revision tracking, shutdown flush, and recovery ownership. Add multi-launch and stored-preference precedence coverage; retain config-byte and failure/retry tests.
+ADR required: amend existing ADR for the durable first-use seed location
 ADR path: backlog/decisions/083-console-edge-rails-and-workspace-tree-ownership.md
-Reason: repair existing one-time rail-seeding and persistence guarantees without changing ownership.
+Reason: retain ADR-083 one-time seeding while separating automatic default materialization from explicit config changes, using the existing ADR-040 profile-owned UI-state owner.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -181,3 +183,30 @@ Rebased original ccbd3e8 onto dev198eca8b93. Mechanical conflicts preserved both
 2. Unresolved behavior decision: first-use defaults currently survive only this session. An untouched workspace can inherit a later Global edit after restarting, contrary to ADR-083's one-time seeding contract. User input requested; no merge until resolved.
 
 The pre-fix/rebase focused battery produced 97 passed and 6 failed: four full-App tests report native-worker retirement/teardown issues, the boot/quit subprocess needs diagnosis, and the ChatScreen size test observed concurrent local code growth during the run. This is not final-head qualification. Diagnostic inventory verified before the seed fix (708 owners,7773 TASK494 calls,16 sinks); final inventory verification remains due. Fatal-name/import lint and whitespace checks passed. Task remains In Progress.
+
+
+**2026-10-31 owner-selected first-use durability repair:** The owner explicitly
+requires an untouched workspace to retain its first-use layout after restarts
+and later Global edits. Default seeds now use the existing
+`sidebar.console_rail_seeds` payload in profile-owned `ui_state.toml`. Its
+admitted background writer, revision tracking, shutdown flush, and recovery
+ownership are reused. Explicit config records override these fallback seeds.
+No new file owner or database is introduced; ADR-083 documents the amendment.
+
+The real-app regression was RED with absent retained defaults, then GREEN
+through two app lifetimes: untouched workspace defaults persisted separately,
+commented config bytes stayed unchanged, a later Global edit did not change
+that workspace, and an explicit workspace record still took precedence.
+The two failed-prerequisite writer regressions also passed (3 tests, 113.17s).
+Rail-state and current size contracts passed (96 tests, 17.47s). The screen
+measurement is 24387/737 under the owner's explicit size-limit waiver.
+Earlier broad targeted runs included native-worker teardown failures; they are
+not claimed as passing and are superseded only for the specific nodes rerun.
+
+Adjacent verification: 6 passed and 2 failed overall in 318.68s. Both failures
+passed their test bodies and failed only native-worker/executor retirement at
+teardown; the same nodes showed that failure before the first-use change.
+The three source-seed cases, held-defaults ordering, and both sidebar-restore
+cases passed. Diagnostic inventory verifies 708 owners,1058 TASK-492 calls,
+56 TASK-31551 calls,7773 TASK-494 calls,16 sinks. Fatal lint and diff whitespace
+checks pass. Independent re-review is pending; no merge readiness claim yet.

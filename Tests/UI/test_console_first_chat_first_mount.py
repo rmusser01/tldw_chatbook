@@ -449,3 +449,67 @@ async def test_failed_held_seed_blocks_the_record_and_retries_before_it(
         assert _saved_rail_layout(key) == edited
         assert console._console_rail_seed_flush == []
         assert notices == [True]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_untouched_workspace_first_use_survives_later_global_edit(request):
+    """ADR-083: defaults survive a restart before a different scope is edited."""
+    _persist_setup()
+    assert save_setting_to_cli_config("console", "rail_layout_scope", "workspace")
+    config_path = get_cli_config_path()
+    commented = b"# retain this first-use comment\n" + config_path.read_bytes()
+    config_path.write_bytes(commented)
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            console = app.screen
+            workspace_key = build_console_rail_preference_key(
+                workspace_id=console._workspace._current_console_workspace_context().active_workspace_id,
+                layout_scope="workspace",
+            ).value
+            assert console._current_console_rail_state().conversations_open is True
+            assert await console._flush_sidebar_state_now()
+            state_path = config_path.parent / "ui_state.toml"
+            state = (
+                tomllib.loads(state_path.read_text(encoding="utf-8"))
+                if state_path.exists()
+                else {}
+            )
+            assert (
+                state.get("sidebar", {})
+                .get("console_rail_seeds", {})
+                .get(workspace_key, {})
+                .get("conversations_open")
+                is True
+            ), "first-use workspace defaults were not retained"
+            assert config_path.read_bytes() == commented
+
+    # A separate launch changes Global, without visiting this workspace's layout.
+    assert save_settings_to_cli_config(
+        {
+            "console": {"rail_layout_scope": "global"},
+            "console.rail_state": {_SHARED_RAIL_KEY: {"conversations_open": False}},
+        }
+    )
+    assert save_setting_to_cli_config("console", "rail_layout_scope", "workspace")
+    app = _build_test_app(first_run_setup_completed=True)
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _wait_until(
+                pilot,
+                lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
+            )
+            assert app.screen._current_console_rail_state().conversations_open is True
+            # An explicit saved workspace preference still wins over the seed.
+            assert save_setting_to_cli_config(
+                "console.rail_state", workspace_key, {"conversations_open": False}
+            )
+            app.app_config["console"]["rail_state"][workspace_key] = {
+                "conversations_open": False
+            }
+            assert app.screen._current_console_rail_state().conversations_open is False

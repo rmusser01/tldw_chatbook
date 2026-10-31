@@ -109,6 +109,27 @@ shared records remain lossless and independent. Preference pruning retains the
 reserved `shared-layout-v1` scope alongside the existing `layout` and legacy
 `global` scopes.
 
+### First-use defaults without a configuration rewrite (2026-10-31, TASK-36385)
+
+The owner confirmed that an untouched workspace retains its first-use layout
+across restarts, even when Global is edited in a later session. Default-only
+seeds live in `sidebar.console_rail_seeds` in the existing profile-owned
+`ui_state.toml`. Explicit `console.rail_state` records in `config.toml` take
+precedence. This is a fallback for first-use defaults, not a second writer of
+user edits. Missing older UI-state files remain compatible.
+
+Console uses the existing UI-state owner, admission, background writer, dirty
+revision tracking and shutdown flush. Recovery and profile selection therefore
+follow that owner's existing rules. An ordinary default seed changes no bytes
+in `config.toml`. Existing source-record migrations and explicit user edits
+retain their checked config writer. A failed UI-state write stays dirty and
+visible to the existing maintenance/retirement path; it is not reported saved.
+
+An in-memory latch alone was rejected: launch A could leave a workspace
+untouched, launch B could change Global, and launch C would silently give that
+workspace the new Global layout. A new file or database owner was rejected
+because the existing profile-owned UI-state store already owns this lifetime.
+
 Inspect pins a compact `What happens if I send now?` authority summary above its
 outer scroll owner. One existing atomic display snapshot supplies workspace and
 conversation identity, next-send scope, run state, staged-source count, and
