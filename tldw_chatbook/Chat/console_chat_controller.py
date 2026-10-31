@@ -515,7 +515,7 @@ from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandServ
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
-    describe_console_stream_failure,
+    console_failure_copy,
     describe_stream_failure,
 )
 from tldw_chatbook.Chat.console_cost_tracker import (
@@ -25724,9 +25724,7 @@ class ConsoleChatController:
             # Provider failures are surfaced as run status plus a transcript
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.
-            visible_copy = (
-                f"Provider stream failed: {describe_console_stream_failure(exc)}"
-            )
+            visible_copy = console_failure_copy(exc, "Provider stream failed")
             self.store.record_trajectory_timing(
                 assistant_message_id, model_status="failed"
             )
@@ -27067,7 +27065,7 @@ class ConsoleChatController:
             # the pre-regenerate base + status for a failed regenerate;
             # preserves whatever partial content already streamed
             # otherwise).
-            visible_copy = f"Agent run failed: {describe_console_stream_failure(exc)}"
+            visible_copy = console_failure_copy(exc, "Agent run failed")
             if getattr(
                 getattr(exc, "response", None), "status_code", None
             ) is not None and self._session_history_carries_images(session_id):
@@ -27664,7 +27662,8 @@ class ConsoleChatController:
                 f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
             )
         if outcome.status == RUN_ERROR and getattr(outcome, "console_copy", None):
-            return f"Agent run failed: {outcome.console_copy}"
+            # TASK-33621.11 AC#4: the gateway's sentence is the whole row.
+            return outcome.console_copy
         return f"Agent run failed: {(reason or outcome.status).rstrip('.')}."
 
     @staticmethod

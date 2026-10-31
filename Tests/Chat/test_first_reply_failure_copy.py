@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatProviderError,
 )
 from tldw_chatbook.Chat.console_provider_gateway import (
+    _gateway_sentence,
     _provider_error_copy_with_model_recovery,
     safe_provider_error_copy,
 )
@@ -326,8 +327,11 @@ def test_the_gateways_own_copy_is_not_wrapped_in_a_second_status() -> None:
         model="gemini-2.0-flash",
         status_code=404,
     )
-    # The gateway's raise: its copy, the status, and no response.
-    raised = ChatProviderError(gateway_copy, provider="google", status_code=404)
+    # The gateway's raise: its copy, the status, and no response -- marked as
+    # its own finished sentence, by type (TASK-33621.11), not by its words.
+    raised = _gateway_sentence(
+        ChatProviderError(gateway_copy, provider="google", status_code=404)
+    )
     outcome = SimpleNamespace(
         status=RUN_ERROR,
         steps=[SimpleNamespace(kind=STEP_ERROR, summary=describe_stream_failure(raised))],
