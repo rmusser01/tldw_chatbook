@@ -225,7 +225,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: (two lines) so both actions are keyboard-reachable. The row, its sync
     #: and both actions live in Console_Modules/composer_run_controls.py.
     #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24333/737 -> 24331/737.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24331/737 -> 24335/737.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
