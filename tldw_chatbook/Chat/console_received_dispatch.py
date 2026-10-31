@@ -335,8 +335,9 @@ async def _run_received_intent_bound(runtime, record, source):
         queued = await method(record.session_id, **kwargs)
         if queued.applied:
             try:
-                if store.commit_session_input_draft(intent.inputs) or intent._pressed_inputs is not None:
-                    runtime._project_received_input(record)
+                committed = store.commit_session_input_draft(intent.inputs)
+                if committed or intent._pressed_inputs is not None:
+                    runtime._project_received_input(record, draft_committed=committed)
             except Exception:  # noqa: BLE001, S110 - presentation cannot retract an already accepted domain outcome.
                 # Queue admission already won; presentation cannot retract it.
                 pass
@@ -488,13 +489,13 @@ def project_received_input(self, record, *, draft_committed=False) -> None:
         return
     project = getattr(self.view, "_project_console_received_input", None)
     if callable(project):
-        if intent is None and draft_committed:
+        if draft_committed:
             saved_project = getattr(self.view, "_project_console_saved_input", None)
             if callable(saved_project):
                 saved_project(
                     record.session_id,
                     _captured_stash=stash,
-                    _captured_inputs=inputs,
+                    _captured_inputs=intent.inputs if intent is not None else inputs,
                 )
                 return
         if inputs is not None:

@@ -1126,8 +1126,12 @@ class ConsolePromptQueueUIController:
         self, session_id: str, expected_controller: Any = None
     ) -> "ConsoleTurnConfigurationSnapshot":
         """Prepare production snapshots while preserving injected sync callbacks."""
-        if self._capture_configuration_async is None:
-            return self._capture_configuration(session_id)
+        sync_callback = self._capture_configuration
+        if (
+            self._capture_configuration_async is None
+            or sync_callback is not self._async_capture_sync_source
+        ):
+            return sync_callback(session_id)
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
         controller = expected_controller or self._chat_controller_accessor()
@@ -1136,6 +1140,7 @@ class ConsolePromptQueueUIController:
         if (
             self._chat_controller_accessor() is not controller
             or self._capture_configuration_async is not callback
+            or self._capture_configuration is not sync_callback
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
         return context

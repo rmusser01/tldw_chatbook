@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import inspect
 import sqlite3
 from dataclasses import fields as dataclass_fields
@@ -2063,3 +2065,89 @@ async def test_recovery_storage_failure_is_nonfatal_and_retains_inputs_in_worker
         )
     ]
     assert "private-path-and-draft-sentinel" not in repr(calls["notified"])
+
+
+@pytest.mark.asyncio
+async def test_dispatch_uses_replaced_sync_capture_inside_precapture() -> None:
+    fake = _FakeChatController(accepted=True)
+    calls = _calls()
+    controller = _ui_controller(fake, calls)
+    captures = []
+    configurations = []
+    selected = object()
+    in_prepared = False
+
+    @contextlib.contextmanager
+    def prepared():
+        nonlocal in_prepared
+        in_prepared = True
+        try:
+            yield
+        finally:
+            in_prepared = False
+
+    async def precapture(session_id):
+        assert session_id == "session-a"
+        return prepared
+
+    def custom_capture(session_id):
+        assert in_prepared
+        captures.append(("sync", session_id))
+        return selected
+
+    async def async_capture(session_id, owner):
+        captures.append(("async", session_id))
+        return None
+
+    original_queue = fake.queue_prompt
+
+    async def queue_prompt(session_id, **kwargs):
+        configurations.append(kwargs["configuration"])
+        return await original_queue(session_id, **kwargs)
+
+    controller._precapture = precapture
+    controller._capture_configuration_async = async_capture
+    controller._capture_configuration = custom_capture
+    fake.queue_prompt = queue_prompt
+
+    outcome = await controller.dispatch("queued text", session_id="session-a")
+
+    assert outcome.status is ConsolePromptDispatchStatus.QUEUED
+    assert captures == [("sync", "session-a")]
+    assert configurations == [selected]
+    assert fake.prompt_queue_registry.snapshot("session-a").total_count == 1
+    assert calls["queued"] == [("session-a", None)]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_refuses_sync_capture_replacement_during_async_capture() -> None:
+    fake = _FakeChatController(accepted=True)
+    calls = _calls()
+    controller = _ui_controller(fake, calls)
+    entered, release = asyncio.Event(), asyncio.Event()
+    replacement_calls = []
+
+    async def held_capture(session_id, owner):
+        assert session_id == "session-a" and owner is fake
+        entered.set()
+        await release.wait()
+        return object()
+
+    def replacement(session_id):
+        replacement_calls.append(session_id)
+        return object()
+
+    controller._capture_configuration_async = held_capture
+    task = asyncio.create_task(controller.dispatch("kept draft", session_id="session-a"))
+    try:
+        await entered.wait()
+        controller._capture_configuration = replacement
+        release.set()
+        outcome = await task
+        assert outcome.status is ConsolePromptDispatchStatus.REFUSED
+        assert fake.prompt_queue_registry.snapshot("session-a").total_count == 0
+        assert calls["queued"] == calls["committed"] == []
+        assert replacement_calls == []
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

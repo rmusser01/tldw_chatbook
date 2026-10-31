@@ -12,13 +12,17 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_configuration_preparation import ConsoleTurnCaptureSelection
+from tldw_chatbook.Chat.console_received_dispatch import publish_received_acceptance
+from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
+@pytest.mark.parametrize("route", ["fallback", "received", "received-unpressed"])
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_saved_fallback_projection_preserves_new_tab_settle_window_typing():
+async def test_saved_projection_preserves_new_tab_settle_window_typing(route):
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
@@ -57,9 +61,34 @@ async def test_saved_fallback_projection_preserves_new_tab_settle_window_typing(
         assert claim is not None
         record = None
         try:
+            intent = None
+            if route != "fallback":
+                intent = ConsoleReceivedTurnIntent(
+                    turn_id=request.turn_id,
+                    session_id=session_a.id,
+                    inputs=inputs,
+                    selection=ConsoleTurnCaptureSelection(
+                        provider_selection=request.configuration.provider_selection,
+                        presentation_context=request.configuration.presentation_context,
+                        rag_defaults={},
+                        tool_configuration={},
+                        skill_workspace_id=None,
+                        project_bindings_eligible=False,
+                        agent_runtime_enabled=False,
+                    ),
+                    staged_evidence_launch=None,
+                    staged_evidence_revision=0,
+                    view_attachment_generation=runtime._attached_generation,
+                    _pressed_inputs=inputs if route == "received" else None,
+                    _pressed_stash=stash if route == "received" else None,
+                )
             record = runtime._register_custody(
-                request, store=store, received_claim=claim
+                request if intent is None else None,
+                store=store,
+                received_claim=claim,
+                received_intent=intent,
             )
+            assert record.received_intent is intent
             # The existing switch test's coalescing guard holds the real swap.
             console._console_sync_in_progress = True
             try:
@@ -82,9 +111,9 @@ async def test_saved_fallback_projection_preserves_new_tab_settle_window_typing(
                 current = store.session_input_snapshot(session_a.id)
                 assert current.draft == inputs.draft
                 assert current.draft_revision == inputs.draft_revision
-                assert store.commit_session_input_draft(inputs)
+                publish_received_acceptance(runtime, record, controller)
+                assert record.inputs.durable_accepted
                 assert store.session_draft(session_a.id) == ""
-                runtime._project_received_input(record, draft_committed=True)
             finally:
                 console._console_sync_in_progress = False
             console._session._sync_console_session_draft()
