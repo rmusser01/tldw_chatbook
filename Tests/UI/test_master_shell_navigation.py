@@ -119,7 +119,6 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-watchlists_collections", "\u23035 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
-        ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F2 Lab"),
         ("nav-logs", "F3 Logs"),
@@ -127,6 +126,7 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-research", "F5 Research"),
         ("nav-meetings", "F7 Meetings"),
         ("nav-plugins", "F8 Plugins"),
+        ("nav-kanban", "F9 Kanban"),
     ]
 
 
@@ -141,6 +141,7 @@ def test_nav_button_label_numbering_scheme():
     assert nav_button_label("research", "Research") == "F5 Research"
     assert nav_button_label("meetings", "Meetings") == "F7 Meetings"
     assert nav_button_label("plugins", "Plugins") == "F8 Plugins"
+    assert nav_button_label("kanban", "Kanban") == "F9 Kanban"
 
 
 @pytest.mark.asyncio
@@ -543,6 +544,7 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "research": "f5",
         "meetings": "f7",
         "plugins": "f8",
+        "kanban": "f9",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     from Tests.UI.css_destination_tour import DESTINATION_BODIES

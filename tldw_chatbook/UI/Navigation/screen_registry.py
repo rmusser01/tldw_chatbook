@@ -10,6 +10,7 @@ from loguru import logger
 from tldw_chatbook.Constants import (
     TAB_CCP,
     TAB_EVALS,
+    TAB_KANBAN,
     TAB_LLM,
     TAB_MEETINGS,
     TAB_PERSONAS,
@@ -170,6 +171,12 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         TAB_MEETINGS,
         "tldw_chatbook.UI.Screens.meetings_screen",
         "MeetingsScreen",
+    ),
+    TAB_KANBAN: ScreenRoute(
+        "kanban",
+        TAB_KANBAN,
+        "tldw_chatbook.UI.Kanban.kanban_board_screen",
+        "KanbanBoardScreen",
     ),
     "acp": ScreenRoute(
         "acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"

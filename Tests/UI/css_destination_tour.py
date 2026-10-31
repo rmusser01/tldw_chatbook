@@ -19,6 +19,7 @@ DESTINATION_BODIES = {
     "settings": "#settings-detail-pane",
     "research": "#research-chat-pane",
     "meetings": "#meetings-transcript",
+    "kanban": "#kanban-board-root",
 }
 
 
