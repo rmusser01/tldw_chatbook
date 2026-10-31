@@ -99,6 +99,8 @@ from ..Console_Modules.status_row import (
     STATUS_CHIPS_POSITION_ABOVE,
     apply_status_chips_position,
     resolve_status_chips_position,
+    sync_temporary_segment,
+    temporary_segment_state,
 )
 
 # The Console controller classes themselves are deliberately NOT imported
@@ -10814,7 +10816,7 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             return
         status_chips.sync_scope_chip(state)
-        status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
+        sync_temporary_segment(self, status_chips)
 
     async def _open_console_retrieval_scope_picker(self) -> None:
         """Open the RAG retrieval-scope picker for the active Console session.
@@ -12131,7 +12133,7 @@ class ChatScreen(BaseAppScreen):
         """
         return self._session._console_active_session_is_ephemeral()
 
-    def _sync_console_temporary_chip(self) -> None:
+    def _sync_console_temporary_chip(self) -> bool:
         """Push the active session's temporary flag to the status-strip chip.
 
         Deliberately scoped to ONLY the temporary chip -- unlike
@@ -12149,21 +12151,17 @@ class ChatScreen(BaseAppScreen):
         create), the character-picker "new chat" flow, and the
         conversation-browser "already-open-tab" branch (task-7 review), and
         ``_promote_console_temporary_session`` (task-8) after a successful
-        save -- ``_sync_native_console_chat_ui``'s regular tick never
-        touches this chip, so a save that skipped this call would leave
-        "Temporary" showing on an already-saved conversation.
+        save -- a save that skipped this call would leave "Temporary"
+        showing on a saved chat until the next full sync pass (TASK-37840:
+        each one calls this; the Console runs one on return from a dialog).
         ``_sync_console_retrieval_scope_row`` (resume, tab activation,
         scope-picker save, first-persist flush) pushes the same thing
         inline instead of calling this helper -- it already has the
         ``ConsoleStatusChips`` instance in hand for the scope-chip push
         right above, so routing through here would only add a redundant
-        second query.
+        second query. Returns True when the segment changed.
         """
-        try:
-            status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
-        except QueryError:
-            return
-        status_chips.sync_temporary_chip(self._console_active_session_is_ephemeral())
+        return sync_temporary_segment(self)
 
     def _console_rail_available_columns(self) -> int | None:
         """Return available screen width for responsive rail state."""
@@ -15104,6 +15102,7 @@ class ChatScreen(BaseAppScreen):
             status_chips_position = resolve_status_chips_position(
                 getattr(self.app_instance, "app_config", {}) or {}
             )
+            temporary, temporary_capture_on = temporary_segment_state(self)
             status_chips = ConsoleStatusChips(
                 control_state,
                 scope_state=retrieval_scope_state,
@@ -15111,7 +15110,8 @@ class ChatScreen(BaseAppScreen):
                 # first render instead of relying on a post-mount sync call
                 # that some code paths (screen recreation via
                 # restore_state) never make.
-                ephemeral=self._console_active_session_is_ephemeral(),
+                ephemeral=temporary,
+                temporary_capture_on=temporary_capture_on,
                 cost_state=initial_cost_state,
                 # FB-08 (TASK-2154.18): same first-frame precedent for the
                 # run chip -- returning to Console while a background run
@@ -17566,6 +17566,7 @@ class ChatScreen(BaseAppScreen):
             # defer the rest of FULL. The tab owner revalidates every await.
             if poll_record is None:
                 await self._sync_console_native_session_tabs()
+                self._sync_console_temporary_chip()  # TASK-37840: capture changes.
             elif await self._sync_console_native_session_tabs(_preparing_record=poll_record) is False:
                 self._console_sync_requested = True
                 return False
