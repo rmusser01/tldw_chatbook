@@ -9,6 +9,7 @@ through this module.
 """
 
 import asyncio
+from collections.abc import Callable
 
 from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatConfigurationError
 
@@ -153,14 +154,11 @@ def describe_stream_failure(exc: BaseException) -> str:
         if marker != -1:
             detail = detail[:marker].rstrip()
         detail = " ".join(detail.split())
-    if (
-        detail
-        and type(status_code) is int
-        and f"Status: {status_code}." in detail
-    ):
+    if detail and getattr(exc, "gateway_sentence", False) is True:
         # Review round 2 (V2-F6): the gateway's own finished copy already
         # names the status and the fix; wrapping it again read
-        # "HTTP 404 (... Status: 404. ... (Alt+M: Switch model).)."
+        # "HTTP 404 (... Status: 404. ... (Alt+M: Switch model).)." Decided by
+        # who raised it, never by the words "Status: N." (TASK-33621.11 AC#5).
         return detail
     if detail and detail.lower() != summary.lower():
         # The closing parenthesis ends the clause; a period inside it read
@@ -169,12 +167,55 @@ def describe_stream_failure(exc: BaseException) -> str:
     return summary
 
 
-def describe_console_stream_failure(exc: BaseException) -> str:
-    """Return gateway-sanitized copy at the Console's visible failure surfaces.
+def console_failure_copy(exc: BaseException, lead_in: str) -> str:
+    """Return one Console failure sentence for ``exc`` (TASK-33621.11 AC#4).
 
-    Durable agent summaries continue to use the unchanged diagnostic helper.
-    Other errors keep their existing description.
+    The gateway's finished sentence already names the provider, the category
+    and the status, so it is shown alone; prefixing it read "Agent run
+    failed: Provider error from Anthropic: ... Status: 401.". Only a failure
+    the gateway did not describe gets the path's own lead-in.
+
+    Args:
+        exc: The failure that ended the turn.
+        lead_in: The path's lead-in, e.g. ``"Agent run failed"``.
+
+    Returns:
+        One user-facing sentence.
     """
     if isinstance(exc, ChatAPIError) and exc.console_copy:
         return exc.console_copy
-    return describe_stream_failure(exc)
+    return f"{lead_in}: {describe_stream_failure(exc)}"
+
+
+#: TASK-335: a provider that cannot read an image fails every later turn of
+#: the conversation (history re-sends it), so the refusal names the way out.
+IMAGE_REFUSAL_HINT = (
+    " This conversation includes an image attachment; if the model can't accept "
+    "images, switch to a vision-capable model, or type /rewind and restore to the "
+    "prompt that added the image (nothing is deleted; later turns stay a branch)."
+)
+
+
+def image_refusal_hint(failure: object, carries_images: Callable[[], bool]) -> str:
+    """Return the image hint only for a provider's image refusal (TASK-33621.11).
+
+    Chosen from the failure's typed verdict -- a 400/413/415/422 whose
+    provider body is about image input (``is_image_input_rejection``) --
+    never from the failure copy's wording, and never for a 401.
+
+    Args:
+        failure: The raised error, or an agent outcome carrying the verdict
+            as ``console_image_rejection``.
+        carries_images: Whether the conversation holds an image; the hint
+            says it does, so without one it would be false.
+
+    Returns:
+        The hint, with its leading space, or ``""``.
+    """
+    if isinstance(failure, BaseException):
+        from tldw_chatbook.Chat.provider_error_reason import is_image_input_rejection
+
+        refused = is_image_input_rejection(failure)
+    else:
+        refused = getattr(failure, "console_image_rejection", False) is True
+    return IMAGE_REFUSAL_HINT if refused and carries_images() else ""

@@ -216,7 +216,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: 2026-10-30, TASK-33621.11 (owner decision: a fix over a size ratchet
+    #: raises the row by its growth, with a dated comment): rebased onto dev
+    #: 7536ac3b87 (24331/737), +1 for the coded image refusal: 24332/737.
+    #: 2026-10-30 (owner decision, 2026-10-04 rule: a genuine fix raises the
+    #: row by exactly its growth): TASK-33621.11's review fix splits the coded
+    #: send gate (_console_send_gate) and composer blocker
+    #: (_console_composer_send_blocker) from the sentence accessors, and moves
+    #: the gate's setup copy out to console_display_state: 24332/737 -> 24328/739.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24328, 739),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

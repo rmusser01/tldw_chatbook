@@ -455,14 +455,13 @@ class ThinkingHistoryGateway(ContinuationHistoryGateway):
 
 
 class WipBlockedGateway:
+    visible_copy = "WIP: Console native provider 'openai' is not wired yet."
+
     async def resolve_for_send(self, selection):
         return type(
             "Resolution",
             (),
-            {
-                "ready": False,
-                "visible_copy": "WIP: Console native provider 'openai' is not wired yet.",
-            },
+            {"ready": False, "visible_copy": self.visible_copy},
         )()
 
 
@@ -1595,23 +1594,40 @@ async def test_submit_draft_blocks_unsafe_markup_before_storage_or_provider_send
     assert "unsafe" in messages[0].content
 
 
+@pytest.mark.parametrize(
+    ("gateway_copy", "row"),
+    [
+        # TASK-33621.11 AC#5: the gateway's blocked sentence is the row,
+        # whatever its words. The controller used to prefix any sentence
+        # starting "WIP:" (and lacking "Provider blocked") -- a row chosen by
+        # matching display copy, for a prefix no gateway emits any more.
+        (
+            "WIP: Console native provider 'openai' is not wired yet.",
+            "WIP: Console native provider 'openai' is not wired yet.",
+        ),
+        # Only a resolution that says nothing gets the generic sentence.
+        ("", "Provider blocked."),
+        ("   ", "Provider blocked."),
+    ],
+    ids=["sentence-verbatim", "empty", "blank"],
+)
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_blocked_provider_wip_copy_is_normalized_once_in_controller():
+async def test_a_blocked_resolution_s_sentence_is_the_row_whatever_its_words(
+    gateway_copy, row
+):
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=WipBlockedGateway()
-    )
+    gateway = WipBlockedGateway()
+    gateway.visible_copy = gateway_copy
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     result = await controller.submit_draft("hello")
 
-    messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is False
-    assert (
-        result.visible_copy
-        == "Provider blocked: WIP: Console native provider 'openai' is not wired yet."
-    )
+    assert result.visible_copy == row
     # TASK-457(a): the send now echoes the USER row before the block-row instead
     # of silently dropping it.
+    messages = store.messages_for_session(store.active_session_id)
     assert [message.content for message in messages] == ["hello", result.visible_copy]
     assert controller.run_state.visible_copy == result.visible_copy
     assert controller.run_state_history[-1] is ConsoleRunStatus.BLOCKED

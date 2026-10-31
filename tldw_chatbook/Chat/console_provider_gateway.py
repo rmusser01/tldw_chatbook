@@ -1623,11 +1623,26 @@ def _raise_if_context_overflow(
     error = ChatBadRequestError(provider=provider, status_code=status)
     error.context_overflow = True  # type: ignore[attr-defined]
     attach_provider_reason(error, exc.response, known_credentials=credentials)
-    raise ChatBadRequestError(
+    raise _gateway_sentence(ChatBadRequestError(
         safe_provider_error_copy(provider, error, known_credentials=credentials),
         provider=provider,
         status_code=status,
-    ) from None
+    ), console=True) from None
+
+
+def _gateway_sentence(
+    error: ChatAPIError, *, console: bool = False, image_rejected: bool = False
+) -> ChatAPIError:
+    """Mark ``error``: its message is this gateway's finished sentence.
+
+    TASK-33621.11: describe_stream_failure then keeps it whole by type, not by
+    finding "Status: N." in it; ``console`` also hands it to the Console row.
+    """
+    error.gateway_sentence = True
+    error.image_input_rejected = image_rejected
+    if console:
+        error.console_copy = error.message
+    return error
 
 
 def _error_copy_for(copy_fn: Any, resolution: Any, exc: BaseException) -> str:
@@ -1833,16 +1848,19 @@ def _provider_error_copy_with_model_recovery(
     status_code: int | None,
     provider_message: str = "",
     tools: Sequence[Mapping[str, Any]] | None = None,
+    model_unavailable: bool = False,
 ) -> str:
     """Add safe recovery to provider bad-request copy.
 
     A rejected tool definition gets tool copy (see
-    ``_tool_definition_rejection_copy``); any other 400 names the model. A
-    404 names the model and says what to check: Fireworks, SambaNova, Nous
-    and GMI answer an unknown model, or one the key cannot use, that way
-    (no-key probes 2026-09-30, TASK-33640).
+    ``_tool_definition_rejection_copy``). A 404, or an explicit
+    ``model_not_found`` (``model_unavailable``) on any status, names the model
+    and says what to check: Fireworks, SambaNova, Nous and GMI answer an
+    unknown model, or one the key cannot use, that way (no-key probes
+    2026-09-30, TASK-33640). Any other 400 gets no model advice: it was never
+    evidence about the model (TASK-33621.11 AC#3).
     """
-    if status_code == 404:
+    if status_code == 404 or model_unavailable:
         model_id = _safe_model_id(model)
         named = f" Selected model: {escape_markup(model_id)}." if model_id else ""
         return (
@@ -1854,16 +1872,7 @@ def _provider_error_copy_with_model_recovery(
     if status_code != 400:
         return copy
     tool_copy = _tool_definition_rejection_copy(provider_message, tools)
-    if tool_copy is not None:
-        return f"{copy} {tool_copy}"
-    model_id = _safe_model_id(model)
-    if not model_id:
-        return copy
-    return (
-        f"{copy} Selected model: {escape_markup(model_id)}. "
-        "The provider rejected this request. Confirm the model is still "
-        "available, or choose another model from the model picker."
-    )
+    return copy if tool_copy is None else f"{copy} {tool_copy}"
 
 
 def _safe_model_id(model: str | None) -> str:
@@ -2227,6 +2236,9 @@ class _QueueItem:
     # TASK-32369: the failure never left the client (a status-less
     # ChatConfigurationError), so the consumer must not report a provider 502.
     local: bool = False
+    # TASK-33621.11: the provider refused the image input (classified from
+    # the original error's status and body, which the projection drops).
+    image_rejected: bool = False
 
     @classmethod
     def content(cls, text: str, *, synthetic: bool = False) -> "_QueueItem":
@@ -2237,9 +2249,11 @@ class _QueueItem:
         cls, text: str, status_code: int | None = None, *,
         typed_error: ChatAPIError | None = None,
         local: bool = False,
+        image_rejected: bool = False,
     ) -> _QueueItem:
         return cls(
-            "error", text, status_code=status_code, payload=typed_error, local=local
+            "error", text, status_code=status_code, payload=typed_error,
+            local=local, image_rejected=image_rejected,
         )
 
     @classmethod
@@ -5841,11 +5855,11 @@ class ConsoleProviderGateway:
                 status_code = exc.response.status_code
             else:
                 status_code = getattr(exc, "status_code", 502)
-            raise ChatProviderError(
+            raise _gateway_sentence(ChatProviderError(
                 _error_copy_for(safe_provider_error_copy, resolution, exc),
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
-            ) from None
+            )) from None
         finally:
             if call_signals is not None and rule_lease is None:
                 call_signals.close_usage_call()
@@ -5872,11 +5886,11 @@ class ConsoleProviderGateway:
         try:
             text = self._normalize_auxiliary_thinking(text, resolution)
         except ProviderThinkingCaptureError as exc:
-            raise ChatProviderError(
+            raise _gateway_sentence(ChatProviderError(
                 safe_provider_error_copy(provider, exc),
                 provider=provider,
                 status_code=502,
-            ) from None
+            )) from None
         return AuxiliaryCompletionResult(
             provider=provider,
             model=model,
@@ -7160,12 +7174,18 @@ class ConsoleProviderGateway:
                     provider_message = str(exc)
                 except BaseException:  # noqa: BLE001 - classification is optional
                     provider_message = ""
+                from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
+                from tldw_chatbook.Chat.provider_error_reason import (
+                    is_image_input_rejection,
+                )
+
                 error_copy = _provider_error_copy_with_model_recovery(
                     raw_error_copy,
                     model=resolution.model,
                     status_code=status_code,
                     provider_message=provider_message,
                     tools=request.tools,
+                    model_unavailable=isinstance(exc, ChatModelUnavailableError),
                 )
                 error_copy = _sanitized_provider_diagnostic(
                     error_copy,
@@ -7180,6 +7200,7 @@ class ConsoleProviderGateway:
                         typed_error=project_provider_error(exc, resolution.provider),
                         local=isinstance(exc, ChatConfigurationError)
                         and status_code is None,
+                        image_rejected=is_image_input_rejection(exc),
                     )
                 )
             finally:
@@ -7216,6 +7237,7 @@ class ConsoleProviderGateway:
                         raise item.adapter_error
                     if isinstance(item.payload, ChatAPIError):
                         item.payload.console_copy = item.text
+                        item.payload.image_input_rejected = item.image_rejected
                         raise item.payload
                     if item.local:
                         # TASK-32369: as the non-stream path does (task-32342), a
@@ -7227,7 +7249,7 @@ class ConsoleProviderGateway:
                     # F5: carry the real status the worker captured -- never
                     # re-derive it by parsing item.text back out (that text
                     # is redacted prose, not a machine-readable status).
-                    raise ChatProviderError(
+                    raise _gateway_sentence(ChatProviderError(
                         item.text
                         or safe_provider_error_copy(
                             resolution.provider, ChatProviderError()
@@ -7236,7 +7258,7 @@ class ConsoleProviderGateway:
                         status_code=item.status_code
                         if isinstance(item.status_code, int)
                         else 502,
-                    )
+                    ), console=True, image_rejected=item.image_rejected)
                 if item.kind == "trace_verification_error":
                     raise TraceProvenanceAlignmentError(
                         "provider request trace verification failed"

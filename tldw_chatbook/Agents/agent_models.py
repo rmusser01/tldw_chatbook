@@ -1281,6 +1281,11 @@ class RunOutcome:
     console_copy: str | None = field(
         default=None, repr=False, compare=False, kw_only=True
     )
+    # TASK-33621.11: the failure was the provider refusing the image input
+    # (``is_image_input_rejection``); transient UI data like console_copy.
+    console_image_rejection: bool = field(
+        default=False, repr=False, compare=False, kw_only=True
+    )
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:

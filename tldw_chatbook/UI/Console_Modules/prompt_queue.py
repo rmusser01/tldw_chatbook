@@ -33,10 +33,13 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_BLOCKER_PROVIDER_SETUP,
     QUEUE_REASON_FULL,
     QUEUE_REASON_PREPARING,
     QUEUE_REASON_RUN_HOLD,
     SEND_LABEL_SENDING,
+    ConsoleBlockedReason,
+    console_blocked_reason,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
@@ -593,7 +596,7 @@ class ConsolePromptQueueUIController:
         chat_controller_accessor: Callable[[], Any],
         capture_configuration: Callable[[str], "ConsoleTurnConfigurationSnapshot"],
         ensure_active_session: Callable[[], None],
-        blocked_reason_accessor: Callable[[], str],
+        blocked_reason_accessor: Callable[[], str | ConsoleBlockedReason],
         setup_blocked_reason_accessor: Callable[[], str],
         append_system_message: Callable[[str], Awaitable[None]],
         notify: Callable[[str, str], None],
@@ -620,6 +623,9 @@ class ConsolePromptQueueUIController:
         """Wire the dispatcher to its owners.
 
         Args:
+            blocked_reason_accessor: The send gate, coded with the blocker
+                it stopped on (``ChatScreen._console_send_gate``); a plain
+                sentence is uncoded.
             precapture: TASK-33620.15. Reads a send's service-owned turn
                 authority off the UI pump and returns the context in which
                 ``capture_configuration``/``launch_chain`` use it. ``None``
@@ -1148,7 +1154,7 @@ class ConsolePromptQueueUIController:
             if self._guardian_checker_getter is not None
             else None
         )
-        captured_gate: tuple[str, str] | None = None
+        captured_gate: tuple[ConsoleBlockedReason, str] | None = None
         if guardian_checker is not None:
             if not session_id:
                 self._ensure_active_session()
@@ -1161,7 +1167,7 @@ class ConsolePromptQueueUIController:
             # Snapshot visible setup authority before Guardian's first await.
             # Refusal still follows Guardian (typed intent) and precedes hooks.
             captured_gate = (
-                self._blocked_reason_accessor().strip(),
+                console_blocked_reason(self._blocked_reason_accessor()),
                 self._setup_blocked_reason_accessor().strip(),
             )
             try:
@@ -1202,20 +1208,18 @@ class ConsolePromptQueueUIController:
                 if isinstance(redacted, str) and redacted:
                     draft = redacted
 
-        blocked_reason = captured_gate[0] if captured_gate is not None else self._blocked_reason_accessor().strip()
-        if blocked_reason:
+        gate = captured_gate[0] if captured_gate is not None else console_blocked_reason(self._blocked_reason_accessor())
+        if gate:
             setup_reason = captured_gate[1] if captured_gate is not None else self._setup_blocked_reason_accessor().strip()
-            visible = (
-                setup_reason
-                if setup_reason
-                and not blocked_reason.startswith(
-                    "Console send blocked: Library Search/RAG"
-                )
-                else blocked_reason
-            )
+            # TASK-33621.11 (TASK-38331): the setup sentence stands in for the
+            # gate's only when the gate stopped on provider setup -- by its
+            # code. A dead "Library Search/RAG" prefix match let a provider
+            # gap hide the evidence blocker the gate actually stopped on.
+            setup_row = bool(setup_reason) and gate.code == CONSOLE_BLOCKER_PROVIDER_SETUP
+            visible = setup_reason if setup_row else gate.text
             await self._append_owned_dispatch_message(visible, session_id)
             if session_id is None or self._chat_controller_accessor().store.active_session_id == session_id:
-                if visible == setup_reason:
+                if setup_row:
                     self._notify(visible, "warning")
                 self._focus_composer()
             return ConsolePromptDispatchResult(

@@ -23,6 +23,10 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_ROW_EVIDENCE,
+    CONSOLE_ROW_PROVIDER,
+)
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.RAG_Search.local_citation_capture import (
@@ -262,44 +266,178 @@ QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
 
 
-def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
-    """Return the native composer's setup-specific send blocker copy.
+#: TASK-33621.11: a staged attachment the selected model can't take.
+CONSOLE_BLOCKER_IMAGE_UNSUPPORTED = "image_unsupported"
+#: The send gate's codes (``ChatScreen._console_send_gate``). A refused
+#: Enter's System row shows the setup sentence only when the gate stopped on
+#: provider setup; otherwise the gate's own sentence (prompt_queue).
+CONSOLE_BLOCKER_PROVIDER_SETUP = "provider_setup"
+CONSOLE_BLOCKER_LIBRARY_EVIDENCE = "library_evidence_unavailable"
+CONSOLE_BLOCKER_ARCHIVE_INFLIGHT = "archive_inflight"
+#: The Send strip per blocker code. Chosen from the code the reason was
+#: built for, never from its words: "model" in "Providers & Models" and in
+#: "<model> can't accept images" both read "choose a model" before. A code
+#: absent here (``provider_setup``, or none) reads as generic setup.
+_SETUP_STRIP_COPY: Mapping[str, str] = {
+    "subscription_pending": "Checking Claude subscription credential",
+    "subscription_login": "Send blocked — log in with Claude Code",
+    "credential_rejected": "Send blocked — key rejected; update the API key",
+    "credential_missing": "Send blocked — add an API key to continue",
+    "endpoint_not_saved": "Send blocked — save the endpoint to continue",
+    "model_missing": "Send blocked — choose a model to continue",
+    "provider_missing": "Send blocked — choose a provider to continue",
+    "endpoint_unreachable": "Send blocked — retry the connection to continue",
+}
+_SETUP_STRIP_FALLBACK = "Send blocked — finish provider setup to continue"
 
-    ``ChatScreen._console_setup_blocked_reason`` returns this for the active
-    session's readiness; `build_console_disabled_reason` below turns it into
-    the reason strip's "Send blocked — ..." copy.
+
+@dataclass(frozen=True, slots=True)
+class ConsoleBlockedReason:
+    """A Send blocker's sentence and, beside it, its code (TASK-33621.11).
+
+    The reason strip, its setup link and a refused Enter's System row are
+    chosen by ``code`` (and ``notice``), never by the words. The code rides
+    beside the sentence, not inside a ``str``: the first cut subclassed
+    ``str``, so the coded value reached transcript rows and a row's
+    ``copy.deepcopy`` (the Inspect Context view) raised. Only ``text`` -- a
+    plain ``str`` -- reaches a tooltip, a row or a toast.
+
+    Attributes:
+        text: The blocker's sentence; ``""`` when nothing blocks.
+        code: A ``_SETUP_STRIP_COPY`` key, or a ``CONSOLE_BLOCKER_*`` code;
+            ``""`` for an uncoded sentence, which reads as generic setup.
+        notice: Short strip copy for a blocker that is not provider setup.
+    """
+
+    text: str = ""
+    code: str = ""
+    notice: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.text)
+
+
+def console_blocked_reason(value: object) -> ConsoleBlockedReason:
+    """Normalize a Send blocker; a plain sentence (or None) is uncoded."""
+    if isinstance(value, ConsoleBlockedReason):
+        text = value.text.strip()
+        return value if text == value.text else replace(value, text=text)
+    return ConsoleBlockedReason(str(value or "").strip())
+
+
+def console_blocker_opens_setup(reason: object) -> bool:
+    """Whether a Send blocker is provider setup (its strip links the wizard)."""
+    blocker = console_blocked_reason(reason)
+    return bool(blocker) and blocker.code != CONSOLE_BLOCKER_IMAGE_UNSUPPORTED
+
+
+def console_image_blocker(
+    refusal: str | None, model: str | None
+) -> ConsoleBlockedReason:
+    """Code the send gate's image refusal so it never reads as setup.
+
+    Args:
+        refusal: ``vision_block_reason``'s sentence, or None when allowed.
+        model: The selected model it names.
+
+    Returns:
+        An empty reason when nothing blocks; otherwise the refusal, coded.
+    """
+    if not refusal:
+        return ConsoleBlockedReason()
+    return ConsoleBlockedReason(
+        refusal,
+        code=CONSOLE_BLOCKER_IMAGE_UNSUPPORTED,
+        notice=f"{model or 'the selected model'} can't accept images",
+    )
+
+
+def console_setup_blocker(readiness: ConsoleSettingsReadiness) -> ConsoleBlockedReason:
+    """Return the native composer's setup blocker: its sentence and code.
+
+    ``build_console_disabled_reason`` turns the code into the reason strip's
+    "Send blocked — ..." copy. Each code is assigned per recovery action
+    (review of TASK-33621.11): an HTTP-status or invalid-payload failure is
+    blocker ``endpoint_unreachable`` too, but its recovery is to review the
+    provider settings, so it must not read "retry the connection".
 
     Args:
         readiness: The active Console session's settings readiness.
 
     Returns:
-        An empty string when the readiness can send, or while an active run
+        An empty reason when the readiness can send, or while an active run
         owns admission; otherwise one sentence naming the setup step.
     """
-    if readiness.operability == "ready_to_send":
-        return ""
-    if readiness.recovery_action == "wait_for_active_run":
+    action = readiness.recovery_action
+    if readiness.operability == "ready_to_send" or action == "wait_for_active_run":
         # The prompt-queue presentation owns active-run admission: it
         # blocks while a turn is preparing, then enables Queue once the
         # provider has accepted it. Settings readiness still blocks
         # mutations during the run, but must not override that composer
         # lifecycle with a second, permanently-blocked gate.
-        return ""
-    if readiness.recovery_action == "select_model":
-        return "Choose a model in Chat settings before sending."
-    if readiness.recovery_action == "configure_credential":
+        return ConsoleBlockedReason()
+    text, code = "Finish provider setup before sending.", CONSOLE_BLOCKER_PROVIDER_SETUP
+    if action == "select_model":
+        text, code = "Choose a model in Chat settings before sending.", "model_missing"
+    elif action == "select_provider":
+        text = "Choose a provider in Chat settings before sending."
+        code = "provider_missing"
+    elif action == "configure_credential":
         if readiness.subscription_status == "pending":
-            return "Checking Claude subscription credential."
+            text = "Checking Claude subscription credential."
+            code = "subscription_pending"
+        elif readiness.subscription_status in {"missing", "expired"}:
+            text = "Log in with Claude Code to refresh the subscription credential."
+            code = "subscription_login"
+        elif readiness.blocker == "credential_rejected":  # TASK-33005.7
+            text = "API key rejected. Update it in Settings > Providers & Models."
+            code = "credential_rejected"
+        else:
+            text = "Add API key in Settings > Providers & Models before sending."
+            code = "credential_missing"
+    elif action == "save_endpoint":
+        text = "Save provider endpoint in Chat settings before sending."
+        code = "endpoint_not_saved"
+    elif action == "retry_connection":
+        text = "Provider unreachable. Retry connection before sending."
+        code = "endpoint_unreachable"
+    return ConsoleBlockedReason(text, code=code)
+
+
+def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the setup blocker's sentence alone (``""`` when none blocks).
+
+    ``ChatScreen._console_setup_blocked_reason`` returns this: the Send
+    tooltip, a refused Enter's System row and a Library prompt insert read
+    the sentence; only the composer's strip reads the code
+    (``console_setup_blocker``).
+    """
+    return console_setup_blocker(readiness).text
+
+
+def console_send_gate_setup_copy(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the send gate's refusal for a provider-setup gap, or ``""``.
+
+    Active-run admission belongs to the prompt queue: it refuses while the
+    turn is preparing and admits Queue after acceptance; only actual
+    provider setup gaps belong in this gate.
+    """
+    action = readiness.recovery_action
+    if readiness.operability != "not_ready" or action == "wait_for_active_run":
+        return ""
+    if action == "configure_credential":
+        if readiness.subscription_status == "pending":
+            return "Checking Claude subscription credential. Your draft is preserved."
         if readiness.subscription_status in {"missing", "expired"}:
-            return "Log in with Claude Code to refresh the subscription credential."
-        if readiness.blocker == "credential_rejected":  # TASK-33005.7
-            return "API key rejected. Update it in Settings > Providers & Models."
-        return "Add API key in Settings > Providers & Models before sending."
-    if readiness.recovery_action == "save_endpoint":
-        return "Save provider endpoint in Chat settings before sending."
-    if readiness.recovery_action == "retry_connection":
-        return "Provider unreachable. Retry connection before sending."
-    return "Finish provider setup before sending."
+            return "Console send blocked: Log in with Claude Code to refresh the subscription credential."
+        provider = readiness.provider_display_name or "this provider"
+        return f"Console send blocked: Add an API key for {provider} before sending."
+    return {
+        "select_model": "Console send blocked: Select a model before sending.",
+        "save_endpoint": "Console send blocked: Save the provider endpoint before sending.",
+        "configure_endpoint": "Console send blocked: Enter a valid provider endpoint before sending.",
+        "retry_connection": "Console send blocked: Retry the provider connection before sending.",
+    }.get(action or "", "Console send blocked: Finish provider setup before sending.")
 
 
 def build_console_disabled_reason(
@@ -307,7 +445,7 @@ def build_console_disabled_reason(
     action_id: str,
     has_draft: bool,
     send_blocked: bool,
-    setup_blocked_reason: str = "",
+    setup_blocked_reason: str | ConsoleBlockedReason = "",
     wake_turn_active: bool = False,
     dispatch_recovery_blocked: bool = False,
     send_label: str = "Send",
@@ -319,7 +457,10 @@ def build_console_disabled_reason(
         action_id: Canonical action id, such as ``send``.
         has_draft: Whether the composer currently has message text.
         send_blocked: Whether sending is blocked by setup or run state.
-        setup_blocked_reason: Provider/setup blocker copy, when present.
+        setup_blocked_reason: The send blocker, when present. Its strip
+            copy comes from the code a ``ConsoleBlockedReason`` carries
+            (TASK-33621.11), never from its words; a plain sentence is
+            uncoded and reads as generic provider setup.
         dispatch_recovery_blocked: An unresolved response needs explicit recovery.
         send_label: The send control's current label. TASK-33625.1: mid-run it
             reads a queue state (``Preparing...``, ``Queue``, ``Queue full``);
@@ -354,7 +495,7 @@ def build_console_disabled_reason(
     if send_blocked and wake_turn_active:
         return "Send blocked — delivering a sub-agent result"
 
-    setup_reason = _clean(setup_blocked_reason, "")
+    setup_reason = console_blocked_reason(setup_blocked_reason)
     queue_reason = _clean(queue_blocked_reason, "")
     queue_blocked = send_blocked and bool(queue_reason) and not setup_reason
     if queue_blocked and send_label == SEND_LABEL_PREPARING:
@@ -365,34 +506,14 @@ def build_console_disabled_reason(
         return QUEUE_REASON_PREPARING
     if queue_blocked and send_label == SEND_LABEL_QUEUE_FULL:
         return QUEUE_REASON_FULL
-    setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
-        if setup_reason == "Checking Claude subscription credential.":
-            return "Checking Claude subscription credential"
-        if setup_reason == "Log in with Claude Code to refresh the subscription credential.":
-            return "Send blocked — log in with Claude Code"
-        # TX-07 follow-up (TASK-2154.12): "api key"/"endpoint" must be
-        # checked BEFORE "model" -- the real blocker copy points at the
-        # "Settings > Providers & Models" screen (e.g. "Add API key in
-        # Settings > Providers & Models before sending."), so a naive
-        # "model" substring match swallowed the missing-key state and
-        # named the wrong blocker.
-        if "key rejected" in setup_reason_lower:  # TASK-33005.7: never "add"
-            return "Send blocked — key rejected; update the API key"
-        if "api key" in setup_reason_lower:
-            return "Send blocked — add an API key to continue"
-        if "endpoint" in setup_reason_lower:
-            return "Send blocked — save the endpoint to continue"
-        if "model" in setup_reason_lower:
-            return "Send blocked — choose a model to continue"
-        if (
-            "choose a provider" in setup_reason_lower
-            or "missing provider" in setup_reason_lower
-        ):
-            return "Send blocked — choose a provider to continue"
-        if "retry connection" in setup_reason_lower:  # TASK-33005.2
-            return "Send blocked — retry the connection to continue"
-        return "Send blocked — finish provider setup to continue"
+        # TASK-33621.11 AC#5: by the code the blocker carries -- the words
+        # matched before ("model" in "Providers & Models", in an image
+        # refusal) named the wrong blocker every time a sentence changed.
+        if setup_reason.code == CONSOLE_BLOCKER_IMAGE_UNSUPPORTED:  # AC#2
+            notice = setup_reason.notice or "this model can't accept images"
+            return f"Send blocked — {notice}"
+        return _SETUP_STRIP_COPY.get(setup_reason.code, _SETUP_STRIP_FALLBACK)
     if queue_blocked:
         # TASK-33620.4: any other queue refusal names itself -- it never
         # falls through to provider-setup or active-run copy.
@@ -416,6 +537,7 @@ class ConsoleDisplayRow:
     value: Any
     status: str = "ready"
     recovery: str = ""
+    code: str = ""
 
     @property
     def text(self) -> str:
@@ -1763,6 +1885,7 @@ class ConsoleInspectorState:
                 provider_status,
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
+                code=CONSOLE_ROW_PROVIDER,
             ),
             # TASK-24610: "Retrieval", not "Sources". This row reports whether
             # RETRIEVAL has anything to read; the tray heading, the pinned
@@ -1801,6 +1924,7 @@ class ConsoleInspectorState:
                     _clean(evidence_summary, ""),
                     status=_clean(evidence_status, "ready"),
                     recovery=_clean(evidence_recovery, ""),
+                    code=CONSOLE_ROW_EVIDENCE,
                 )
             )
         if _clean(evidence_authority, ""):

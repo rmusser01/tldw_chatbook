@@ -112,30 +112,12 @@ _INACTIVE_STAGED_SUMMARIES = {
     "no staged work",
     "no sources attached",
 }
-_NEGATIVE_READINESS_TERMS = {
-    "blocked",
-    "missing source",
-    "no results",
-    "not available",
-    "not requested",
-    "not staged",
-    "unavailable",
-}
-_POSITIVE_READINESS_TERMS = {
-    "attached",
-    "available",
-    "ready",
-    "retrieving",
-    "staged",
-}
-_SETUP_BLOCKER_LABEL_TERMS = {"model", "provider"}
-_SETUP_BLOCKER_READINESS_TERMS = {
-    "blocked",
-    "invalid",
-    "missing",
-    "unavailable",
-    "unconfigured",
-}
+#: TASK-33621.11: the structured identity of the Inspector rows the rail
+#: badge reads (``ConsoleDisplayRow.code``). The badge keys on a row's code
+#: and status, never on the words in its label, value or recovery copy.
+CONSOLE_ROW_PROVIDER = "provider"
+CONSOLE_ROW_EVIDENCE = "evidence"
+_BADGE_ROW_CODES = frozenset({CONSOLE_ROW_PROVIDER, CONSOLE_ROW_EVIDENCE})
 
 
 @dataclass(frozen=True)
@@ -633,26 +615,17 @@ def build_console_context_rail_badge(
     return ""
 
 
-def _row_text_parts(row: Any) -> tuple[str, str, str, str]:
-    return (
-        _clean_text(getattr(row, "label", "")),
-        _clean_text(getattr(row, "status", "")),
-        _clean_text(getattr(row, "value", "")),
-        _clean_text(getattr(row, "text", "")),
-    )
-
-
 def _normalized_status(value: Any) -> str:
     status = getattr(value, "value", value)
     return _clean_text(status).lower()
 
 
-def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
-    for row in rows:
-        combined = " ".join(part.lower() for part in _row_text_parts(row) if part)
-        if any(candidate in combined for candidate in candidates):
-            return True
-    return False
+def _row_code(row: Any) -> str:
+    return _clean_text(getattr(row, "code", ""))
+
+
+def _row_status(row: Any) -> str:
+    return _normalized_status(getattr(row, "status", ""))
 
 
 _ACTIVE_RUN_STATUS_VALUES = frozenset(
@@ -660,48 +633,14 @@ _ACTIVE_RUN_STATUS_VALUES = frozenset(
 )
 
 
-def _has_setup_blocker_row(rows: tuple[Any, ...]) -> bool:
-    for row in rows:
-        label, status, value, text = _row_text_parts(row)
-        category = label.lower()
-        if not any(term in category for term in _SETUP_BLOCKER_LABEL_TERMS):
-            continue
-
-        readiness = " ".join(part.lower() for part in (status, value, text) if part)
-        if _contains_any_term(readiness, _SETUP_BLOCKER_READINESS_TERMS):
-            return True
-
-    return False
-
-
-def _contains_any_term(text: str, terms: set[str]) -> bool:
-    tokens = set(re.findall(r"[a-z0-9]+", text))
-    return bool(tokens & terms)
-
-
-def _has_row_readiness_match(rows: tuple[Any, ...], category_terms: set[str]) -> bool:
-    for row in rows:
-        label, status, value, text = _row_text_parts(row)
-        category = label.lower()
-        readiness = " ".join(part.lower() for part in (status, value, text) if part)
-        if not readiness or any(
-            term in readiness for term in _NEGATIVE_READINESS_TERMS
-        ):
-            continue
-        if any(term in category for term in category_terms) and _contains_any_term(
-            readiness, _POSITIVE_READINESS_TERMS
-        ):
-            return True
-    return False
-
-
 def console_badge_inspector_rows(inspector_state: Any) -> tuple[Any, ...]:
-    """Return only rows whose blocked state should outrank review badges."""
+    """Return only rows whose blocked state should outrank review badges.
+
+    Selected by structured row code (TASK-33621.11): the label lookup this
+    replaced silently lost the retrieval row when it was renamed.
+    """
     return tuple(
-        row
-        for row in inspector_state.rows
-        if str(getattr(row, "label", "")).strip().lower()
-        in {"provider", "rag/source", "evidence", "source"}
+        row for row in inspector_state.rows if _row_code(row) in _BADGE_ROW_CODES
     )
 
 
@@ -720,8 +659,7 @@ def build_console_inspector_rail_badge(
     Task-400: the staged-sources Context section lives in the Inspector rail,
     so its "N staged"/"staged" badge surfaces here. Precedence: failed,
     setup, blocked, approvals, then an active run (``running``), then tools;
-    staged context outranks the informational artifact/source readiness
-    fallbacks.
+    staged context outranks the informational ``artifact`` fallback.
 
     TASK-33620.4: an active run is read from the STRUCTURED ``run_status``
     (the canonical active set) and shows ``running`` just below approvals
@@ -729,9 +667,14 @@ def build_console_inspector_rail_badge(
     never ``setup`` -- the row-text match below turned every healthy run
     into ``setup`` while the Provider row mislabelled it blocked.
 
+    TASK-33621.11 (AC#5): rows choose a badge only by their structured
+    ``status`` and ``code`` -- ``failed``/``blocked`` statuses, and ``setup``
+    for a blocked Provider row -- never by words in their copy. Dev badged a
+    ready Evidence row "blocked" because its recovery said "1 blocked".
+
     Args:
         run_status: Current Console run status value or enum.
-        inspector_rows: Inspector display rows used for keyword matching.
+        inspector_rows: Coded Inspector rows (``console_badge_inspector_rows``).
         tool_count: Pending tool-call count.
         approval_count: Pending approval count.
         can_save_chatbook: Whether a Chatbook artifact save is available.
@@ -743,16 +686,17 @@ def build_console_inspector_rail_badge(
         The highest-precedence badge string, or ``""`` when nothing applies.
     """
     normalized_run_status = _normalized_status(run_status)
-    if normalized_run_status == "failed" or _has_row_match(inspector_rows, {"failed"}):
+    row_statuses = {_row_status(row) for row in inspector_rows}
+    if normalized_run_status == "failed" or "failed" in row_statuses:
         return "failed"
 
-    if _has_setup_blocker_row(inspector_rows):
+    if any(
+        _row_code(row) == CONSOLE_ROW_PROVIDER and _row_status(row) == "blocked"
+        for row in inspector_rows
+    ):
         return "setup"
 
-    if normalized_run_status == "blocked" or _has_row_match(
-        inspector_rows,
-        {"blocked"},
-    ):
+    if normalized_run_status == "blocked" or "blocked" in row_statuses:
         return "blocked"
 
     approvals = _coerce_non_negative_int(approval_count)
@@ -774,14 +718,8 @@ def build_console_inspector_rail_badge(
     if _has_active_staged_summary(staged_summary):
         return "staged"
 
-    if can_save_chatbook or _has_row_readiness_match(
-        inspector_rows,
-        {"artifact", "chatbook"},
-    ):
+    if can_save_chatbook:
         return "artifact"
-
-    if _has_row_readiness_match(inspector_rows, {"source", "rag"}):
-        return "source"
 
     return ""
 
