@@ -700,6 +700,33 @@ def test_repo_relative_exclusions_ignore_unicode_normalization(
     )
 
 
+@pytest.mark.parametrize(("file_form", "rule_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_an_exclusion_hides_the_other_normalization_from_git(
+    tmp_path: Path, file_form: str, rule_form: str
+) -> None:
+    """TASK-37655: git matches pathspecs byte-wise, and with
+    core.precomposeunicode off it keeps a name in the normalization it was
+    created in, so one spelling of an exclusion missed the other."""
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    repo = (tmp_path / "project").resolve()
+    _init(repo)
+    _git(repo, "config", "core.precomposeunicode", "false")
+    name = unicodedata.normalize(file_form, "naïve.txt")
+    (repo / name).write_text("v1\n")
+    (repo / "keep.txt").write_text("v1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "initial")
+    (repo / name).write_text("v1\nSECRET-37655\n")
+    (repo / "keep.txt").write_text("v1\nv2\n")
+    rule = SensitiveExclusion("file", unicodedata.normalize(rule_form, "naïve.txt"))
+
+    out = git_diff(repo, sensitive_exclusions=(rule,))
+
+    assert "SECRET-37655" not in out
+    assert "keep.txt" in out
+
+
 def test_a_location_exclusion_survives_a_case_variant_directory_spelling() -> None:
     """The same fold, on the LOCATION rules -- the case that was unpinned.
 

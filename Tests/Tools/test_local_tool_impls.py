@@ -160,6 +160,14 @@ def test_worker_fs_read_refuses_other_normalization_of_excluded_file(
         )
 
 
+def test_grep_core_annotations_resolve() -> None:
+    """``_grep_relative_files`` annotates ``re.Pattern``; ``re`` must be bound."""
+    import typing
+
+    hints = typing.get_type_hints(local_tool_impls._grep_relative_files)
+    assert "pattern" in hints
+
+
 def test_resolve_workspace_path_confines(tmp_path):
     assert resolve_workspace_path("a/b", tmp_path) == (tmp_path / "a/b").resolve()
     with pytest.raises(LocalToolError, match="outside the workspace root"):

@@ -18,6 +18,7 @@ from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentityError,
     directory_identity_from_stat,
 )
+from tldw_chatbook.Utils.path_validation import fold_path_part
 
 InstructionKind = Literal["override", "standard"]
 InstructionOutcomeCode = Literal[
@@ -178,8 +179,9 @@ class _UnsafeMetadata(Exception):
 def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
     """True when ``path`` is or lies under a workspace-excluded directory.
 
-    Deny-side comparison is COMPONENT-WISE CASEFOLDED, mirroring
-    ``Utils.sensitive_paths._compare_key`` (TASK-19800): macOS and Windows
+    Deny-side comparison is COMPONENT-WISE FOLDED (case and Unicode
+    normalization, ``fold_path_part``), mirroring
+    ``Utils.sensitive_paths._compare_key`` (TASK-19800, TASK-37655): macOS and Windows
     filesystems are case-insensitive by default and ``Path.resolve()``
     preserves the caller's spelling, so a Settings-typed ``Docs`` exclusion
     must also exclude an on-disk ``docs/AGENTS.md``. Folding may
@@ -201,14 +203,14 @@ def path_is_excluded(path: Path, excluded: frozenset[Path]) -> bool:
         return False
     try:
         resolved_key = tuple(
-            part.casefold() for part in path.resolve(strict=False).parts
+            fold_path_part(part) for part in path.resolve(strict=False).parts
         )
     except Exception:  # noqa: BLE001 - unresolvable candidate paths fail closed
         return True
     for entry in excluded:
         try:
             entry_key = tuple(
-                part.casefold() for part in entry.resolve(strict=False).parts
+                fold_path_part(part) for part in entry.resolve(strict=False).parts
             )
         except Exception:  # noqa: BLE001 - broad like ``_resolved`` (TASK-847):
             # symlink loops raise OSError/RuntimeError, embedded NULs raise
@@ -1323,13 +1325,11 @@ def remote_path_is_excluded(
     """
     if not excluded:
         return False
-    parts = tuple(
-        part.casefold() for part in PurePosixPath(relative_posix).parts
-    )
+    parts = tuple(fold_path_part(part) for part in PurePosixPath(relative_posix).parts)
     for entry in excluded:
         if entry.is_absolute() or ".." in entry.parts:
             continue
-        entry_parts = tuple(part.casefold() for part in entry.parts)
+        entry_parts = tuple(fold_path_part(part) for part in entry.parts)
         if not entry_parts:
             # An exclusion of "." covers the whole binding root.
             return True

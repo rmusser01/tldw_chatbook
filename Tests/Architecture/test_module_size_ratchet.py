@@ -841,8 +841,19 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Agents/local_tool_provider.py": 5851,
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5721,
+    # 2026-10-31, TASK-37655 round 2 (owner rule: a fix over a size ratchet
+    # raises the row with a dated comment): 5738 -> 5741 (+3). The remote
+    # preflight mirror folds Unicode normalization like the worker.
+    "tldw_chatbook/Agents/local_tool_provider.py": 5854,
+    # 2026-10-31, TASK-37655 (owner rule: a fix over a size ratchet raises
+    # the row with a dated comment): 5706 -> 5950. +16 is this fix (the
+    # bundled fold_path_part that Unicode-normalizes exclusion matching);
+    # +228 is regenerating the artifact dev 94a8a85f03 left stale (PR #3286's
+    # git_tool_impls review reader was never re-bundled, so the drift guard
+    # test_bundle_rebuild_matches_committed_artifact already failed on dev).
+    # Round 2: 5950 -> 5951 (+1): git exclusion pathspecs in both spellings,
+    # fold_path_part moved to path_validation, grep's ``re`` at module scope.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5722,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5167,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,

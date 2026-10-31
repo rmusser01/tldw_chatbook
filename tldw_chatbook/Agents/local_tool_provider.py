@@ -1697,6 +1697,7 @@ class LocalToolProvider:
         from tldw_chatbook.Tools.workspace_tool_executor import (
             _normalize_remote_relative_path,
         )
+        from tldw_chatbook.Utils.path_validation import fold_path_part
 
         base = Path(str(root.root))
         exclusions: tuple[Any, ...] = ()
@@ -1710,13 +1711,15 @@ class LocalToolProvider:
 
         def refused(relative: str, *, is_directory: bool) -> bool:
             """Lexical SensitiveExclusion match, mirroring the worker's."""
-            parts = tuple(part.casefold() for part in PurePosixPath(relative).parts)
+            parts = tuple(
+                fold_path_part(part) for part in PurePosixPath(relative).parts
+            )
             if not parts:
                 return False
             for entry in exclusions:
                 kind = getattr(entry, "kind", None)
                 value_parts = tuple(
-                    part.casefold()
+                    fold_path_part(part)
                     for part in PurePosixPath(str(getattr(entry, "value", ""))).parts
                 )
                 if kind == "subtree" and parts[: len(value_parts)] == value_parts:

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: 2026-10-30 10:35
-updated_date: '2026-10-31T09:45:00Z'
+updated_date: '2026-10-31T10:30:00Z'
 labels:
 - security
 - tools
@@ -32,6 +32,7 @@ On APFS, and other filesystems that ignore Unicode normalization when opening fi
 2. Write regression tests first (both NFC/NFD directions, ASCII case folding unchanged) for the matcher, fs_read (executor and worker core), code-review capture, git exclusion translation and the absolute denylist; show them red.
 3. Add one fold, `sensitive_paths.fold_path_part` (canonical caseless: `NFD(casefold(NFD(x)))`), and use it for rule and candidate in `_compare_key`, `_folded_exclusions` / `_is_relative_sensitive_path` (name rule included) and git's `_repo_relative_exclusions`.
 4. Regenerate the remote worker bundle, adjust its size-ratchet row with a dated comment, run the affected suites on branch and base, preflight, ruff.
+5. Round 2: fold the remaining exclusion matchers (project-instruction `path_is_excluded`/`remote_path_is_excluded`, the remote preflight mirror in `local_tool_provider`), test git pathspecs against both spellings, fix the unbound `re` annotation in `local_tool_impls`.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -45,7 +46,13 @@ Root cause: the shared matcher folded case but not Unicode normalization, so `na
 - `Tools/remote_worker_bundle.py` regenerated. The artifact on dev 94a8a85f03 was already stale (PR #3286's git review reader never re-bundled; `test_bundle_rebuild_matches_committed_artifact` failed on base). Size-ratchet row 5706 -> 5950: +16 this fix, +228 that pre-existing drift, recorded in a dated comment.
 - Tests: matcher both directions for every rule kind plus case+normalization combined, ASCII case folding unchanged (`Tests/Tools/test_local_tool_impls.py`); fs_read through `WorkspaceToolExecutor` with a user exclusion (`test_local_tool_user_exclusions.py`) and through the worker's `_read_relative_file`; code-review capture refuses with `source_path_unavailable` (the matcher, ahead of the listing check) both ways (`Tests/Agents/test_code_review_source.py`, replacing the NFD-only test); git translation (`test_git_tool_sensitive_paths.py`); absolute denylist + `sensitive_exclusions_under` (`test_local_tool_sensitive_paths.py`). 20 of the 25 new cases were red before the fix (the 5 ASCII controls passed), all 25 green after.
 - Verified 2026-10-31 on claude/burn-37655 (base origin/dev 94a8a85f03) through the scratch wrapper. Suites that die at setup with `RecoveryRequired: raw_source_selection_changed` were compared on both trees with the bootstrap_profile probe plugin (lessons-testing-evidence): identical failing ids, no branch-only failure.
-- Not changed (same class, separate re-implementations): `Agents/project_instruction_resolver.py` `path_is_excluded` / `remote_path_is_excluded` and the remote preflight mirror `refused` in `Agents/local_tool_provider.py` still casefold without normalizing. The worker re-enforces for the latter; the former decides which AGENTS.md files load. Candidates for a follow-up.
+- Round 2 (same branch, second commit):
+  - `fold_path_part` moved to `Utils/path_validation.py`, which is already in the agent-runtime import footprint and the bundle closure. `sensitive_paths`, `local_tool_impls` and `git_tool_impls` import it from there, so there is still one definition and `test_agent_runtime_import_footprint` stays green.
+  - `Agents/project_instruction_resolver.py`: `path_is_excluded` and `remote_path_is_excluded` fold with it, so an excluded folder's AGENTS.md does not load under the other spelling (`Tests/Chat/test_project_instruction_exclusions.py`).
+  - `Agents/local_tool_provider.py`: the remote preflight mirror `refused` folds the same way, so the refusal happens before an approval card (`Tests/Agents/test_local_tool_provider.py`). Its ratchet row goes 5738 -> 5741 (+3), with a dated comment.
+  - Git pathspecs: a scratch repo on git 2.39.5 (Apple) with a modified tracked `naïve.txt` and an untracked `new_naïve.txt` showed that with `core.precomposeunicode=true` (what `git init` writes on macOS) both spellings are excluded. With it `false`, an NFD rule missed an NFC file and an NFC rule missed an NFD file in `git diff` (content leaked) and in `git status`. `_denylist_pathspecs` now emits each exclusion's NFC and NFD spellings, and identical ASCII spellings dedupe, so ASCII output is unchanged. A name stored in a mixed normalization is still not covered (marked `ponytail:`). Test: `test_an_exclusion_hides_the_other_normalization_from_git` (precompose off, both directions).
+  - `local_tool_impls.py` F821: `_grep_relative_files` annotates `re.Pattern` while `re` was only imported inside function bodies. With `from __future__ import annotations` this never fails at runtime; it fails only when the annotation is evaluated (`typing.get_type_hints`), and no production code does that for this function. `re` is now imported at module scope (the two function-local imports are gone); `test_grep_core_annotations_resolve` failed with NameError before.
+  - Bundle row 5950 -> 5951 (+1).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

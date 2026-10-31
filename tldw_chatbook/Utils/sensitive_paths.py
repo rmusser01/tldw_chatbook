@@ -205,9 +205,10 @@ from __future__ import annotations
 
 import os
 import threading
-import unicodedata
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
+
+from tldw_chatbook.Utils.path_validation import fold_path_part
 
 #: Resolution failures seen on this thread; ``_raw_inputs`` never memoizes a
 #: snapshot built while one occurred (it would keep a gap in the deny list).
@@ -813,19 +814,6 @@ def merge_sensitive_context(
             seen_dirs.add(key)
             dirs.append(resolved)
     return base._replace(files=tuple(files), dirs=tuple(dirs))
-
-
-def fold_path_part(part: str) -> str:
-    """One path component in the form every denylist/exclusion compares.
-
-    Case-folded (TASK-19800, see :func:`_compare_key`) AND Unicode
-    normalization-folded (TASK-37655): APFS, like other filesystems that
-    ignore normalization when opening files, opens an NFD ``naïve.txt`` as
-    the stored NFC file, so an exact-codepoint compare let either spelling
-    past a rule written in the other. This is Unicode's canonical caseless
-    match, ``NFD(casefold(NFD(x)))``; ASCII folds exactly as ``casefold``.
-    """
-    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", part).casefold())
 
 
 def _compare_key(path: Path) -> tuple[str, ...]:

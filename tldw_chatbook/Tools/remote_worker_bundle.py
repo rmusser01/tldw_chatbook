@@ -139,6 +139,7 @@ escape allowed directories.
 import os
 import stat
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -205,6 +206,18 @@ def _logging_logger():
     except ImportError:
         return _NoOpLogger()
     return logger
+
+def fold_path_part(part: str) -> str:
+    """One path component in the form every denylist/exclusion compares.
+
+    Case-folded (TASK-19800, see ``sensitive_paths._compare_key``) AND Unicode
+    normalization-folded (TASK-37655): APFS, like other filesystems that
+    ignore normalization when opening files, opens an NFD ``naïve.txt`` as
+    the stored NFC file, so an exact-codepoint compare let either spelling
+    past a rule written in the other. This is Unicode's canonical caseless
+    match, ``NFD(casefold(NFD(x)))``; ASCII folds exactly as ``casefold``.
+    """
+    return unicodedata.normalize('NFD', unicodedata.normalize('NFD', part).casefold())
 
 def validate_recovery_relative_path(value: str) -> str:
     """Validate one bounded portable tree name; empty string names its root."""
@@ -772,7 +785,6 @@ track is the real answer for shell execution.
 """
 import os
 import threading
-import unicodedata
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
 _failures = threading.local()
@@ -1186,18 +1198,6 @@ def merge_sensitive_context(base: SensitivePathContext, *, extra_files: Iterable
             seen_dirs.add(key)
             dirs.append(resolved)
     return base._replace(files=tuple(files), dirs=tuple(dirs))
-
-def fold_path_part(part: str) -> str:
-    """One path component in the form every denylist/exclusion compares.
-
-    Case-folded (TASK-19800, see :func:`_compare_key`) AND Unicode
-    normalization-folded (TASK-37655): APFS, like other filesystems that
-    ignore normalization when opening files, opens an NFD ``naïve.txt`` as
-    the stored NFC file, so an exact-codepoint compare let either spelling
-    past a rule written in the other. This is Unicode's canonical caseless
-    match, ``NFD(casefold(NFD(x)))``; ASCII folds exactly as ``casefold``.
-    """
-    return unicodedata.normalize('NFD', unicodedata.normalize('NFD', part).casefold())
 
 def _compare_key(path: Path) -> tuple[str, ...]:
     """The form two paths are compared in by the denylist (TASK-19800).
@@ -2164,6 +2164,7 @@ import hashlib
 import heapq
 import json
 import os
+import re
 import stat as stat_module
 import threading
 import uuid
@@ -3112,7 +3113,6 @@ def grep_files(pattern: str, *, workspace_root: Path, mode: str='content', max_r
     Raises:
         LocalToolError: If ``max_results`` is below 1.
     """
-    import re
     try:
         compiled = re.compile(pattern)
     except re.error as exc:
@@ -3127,7 +3127,6 @@ def grep_files(pattern: str, *, workspace_root: Path, mode: str='content', max_r
 
 def _grep_relative_files(pattern: str | re.Pattern[str], *, workspace: Path, mode: str, max_results: int, sensitive_exclusions: tuple[SensitiveExclusion, ...]) -> str:
     """Grep pinned-root-relative files while refusing escaping symlink content."""
-    import re
     if isinstance(pattern, re.Pattern):
         rx = pattern
         display_pattern = pattern.pattern
@@ -3597,6 +3596,7 @@ import signal
 import subprocess
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 GIT_TIMEOUT_SECONDS = 30.0
@@ -3840,18 +3840,19 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
             raise LocalToolError('workspace root is required for admitted exclusions')
         exclusions = _repo_relative_exclusions(Path(workspace_root).resolve(), repo_root, sensitive_exclusions)
     specs: list[str] = []
-    for kind, value in exclusions:
-        if kind in {'subtree', 'file'}:
-            if not value:
-                raise LocalToolError(f'repository root ({repo_root}) is a protected path; refusing')
-            specs.append(f':(exclude,literal,icase){value}')
-        elif kind == 'direct_children':
-            prefix = f'{_glob_escape(value)}/' if value else ''
-            specs.append(f':(exclude,glob,icase){prefix}*')
-        elif kind == 'name':
-            specs.append(f':(exclude,glob,icase)**/{_glob_escape(value)}')
-        else:
-            raise LocalToolError(f'unsupported sensitive-path exclusion kind: {kind!r}')
+    for kind, raw_value in exclusions:
+        for value in dict.fromkeys((unicodedata.normalize(form, raw_value) for form in ('NFC', 'NFD'))):
+            if kind in {'subtree', 'file'}:
+                if not value:
+                    raise LocalToolError(f'repository root ({repo_root}) is a protected path; refusing')
+                specs.append(f':(exclude,literal,icase){value}')
+            elif kind == 'direct_children':
+                prefix = f'{_glob_escape(value)}/' if value else ''
+                specs.append(f':(exclude,glob,icase){prefix}*')
+            elif kind == 'name':
+                specs.append(f':(exclude,glob,icase)**/{_glob_escape(value)}')
+            else:
+                raise LocalToolError(f'unsupported sensitive-path exclusion kind: {kind!r}')
     return tuple(specs)
 
 def _repo_relative_exclusions(workspace_root: Path, repo_root: Path, exclusions: tuple[SensitiveExclusion, ...]) -> tuple[SensitiveExclusion, ...]:
@@ -5718,4 +5719,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("84b2bdd3a017e573f2bccb52d58c8aca161cc879e5b6590b43dfe386215cd2d5")
+BUNDLE_SHA256 = _enter_worker_exchange("8faea95ba2cc472b9655ba8f26c6495cc53e4348a5c2a4c3610db804052152c8")

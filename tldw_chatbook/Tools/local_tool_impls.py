@@ -53,6 +53,7 @@ import hashlib
 import heapq
 import json
 import os
+import re
 import stat as stat_module
 import threading
 import uuid
@@ -60,9 +61,8 @@ from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
 from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.path_validation import fold_path_part, validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
-    fold_path_part,
     is_git_metadata_write,
     SensitivePathContext,
     SensitiveExclusion,
@@ -1597,8 +1597,6 @@ def grep_files(
     Raises:
         LocalToolError: If ``max_results`` is below 1.
     """
-    import re
-
     try:
         compiled = re.compile(pattern)
     except re.error as exc:
@@ -1629,8 +1627,6 @@ def _grep_relative_files(
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
 ) -> str:
     """Grep pinned-root-relative files while refusing escaping symlink content."""
-    import re
-
     if isinstance(pattern, re.Pattern):
         rx = pattern
         display_pattern = pattern.pattern
