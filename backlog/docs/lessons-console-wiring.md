@@ -11,6 +11,23 @@ bring the incident.
 
 ---
 
+## A `str` subclass that carries a code loses it at the first `.strip()` (TASK-33621.11, 2026-10-30)
+
+**Incident.** The setup blocker's sentence was given its readiness code by making
+it a `str` subclass (`ConsoleBlockedReason`), so every consumer that shows the
+sentence kept working unchanged. The unit tests went green. The mounted ChatScreen
+test still painted "Send blocked — finish provider setup to continue ›" for a
+staged image, because `ConsoleComposerBar.sync_action_state` normalizes with
+`setup_blocked_reason.strip()`. `str.strip()` returns a plain `str`, so the code
+was gone before the strip builder read it. Nothing raised: the uncoded sentence
+simply fell to the generic copy.
+
+**What to do.** If a typed value rides a `str` seam, override the normalizers its
+consumers call (`strip` here) to return the subclass, and prove the type survives
+with a test that drives the real composer, not just the pure builder. Before
+choosing this shape, grep the receiving widget for `.strip()`, `str(...)` and
+f-string rebuilds.
+
 ## A correct model Apply can be hidden by a stale workspace activation (TASK-37620, 2026-10-29)
 
 **Incident.** A user selected a model in a character chat and landed in another
