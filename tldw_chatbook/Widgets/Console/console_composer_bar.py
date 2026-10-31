@@ -497,6 +497,26 @@ class ComposerControlButton(Button):
             composer.focus_draft_from(self)
 
 
+def _restyle_button_once(button: Button, variant: str, classes: dict[str, bool]) -> None:
+    """Give ``button`` its ``variant`` and state ``classes`` in one restyle.
+
+    TASK-36571: assigning ``Button.variant`` runs Textual's watcher, which
+    removes the old ``-<variant>`` class and adds the new one, a restyle each,
+    before the state classes pay their own. The reactive is set without its
+    watcher and the watcher's two class changes join the batch, so the button
+    ends exactly as ``button.variant = variant`` plus ``update_classes`` would
+    leave it (``Tests/UI/test_console_projection_restyles.py`` pins the
+    watcher this mirrors).
+    """
+    wanted = dict(classes)
+    old = button.variant
+    if variant != old:
+        button.set_reactive(Button.variant, button.validate_variant(variant))
+        wanted[f"-{old}"] = False
+        wanted[f"-{variant}"] = True
+    button.update_classes(wanted)
+
+
 def _swap_size_class(widget: Widget, prefix: str, wanted: str) -> None:
     """Give ``widget`` the ``wanted`` size class in place of any ``prefix`` one.
 
@@ -2230,7 +2250,6 @@ class ConsoleComposerBar(Horizontal):
             strip = self.query_one("#console-send-disabled-reason", Static)
         except NoMatches:
             return
-        strip.set_class(muted, "console-send-disabled-reason-idle")
         if reason:
             # TASK-21145 (UAT H-3): a setup blocker must carry its own way
             # out — the UAT run showed "Send blocked — finish provider
@@ -2270,6 +2289,12 @@ class ConsoleComposerBar(Horizontal):
         # remove/re-add the same classes and synchronously restyle the node.
         classes = {name for name in strip.classes if not name.startswith(("w-", "h-"))}
         classes.update(("w-auto", "h-1") if visible else ("w-0", "h-0"))
+        # TASK-36571: the muted style joins the same replacement (one restyle).
+        idle = "console-send-disabled-reason-idle"
+        if muted:
+            classes.add(idle)
+        else:
+            classes.discard(idle)
         # Clearing a scalar style requests a whole-screen layout even when no
         # inline rule is set, and this runs on every 0.2 s run tick
         # (TASK-33620.15.7): clear only rules that exist. Each reset is a
@@ -2539,7 +2564,6 @@ class ConsoleComposerBar(Horizontal):
         # `handle_console_send_message` directly, so the blocked-attempt
         # feedback (toast + transcript system row) survives the flag.
         send_button.disabled = not send_ready
-        send_button.variant = "primary" if send_ready else "default"
         if raw_cli_ready:
             send_button.tooltip = "Run this raw command with host-user authority."
         elif effective_send_blocked and dispatch_recovery_blocked:
@@ -2571,7 +2595,10 @@ class ConsoleComposerBar(Horizontal):
         # TASK-33620.15.8: one restyle for the six readiness classes; six
         # `set_class` calls restyled the button once per changed class, on
         # every readiness flip (a Send's acceptance, the first keystroke).
-        send_button.update_classes(
+        # TASK-36571: the variant joins them (its watcher paid two more).
+        _restyle_button_once(
+            send_button,
+            "primary" if send_ready else "default",
             {
                 "console-action-primary": send_ready,
                 "console-action-subdued": not send_ready,
@@ -2579,7 +2606,7 @@ class ConsoleComposerBar(Horizontal):
                 "console-send-ready": send_ready,
                 "console-send-inactive": not has_draft,
                 "console-send-blocked": effective_send_blocked,
-            }
+            },
         )
         # TASK-33625.1: a queue state arrives as `queue_blocked_reason`, never
         # as setup copy, so it cannot become a link into the setup wizard.
@@ -2606,7 +2633,17 @@ class ConsoleComposerBar(Horizontal):
         self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
 
         stop_button.disabled = False
-        stop_button.variant = "warning" if self._stop_available else "default"
+        # TASK-36571: one restyle for Stop's variant and state classes; the
+        # variant watcher and three `set_class` calls paid four on a run start.
+        _restyle_button_once(
+            stop_button,
+            "warning" if self._stop_available else "default",
+            {
+                "console-stop-active": self._stop_available,
+                "console-stop-idle": not self._stop_available,
+                "console-action-disabled": not self._stop_available,
+            },
+        )
         # Fleet-UX expert review F7 (task-1234): this LIVE sync overrides
         # the button's construction-time tooltip on every action-state
         # refresh, so the compose-time copy alone (see `compose()` above)
@@ -2621,9 +2658,6 @@ class ConsoleComposerBar(Horizontal):
         # control that is never actionable while shown, so the dead copy
         # goes instead of the budget.
         stop_button.tooltip = "Stop this tab's run." if self._stop_available else None
-        stop_button.set_class(self._stop_available, "console-stop-active")
-        stop_button.set_class(not self._stop_available, "console-stop-idle")
-        stop_button.set_class(not self._stop_available, "console-action-disabled")
         stop_button.styles.display = "block" if self._stop_available else "none"
         # Redirect requires active generation; a pending hook exposes only Stop.
         # TASK-28227: Redirect appears only while this tab's run is active.

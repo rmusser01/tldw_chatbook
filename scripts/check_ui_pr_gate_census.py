@@ -645,7 +645,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-18925 adds the verified OS-notification Settings journey (+1).
 # Console hook-file qualification remains open after native-worker teardown
 # errors; no existing census entry is removed or replaced (review receipt).
-MINIMUM_FILES = 1174
+# TASK-36571 (2026-10-30) appends 1 whole-file entry at the tail: a run
+# start's per-widget restyle pins and their style-equivalence guards (nine
+# cases, about 17 s locally), so no existing entry changes shard: dev's
+# 1163 + 1 = 1164.
+MINIMUM_FILES = 1175
 
 
 def read_census(path: Path) -> list[str]:

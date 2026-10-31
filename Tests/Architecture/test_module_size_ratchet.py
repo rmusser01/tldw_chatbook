@@ -598,7 +598,12 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    # 2026-10-30, TASK-36571 (owner decision: a fix over a size ratchet raises
+    # the row with a dated comment; never squeeze code to fit): 7043 -> 7077
+    # (+34). Stop's and Send's variant and state classes take one restyle
+    # (`_restyle_button_once`), and the Send reason strip's muted class joins
+    # its size-class swap, cutting a run start's restyles in the projection.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7077,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,

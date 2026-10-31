@@ -82,6 +82,11 @@ def test_workbench_frame_sync_state_dispatches_one_snapshot_to_every_region():
         set_class=Mock(),
         add_class=Mock(),
         remove_class=Mock(),
+        # TASK-36571: density and status classes swap in one call each; the
+        # status swap restyles the frame node alone.
+        update_classes=Mock(),
+        has_class=Mock(return_value=False),
+        app=SimpleNamespace(stylesheet=SimpleNamespace(update_nodes=Mock())),
         _route_class=None,
     )
 
@@ -262,12 +267,21 @@ def test_destination_header_first_sync_runs_even_for_the_constructor_state():
         _synced_state=_UNSYNCED,
         query_one=Mock(return_value=Mock()),
         set_class=Mock(),
+        # TASK-36571: the status classes swap in one call and restyle the
+        # header node alone; density classes swap in one call too.
+        has_class=Mock(return_value=False),
+        update_classes=Mock(),
+        app=SimpleNamespace(stylesheet=SimpleNamespace(update_nodes=Mock())),
     )
 
     DestinationHeader.sync_state(header, state)
 
     assert header.query_one.call_count == 3
     assert header.set_class.call_count > 0
+    applied = [call.args[0] for call in header.update_classes.call_args_list]
+    assert any(classes.get("status-running") for classes in applied)
+    assert any(classes.get("density-normal") for classes in applied)
+    header.app.stylesheet.update_nodes.assert_called_once_with([header], animate=True)
     assert header._synced_state == state
 
 
