@@ -15,6 +15,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -449,3 +450,69 @@ def test_notification_timeout_survives_orderly_interpreter_shutdown(tmp_path) ->
         "returned_before_completion": True,
     }
     assert not (tmp_path / "natural-exit").exists(), "slow notifier escaped its timeout"
+
+
+def test_thread_start_failure_preserves_viewed_failure_toast(monkeypatch) -> None:
+    """The real bridge must keep its toast when optional dispatch cannot start.
+
+    Only external state and output boundaries are replaced; the bridge, config
+    gate, display sanitizer and spawn helper remain real, without mounting UI.
+    """
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    toasts = []
+    sends = []
+    logs = []
+    private_error = f"can't start new thread: {SECRET_CANARY}"
+    visible_copy = "Provider failed: private run error"
+    session_title = "Private session title"
+    workspace_name = "Private workspace name"
+
+    def refuse_start(_thread):
+        raise RuntimeError(private_error)
+
+    monkeypatch.setattr(chat_screen.threading.Thread, "start", refuse_start)
+    monkeypatch.setattr(chat_screen.logger, "debug", logs.append)
+    monkeypatch.setattr(
+        chat_screen, "send_os_notification", lambda *args, **kwargs: sends.append(args)
+    )
+    monkeypatch.setattr(
+        chat_screen,
+        "get_cli_setting",
+        lambda section, key, default: {"enabled": True},
+    )
+    screen = SimpleNamespace(
+        _console_chat_controller=SimpleNamespace(
+            store=SimpleNamespace(active_session_id="viewed-session")
+        ),
+        _workspace=SimpleNamespace(
+            _console_session_title_and_workspace_name=lambda controller, session_id: (
+                session_title,
+                workspace_name,
+            )
+        ),
+        app_instance=SimpleNamespace(
+            notify=lambda message, **kwargs: toasts.append((message, kwargs))
+        ),
+        _console_os_notification_display=(
+            chat_screen.ChatScreen._console_os_notification_display
+        ),
+    )
+    screen._fire_console_os_notification = MethodType(
+        chat_screen.ChatScreen._fire_console_os_notification, screen
+    )
+
+    chat_screen.ChatScreen._notify_console_run_failure(screen, visible_copy)
+
+    assert toasts == [(visible_copy, {"severity": "error"})]
+    assert sends == [], "thread startup failure must not run the sender synchronously"
+    assert len(logs) == 1
+    assert "RuntimeError" in logs[0]
+    for private_text in (
+        SECRET_CANARY,
+        private_error,
+        visible_copy,
+        session_title,
+        workspace_name,
+    ):
+        assert private_text not in logs[0]

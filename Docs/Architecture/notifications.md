@@ -108,6 +108,8 @@ A non-daemon one-shot thread keeps the UI event loop free and retains the
 3-second subprocess wait/kill/reap path through orderly interpreter shutdown.
 Process exit may wait for the remaining invocation; platform process creation
 and forced termination are outside that timeout guarantee. No app/profile
-resource is retained by the callback. See [ADR-282](../../backlog/decisions/282-console-os-notification-dispatch.md)
+resource is retained by the callback. A thread-start RuntimeError is logged as
+fixed failure metadata and dropped, preserving the normal in-app toast without
+running the notifier synchronously. See [ADR-282](../../backlog/decisions/282-console-os-notification-dispatch.md)
 for the separation from the inbox and configurable run hooks, platform limits,
 and the shutdown tradeoff.

@@ -64,3 +64,27 @@ Reason: External platform dispatch, privacy boundary, and subprocess lifetime re
 - Ruling: only the verified Settings journey enters the verified-green census (1,174 total). Console remains in the repository but unqualified; no previous census entry was removed. No third suite or unrelated native-app cleanup is authorized in this repair.
 - Ruling: config.py's 12 default-table lines also exceed its size pin; the same explicit user waiver pins its exact 12,245-line measurement. ChatScreen is 24,420/739; Settings is 35,758.
 - Diagnostic regeneration and one-owner postcheck passed; new module/test Ruff checks and format checks passed, with no new findings in changed existing files. Native desktop display is unverified; CI was explicitly waived by the user. Task remains In Progress for fresh independent review.
+
+## Independent review follow-up: thread admission failure
+
+The fresh review at `dbbfcac` reproduced `Thread.start()` raising RuntimeError
+through the viewed-failure bridge before its normal toast. Keep the existing
+ADR-282 boundary and make this optional-channel failure local to the spawn helper.
+
+- [x] Add an unmounted regression using the real viewed-failure bridge, gate,
+  display sanitizer and helper; fail only Thread.start, and prove the normal
+  error toast survives, the sender never runs, and logs exclude private text.
+- [x] Observe RED, then narrowly catch RuntimeError around thread startup with
+  fixed metadata-only debug output; retain non-daemon ownership and no fallback.
+- [x] Run the regression and dispatcher file only; do not repeat mounted UI runs.
+- [x] Update exact ChatScreen pin, reviewed diagnostic inventory, QA/task notes;
+  commit for the same independent reviewer's follow-up. Task stays In Progress.
+
+- Follow-up RED: 1 failed at Thread.start before its toast, 2.98 s. GREEN:
+  all 29 dispatcher tests passed, 11.21 s, including slow-child shutdown;
+  one existing Pydantic warning. No mounted file was rerun.
+- Follow-up size: ChatScreen is exactly 24,424 lines/739 methods; pin updated
+  under the same explicit waiver. Thread-start debug metadata is fixed text.
+- Follow-up inventory: full regeneration changed only ChatScreen 116 -> 117
+  calls/digest; all remaining inventory content equals dbbfcac. Ruff/format
+  checks pass for the regression; no new ChatScreen Ruff findings. Census unchanged.

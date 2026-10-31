@@ -38,6 +38,8 @@ this committed table records their results and the commands below reproduce them
 | Console serial replay | 4 passed, 2 failed, 0 errors | 300.81 s | `.tmp-pr3155-repair-console-serial.xml` |
 | ChatScreen/Settings pins | 4 passed, 0 failed, 0 errors | 2.35 s | `.tmp-pr3155-repair-pins.xml` |
 | Config pin | 2 passed, 0 failed, 0 errors | 0.97 s | `.tmp-pr3155-repair-config-pin.xml` |
+| Thread-start regression RED | 0 passed, 1 failed, 0 errors | 2.98 s | `.tmp-pr3155-start-red.xml` |
+| Follow-up dispatcher GREEN | 29 passed, 0 failed, 0 errors | 11.21 s | `.tmp-pr3155-start-green.xml` |
 
 The RED run failed all five new cases for the intended reason: raw Linux tags,
 True after nonzero exit, two exception-text leaks, and a missing completion
@@ -47,6 +49,25 @@ interpreter; only the external notifier executable is replaced by a Python child
 that sleeps six seconds. It proves off-thread execution, an immediate caller
 return, timeout cleanup, and a False result retained through orderly process exit.
 There is no explicit thread join in the parent fixture to hide the daemon defect.
+
+### Independent-review thread-start follow-up
+
+The fresh review at `dbbfcac2216e057777f8fe770140ef685e755972` reproduced
+`Thread.start()` raising RuntimeError through the viewed-failure bridge before
+its normal in-app toast. `_spawn_os_notification_thread` now catches only that
+exception class, logs fixed `thread_start_failed (RuntimeError)` metadata, and
+returns normally. It does not retry or execute the sender synchronously; the
+non-daemon timeout owner for admitted threads is unchanged.
+
+`Tests/Utils/test_os_notifications.py::test_thread_start_failure_preserves_viewed_failure_toast`
+uses the real viewed-failure bridge, notification gate, display sanitizer, and
+spawn helper with unmounted state/output boundaries. Injecting a sensitive
+RuntimeError only at `Thread.start` produced the expected RED traceback. GREEN
+proves the ordinary error toast survives, the sender never runs, and the debug
+record contains no private exception text, run error, or session/workspace name.
+The full dispatcher run passed all 29 cases, including the slow-child orderly
+shutdown regression. Both runs retain the existing Pydantic deprecation warning;
+no mounted UI suite was repeated and earlier teardown limits remain unchanged.
 
 ### Open Console teardown qualification
 
@@ -87,17 +108,28 @@ The existing 1,173-entry prefix is unchanged, and the new floor is 1,174.
 
 Normalized original-prefix SHA-256: `0924d49048ba3b295cd000d24be335634df263dc0d30207ccbfe56eecc200631`.
 
-Diagnostic statement review found exactly three new metadata-only debug calls
+At repair commit `dbbfcac`, diagnostic statement review found exactly three new metadata-only debug calls
 in `Utils/os_notifications.py`; ChatScreen and Settings statements were unchanged.
 The full inventory generator completed with `--write`. A postcheck rescanned the
 new module (three calls, digest `b1687c2331944c91ff78`, no sink or path candidate),
 removed its row in memory, and confirmed the remainder equals the base inventory
 exactly. Final totals: 709 owners, 1,058 TASK-492 calls, 56 TASK-31551 calls,
-7,775 TASK-494 calls, 16 sink files. No production source changed after generation.
+7,775 TASK-494 calls, 16 sink files. No production source changed after that generation.
 
-The user's size waiver is recorded beside exact pins: ChatScreen **24,420 lines /
-739 methods**, Settings **35,758 lines**, config **12,245 lines**. All six targeted
-ceiling/slack checks passed. No code was moved or compressed to fit a former pin.
+The thread-start follow-up reviewed exactly one additional fixed-text debug call
+in ChatScreen. Full regeneration changed only that owner's count (116 -> 117)
+and digest (`c4acf3c2c2428f4084ed`); restoring that row in memory proves the rest
+of the inventory equals `dbbfcac` exactly, including sink and path projections.
+The TASK-494 total is now 7,776. Production source did not change after this
+regeneration. The new regression and pin file pass Ruff; the regression file
+passes formatter checking, and ChatScreen still has its same 17 existing Ruff
+findings with none added. The census and its qualification remain unchanged.
+
+The user's size waiver is recorded beside exact pins: ChatScreen **24,424 lines /
+739 methods** after the four-line thread-start guard, Settings **35,758 lines**,
+config **12,245 lines**. All six targeted ceiling/slack checks passed before this
+follow-up; the current ChatScreen pin was remeasured exactly without another
+pytest run. No code was moved or compressed to fit a former pin.
 
 Ruff check and formatter checks passed for the new notifier/test module. Comparing
 all changed existing Python files against the base showed no new Ruff findings;
@@ -111,6 +143,7 @@ and create a fresh `TLDW_TEST_CONFIG_ROOT` with the repository's private-directo
 helper before each invocation. Retain the repository's default pytest addopts.
 
 ```text
+python -m pytest Tests/Utils/test_os_notifications.py::test_thread_start_failure_preserves_viewed_failure_toast -q
 python -m pytest Tests/Utils/test_os_notifications.py -q
 python -m pytest Tests/Utils/test_os_notifications.py Tests/UI/test_console_os_notifications.py Tests/UI/test_settings_console_os_notifications_journeys.py Tests/test_config_console_defaults.py -k os_notifications -q
 python -m pytest Tests/UI/test_settings_console_behavior_grammar.py -q

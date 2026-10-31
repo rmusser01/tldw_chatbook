@@ -941,9 +941,13 @@ def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
     The UI thread returns immediately; process exit may wait for the remaining
     notifier timeout instead of abandoning a slow child.
     """
-    threading.Thread(
-        target=notify, daemon=False, name="console-os-notification"
-    ).start()
+    try:
+        threading.Thread(
+            target=notify, daemon=False, name="console-os-notification"
+        ).start()
+    except RuntimeError:
+        # Optional desktop delivery must not suppress the bridge's in-app toast.
+        logger.debug("OS notification skipped: thread_start_failed (RuntimeError)")
 
 
 class _ConsoleTurnUndoUnavailableError(RuntimeError):
