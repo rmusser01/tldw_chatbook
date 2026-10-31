@@ -97,3 +97,57 @@ sink files. No inventory regeneration or changed logging statement was needed.
 Task32695 remains In Progress for independent review/publication. No full suite,
 hosted CI, native Darwin execution, keychain interoperability, push or merge is
 claimed by this repair.
+
+
+## Final integration onto e39df4875d
+
+The 68-commit sequence from reviewed `79516f2bd296bf687865605e032d6bf4ac9fcbe4`
+was rebased onto `e39df4875d636e37a9b28aeba84c36a7e2948f3d`, producing
+`4f213a7bda4f6342dbe19bd04dde20771fac3dee`. The range-diff retains all 68
+commits; the seven changed patch displays reflect new surrounding context and
+combined conflict resolution. No remote action was taken by the implementer.
+
+Conflict resolution retained both `_begin_hook_submission` and the current shared
+hook-read identity guard; both runtime helper groups and `_hook_read`/`test_only`
+arguments; both MCP composition flags; and both the new Retry regression and the
+owned-skill UI test. The five received-dispatch, wiring, sent-draft, prompt-queue
+and Library-screen owners match the new base text. The prior variable-recovery
+product and test files match the reviewed 79516f2 text. The auto-merged image owner
+retains its actual shutdown join. All 183 PR-changed Python files parse, and the
+conflict-heavy Console classes and Library test file have no duplicate methods.
+
+A real interaction between the two PRs required one additional narrow fix:
+`_hook_read_prepares_nothing` inspected visible plugin rows but missed a retained
+`_plugin_requirement_ceiling` when all availability rows were removed. That early
+return could bypass the plugin owner's required refusal. The shortcut now leaves
+both forms to fresh plugin verification; the genuinely empty case still avoids
+the read. Existing test doubles now accept and check the plugin API's scratch
+manager/snapshot keywords. No permission, persistence, platform or runtime boundary
+changes; existing ADR162/163/230 apply, with no new ADR.
+
+- `../ceiling-red-1793474808632364600`: 1 expected failure (retained requirement
+  did not raise the plugin owner's refusal), 2 passing controls, 1 warning in
+  25.46s. This uses the actual runtime/permission read and an explicitly substituted
+  plugin-owner refusal boundary, not native plugin authentication qualification.
+- `../integration-e39-1793474630128275500`: 70 direct-overlap cases selected;
+  stopped by parent authorization to avoid repeating remaining composition
+  variants. Exit 4294967295, with 35 passing and 2 failing progress markers.
+  `partial-observations.json` maps the preserved markers to frozen collection order.
+  The paired deferred-capture/composition controls and both empty/killed-ceiling
+  controls finished. The two failures were the old plugin-service callback fixture
+  variants; their signatures omitted the existing scratch keyword arguments.
+  No aggregate success or completed JUnit report is claimed for this interrupted run.
+- `../integration-ceiling-green-1793475181567903800`: **14 passed, 2 warnings
+  in 101.33s**. New ceiling controls (3), repaired plugin callback fixtures (2),
+  explicit Retry (6), owned skill UI (1), and sync-capture replacement controls
+  (2) all passed. The warnings are Pydantic's exclude_if deprecation and pydub's
+  audioop deprecation; the runner also prints the existing pytest-asyncio loop
+  scope warning. The run finished during handoff preparation, before this commit;
+  exec session25409 contains its final output and result.xml records all14 cases.
+
+Source copies and exact commands are retained in those private sibling evidence
+directories. New-regression Ruff lint/format checks, touched-runtime/test undefined
+name and duplicate-definition checks, AST parsing and git diff --check pass. The
+narrow source diff changes no diagnostic statement. No size work was added under
+the dated user waiver. No repeated full Plugin/credential run, full suite, hosted
+CI, native Darwin qualification or performance requalification is claimed.

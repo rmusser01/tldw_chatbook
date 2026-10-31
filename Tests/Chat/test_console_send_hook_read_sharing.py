@@ -683,7 +683,11 @@ async def test_v2_preparation_consults_plugin_owned_skills_fresh(
     native = SimpleNamespace(signature=("native",), definitions=definitions)
     captures = []
 
-    async def hook_configuration(captured_maximum):
+    async def hook_configuration(
+        captured_maximum, *, scratch_manager, scratch_snapshot
+    ):
+        assert scratch_manager is runtime._scratch_spaces
+        assert scratch_snapshot == runtime._scratch_spaces.snapshot(session_id)
         captures.append(captured_maximum)
         return native
 

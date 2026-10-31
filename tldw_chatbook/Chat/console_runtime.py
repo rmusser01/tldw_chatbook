@@ -3754,13 +3754,16 @@ class ConsoleRuntime:
             # no v2 handlers and no invalid admissions; other shapes go fresh.
             if not isinstance(handlers, list) or handlers:
                 return False
-            if configuration is not None and any(
-                row.get("plugin_owned")
-                for row in configuration.skill_context_maximum.get(
-                    "available_skills", ()
+            if configuration is not None and (
+                configuration.skill_context_maximum.get("_plugin_requirement_ceiling")
+                or any(
+                    row.get("plugin_owned")
+                    for row in configuration.skill_context_maximum.get(
+                        "available_skills", ()
+                    )
                 )
             ):
-                # Plugin-owned skills may contribute native definitions.
+                # Retained requirements also need the plugin owner's fresh check.
                 return False
             # No engine also means no engine-carried native plugins.
             return (
