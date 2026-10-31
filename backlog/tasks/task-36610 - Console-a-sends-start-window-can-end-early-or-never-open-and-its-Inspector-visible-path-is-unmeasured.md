@@ -3,9 +3,11 @@ id: TASK-36610
 title: >-
   Console: a send's start window can end early or never open, and its
   Inspector-visible path is unmeasured
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-10-24 07:50'
+updated_date: '2026-10-31 05:11'
 labels:
   - console
   - performance
@@ -36,3 +38,14 @@ The live measurement (2026-10-23, Anthropic claude-haiku-4-5, 160x45, dev 1381e7
 - [ ] #4 First sends alone reach the provider no later than on the base build (at least 30 first sends per arm, paired and interleaved, median and paired difference)
 - [ ] #5 Deterministic tests fail on the base build for #1 and #2
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Measure first on dev (live, probe, Inspector open): does the send-start window open at acceptance and close at the provider request; are display reads off the loop inside it.
+2. Tests first: a mounted two-session test (another session's provider request must not end this send's start), a queued-prompt dispatch test, agent wake and goal iteration acceptance tests, and an agent chat-start test; each must fail on dev for the reason it pins.
+3. Give each send its own start: a context-carried SendStart opened at the runtime's custody-task creation (every acceptance, any origin) and around an agent chat start's submission, ended by the provider request its own work makes, its task's end, or the 3 s limit; the Console reads the starts open on its store.
+4. Remove the screen-level acceptance note and the process-wide provider-request mark.
+5. Live, paired and interleaved against dev with the pf2probe kit (relay timing outside the app): Inspector open, >=30 sends per arm (AC#3); first sends, >=30 per arm (AC#4).
+6. Rebase onto newest dev, gates by test id against dev, preflight, notes.
+<!-- SECTION:PLAN:END -->
