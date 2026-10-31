@@ -60,6 +60,7 @@ from ...Chat.console_display_state import (
     QUEUE_REASON_PREPARING,
     QUEUE_REASON_RECEIVED_PREPARING,
     build_console_disabled_reason,
+    console_blocker_opens_setup,
 )
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
 
@@ -2717,7 +2718,8 @@ class ConsoleComposerBar(Horizontal):
         # as setup copy, so it cannot become a link into the setup wizard.
         self.set_class(
             effective_send_blocked
-            and bool(setup_blocked_reason)
+            # TASK-33621.11: by the blocker's code; an image refusal is not setup.
+            and console_blocker_opens_setup(setup_blocked_reason)
             and not wake_turn_active
             # Recovery is resolved at its own controls, not the setup wizard.
             and not dispatch_recovery_blocked,

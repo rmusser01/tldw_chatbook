@@ -206,6 +206,10 @@ def _disabled_reason_literals() -> list[tuple[str, bool]]:
             continue
         if isinstance(text, str) and text:
             literals.append((text, id(node) in setup_returns))
+    # TASK-33621.11: the setup strips are chosen by blocker code from a
+    # table, not returned as literals; every one carries the setup chevron.
+    literals.extend((text, True) for text in state._SETUP_STRIP_COPY.values())
+    literals.append((state._SETUP_STRIP_FALLBACK, True))
     return literals
 
 

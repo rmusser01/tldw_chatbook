@@ -1460,6 +1460,7 @@ async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
 def test_disabled_reason_names_the_queue_state_not_send_or_setup():
     """TASK-33625.1 AC#4: mid-run copy follows the queue-state label."""
     from tldw_chatbook.Chat.console_display_state import (
+        ConsoleBlockedReason,
         SEND_LABEL_PREPARING,
         SEND_LABEL_QUEUE,
         SEND_LABEL_QUEUE_FULL,
@@ -1503,7 +1504,9 @@ def test_disabled_reason_names_the_queue_state_not_send_or_setup():
             action_id="send",
             has_draft=True,
             send_blocked=True,
-            setup_blocked_reason="Choose a model before sending.",
+            setup_blocked_reason=ConsoleBlockedReason(  # TASK-33621.11: coded
+                "Choose a model before sending.", code="model_missing"
+            ),
             queue_blocked_reason="Wait for this turn to be accepted.",
             send_label=label,
         )
