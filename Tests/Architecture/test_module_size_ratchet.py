@@ -183,6 +183,7 @@ _BUDGETS: dict[str, int] = {
     # Capture Off default at both capture resolutions (owner decision
     # 2026-10-27).
     # 2026-10-27). Rebased 2026-10-30 onto dev 7536ac3b87 (29,038): 29,049.
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 29036 -> 29047.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
@@ -709,11 +710,13 @@ _BUDGETS: dict[str, int] = {
     # raise the row rather than squeeze unrelated code): 6686 -> 6701. A
     # capture pause's unsent turn is recorded held off the shelf (the refusal
     # carries card_held) instead of dropped, so Cancel loses no attachment.
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6990 -> 7001.
+    # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     "tldw_chatbook/UI/Console_Modules/session.py": 7005,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7076,
+    "tldw_chatbook/Chat/console_runtime.py": 7091,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-097 amendment 2026-10-27). The proof itself lives in

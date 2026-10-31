@@ -238,6 +238,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: owner decision 2026-10-04 (raise the row rather than squeeze unrelated
     #: code): dev 7536ac3b87 measures 24331/737; the Temporary segment's capture
     #: state at compose and on every full sync pass adds 1, 24332/737.
+    #: 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24336/737.
     #: 2026-10-31, PR #3225 after #3183: user size-limit waiver; exact measurement.
     # owner decision 2026-10-04 (expand limits): TASK-34100.6 +11.
     #: 2026-10-20, TASK-34100.6 review v3r1 (R1-01); re-measured 2026-10-29
