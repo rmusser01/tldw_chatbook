@@ -1,0 +1,146 @@
+{
+  "base": "57e330e735fff25515778e839f31ed85602c34f2",
+  "files": [
+    {
+      "path": "tldw_chatbook/Utils/windows_files.py",
+      "base_sha256": "6b665fa28c2b3916a7db03d25877d098219edc3de57d53f0c5d649454a4eafad",
+      "current_sha256": "6b665fa28c2b3916a7db03d25877d098219edc3de57d53f0c5d649454a4eafad",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/bootstrap.py",
+      "base_sha256": "398ac4ad624e75979e15a57a49ea59c27928a2996ce3122cad000601064412aa",
+      "current_sha256": "398ac4ad624e75979e15a57a49ea59c27928a2996ce3122cad000601064412aa",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/storage_admission.py",
+      "base_sha256": "36ad34258cdd16615294b52e5ce5d98609010beb6f0aca3569c6263d01deaab7",
+      "current_sha256": "36ad34258cdd16615294b52e5ce5d98609010beb6f0aca3569c6263d01deaab7",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/admission_runtime.py",
+      "base_sha256": "1eada00fea80076ca40a7c2ec122b50ed73c12878bce2476f449b3c76d2db3f4",
+      "current_sha256": "1eada00fea80076ca40a7c2ec122b50ed73c12878bce2476f449b3c76d2db3f4",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Agents/activation.py",
+      "base_sha256": "4a98f12bf8242b420ba8678ed79602eb28b76660bf8f5b89b7c121cb62acba66",
+      "current_sha256": "4a98f12bf8242b420ba8678ed79602eb28b76660bf8f5b89b7c121cb62acba66",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_hook_preparation.py",
+      "base_sha256": "75fa5880b63dfcaab640a297bf7f16b885c0b618310eeda0cfb876a3a2c947cc",
+      "current_sha256": "75fa5880b63dfcaab640a297bf7f16b885c0b618310eeda0cfb876a3a2c947cc",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_preparation_reads.py",
+      "base_sha256": "160c2463e9ec5451853828ef305f5fe45ecdf50ac1839524aaefd60bbefafa31",
+      "current_sha256": "160c2463e9ec5451853828ef305f5fe45ecdf50ac1839524aaefd60bbefafa31",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Utils/private_paths.py",
+      "base_sha256": "5ab6c555d423bbf60323cc1dd9fcec9b8605acd7d1ccf0d25549b9d8d1d3265a",
+      "current_sha256": "5ab6c555d423bbf60323cc1dd9fcec9b8605acd7d1ccf0d25549b9d8d1d3265a",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/raw_participants.py",
+      "base_sha256": "420f0dbf647d6e2c226b2f06a2a47a2feaf9d848122080ac1a1ad3b15eaaa936",
+      "current_sha256": "420f0dbf647d6e2c226b2f06a2a47a2feaf9d848122080ac1a1ad3b15eaaa936",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/config_participants.py",
+      "base_sha256": "0a8a099e4b2541adc12e39b3b4d3de48802c82c52dc119a924e20260ffb4042a",
+      "current_sha256": "0a8a099e4b2541adc12e39b3b4d3de48802c82c52dc119a924e20260ffb4042a",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/app_skill_wiring.py",
+      "base_sha256": "8c53fe2df9a7c08cb076f39f465112f54d098afb0fff9b11f263bd2deec56bd8",
+      "current_sha256": "8c53fe2df9a7c08cb076f39f465112f54d098afb0fff9b11f263bd2deec56bd8",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/app_service_wiring.py",
+      "base_sha256": "4dba48aed28b36eb809ae0ba2d370a40ad007d8cb2b35a57604ca9ebb8cc1e90",
+      "current_sha256": "4dba48aed28b36eb809ae0ba2d370a40ad007d8cb2b35a57604ca9ebb8cc1e90",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Skills_Interop/local_skills_service.py",
+      "base_sha256": "802ff38c16584c178d0768e90bf70c4a6c84afd67367e5df8dfa339825c90866",
+      "current_sha256": "802ff38c16584c178d0768e90bf70c4a6c84afd67367e5df8dfa339825c90866",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/local_content_lifetime.py",
+      "base_sha256": "e8f2ebe1dff2c1b926481826e183f09a1a1ea7a66bea248544aafa680c7a6495",
+      "current_sha256": "e8f2ebe1dff2c1b926481826e183f09a1a1ea7a66bea248544aafa680c7a6495",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Skills_Interop/skills_scope_service.py",
+      "base_sha256": "e0bfdc0900037af62cb26475b968e2623bbf6efd353dedaa1c4e3f3926891e02",
+      "current_sha256": "e0bfdc0900037af62cb26475b968e2623bbf6efd353dedaa1c4e3f3926891e02",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/skill.py",
+      "base_sha256": "792a5f32595f80ea1f94e74afe7e8246331341fc858bac901e015a84af151ea5",
+      "current_sha256": "792a5f32595f80ea1f94e74afe7e8246331341fc858bac901e015a84af151ea5",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/participants.py",
+      "base_sha256": "aa132fb37ae27ef044941b5e4b2beabbaa104b8269cb634d8f765165f9afbc24",
+      "current_sha256": "aa132fb37ae27ef044941b5e4b2beabbaa104b8269cb634d8f765165f9afbc24",
+      "identical": true
+    },
+    {
+      "path": "tldw_chatbook/DB/AgentRuns_DB.py",
+      "base_sha256": "8044686ba972af20874535cac02b2d0de738ddcc27d48f6df0847d0900b9c004",
+      "current_sha256": "8044686ba972af20874535cac02b2d0de738ddcc27d48f6df0847d0900b9c004",
+      "identical": true
+    }
+  ],
+  "fixture_changed_ranges_formatted": 23,
+  "mounted_main_thread_owner": "ConsoleSkillController._refresh_console_skill_candidates -> skills scope -> local skill trust -> config participant admission -> private path/native handle info",
+  "final_mounted_worker_owner": "AgentService lifecycle owner-sequence allocation -> AgentRunsDB.get_run -> participant/storage admission -> native private-path/open_handle",
+  "method_comparison": [
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "method": "_next_owner_seq",
+      "identical_ast": true,
+      "base_sha256": "be529baad11b56fd9e678e95d15db14f80f2f35a0f9f6a0ea511bfa0d207e2d0",
+      "current_sha256": "be529baad11b56fd9e678e95d15db14f80f2f35a0f9f6a0ea511bfa0d207e2d0"
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "method": "_owner_seq_allocator",
+      "identical_ast": true,
+      "base_sha256": "e0555020546191fe52c1d0b16800e8e2a0f8c788b4505ca4abc93f5994f16f3e",
+      "current_sha256": "e0555020546191fe52c1d0b16800e8e2a0f8c788b4505ca4abc93f5994f16f3e"
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "method": "_allocate_owner_seq",
+      "identical_ast": true,
+      "base_sha256": "25c100665c4246238360a23a4b1382dee959ec3a31a29c4a1208df27ec6a9b5e",
+      "current_sha256": "25c100665c4246238360a23a4b1382dee959ec3a31a29c4a1208df27ec6a9b5e"
+    },
+    {
+      "path": "tldw_chatbook/Agents/agent_service.py",
+      "method": "_append_run_lifecycle",
+      "identical_ast": true,
+      "base_sha256": "5c0ae42ccc482fa1e2573cdec9e0d1fb4ae5a234ef2bd983836a318265719221",
+      "current_sha256": "5c0ae42ccc482fa1e2573cdec9e0d1fb4ae5a234ef2bd983836a318265719221"
+    }
+  ]
+}

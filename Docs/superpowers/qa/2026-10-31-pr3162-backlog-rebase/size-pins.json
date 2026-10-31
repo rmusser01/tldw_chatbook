@@ -1,0 +1,82 @@
+[
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Workspaces/registry_service.py",
+    "previous": 4232,
+    "final": 4304
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_trace_service.py",
+    "previous": 6662,
+    "final": 6679
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "previous": 6686,
+    "final": 6759
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "previous": 8763,
+    "final": 8774
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Agents/agent_service.py",
+    "previous": 9570,
+    "final": 9644
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "previous": 11604,
+    "final": 11630
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "previous": 25705,
+    "final": 25867
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "previous": 8380,
+    "final": 8840
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "previous": 35602,
+    "final": 35528
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "previous": 6307,
+    "final": 6303
+  },
+  {
+    "budget_file": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "previous": 29036,
+    "final": 29035
+  },
+  {
+    "budget_file": "Tests/Architecture/test_screen_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "previous": [
+      "ChatScreen",
+      24335,
+      737
+    ],
+    "final": [
+      "ChatScreen",
+      24259,
+      737
+    ]
+  }
+]

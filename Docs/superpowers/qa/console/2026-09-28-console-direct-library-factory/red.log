@@ -1,0 +1,198 @@
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+______ test_shared_direct_factory_uses_real_supported_constructor[False] _______
+
+backends_present = False
+
+    @pytest.mark.parametrize("backends_present", [False, True])
+    def test_shared_direct_factory_uses_real_supported_constructor(backends_present):
+        backend = object() if backends_present else None
+        app = SimpleNamespace(
+            local_library_collections_service=object(),
+            local_media_reading_service=backend,
+            notes_service=backend,
+            local_prompt_service=backend,
+            local_skills_service=backend,
+            local_chat_conversation_service=backend,
+            notes_scope_service=backend,
+            service_policy_enforcer=backend,
+        )
+        context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
+        provider, authority = _controller(
+            partial(_library_provider_for_app, app)
+>       )._library_provider_for_context(context)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_library_runtime_policy.py:125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/Chat/console_chat_controller.py:15648: in _library_provider_for_context
+    provider = factory(turn_context)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+app = namespace(local_library_collections_service=<object object at 0x10c26dad0>, local_media_reading_service=None, notes_se...ocal_skills_service=None, local_chat_conversation_service=None, notes_scope_service=None, service_policy_enforcer=None)
+turn_context = ConsoleTurnExecutionContext()
+
+    def _library_provider_for_app(app: Any, turn_context: Any | None = None) -> Any | None:
+        """Build one Library provider from frozen authority and app services."""
+        if turn_context is None:
+            return None
+        if not turn_context.library_authority.direct_library_tools:
+            from tldw_chatbook.Agents.library_rag_tool_provider import (
+                LibraryRagToolProvider,
+            )
+    
+            return LibraryRagToolProvider(
+                getattr(app, "library_rag_search_service", None)
+            )
+    
+        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+        from tldw_chatbook.Library.local_library_tool_service import (
+            LocalLibraryToolService,
+        )
+    
+        media_chunk_service = None
+        media_reading_service = getattr(app, "local_media_reading_service", None)
+        media_db = getattr(app, "media_db", None) or getattr(
+            media_reading_service, "media_db", None
+        )
+        if media_db is not None or media_reading_service is not None:
+            from tldw_chatbook.Chunking.chunking_interop_library import (
+                get_chunking_service,
+            )
+            from tldw_chatbook.Library.local_media_chunk_tool_service import (
+                LocalMediaChunkToolService,
+            )
+    
+            media_chunk_service = LocalMediaChunkToolService(
+                media_db,
+                media_reading_service,
+                template_interop=(
+                    get_chunking_service(media_db) if media_db is not None else None
+                ),
+                policy_enforcer=getattr(app, "service_policy_enforcer", None),
+            )
+>       service = LocalLibraryToolService(
+            media_service=media_reading_service,
+            notes_service=getattr(app, "notes_service", None),
+            prompt_service=getattr(app, "local_prompt_service", None),
+            skills_service=getattr(app, "local_skills_service", None),
+            conversation_service=getattr(app, "local_chat_conversation_service", None),
+            collections_service=getattr(app, "local_library_collections_service", None),
+            media_chunk_service=media_chunk_service,
+            notes_scope_service=getattr(app, "notes_scope_service", None),
+            policy_enforcer=getattr(app, "service_policy_enforcer", None),
+        )
+E       TypeError: LocalLibraryToolService.__init__() got an unexpected keyword argument 'collections_service'
+
+tldw_chatbook/Chat/console_runtime.py:661: TypeError
+---------------------------- Captured stderr setup -----------------------------
+2026-09-28 08:17:08.839 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-09-28 08:17:08.998 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-09-28 08:17:09.021 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-09-28 08:17:09.024 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-09-28 08:17:09.036 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /private/tmp/archive-capture-task2-red-stores/test_shared_direct_factory_use0/test_data/config/config.toml
+2026-09-28 08:17:09.037 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /private/tmp/archive-capture-task2-red-stores/test_shared_direct_factory_use0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-28 08:17:09.038 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /private/tmp/archive-capture-task2-red-stores/test_shared_direct_factory_use0/test_data/config/config.toml
+2026-09-28 08:17:09.039 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-28 08:17:09.040 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+_______ test_shared_direct_factory_uses_real_supported_constructor[True] _______
+
+backends_present = True
+
+    @pytest.mark.parametrize("backends_present", [False, True])
+    def test_shared_direct_factory_uses_real_supported_constructor(backends_present):
+        backend = object() if backends_present else None
+        app = SimpleNamespace(
+            local_library_collections_service=object(),
+            local_media_reading_service=backend,
+            notes_service=backend,
+            local_prompt_service=backend,
+            local_skills_service=backend,
+            local_chat_conversation_service=backend,
+            notes_scope_service=backend,
+            service_policy_enforcer=backend,
+        )
+        context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
+        provider, authority = _controller(
+            partial(_library_provider_for_app, app)
+>       )._library_provider_for_context(context)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_library_runtime_policy.py:125: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/Chat/console_chat_controller.py:15648: in _library_provider_for_context
+    provider = factory(turn_context)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+app = namespace(local_library_collections_service=<object object at 0x10c26db30>, local_media_reading_service=<object object...10c26da60>, notes_scope_service=<object object at 0x10c26da60>, service_policy_enforcer=<object object at 0x10c26da60>)
+turn_context = ConsoleTurnExecutionContext()
+
+    def _library_provider_for_app(app: Any, turn_context: Any | None = None) -> Any | None:
+        """Build one Library provider from frozen authority and app services."""
+        if turn_context is None:
+            return None
+        if not turn_context.library_authority.direct_library_tools:
+            from tldw_chatbook.Agents.library_rag_tool_provider import (
+                LibraryRagToolProvider,
+            )
+    
+            return LibraryRagToolProvider(
+                getattr(app, "library_rag_search_service", None)
+            )
+    
+        from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+        from tldw_chatbook.Library.local_library_tool_service import (
+            LocalLibraryToolService,
+        )
+    
+        media_chunk_service = None
+        media_reading_service = getattr(app, "local_media_reading_service", None)
+        media_db = getattr(app, "media_db", None) or getattr(
+            media_reading_service, "media_db", None
+        )
+        if media_db is not None or media_reading_service is not None:
+            from tldw_chatbook.Chunking.chunking_interop_library import (
+                get_chunking_service,
+            )
+            from tldw_chatbook.Library.local_media_chunk_tool_service import (
+                LocalMediaChunkToolService,
+            )
+    
+            media_chunk_service = LocalMediaChunkToolService(
+                media_db,
+                media_reading_service,
+                template_interop=(
+                    get_chunking_service(media_db) if media_db is not None else None
+                ),
+                policy_enforcer=getattr(app, "service_policy_enforcer", None),
+            )
+>       service = LocalLibraryToolService(
+            media_service=media_reading_service,
+            notes_service=getattr(app, "notes_service", None),
+            prompt_service=getattr(app, "local_prompt_service", None),
+            skills_service=getattr(app, "local_skills_service", None),
+            conversation_service=getattr(app, "local_chat_conversation_service", None),
+            collections_service=getattr(app, "local_library_collections_service", None),
+            media_chunk_service=media_chunk_service,
+            notes_scope_service=getattr(app, "notes_scope_service", None),
+            policy_enforcer=getattr(app, "service_policy_enforcer", None),
+        )
+E       TypeError: LocalLibraryToolService.__init__() got an unexpected keyword argument 'collections_service'
+
+tldw_chatbook/Chat/console_runtime.py:661: TypeError
+----------------------------- Captured stderr call -----------------------------
+2026-09-28 08:17:09.492 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /private/tmp/archive-capture-task2-red-stores/test_shared_direct_factory_use1/test_data/config/config.toml
+2026-09-28 08:17:09.493 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /private/tmp/archive-capture-task2-red-stores/test_shared_direct_factory_use1/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-09-28 08:17:09.495 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /private/tmp/archive-capture-task2-red-stores/test_shared_direct_factory_use1/test_data/config/config.toml
+2026-09-28 08:17:09.496 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-09-28 08:17:09.496 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_library_runtime_policy.py::test_shared_direct_factory_uses_real_supported_constructor[False]
+FAILED Tests/Chat/test_console_library_runtime_policy.py::test_shared_direct_factory_uses_real_supported_constructor[True]
+2 failed, 1 passed, 10 deselected in 1.55s

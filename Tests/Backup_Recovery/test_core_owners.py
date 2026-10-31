@@ -127,7 +127,7 @@ def test_schema_policy_matches_installed_store(core_store):
     assert policy.versions == (
         (owner._CURRENT_SCHEMA_VERSION, 4)
         if name == "prompts"
-        else (owner._CURRENT_SCHEMA_VERSION, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+        else (owner._CURRENT_SCHEMA_VERSION, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
         if name == "chachanotes"
         else (5, 4)
         if name == "library_collections"
@@ -135,7 +135,7 @@ def test_schema_policy_matches_installed_store(core_store):
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        38
+        42
         if name == "chachanotes"
         else 2
         if name == "prompts"
@@ -153,11 +153,12 @@ def test_schema_policy_matches_installed_store(core_store):
             CHACHANOTES_REGIONS_V83_TO_V84_SQL,
             CHACHANOTES_RULES_V80_TO_V81_SQL,
             CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
-            CHACHANOTES_V84_SCHEMAS,
+            CHACHANOTES_V85_SCHEMAS,
+            CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
         )
 
         assert policy.schema_sql[-2:] == tuple(
-            (84, schema) for schema in CHACHANOTES_V84_SCHEMAS[2:]
+            (85, schema) for schema in CHACHANOTES_V85_SCHEMAS[2:]
         )
         assert policy.migration_steps == (
             (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
@@ -168,6 +169,7 @@ def test_schema_policy_matches_installed_store(core_store):
             (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
             (82, 83, CHACHANOTES_PORTRAIT_V82_TO_V83_SQL),
             (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
+            (84, 85, CHACHANOTES_ARCHIVE_V84_TO_V85_SQL),
         )
     elif name == "library_collections":
         from tldw_chatbook.DB.recovery_core_schema import COLLECTIONS_V4_TO_V5_SQL

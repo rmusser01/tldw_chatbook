@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settin  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Amber itinerary conversation                                                                           │
+                  Context ◂  │   Find currently arc…  ✕        Chat 2         ✕  Amber itinerary co…  ✕    New tab     Temporary                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Conversations          ▾    │                                                                                                                       │
+     Archive this chat       │                                                                                                                       │
+      Archived chats         │                                                                                                                       │
+     Search all chats…       │                                                                                                                       │
+   No active                 │                                                                                                                       │
+   conversation.             │                                                                                                                       │
+                             │                                                                                                                       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                       │
+  ▊  Filter      ▎           │                                                                                                                       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                       │
+                             │                                                                                                                       │
+  Chats                 ▾    │                                                                                                                       │◂ Inspect
+   ▢     Chat 2       *   ▇  │                                                                                                                       │
+         open                │                                                                                                                       │
+                             │                                                                                                                       │
+         Find         *      │                                                                                                                       │
+   ▢     currently           │                                                                                                                       │
+         ar…                 │                                                                                                                       │
+                             │                                                                                                                       │
+         I            *      │                                                                                                                       │
+   ▢     accidenta           │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ▼ more — scroll             │   User                                                                                                                │
+ ──────────────────────────  │   Original history for Amber itinerary conversation                                                                   │
+ Character · No chats   ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │  ▊ Assistant                                                                                                          │
+ Model                  ▸    │  ▊                                                                                                                    │
+ ──────────────────────────▇ │  ▊  Saved reply for Amber itinerary conversation                                                                      │
+ Agent                  ▸    │  ▊                                                                                                                    │
+ ▼ Details                   │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▴ Status hidden
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                           Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

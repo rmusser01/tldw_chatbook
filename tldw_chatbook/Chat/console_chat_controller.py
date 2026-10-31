@@ -251,6 +251,9 @@ from tldw_chatbook.Chat.console_prepared_request import (
     PERSISTED_MESSAGE_ID_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
+    freeze_json as freeze_json,  # noqa: PLC0414 - retained live trace patch seam
+    _is_current_user_text_transform,
+    _reseal_archive_followup_trace_request,
     tagged_memory_message,
     tagged_visual_memory_message,
 )
@@ -267,6 +270,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceTransformKind,
     admit_message_provenance,
     compaction_transform_provenance,
+    current_turn_source_revision_id as current_turn_source_revision_id,  # noqa: PLC0414 - retained live trace patch seam
     frozen_policy_from_provenance,
 )
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
@@ -287,6 +291,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
 # off the UI-ready module census (ADR-097): task-31384 spends that slot on
 # `Chat.console_interrupt_rounds`, which the controller constructs at boot.
 from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS as CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,  # noqa: PLC0414 - retained live rider patch seam
     ConsoleSessionSettings,
     configured_provider_model,
     console_provider_settings,
@@ -2702,6 +2707,8 @@ def build_tool_review_hook(
     workspace_id: str | None = None,
     kill_switch: Callable[[], bool] | None = None,
     library_provider: Any | None = None,
+    recovery_provider_reader: Callable[[], Any] | None = None,
+    recovery_persona_rules: tuple[Mapping[str, Any], ...] = (),
 ) -> Callable[[list["ToolCall"], str], dict[str, ToolReviewValue]]:
     """Forward to the documented console_interrupt_rounds implementation."""
     from tldw_chatbook.Chat.console_interrupt_rounds import (
@@ -2716,6 +2723,8 @@ def build_tool_review_hook(
         workspace_id=workspace_id,
         kill_switch=kill_switch,
         library_provider=library_provider,
+        recovery_provider_reader=recovery_provider_reader,
+        recovery_persona_rules=recovery_persona_rules,
         read_global_AGENT_LESSON_APPROVAL_REQUIRED=lambda: (
             AGENT_LESSON_APPROVAL_REQUIRED
         ),
@@ -11847,38 +11856,9 @@ class ConsoleChatController:
             effective_thinking_policy=thinking.effective_policy,
         )
 
-    @staticmethod
-    def _is_current_user_text_transform(
-        source: Mapping[str, Any], visible: Mapping[str, Any]
-    ) -> bool:
-        """Admit text-only changes; retain every role, attachment and sidecar."""
-        if source.get("role") != "user" or {
-            key: value for key, value in source.items() if key != "content"
-        } != {key: value for key, value in visible.items() if key != "content"}:
-            return False
-        before, after = source.get("content"), visible.get("content")
-        if type(before) is str and type(after) is str:
-            return True
-        if (
-            type(before) is not list
-            or type(after) is not list
-            or len(before) != len(after)
-        ):
-            return False
-        for original, transformed in zip(before, after, strict=True):
-            if original == transformed:
-                continue
-            if (
-                type(original) is not dict
-                or type(transformed) is not dict
-                or original.get("type") != "text"
-                or type(original.get("text")) is not str
-                or type(transformed.get("text")) is not str
-                or {key: value for key, value in original.items() if key != "text"}
-                != {key: value for key, value in transformed.items() if key != "text"}
-            ):
-                return False
-        return True
+    _is_current_user_text_transform = staticmethod(_is_current_user_text_transform)
+
+    _reseal_archive_followup_trace_request = _reseal_archive_followup_trace_request
 
     @staticmethod
     def _provider_messages_with_prefill(
@@ -26636,6 +26616,8 @@ class ConsoleChatController:
                 # no switch to honor (None), matching `_compose_mcp_provider`.
                 kill_switch=self._console_tool_kill_switch_reader(),
                 library_provider=library_provider,
+                recovery_provider_reader=lambda: recovery_provider,
+                recovery_persona_rules=turn_context.persona_policy_rules,
             )
 
             # Local tools (ADR-032): same per-run composition point. Both
@@ -26832,7 +26814,21 @@ class ConsoleChatController:
                     disabled_reader=self._canvas_disabled_reader,
                 )
                 canvas_authority = canvas_provider.issue_registration_authority()
+        recovery_runtime = getattr(self, "_archive_recovery_runtime", None)
+        recovery_provider = (
+            recovery_runtime.admit(turn_context, session)
+            if recovery_runtime is not None and session is not None
+            and work_origin is WorkOrigin.MANUAL and not resume_provider_continuation
+            else None
+        )
         try:
+            if recovery_provider is not None:
+                from .archive_recovery.runtime import prepare_archive_followup
+
+                agent_messages, trace_request = await prepare_archive_followup(
+                    self, recovery_runtime, recovery_provider, turn_context, resolution,
+                    agent_messages, trace_request, trusted_profile_user_message_id,
+                )
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
@@ -26885,6 +26881,7 @@ class ConsoleChatController:
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
+                recovery_provider=recovery_provider,
                 library_provider=library_provider,
                 library_authority=library_provider_authority,
                 managed_skill_promotion_gate=managed_skill_promotion_gate,
@@ -27116,6 +27113,8 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
+            if recovery_provider is not None:
+                await recovery_runtime.release(recovery_provider.authority)
             # Task 3b: this finally intentionally pops NONE of the three
             # per-session entries (stream task, assistant message id,
             # cancel event) -- `_finalize_agent_reply` below (and, through

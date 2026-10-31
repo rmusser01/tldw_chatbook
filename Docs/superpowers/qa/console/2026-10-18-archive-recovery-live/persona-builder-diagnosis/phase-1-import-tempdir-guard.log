@@ -1,0 +1,40 @@
+Traceback (most recent call last):
+  File "/private/tmp/archive-recovery-persona-builder-diagnosis-20261018/probe.py", line 49, in <module>
+    from tldw_chatbook.Chat.console_prepared_request import build_console_request
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/__init__.py", line 5, in <module>
+    from .chat_conversation_scope_service import ChatConversationScopeService
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/chat_conversation_scope_service.py", line 9, in <module>
+    from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Library/__init__.py", line 16, in <module>
+    from .local_library_tool_service import LocalLibraryToolService
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Library/local_library_tool_service.py", line 69, in <module>
+    from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Skills_Interop/__init__.py", line 4, in <module>
+    from .server_skills_service import ServerSkillsService
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Skills_Interop/server_skills_service.py", line 7, in <module>
+    from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/runtime_policy/bootstrap.py", line 12, in <module>
+    from tldw_chatbook.Utils.tls_trust import httpx_verify
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Utils/tls_trust.py", line 32, in <module>
+    from ..config import get_cli_setting
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py", line 25, in <module>
+    import portalocker
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/portalocker/__init__.py", line 2, in <module>
+    from .utils import (
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/portalocker/utils.py", line 435, in <module>
+    class BoundedSemaphore(LockBase):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/portalocker/utils.py", line 458, in BoundedSemaphore
+    directory: str = tempfile.gettempdir(),
+                     ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/tempfile.py", line 315, in gettempdir
+    return _os.fsdecode(_gettempdir())
+                        ^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/tempfile.py", line 308, in _gettempdir
+    tempdir = _get_default_tempdir()
+              ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/tempfile.py", line 203, in _get_default_tempdir
+    fd = _os.open(filename, _bin_openflags, 0o600)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/archive-recovery-persona-builder-diagnosis-20261018/probe.py", line 46, in audit
+    raise RuntimeError(f'offline builder diagnostic forbids external writes: {target}')
+RuntimeError: offline builder diagnostic forbids external writes: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/_l3q9st5

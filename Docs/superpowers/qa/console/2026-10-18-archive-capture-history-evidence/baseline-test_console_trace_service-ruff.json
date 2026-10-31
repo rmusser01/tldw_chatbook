@@ -1,0 +1,367 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 68
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport inspect\nimport json\nimport sqlite3\nimport threading\nfrom collections.abc import Mapping\nfrom dataclasses import dataclass, fields, replace\nfrom typing import cast\n\nimport pytest\n\nfrom tldw_chatbook.Chat.console_trace_final_values import (\n    CompletedToolTurnWitness,\n    ProviderRequestShadowBundle,\n    SurfaceDeltaAdmission,\n    VerifiedSurfaceDelta,\n    VerifiedSurfaceDeltaItem,\n    VerifiedSurfaceReplacementRange,\n    build_verified_surface_delta,\n    verify_provider_request_shadow,\n)\nfrom tldw_chatbook.Chat.console_trace_models import (\n    FrozenTracePolicy,\n    SemanticRevisionRef,\n    TraceCallState,\n    TraceContentRef,\n    TraceOmission,\n    new_opaque_id,\n)\nfrom tldw_chatbook.Chat.console_trace_provenance import (\n    ConsoleRequestRoute,\n    DerivedTraceProvenance,\n    OmittedTraceProvenance,\n    ProviderArtifactTraceProvenance,\n    ProviderRequestProvenance,\n    SavedRevisionTraceProvenance,\n    TraceOmissionReason,\n    TraceProvenanceSource,\n    TraceTransformKind,\n    request_route_provenance,\n)\nfrom tldw_chatbook.Chat.console_trace_repository import (\n    ConsoleTraceRepository,\n    RequestHeaderRecord,\n    SurfaceReplacementRecord,\n    TraceCallRecord,\n)\nfrom tldw_chatbook.Chat.console_trace_service import (\n    ConsoleTraceService,\n)\nfrom tldw_chatbook.Chat.provider_continuation import (\n    dump_provider_continuation_json,\n    parse_provider_continuation_json,\n)\nfrom tldw_chatbook.DB.ChaChaNotes_DB import (\n    CharactersRAGDB,\n    CharactersRAGDBError,\n    TransactionContextManager,\n)\nfrom tldw_chatbook.DB.transaction_observer import (\n    active_managed_transaction_count,\n    begin_managed_transaction,\n    current_managed_transaction,\n    register_transaction_completion,\n)\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 71
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "PYI041",
+    "end_location": {
+      "column": 29,
+      "row": 174
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "float",
+          "end_location": {
+            "column": 29,
+            "row": 174
+          },
+          "location": {
+            "column": 18,
+            "row": 174
+          }
+        }
+      ],
+      "message": "Remove redundant type"
+    },
+    "location": {
+      "column": 18,
+      "row": 174
+    },
+    "message": "Use `float` instead of `int | float`",
+    "name": "redundant-numeric-union",
+    "noqa_row": 174,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/redundant-numeric-union"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 731
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 730
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 730,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 1096
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 1095
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 1095,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 1158
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 1157
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 1157,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 2035
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 2034
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 2034,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 63,
+      "row": 2223
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "checkpoint._extend_surface_projection",
+          "end_location": {
+            "column": 63,
+            "row": 2223
+          },
+          "location": {
+            "column": 14,
+            "row": 2223
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 14,
+      "row": 2223
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 2223,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 45,
+      "row": 2269
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 2268
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 2268,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 2280
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    with pytest.raises(RuntimeError, match=\"rollback\"), db.transaction() as cursor:\n        first_attempt = service.persist_request(\n            cursor,\n            owner_id=owner_id,\n            segment_id=segment_id,\n            provenance=provenance,\n            bundle=bundle,\n            surface_delta=delta,\n        )\n        extended_descriptors = descriptors + (\n            SavedRevisionTraceProvenance(revisions[2]),\n        )\n        extended_provenance = _provenance(extended_descriptors)\n        _persist(\n            service,\n            cursor,\n            owner_id=owner_id,\n            segment_id=segment_id,\n            provenance=extended_provenance,\n            bundle=_available_bundle(\n                extended_provenance,\n                messages=[\n                    {\"role\": \"user\", \"content\": \"A\"},\n                    {\"role\": \"user\", \"content\": \"C\"},\n                    {\"role\": \"user\", \"content\": \"D\"},\n                ],\n            ),\n            append_from_index=2,\n            previous_surface_head_id=first_attempt.surface_head_id,\n        )\n        raise RuntimeError(\"rollback\")",
+          "end_location": {
+            "column": 43,
+            "row": 2310
+          },
+          "location": {
+            "column": 1,
+            "row": 2279
+          }
+        }
+      ],
+      "message": "Combine `with` statements"
+    },
+    "location": {
+      "column": 5,
+      "row": 2279
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 2279,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 2323
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 2322
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 2322,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 2424
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 2423
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 2423,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 2507
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    with pytest.raises(RuntimeError, match=\"rollback\"), db.transaction() as cursor:\n        for projected, bundle, delta in (first, second):\n            service.persist_request(\n                cursor,\n                owner_id=owner_id,\n                segment_id=segment_id,\n                provenance=projected,\n                bundle=bundle,\n                surface_delta=delta,\n            )\n        raise RuntimeError(\"rollback\")",
+          "end_location": {
+            "column": 43,
+            "row": 2517
+          },
+          "location": {
+            "column": 1,
+            "row": 2506
+          }
+        }
+      ],
+      "message": "Combine `with` statements"
+    },
+    "location": {
+      "column": 5,
+      "row": 2506
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 2506,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 4301
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 4300
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 4300,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 4389
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 4388
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 4388,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  },
+  {
+    "cell": null,
+    "code": "SIM117",
+    "end_location": {
+      "column": 41,
+      "row": 4732
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 5,
+      "row": 4731
+    },
+    "message": "Use a single `with` statement with multiple contexts instead of nested `with` statements",
+    "name": "multiple-with-statements",
+    "noqa_row": 4731,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/multiple-with-statements"
+  }
+]

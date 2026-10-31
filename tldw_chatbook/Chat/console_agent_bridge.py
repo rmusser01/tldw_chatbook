@@ -148,6 +148,7 @@ from tldw_chatbook.Agents.mcp_tool_provider import (
 # module is imported on the Chat-screen mount leg).
 from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
+    RECOVERY_RESERVED_TOOL_NAMES,
     CANVAS_RESERVED_TOOL_NAMES,
     CODE_REVIEW_RESERVED_TOOL_NAMES,
     LIBRARY_RESERVED_TOOL_NAMES,
@@ -190,6 +191,7 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
     CONTINUATION_OWNER_KEY,
+    THINKING_OWNER_KEY,
     PreparedConsoleRequest,
     PreparedProviderRequest,  # noqa: F401 - lazy request helper compatibility seam
     build_console_request,
@@ -2969,6 +2971,7 @@ class ConsoleAgentTraceRequestFactory:
         actor_id: str,
         chain_id: str,
         continuation_groups: Sequence[ContinuationOwnerGroup] = (),
+        thinking_owner_key: str | None = None,
     ) -> PreparedConsoleRequest:
         """Bind current agent rows to admitted references or new artifacts."""
 
@@ -2976,27 +2979,35 @@ class ConsoleAgentTraceRequestFactory:
         assert provenance is not None
         base_rows = self.admitted_request.flattened_messages()
         base_descriptors = provenance.flattened_messages()
+        thinking_owners = {
+            group.owner_message_id
+            for unit in self.admitted_request.compactable
+            for group in unit.thinking_groups
+        } | {
+            group.owner_message_id
+            for group in self.admitted_request.active_thinking_groups
+        }
         search_from = 0
         descriptors: list[TraceProvenance] = []
         for message in messages:
             # Prepared rows are recursively frozen, while agent transport rows
             # carry mutable JSON arrays. Compare the same representation so an
             # unchanged multimodal message keeps its admitted saved owner.
-            frozen_message = freeze_json(message)
+            compared = message
+            if (
+                thinking_owner_key is not None
+                and THINKING_OWNER_KEY not in message
+                and type(owner := message.get(thinking_owner_key)) is str
+                and owner in thinking_owners
+            ):
+                # Only the adapter's validated owner alias may change spelling.
+                compared = dict(message)
+                compared[THINKING_OWNER_KEY] = compared.pop(thinking_owner_key)
+            frozen_message = freeze_json(compared)
             descriptor: TraceProvenance | None = None
             for index in range(search_from, len(base_rows)):
                 candidate = base_descriptors[index]
                 base_message = base_rows[index]
-                if (
-                    base_message.get("role") == "assistant"
-                    and "_tldw_thinking_owner" in base_message
-                    and "_tldw_call_thinking_owner" not in base_message
-                ):
-                    # Agent transport renames this marker; its owner stays exact.
-                    base_message = dict(base_message)
-                    base_message["_tldw_call_thinking_owner"] = base_message.pop(
-                        "_tldw_thinking_owner"
-                    )
                 if base_message == frozen_message and _agent_can_reuse_descriptor(
                     candidate,
                     message,
@@ -3720,6 +3731,7 @@ def _non_colliding_skill_entries(
         | set(library_names)
         | set(profile_names)
         | set(canvas_names)
+        | RECOVERY_RESERVED_TOOL_NAMES
         | RUNTIME_TOOL_NAMES
     )
     eligible = _eligible_skill_entries(context)
@@ -3998,6 +4010,7 @@ def _compose_run_registry_and_allowed(
     local_provider: Any | None = None,
     virtual_cli_provider: Any | None = None,
     raw_shell_provider: Any | None = None,
+    recovery_provider: Any | None = None,
     library_provider: Any | None = None,
     library_authority: Any | None = None,
     persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
@@ -4158,6 +4171,11 @@ def _compose_run_registry_and_allowed(
     # every collision filter below so a skill or MCP tool can never shadow
     # them -- but they never join the skill-runner narrowing set (the
     # returned builtin/local names below stay Library-free).
+    recovery_names: tuple[str, ...] = ()
+    if recovery_provider is not None and registry.register_archive_recovery_provider(
+        recovery_provider, recovery_provider.authority
+    ):
+        recovery_names = tuple(e.name for e in recovery_provider.list_catalog())
     library_names: tuple[str, ...] = ()
     if library_provider is not None and registry.register_builtin_library_provider(
         library_provider, library_authority
@@ -4197,6 +4215,7 @@ def _compose_run_registry_and_allowed(
         + review_names
         + local_names
         + library_names
+        + recovery_names
         + profile_names
         + skill_names
     )
@@ -4209,6 +4228,7 @@ def _compose_run_registry_and_allowed(
             | set(CANVAS_RESERVED_TOOL_NAMES)
             | set(CODE_REVIEW_RESERVED_TOOL_NAMES)
             | set(skill_names)
+            | RECOVERY_RESERVED_TOOL_NAMES
             | RUNTIME_TOOL_NAMES
         )
         # Single partition call (finding 8, substrate review): the two
@@ -4437,6 +4457,7 @@ def build_console_first_request_plan(
     local_provider: Any | None,
     virtual_cli_provider: Any | None = None,
     raw_shell_provider: Any | None = None,
+    recovery_provider: Any | None = None,
     library_provider: Any | None,
     library_authority: Any | None,
     profile_provider: Any | None = None,
@@ -4531,6 +4552,7 @@ def build_console_first_request_plan(
         or local_provider is not None
         or virtual_cli_provider is not None
         or raw_shell_provider is not None
+        or recovery_provider is not None
         or library_provider is not None
         or profile_provider is not None
         or canvas_provider is not None
@@ -4556,6 +4578,7 @@ def build_console_first_request_plan(
                 local_provider=local_provider,
                 virtual_cli_provider=virtual_cli_provider,
                 raw_shell_provider=raw_shell_provider,
+                recovery_provider=recovery_provider,
                 library_provider=library_provider,
                 library_authority=library_authority,
                 persona_policy_rules=persona_policy_rules,
@@ -5696,6 +5719,7 @@ class ConsoleAgentBridge:
         local_provider: Any | None = None,
         virtual_cli_provider: Any | None = None,
         raw_shell_provider: Any | None = None,
+        recovery_provider: Any | None = None,
         library_provider: Any | None = None,
         library_authority: Any | None = None,
         managed_skill_promotion_gate: Any | None = None,
@@ -6093,6 +6117,7 @@ class ConsoleAgentBridge:
             local_provider=local_provider,
             virtual_cli_provider=virtual_cli_provider,
             raw_shell_provider=raw_shell_provider,
+            recovery_provider=recovery_provider,
             library_provider=library_provider,
             library_authority=library_authority,
             profile_provider=profile_provider,
@@ -7607,6 +7632,7 @@ class ConsoleAgentBridge:
             install_skill_tool=install_skill_tool,
             prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
             run_skill_script_tool=run_skill_script_tool,
+            archive_recovery_provider=recovery_provider,
             fork_chat_tool=fork_chat_tool,
             new_chat_tool=new_chat_tool,
             run_log_writer=run_log_writer,

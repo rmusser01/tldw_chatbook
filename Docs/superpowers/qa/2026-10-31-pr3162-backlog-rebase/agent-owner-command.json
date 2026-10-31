@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[agent-size1]",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--maxfail=1",
+    "-o",
+    "faulthandler_timeout=30",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\agent-owner.xml"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\agent-owner-7c5cb710cc1b4f179bfe87bcbe861a77",
+  "outer_seconds": 180
+}

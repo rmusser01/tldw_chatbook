@@ -1,0 +1,797 @@
+{
+  "calls": [
+    {
+      "call_id": "030e4d70-d113-4921-ae6f-5ac02d726d9f",
+      "call_sequence": 0,
+      "created_at": "2026-10-18 17:31:57",
+      "dispatch_started_at": "2026-10-18T17:31:57.700217Z",
+      "idempotency_key": "bba9d04b-95d8-4f6c-b6bd-7d38d1112576",
+      "import_reason_code": null,
+      "integrity_state": "complete",
+      "model_name": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+      "omission_reason_code": null,
+      "outcome": "complete",
+      "owner_id": "c7d071f7-b574-4799-ac75-287c39ef2f7d",
+      "policy_id": "306b797d-baf7-4731-b0b3-f85d5b834f5f",
+      "provider_inactive_at": null,
+      "provider_name": "llama_cpp",
+      "request_header_id": "4b50e32f-7782-472f-9c07-49957957c3dc",
+      "reservation_provenance": "crash_durable_reserved",
+      "response_started_at": "2026-10-18T17:32:10.656367Z",
+      "route_identity": "agent_first",
+      "run_id": "ed332b61-157e-4d51-b2d2-4c29119aa235:864bf0b1-9715-49c5-9921-708be9568f36",
+      "segment_id": "dfda3cef-68cb-47a1-af49-5f1b35cf3606",
+      "settled_at": "2026-10-18T17:32:16.393032Z",
+      "state": "complete",
+      "surface_node_id": "399174eb-d6ce-4150-ac5e-c0991a117f9d",
+      "turn_id": "4d453211-5b98-406c-a680-f9dce366afdc",
+      "usage_json": null
+    },
+    {
+      "call_id": "924d3802-fe0d-4efd-89e8-18744d7e92c5",
+      "call_sequence": 0,
+      "created_at": "2026-10-18 17:30:34",
+      "dispatch_started_at": "2026-10-18T17:30:34.489864Z",
+      "idempotency_key": "bb9deb59-04aa-4ef3-8a13-bdb81272dd14",
+      "import_reason_code": null,
+      "integrity_state": "complete",
+      "model_name": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+      "omission_reason_code": null,
+      "outcome": "complete",
+      "owner_id": "c7d071f7-b574-4799-ac75-287c39ef2f7d",
+      "policy_id": "00453fd4-c4df-498d-a6aa-7eb42c67f30f",
+      "provider_inactive_at": null,
+      "provider_name": "llama_cpp",
+      "request_header_id": "79a99d9f-ab96-45f6-b48c-5d3c4dd8eb4b",
+      "reservation_provenance": "crash_durable_reserved",
+      "response_started_at": "2026-10-18T17:30:34.866443Z",
+      "route_identity": "agent_first",
+      "run_id": "fa3ee900-4041-485a-98ff-f67c5da6d9c1:8b31a830-f166-4e3a-a163-c75d821a3d26",
+      "segment_id": "dfda3cef-68cb-47a1-af49-5f1b35cf3606",
+      "settled_at": "2026-10-18T17:30:39.055986Z",
+      "state": "complete",
+      "surface_node_id": "e6fe2205-c6ba-4546-bd0f-7aeb1749f216",
+      "turn_id": "2b8bab96-8136-40a9-bc87-3bf62910a631",
+      "usage_json": null
+    },
+    {
+      "call_id": "601f98c8-ed24-44e0-8a6e-2552759287c7",
+      "call_sequence": 1,
+      "created_at": "2026-10-18 17:30:39",
+      "dispatch_started_at": "2026-10-18T17:30:40.136983Z",
+      "idempotency_key": "7f47ee63-f43b-4d91-becd-b507f7973f10",
+      "import_reason_code": null,
+      "integrity_state": "complete",
+      "model_name": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+      "omission_reason_code": null,
+      "outcome": "complete",
+      "owner_id": "c7d071f7-b574-4799-ac75-287c39ef2f7d",
+      "policy_id": "00453fd4-c4df-498d-a6aa-7eb42c67f30f",
+      "provider_inactive_at": null,
+      "provider_name": "llama_cpp",
+      "request_header_id": "2b224089-38aa-4e5a-9a82-97f78db81069",
+      "reservation_provenance": "crash_durable_reserved",
+      "response_started_at": "2026-10-18T17:30:42.761557Z",
+      "route_identity": "tool_loop",
+      "run_id": "fa3ee900-4041-485a-98ff-f67c5da6d9c1:8b31a830-f166-4e3a-a163-c75d821a3d26",
+      "segment_id": "dfda3cef-68cb-47a1-af49-5f1b35cf3606",
+      "settled_at": "2026-10-18T17:30:49.920207Z",
+      "state": "complete",
+      "surface_node_id": "9d3b36c9-e895-4e1a-bd9a-28d72a1a52ad",
+      "turn_id": "2b8bab96-8136-40a9-bc87-3bf62910a631",
+      "usage_json": null
+    },
+    {
+      "call_id": "fd15bdc9-31cc-475e-877c-980bbd79b5b2",
+      "call_sequence": 1,
+      "created_at": "2026-10-18 17:32:16",
+      "dispatch_started_at": "2026-10-18T17:32:16.501711Z",
+      "idempotency_key": "ab5ee801-d15f-471e-811c-9e6f060261d4",
+      "import_reason_code": null,
+      "integrity_state": "complete",
+      "model_name": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+      "omission_reason_code": null,
+      "outcome": "complete",
+      "owner_id": "c7d071f7-b574-4799-ac75-287c39ef2f7d",
+      "policy_id": "306b797d-baf7-4731-b0b3-f85d5b834f5f",
+      "provider_inactive_at": null,
+      "provider_name": "llama_cpp",
+      "request_header_id": "6f92bfe3-4af8-4dcb-bf10-04eb3a7531a5",
+      "reservation_provenance": "crash_durable_reserved",
+      "response_started_at": "2026-10-18T17:32:17.438489Z",
+      "route_identity": "tool_loop",
+      "run_id": "ed332b61-157e-4d51-b2d2-4c29119aa235:864bf0b1-9715-49c5-9921-708be9568f36",
+      "segment_id": "dfda3cef-68cb-47a1-af49-5f1b35cf3606",
+      "settled_at": "2026-10-18T17:32:19.063122Z",
+      "state": "complete",
+      "surface_node_id": "a60bd6c2-e391-4ef5-91ef-3720ea6a28c7",
+      "turn_id": "4d453211-5b98-406c-a680-f9dce366afdc",
+      "usage_json": null
+    },
+    {
+      "call_id": "de26924c-45a3-4fca-b616-4ca4f9dc899a",
+      "call_sequence": 2,
+      "created_at": "2026-10-18 17:32:19",
+      "dispatch_started_at": "2026-10-18T17:32:19.465588Z",
+      "idempotency_key": "7851b01e-16e4-407e-b91c-62b5c9c5fea6",
+      "import_reason_code": null,
+      "integrity_state": "complete",
+      "model_name": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+      "omission_reason_code": null,
+      "outcome": "complete",
+      "owner_id": "c7d071f7-b574-4799-ac75-287c39ef2f7d",
+      "policy_id": "306b797d-baf7-4731-b0b3-f85d5b834f5f",
+      "provider_inactive_at": null,
+      "provider_name": "llama_cpp",
+      "request_header_id": "c21b344b-a393-4ef3-9548-b3775caa018f",
+      "reservation_provenance": "crash_durable_reserved",
+      "response_started_at": "2026-10-18T17:32:31.605755Z",
+      "route_identity": "tool_loop",
+      "run_id": "ed332b61-157e-4d51-b2d2-4c29119aa235:864bf0b1-9715-49c5-9921-708be9568f36",
+      "segment_id": "dfda3cef-68cb-47a1-af49-5f1b35cf3606",
+      "settled_at": "2026-10-18T17:32:41.604059Z",
+      "state": "complete",
+      "surface_node_id": "eb21265f-9356-4082-830f-7a5de45600c8",
+      "turn_id": "4d453211-5b98-406c-a680-f9dce366afdc",
+      "usage_json": null
+    }
+  ],
+  "conversation_count": 4,
+  "conversations": [
+    {
+      "active_leaf_before_message_id": null,
+      "active_leaf_message_id": "f2c31f11-9871-4da8-b88c-df3f75088449",
+      "archived": 1,
+      "archived_at": "2026-10-18T17:29:39.335Z",
+      "assistant_authority_id": null,
+      "assistant_id": null,
+      "assistant_kind": null,
+      "character_id": null,
+      "client_id": "task7-live",
+      "cluster_id": null,
+      "console_project_context_json": null,
+      "context_summary": null,
+      "created_at": "2026-10-18T17:29:39.302Z",
+      "deleted": 0,
+      "discovery_entity_id": null,
+      "discovery_owner": "general_chat",
+      "external_ref": null,
+      "forked_from_message_id": null,
+      "id": "eaa5e19b-be9c-4a75-8ed7-03ba35e4f067",
+      "last_modified": "2026-10-18T17:29:39.335Z",
+      "metadata": null,
+      "parent_conversation_id": null,
+      "persona_memory_mode": null,
+      "rating": null,
+      "root_id": "eaa5e19b-be9c-4a75-8ed7-03ba35e4f067",
+      "runtime_backend": "local",
+      "scope_type": "global",
+      "source": null,
+      "state": "in-progress",
+      "summary_boundary_message_id": null,
+      "system_prompt": null,
+      "thinking_history_policy": null,
+      "title": "Maple archival notes",
+      "topic_label": null,
+      "topic_label_source": null,
+      "topic_last_tagged_at": null,
+      "topic_last_tagged_message_id": null,
+      "version": 2,
+      "workspace_id": null
+    },
+    {
+      "active_leaf_before_message_id": null,
+      "active_leaf_message_id": "28816316-afd5-4152-8205-4a94585b4bce",
+      "archived": 0,
+      "archived_at": null,
+      "assistant_authority_id": null,
+      "assistant_id": null,
+      "assistant_kind": null,
+      "character_id": null,
+      "client_id": "task7-live",
+      "cluster_id": null,
+      "console_project_context_json": null,
+      "context_summary": null,
+      "created_at": "2026-10-18T17:29:39.337Z",
+      "deleted": 0,
+      "discovery_entity_id": null,
+      "discovery_owner": "general_chat",
+      "external_ref": null,
+      "forked_from_message_id": null,
+      "id": "992b9450-0315-48f6-85d8-2b8f3d92b354",
+      "last_modified": "2026-10-18T17:29:39.337Z",
+      "metadata": null,
+      "parent_conversation_id": null,
+      "persona_memory_mode": null,
+      "rating": null,
+      "root_id": "992b9450-0315-48f6-85d8-2b8f3d92b354",
+      "runtime_backend": "local",
+      "scope_type": "workspace",
+      "source": null,
+      "state": "in-progress",
+      "summary_boundary_message_id": null,
+      "system_prompt": null,
+      "thinking_history_policy": null,
+      "title": "Linden planning conversation",
+      "topic_label": null,
+      "topic_label_source": null,
+      "topic_last_tagged_at": null,
+      "topic_last_tagged_message_id": null,
+      "version": 1,
+      "workspace_id": "atlas"
+    },
+    {
+      "active_leaf_before_message_id": null,
+      "active_leaf_message_id": "cc5698fe-8a60-4bb5-a1cf-b75143cc72c6",
+      "archived": 1,
+      "archived_at": "2026-10-18T17:29:39.361Z",
+      "assistant_authority_id": null,
+      "assistant_id": null,
+      "assistant_kind": null,
+      "character_id": null,
+      "client_id": "task7-live",
+      "cluster_id": null,
+      "console_project_context_json": null,
+      "context_summary": null,
+      "created_at": "2026-10-18T17:29:39.349Z",
+      "deleted": 0,
+      "discovery_entity_id": null,
+      "discovery_owner": "general_chat",
+      "external_ref": null,
+      "forked_from_message_id": null,
+      "id": "b2b99a9a-1e4b-4ecf-b1c9-51cc148ac597",
+      "last_modified": "2026-10-18T17:29:39.361Z",
+      "metadata": null,
+      "parent_conversation_id": null,
+      "persona_memory_mode": null,
+      "rating": null,
+      "root_id": "b2b99a9a-1e4b-4ecf-b1c9-51cc148ac597",
+      "runtime_backend": "local",
+      "scope_type": "workspace",
+      "source": null,
+      "state": "in-progress",
+      "summary_boundary_message_id": null,
+      "system_prompt": null,
+      "thinking_history_policy": null,
+      "title": "Birch itinerary conversation",
+      "topic_label": null,
+      "topic_label_source": null,
+      "topic_last_tagged_at": null,
+      "topic_last_tagged_message_id": null,
+      "version": 2,
+      "workspace_id": "vault"
+    }
+  ],
+  "messages": [
+    {
+      "assistant_generation_state": null,
+      "client_id": "task7-live",
+      "content": "Original history for Maple archival notes",
+      "conversation_id": "eaa5e19b-be9c-4a75-8ed7-03ba35e4f067",
+      "deleted": 0,
+      "feedback": null,
+      "id": "1913b437-8662-4e75-8789-a75b5539de17",
+      "image_data": null,
+      "image_mime_type": null,
+      "is_selected_variant": 1,
+      "last_modified": "2026-10-18T17:29:39.306Z",
+      "metadata_json": null,
+      "parent_message_id": null,
+      "provider_continuation_json": null,
+      "ranking": null,
+      "role": "user",
+      "sender": "user",
+      "thinking_blocks_json": null,
+      "timestamp": "2026-10-18T17:29:39.306Z",
+      "total_variants": 1,
+      "usage_json": null,
+      "variant_number": 1,
+      "variant_of": null,
+      "version": 1
+    },
+    {
+      "assistant_generation_state": null,
+      "client_id": "task7-live",
+      "content": "Saved reply for Maple archival notes",
+      "conversation_id": "eaa5e19b-be9c-4a75-8ed7-03ba35e4f067",
+      "deleted": 0,
+      "feedback": null,
+      "id": "f2c31f11-9871-4da8-b88c-df3f75088449",
+      "image_data": null,
+      "image_mime_type": null,
+      "is_selected_variant": 1,
+      "last_modified": "2026-10-18T17:29:39.328Z",
+      "metadata_json": null,
+      "parent_message_id": "1913b437-8662-4e75-8789-a75b5539de17",
+      "provider_continuation_json": null,
+      "ranking": null,
+      "role": "assistant",
+      "sender": "assistant",
+      "thinking_blocks_json": null,
+      "timestamp": "2026-10-18T17:29:39.328Z",
+      "total_variants": 1,
+      "usage_json": null,
+      "variant_number": 1,
+      "variant_of": null,
+      "version": 1
+    },
+    {
+      "assistant_generation_state": null,
+      "client_id": "task7-live",
+      "content": "Original history for Linden planning conversation",
+      "conversation_id": "992b9450-0315-48f6-85d8-2b8f3d92b354",
+      "deleted": 0,
+      "feedback": null,
+      "id": "68b11bf4-b973-42ff-b1ba-7305201676cd",
+      "image_data": null,
+      "image_mime_type": null,
+      "is_selected_variant": 1,
+      "last_modified": "2026-10-18T17:29:39.340Z",
+      "metadata_json": null,
+      "parent_message_id": null,
+      "provider_continuation_json": null,
+      "ranking": null,
+      "role": "user",
+      "sender": "user",
+      "thinking_blocks_json": null,
+      "timestamp": "2026-10-18T17:29:39.340Z",
+      "total_variants": 1,
+      "usage_json": null,
+      "variant_number": 1,
+      "variant_of": null,
+      "version": 1
+    },
+    {
+      "assistant_generation_state": null,
+      "client_id": "task7-live",
+      "content": "Saved reply for Linden planning conversation",
+      "conversation_id": "992b9450-0315-48f6-85d8-2b8f3d92b354",
+      "deleted": 0,
+      "feedback": null,
+      "id": "28816316-afd5-4152-8205-4a94585b4bce",
+      "image_data": null,
+      "image_mime_type": null,
+      "is_selected_variant": 1,
+      "last_modified": "2026-10-18T17:29:39.344Z",
+      "metadata_json": null,
+      "parent_message_id": "68b11bf4-b973-42ff-b1ba-7305201676cd",
+      "provider_continuation_json": null,
+      "ranking": null,
+      "role": "assistant",
+      "sender": "assistant",
+      "thinking_blocks_json": null,
+      "timestamp": "2026-10-18T17:29:39.344Z",
+      "total_variants": 1,
+      "usage_json": null,
+      "variant_number": 1,
+      "variant_of": null,
+      "version": 1
+    },
+    {
+      "assistant_generation_state": null,
+      "client_id": "task7-live",
+      "content": "Original history for Birch itinerary conversation",
+      "conversation_id": "b2b99a9a-1e4b-4ecf-b1c9-51cc148ac597",
+      "deleted": 0,
+      "feedback": null,
+      "id": "f3f73497-a33d-4837-a15e-17f78e5f6aba",
+      "image_data": null,
+      "image_mime_type": null,
+      "is_selected_variant": 1,
+      "last_modified": "2026-10-18T17:29:39.352Z",
+      "metadata_json": null,
+      "parent_message_id": null,
+      "provider_continuation_json": null,
+      "ranking": null,
+      "role": "user",
+      "sender": "user",
+      "thinking_blocks_json": null,
+      "timestamp": "2026-10-18T17:29:39.352Z",
+      "total_variants": 1,
+      "usage_json": null,
+      "variant_number": 1,
+      "variant_of": null,
+      "version": 1
+    },
+    {
+      "assistant_generation_state": null,
+      "client_id": "task7-live",
+      "content": "Saved reply for Birch itinerary conversation",
+      "conversation_id": "b2b99a9a-1e4b-4ecf-b1c9-51cc148ac597",
+      "deleted": 0,
+      "feedback": null,
+      "id": "cc5698fe-8a60-4bb5-a1cf-b75143cc72c6",
+      "image_data": null,
+      "image_mime_type": null,
+      "is_selected_variant": 1,
+      "last_modified": "2026-10-18T17:29:39.356Z",
+      "metadata_json": null,
+      "parent_message_id": "f3f73497-a33d-4837-a15e-17f78e5f6aba",
+      "provider_continuation_json": null,
+      "ranking": null,
+      "role": "assistant",
+      "sender": "assistant",
+      "thinking_blocks_json": null,
+      "timestamp": "2026-10-18T17:29:39.356Z",
+      "total_variants": 1,
+      "usage_json": null,
+      "variant_number": 1,
+      "variant_of": null,
+      "version": 1
+    }
+  ],
+  "reconstructions": [
+    {
+      "archive_handoffs": 0,
+      "boundary_source_revisions": [
+        "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0"
+      ],
+      "call_id": "030e4d70-d113-4921-ae6f-5ac02d726d9f",
+      "omissions": [],
+      "pinned_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b",
+        "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0"
+      ],
+      "sha256": "ae517dd72024ea2374bce153b9b73d4ac6c3805c30c6446e31fdf16c5f490770",
+      "turn_id": "4d453211-5b98-406c-a680-f9dce366afdc"
+    },
+    {
+      "archive_handoffs": 0,
+      "boundary_source_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b"
+      ],
+      "call_id": "924d3802-fe0d-4efd-89e8-18744d7e92c5",
+      "omissions": [],
+      "pinned_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b"
+      ],
+      "sha256": "0551804627764a093b1369e28b7bf88943edecdf744f66a6b0d74d9ae9dd3de4",
+      "turn_id": "2b8bab96-8136-40a9-bc87-3bf62910a631"
+    },
+    {
+      "archive_handoffs": 0,
+      "boundary_source_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b"
+      ],
+      "call_id": "601f98c8-ed24-44e0-8a6e-2552759287c7",
+      "omissions": [],
+      "pinned_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b"
+      ],
+      "sha256": "25b95bf5c0d02668ccc70db1fe218cbfa16dea812707d59caba65907f920c8f7",
+      "turn_id": "2b8bab96-8136-40a9-bc87-3bf62910a631"
+    },
+    {
+      "archive_handoffs": 0,
+      "boundary_source_revisions": [
+        "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0"
+      ],
+      "call_id": "fd15bdc9-31cc-475e-877c-980bbd79b5b2",
+      "omissions": [],
+      "pinned_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b",
+        "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0"
+      ],
+      "sha256": "0a6f1007bd3f875ee8f528b3c175c777f389727986f1dec5f5bbd8674b1cc7df",
+      "turn_id": "4d453211-5b98-406c-a680-f9dce366afdc"
+    },
+    {
+      "archive_handoffs": 0,
+      "boundary_source_revisions": [
+        "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0"
+      ],
+      "call_id": "de26924c-45a3-4fca-b616-4ca4f9dc899a",
+      "omissions": [],
+      "pinned_revisions": [
+        "5c5fed4e-7779-4d45-b008-faf1b1f12b3b",
+        "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0"
+      ],
+      "sha256": "106c7f4c5a67c23693bf2cb9db94cfa1aeb42adf54857f464b20aafb303138bb",
+      "turn_id": "4d453211-5b98-406c-a680-f9dce366afdc"
+    }
+  ],
+  "responses": [
+    {
+      "call_id": "030e4d70-d113-4921-ae6f-5ac02d726d9f",
+      "header_sha256": "0f46af5c689939751d51bd68570bc6195e39ba426c5a6dd1cb9dbca702ed1bb3",
+      "link": {
+        "artifact_id": "17fbcdf0-0965-43c4-8195-9473ddd1c893",
+        "call_id": "030e4d70-d113-4921-ae6f-5ac02d726d9f",
+        "created_at": "2026-10-18 17:32:41",
+        "link_kind": "artifact",
+        "response_link_id": "ff9404fa-e458-4b6d-85bb-f47c177acee7",
+        "semantic_revision_id": null,
+        "verification_outcome": "sanitized_artifact"
+      },
+      "profile": {
+        "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+        "protocol": "chat_completions",
+        "provider": "llama_cpp",
+        "source_formats": [
+          "start_anchored_think",
+          "reasoning_content"
+        ],
+        "thinking_round_trip_version": 1,
+        "thinking_stream_disposition": "displayable",
+        "version": 2
+      },
+      "response_sha256": "dc71f9eb2976faf943450aecaf302bc8300e33b902de2de8b125af88f9da016d",
+      "revision_owner": null
+    },
+    {
+      "call_id": "924d3802-fe0d-4efd-89e8-18744d7e92c5",
+      "header_sha256": "0e5ce4d9da1e5ecbf2e048f25497141efe66e9f91e61e1165c1a5575037463e4",
+      "link": {
+        "artifact_id": "1960d2c8-fb1b-4150-ad37-df63c6062f97",
+        "call_id": "924d3802-fe0d-4efd-89e8-18744d7e92c5",
+        "created_at": "2026-10-18 17:30:50",
+        "link_kind": "artifact",
+        "response_link_id": "85cebf61-7665-4842-bde9-8f898f75bd5e",
+        "semantic_revision_id": null,
+        "verification_outcome": "sanitized_artifact"
+      },
+      "profile": {
+        "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+        "protocol": "chat_completions",
+        "provider": "llama_cpp",
+        "source_formats": [
+          "start_anchored_think",
+          "reasoning_content"
+        ],
+        "thinking_round_trip_version": 1,
+        "thinking_stream_disposition": "displayable",
+        "version": 2
+      },
+      "response_sha256": "7b2b6da97d34c062fdd03e725a23c42ab1e22e01ce73f237d1a2287ade84fc60",
+      "revision_owner": null
+    },
+    {
+      "call_id": "601f98c8-ed24-44e0-8a6e-2552759287c7",
+      "header_sha256": "a151cf2a8fe867fd1560629356254f99d979339aa7692c957c03e5198d584b42",
+      "link": {
+        "artifact_id": null,
+        "call_id": "601f98c8-ed24-44e0-8a6e-2552759287c7",
+        "created_at": "2026-10-18 17:30:51",
+        "link_kind": "revision",
+        "response_link_id": "860d0a53-7e75-4641-8e3b-3d0c04f652e4",
+        "semantic_revision_id": "5715d612-1bac-4b79-9259-e91cef735817",
+        "verification_outcome": "verified_equal"
+      },
+      "profile": {
+        "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+        "protocol": "chat_completions",
+        "provider": "llama_cpp",
+        "source_formats": [
+          "start_anchored_think",
+          "reasoning_content"
+        ],
+        "thinking_round_trip_version": 1,
+        "thinking_stream_disposition": "displayable",
+        "version": 2
+      },
+      "response_sha256": "bea6186a2b480131e86beb3fd31ca5829a65c41ebd10d1ee8427620039aa33cf",
+      "revision_owner": {
+        "conversation": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+        "message": "8f620910-bfad-4a1c-9ce8-d64bbdce1fe3"
+      }
+    },
+    {
+      "call_id": "fd15bdc9-31cc-475e-877c-980bbd79b5b2",
+      "header_sha256": "57ee3409362cb1cabaec52e824b31904a27b2efcb2d2585d74d5d5cfde93a391",
+      "link": {
+        "artifact_id": "8c9adb9f-9ab3-4196-aa1a-cfec06e253f4",
+        "call_id": "fd15bdc9-31cc-475e-877c-980bbd79b5b2",
+        "created_at": "2026-10-18 17:32:42",
+        "link_kind": "artifact",
+        "response_link_id": "fce4fc71-36af-42a9-8e90-8de42da6c5b5",
+        "semantic_revision_id": null,
+        "verification_outcome": "sanitized_artifact"
+      },
+      "profile": {
+        "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+        "protocol": "chat_completions",
+        "provider": "llama_cpp",
+        "source_formats": [
+          "start_anchored_think",
+          "reasoning_content"
+        ],
+        "thinking_round_trip_version": 1,
+        "thinking_stream_disposition": "displayable",
+        "version": 2
+      },
+      "response_sha256": "7d51ee2bc1a61686192cae40a628fffaaad3d8b760d9dbc195c2d51bb36a8214",
+      "revision_owner": null
+    },
+    {
+      "call_id": "de26924c-45a3-4fca-b616-4ca4f9dc899a",
+      "header_sha256": "cb6fb7289a2d74af97c8d476f832c9466117e1fb8d1040fc39da37ad9ebff3ac",
+      "link": {
+        "artifact_id": "5d7651dd-988d-4a21-b49f-5236de2254e2",
+        "call_id": "de26924c-45a3-4fca-b616-4ca4f9dc899a",
+        "created_at": "2026-10-18 17:32:42",
+        "link_kind": "artifact",
+        "response_link_id": "cecf6e78-0e76-40fe-bdbc-c34879c82213",
+        "semantic_revision_id": null,
+        "verification_outcome": "sanitized_artifact"
+      },
+      "profile": {
+        "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+        "protocol": "chat_completions",
+        "provider": "llama_cpp",
+        "source_formats": [
+          "start_anchored_think",
+          "reasoning_content"
+        ],
+        "thinking_round_trip_version": 1,
+        "thinking_stream_disposition": "displayable",
+        "version": 2
+      },
+      "response_sha256": "f201be1bf36d5511a7af5341822937d8b9f06c225eeb88ed5eaaad4805ba3b88",
+      "revision_owner": null
+    }
+  ],
+  "source_messages": [
+    {
+      "content": "Find recently archived chats across all workspaces.",
+      "conversation_id": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+      "id": "2b8bab96-8136-40a9-bc87-3bf62910a631",
+      "parent_message_id": null,
+      "role": "user",
+      "sender": "user"
+    },
+    {
+      "content": "Found 3 recently archived items across all workspaces (all archived 2026-10-18):\n\n1. **Birch itinerary conversation** \u2014 archived 2026-10-18 17:29 UTC\n   - Workspace: **Vault Trips** (also archived at the same time)\n   - Restorable as: chat only, or chat + workspace\n\n2. **Linden planning conversation** \u2014 the chat itself is *not* archived, but it lives in workspace **Atlas Research**, which was archived 2026-10-18 17:29 UTC\n   - Restorable as: workspace only\n\n3. **Maple archival notes** \u2014 archived 2026-10-18 17:29 UTC\n   - No workspace (standalone chat)\n   - Restorable as: chat only\n\nNo pagination \u2014 this is the complete set. Want me to request a restore for any of these?",
+      "conversation_id": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+      "id": "8f620910-bfad-4a1c-9ce8-d64bbdce1fe3",
+      "parent_message_id": "2b8bab96-8136-40a9-bc87-3bf62910a631",
+      "role": "assistant",
+      "sender": "assistant"
+    },
+    {
+      "content": "**Accomplished:** Located the 3 recently archived items (all 2026-10-18 17:29 UTC) and identified the second one: the **Linden planning conversation**, whose chat isn't archived but whose workspace **Atlas Research** is \u2014 restorable as *workspace only*.\n\n**Unfinished:** The restore was never issued. I couldn't retrieve the original `result_ref` (the earlier run's log isn't reachable under the current root), and the budget ran out before I could re-search.\n\n**To finish:** Re-run the archived-search, take the `result_ref` for the Atlas Research item, and call `request_conversation_restore` with workspace-only scope.",
+      "conversation_id": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+      "id": "12b20efb-7936-4fcb-9f8c-0ce7167fd071",
+      "parent_message_id": "4d453211-5b98-406c-a680-f9dce366afdc",
+      "role": "assistant",
+      "sender": "assistant"
+    },
+    {
+      "content": "Restore the second one.",
+      "conversation_id": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+      "id": "4d453211-5b98-406c-a680-f9dce366afdc",
+      "parent_message_id": "8f620910-bfad-4a1c-9ce8-d64bbdce1fe3",
+      "role": "user",
+      "sender": "user"
+    }
+  ],
+  "thinking_structure": [
+    {
+      "blocks": [
+        {
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 0,
+          "source_format": "reasoning_content:tool_call",
+          "status": "complete"
+        },
+        {
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 1,
+          "source_format": "reasoning_content",
+          "status": "complete"
+        }
+      ],
+      "message_id": "8f620910-bfad-4a1c-9ce8-d64bbdce1fe3",
+      "raw_sha256": "b69b9f84322adfdce2946044f32c2f0c6b7f484b86d41ef1289b34db1e84ce3b"
+    },
+    {
+      "blocks": [
+        {
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 0,
+          "source_format": "reasoning_content:tool_call",
+          "status": "complete"
+        },
+        {
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 1,
+          "source_format": "reasoning_content:tool_call",
+          "status": "complete"
+        },
+        {
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 2,
+          "source_format": "reasoning_content",
+          "status": "failed"
+        }
+      ],
+      "message_id": "12b20efb-7936-4fcb-9f8c-0ce7167fd071",
+      "raw_sha256": "a61f57a17e33ca98382a242cb795b08651d94e85c841ee8bfe0a434c5722f725"
+    }
+  ],
+  "user_revisions": [
+    {
+      "normalized_role": "user",
+      "revision_id": "5c5fed4e-7779-4d45-b008-faf1b1f12b3b",
+      "source_conversation_id": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+      "source_message_id": "2b8bab96-8136-40a9-bc87-3bf62910a631"
+    },
+    {
+      "normalized_role": "user",
+      "revision_id": "e9eba2e6-e3a0-47f7-95e0-a0d7279bd6d0",
+      "source_conversation_id": "864ea7cc-b854-48aa-910e-967209cfbd6d",
+      "source_message_id": "4d453211-5b98-406c-a680-f9dce366afdc"
+    }
+  ],
+  "workspace_records": [
+    {
+      "active": 0,
+      "archive_revision": 1,
+      "archived": 1,
+      "archived_at": "2026-10-18T17:29:39.362537+00:00",
+      "assistant_defaults": null,
+      "assistant_defaults_explicit_none": 0,
+      "authority": "local-only",
+      "created_at": "2026-10-18T17:29:39.301684+00:00",
+      "description": "",
+      "name": "Atlas Research",
+      "sync_status": "not-configured",
+      "updated_at": "2026-10-18T17:29:39.362537+00:00",
+      "workspace_id": "atlas"
+    },
+    {
+      "active": 1,
+      "archive_revision": 0,
+      "archived": 0,
+      "archived_at": null,
+      "assistant_defaults": "{\"assistant_id\": \"local-persona-archive-recovery-check\", \"assistant_kind\": \"persona\", \"persona_memory_mode\": \"read_only\", \"style\": null, \"tool_policy_profile_id\": null, \"voice\": null}",
+      "assistant_defaults_explicit_none": 0,
+      "authority": "local-only",
+      "created_at": "2026-10-18T17:29:39.414029+00:00",
+      "description": "",
+      "name": "Recovery Check",
+      "sync_status": "not-configured",
+      "updated_at": "2026-10-18T17:30:17.913912+00:00",
+      "workspace_id": "recovery-check"
+    },
+    {
+      "active": 0,
+      "archive_revision": 1,
+      "archived": 1,
+      "archived_at": "2026-10-18T17:29:39.362755+00:00",
+      "assistant_defaults": null,
+      "assistant_defaults_explicit_none": 0,
+      "authority": "local-only",
+      "created_at": "2026-10-18T17:29:39.302115+00:00",
+      "description": "",
+      "name": "Vault Trips",
+      "sync_status": "not-configured",
+      "updated_at": "2026-10-18T17:29:39.362755+00:00",
+      "workspace_id": "vault"
+    },
+    {
+      "active": 0,
+      "archive_revision": 0,
+      "archived": 0,
+      "archived_at": null,
+      "assistant_defaults": null,
+      "assistant_defaults_explicit_none": 0,
+      "authority": "local-only",
+      "created_at": "2026-10-18T17:29:45.187561+00:00",
+      "description": "Built-in local chat workspace. Filesystem and runtime bindings are disabled until the user creates an explicit workspace.",
+      "name": "Default",
+      "sync_status": "not-configured",
+      "updated_at": "2026-10-18T17:29:45.188126+00:00",
+      "workspace_id": "workspace-default"
+    }
+  ]
+}

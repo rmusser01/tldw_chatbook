@@ -32,7 +32,10 @@ def test_v83_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
             )
     db = CharactersRAGDB(path, "upgraded")
     try:
-        assert db._get_db_version(db.get_connection()) == 84
+        assert (
+            db._get_db_version(db.get_connection())
+            == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        )
         record = db.get_character_portrait_performance(
             character_id=cid, expression_key="neutral"
         )
@@ -48,7 +51,7 @@ def test_v83_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
             is None
         )
         assert db.execute_query("PRAGMA foreign_key_check").fetchall() == []
-        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V84_SCHEMAS
+        from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V85_SCHEMAS
 
         actual = tuple(
             row[0]
@@ -56,7 +59,7 @@ def test_v83_upgrade_preserves_old_six_frames_and_admits_actual_schema(tmp_path)
                 "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
         )
-        assert actual in CHACHANOTES_V84_SCHEMAS
+        assert actual in CHACHANOTES_V85_SCHEMAS
         assert (
             db.execute_query(
                 "SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name='character_portrait_regions'"

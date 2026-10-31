@@ -1,0 +1,142 @@
+[
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "sha256": "1d9d0f8946196cd5cf953ff5faf2e462a636a9b890ec9d4f1207813d9ab5e958",
+    "introduced": [],
+    "baseline": 1,
+    "current": 1
+  },
+  {
+    "path": "Tests/Architecture/test_screen_size_ratchet.py",
+    "sha256": "fa2c47c9f304c57eb7603c3a3a2545911dcb54546afdfc7fb7001ddba8d2d564",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "Tests/Chat/test_console_archive_recovery_dispatch.py",
+    "sha256": "1dd86af38a955feade4912ef4665edef98b36deb6f1328b6a0e352286c8ba4ce",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "Tests/Performance/test_ui_ready_module_census.py",
+    "sha256": "f3dcc8d3f4ae911bc4a0440e47393812d6ea3f9c4e013414d701d3d17ee929ba",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "Tests/UI/test_console_archive_recovery_cards.py",
+    "sha256": "d5d7609b22a9543ba7fe4784494c35e92fbe691e1ebca1b3d624dcc01f2eb431",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "Tests/UI/test_console_runtime_ownership.py",
+    "sha256": "60d3836d8c4573ac987a58565f3b635f5850625d88fbcead68b7a6e55e0db963",
+    "introduced": [],
+    "baseline": 12,
+    "current": 12
+  },
+  {
+    "path": "tldw_chatbook/Agents/approval_provenance.py",
+    "sha256": "304d4230811d61be0b1e0751b3324dfde678549bd204c20dd2149b7ec9e10ea4",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "tldw_chatbook/Agents/archive_recovery_tool_provider.py",
+    "sha256": "99841736c8226c7f3bef118c57f0accb81aa376338e05da017e8525839664b20",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "tldw_chatbook/Agents/tool_catalog.py",
+    "sha256": "3cc2d8bc8f330ad13bb9af7515df409042c611aa103ecfc50d339c79e6dc13e0",
+    "introduced": [],
+    "baseline": 9,
+    "current": 9
+  },
+  {
+    "path": "tldw_chatbook/Chat/archive_recovery/runtime.py",
+    "sha256": "3978804a2abd26afcb9820116451a499cac20a530ffdb568da854d318a9228a1",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "sha256": "5b72ff1175a93a6c296aa6d27843fb7894483ec3b7459e4a12e65e3b7e220cbc",
+    "introduced": [],
+    "baseline": 180,
+    "current": 180
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "sha256": "4f96d46a96e868aaec10c32c6a45b00ee4239dbebb54342e57da19c045b41d35",
+    "introduced": [],
+    "baseline": 50,
+    "current": 47
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_prepared_request.py",
+    "sha256": "e638d499493f2525bd725c5becb29212871ab400ea413cb747c684a401c6d4a2",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "sha256": "31859439a6046cbe2bb7b369d563699e004e97061556f0b313cf1b47fb34994c",
+    "introduced": [],
+    "baseline": 24,
+    "current": 24
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+    "sha256": "5736eca52c15e626f72937efe2bd7c0cd965b8f1d6aaa8eed003aa1557b06a13",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+    "sha256": "3e88455fb2aaae39488bb3a7ee827c1b3ca54406ebb7c66f8e91ae4050604c2c",
+    "introduced": [],
+    "baseline": 8,
+    "current": 8
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+    "sha256": "8474d7e903c80ec8485aa099c6229fea47e2b8ded2c8f110df6d81bc2b120370",
+    "introduced": [],
+    "baseline": 3,
+    "current": 3
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "sha256": "f056e771ee2680b932b26a92a0dd69d3364f96d62a0b0149929677309c93f909",
+    "introduced": [],
+    "baseline": 187,
+    "current": 186
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_selection.py",
+    "sha256": "6cfab67cf16923a0265327655ed3fda29d527a51971d5ac09994cbfe88c3cdb9",
+    "introduced": [],
+    "baseline": 0,
+    "current": 0
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "sha256": "26620f1aa7ed95c06a43544dd225bdc38566226e53dee01d408b741fde817cd3",
+    "introduced": [],
+    "baseline": 28,
+    "current": 27
+  }
+]

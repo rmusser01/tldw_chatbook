@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MethodType
 from typing import TYPE_CHECKING, Any
 
@@ -296,6 +296,9 @@ async def _run_received_intent_bound(runtime, record, source):
         **({} if prepared_skills is None else {"_prepared_skills": prepared_skills}),
     )
     require_received_source(runtime, record, source)
+    configuration = replace(
+        configuration, recovery_user_origin=intent.recovery_user_origin
+    )
     if any(
         item.file_type == "image"
         and item.insert_mode == "attachment"

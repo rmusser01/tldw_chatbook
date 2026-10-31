@@ -1,0 +1,161 @@
+{
+  "rag": {
+    "config_sha256": "ffeea0e22307bb03d85843393a08be5ee2fb92a12e685d80198202564edbff57",
+    "database_paths": {
+      "chachanotes_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_ChaChaNotes.db",
+      "prompts_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_cli_prompts.db",
+      "media_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_cli_media_v2.db",
+      "research_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_research.db",
+      "writing_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_writing.db",
+      "library_collections_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_library_collections.db",
+      "workspaces_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_workspaces.db",
+      "evals_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/evals.db",
+      "rag_indexing_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/rag_indexing.db",
+      "subscriptions_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data/task7_live/tldw_chatbook_subscriptions.db",
+      "USER_DB_BASE_DIR": "/private/tmp/archive-capture-native-_yuzjq8a/rag/data",
+      "check_integrity_on_startup": false,
+      "integrity_check_timeout": 30
+    },
+    "console": {
+      "exchange_capture": true,
+      "trace_normalized_writes": true,
+      "trace_normalized_reads": true,
+      "trace_legacy_writes": false,
+      "exchange_capture_detail": "safe",
+      "exchange_capture_pii_redaction": false,
+      "direct_library_tools": false,
+      "assistant_library_access_default": true,
+      "local_tools_enabled": false,
+      "agent_max_model_turns": 5,
+      "agent_max_steps": 40,
+      "agent_max_wall_seconds": 180.0,
+      "agent_max_model_retries": 0
+    },
+    "rag_auto_retrieve_on_send": false,
+    "provider": "llama_cpp",
+    "model": "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+    "api_url": "http://127.0.0.1:9099",
+    "model_catalog_auto_refresh_enabled": false,
+    "mcp_server_enabled": false,
+    "hook": {
+      "enabled": true,
+      "hook": [
+        {
+          "event": "PreToolUse",
+          "matcher": "search_library_rag",
+          "command": [
+            "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+            "/private/tmp/archive-capture-native-_yuzjq8a/rag/deny-rag.py"
+          ],
+          "timeout_s": 2
+        }
+      ]
+    }
+  },
+  "direct": {
+    "config_sha256": "1408c48b614adf3c25d348eb1752dbe13050214b944db794488dcfd697e43f60",
+    "database_paths": {
+      "chachanotes_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_chatbook_ChaChaNotes.db",
+      "prompts_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_cli_prompts.db",
+      "media_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_cli_media_v2.db",
+      "research_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_chatbook_research.db",
+      "writing_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_chatbook_writing.db",
+      "library_collections_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_chatbook_library_collections.db",
+      "workspaces_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_chatbook_workspaces.db",
+      "evals_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/evals.db",
+      "rag_indexing_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/rag_indexing.db",
+      "subscriptions_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data/task7_live/tldw_chatbook_subscriptions.db",
+      "USER_DB_BASE_DIR": "/private/tmp/archive-capture-native-_yuzjq8a/direct/data",
+      "check_integrity_on_startup": false,
+      "integrity_check_timeout": 30
+    },
+    "console": {
+      "exchange_capture": true,
+      "trace_normalized_writes": true,
+      "trace_normalized_reads": true,
+      "trace_legacy_writes": false,
+      "exchange_capture_detail": "safe",
+      "exchange_capture_pii_redaction": false,
+      "direct_library_tools": true,
+      "assistant_library_access_default": true,
+      "local_tools_enabled": false,
+      "agent_max_model_turns": 5,
+      "agent_max_steps": 40,
+      "agent_max_wall_seconds": 180.0,
+      "agent_max_model_retries": 0
+    },
+    "rag_auto_retrieve_on_send": false,
+    "provider": "llama_cpp",
+    "model": "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+    "api_url": "http://127.0.0.1:9099",
+    "model_catalog_auto_refresh_enabled": false,
+    "mcp_server_enabled": false,
+    "hook": {
+      "enabled": true,
+      "hook": [
+        {
+          "event": "PreToolUse",
+          "matcher": "search_library_rag",
+          "command": [
+            "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+            "/private/tmp/archive-capture-native-_yuzjq8a/direct/deny-rag.py"
+          ],
+          "timeout_s": 2
+        }
+      ]
+    }
+  },
+  "direct-fixed": {
+    "config_sha256": "77d232bc586041dc756d672740b34f426e0e0dd8dd0003ff133364b84ae9c07a",
+    "database_paths": {
+      "chachanotes_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_chatbook_ChaChaNotes.db",
+      "prompts_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_cli_prompts.db",
+      "media_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_cli_media_v2.db",
+      "research_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_chatbook_research.db",
+      "writing_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_chatbook_writing.db",
+      "library_collections_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_chatbook_library_collections.db",
+      "workspaces_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_chatbook_workspaces.db",
+      "evals_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/evals.db",
+      "rag_indexing_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/rag_indexing.db",
+      "subscriptions_db_path": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data/task7_live/tldw_chatbook_subscriptions.db",
+      "USER_DB_BASE_DIR": "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/data",
+      "check_integrity_on_startup": false,
+      "integrity_check_timeout": 30
+    },
+    "console": {
+      "exchange_capture": true,
+      "trace_normalized_writes": true,
+      "trace_normalized_reads": true,
+      "trace_legacy_writes": false,
+      "exchange_capture_detail": "safe",
+      "exchange_capture_pii_redaction": false,
+      "direct_library_tools": true,
+      "assistant_library_access_default": true,
+      "local_tools_enabled": false,
+      "agent_max_model_turns": 5,
+      "agent_max_steps": 40,
+      "agent_max_wall_seconds": 180.0,
+      "agent_max_model_retries": 0
+    },
+    "rag_auto_retrieve_on_send": false,
+    "provider": "llama_cpp",
+    "model": "../../../Working/Language_Models/gemma-4-26B-A4B/gemma-4-26B-A4B-it-ultra-uncensored-heretic-Q4_K_M.gguf",
+    "api_url": "http://127.0.0.1:9099",
+    "model_catalog_auto_refresh_enabled": false,
+    "mcp_server_enabled": false,
+    "hook": {
+      "enabled": true,
+      "hook": [
+        {
+          "event": "PreToolUse",
+          "matcher": "search_library_rag",
+          "command": [
+            "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+            "/private/tmp/archive-capture-native-_yuzjq8a/direct-fixed/deny-rag.py"
+          ],
+          "timeout_s": 2
+        }
+      ]
+    }
+  }
+}

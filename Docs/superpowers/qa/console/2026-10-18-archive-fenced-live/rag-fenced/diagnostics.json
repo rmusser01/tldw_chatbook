@@ -1,0 +1,20 @@
+{
+  "source": "/private/tmp/archive-recovery-profilev2-live-20261018/rag-fenced/data/task7_live/tldw_cli_app.log",
+  "sha256": "9506da4878baec15eb6845c7f9c6e05424c83e69fc29f31515ae7f2a3ecdb901",
+  "selection_rule": "capture_provider_failure OR [ERROR OR [CRITICAL OR Traceback",
+  "selected": [
+    {
+      "line": 115,
+      "text": "2026-10-18 11:15:07 [ERROR   ] root:11945 - !!! ERROR: Failed to find #app-log-display widget for RichLogHandler setup."
+    },
+    {
+      "line": 165,
+      "text": "2026-10-18 11:15:18 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:463 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=51"
+    },
+    {
+      "line": 196,
+      "text": "2026-10-18 11:15:59 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:463 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=23"
+    }
+  ],
+  "interpretation": "optional RAG capture and RichLog setup diagnostics; actual archive flow and all4provider calls succeeded; not repaired or claimed causal"
+}

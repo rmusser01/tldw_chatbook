@@ -1,0 +1,16 @@
+{
+  "baseline": {
+    "ruff_exit": 1,
+    "ruff_count": 34,
+    "whole_source_formatted": false
+  },
+  "current": {
+    "ruff_exit": 1,
+    "ruff_count": 34,
+    "whole_source_formatted": false
+  },
+  "signatures_equal": true,
+  "one_argument_deletion_only": true,
+  "source_sha256": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+  "test_sha256": "15e3519c369fe055b7feb11f6cee6deb5fb69adb0751f60ea3f5d980de1e772c"
+}

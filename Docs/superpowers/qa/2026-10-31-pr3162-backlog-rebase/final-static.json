@@ -1,0 +1,20 @@
+{
+  "integration_head": "52269c3dd4b330a5cf6ccd938e7ea1f467a05cf0",
+  "base": "57e330e735fff25515778e839f31ed85602c34f2",
+  "parsed_changed_python": 90,
+  "parsed_product_python": 49,
+  "parse_errors": [],
+  "duplicate_test_definitions": [],
+  "local_python_files": [
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "Tests/Architecture/test_screen_size_ratchet.py",
+    "Tests/Chat/test_console_archive_recovery_dispatch.py",
+    "Tests/Chat/test_console_archive_recovery_followup.py",
+    "Tests/UI/test_console_archive_recovery_flow.py",
+    "scripts/check_ui_pr_gate_census.py"
+  ],
+  "local_introduced_ruff": [],
+  "census_check": "1174 entries, floor1174, verified unchanged1173-entry prefix",
+  "css_build": "Succeeded; generated outputs unchanged",
+  "diff_check": "Product/test/script and local working diffs passed"
+}

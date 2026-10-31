@@ -1042,6 +1042,12 @@ prefix with real asyncio and owned loopback controls, while preserving external
 network refusal. Select a fresh private profile before imports for source-bound
 configuration consumers; an earlier harness refusal is not the intended RED.
 
+## A scroll request can precede the layout it needs (TASK-35585, 2026-10-18)
+
+**Incident.** PR3162's native100x30 recovery capture read composer strips instead of its header: the header was at y26 while the transcript ended at y26, with scroll_y1 and max_scroll_y31. An immediate scroll had used the earlier layout's range. Deferred scrolling alone still failed both compact controls; waiting for layout before requesting that scroll completed the same real click/restore/history journey. A separate imported-results assertion ran after a coalesced Console sync request returnedFalse, before its owning pass published the imported session.
+
+**What to do.** Let layout finish before scrolling, then require the full captured widget inside the transcript viewport and crop there. Keep real hit-tested clicks and content assertions. A coalescible sync call is a request, so wait for its observed view session and completed pass before asserting its publication; do not treat its return as an unconditional completion barrier.
+
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
 **Incident.** PR #3137 hosted UI shard10 timed out while checking response-rule
@@ -3563,6 +3569,29 @@ GC. An empty filtered basename report had initially missed those resource names.
 Measure all resource types after teardown, record diagnostic exit/stderr, and
 distinguish fixture lifetime from ordinary production reads; falling below the
 warning threshold is not evidence of a plateau.
+
+
+**TASK-33020, agent archive recovery qualification, 2026-09-27.** The 498-node
+scoped pass reported +729 descriptors; total attribution remains unqualified.
+A focused probe retained the explicit recovery fixture's real main and worker
+ChaChaNotesDB handles after an actual off-loop target read. Calling the fixture's
+`close_connection()` teardown left the worker handle usable. The fixture now
+uses `quiesce_connections` after recovery work settles; the matching explicit
+file-backed runtime-search test does likewise. Cached-config teardown already
+used this boundary, but explicit fixture owners were outside that cache. Test
+those exact retained handles for closure; do not attribute the aggregate warning
+or claim a process-wide plateau from a smaller passing selection.
+
+**Same incident, bounded follow-through.** One retained native recovery app ran
+five confirmed real-store cycles on two explicitly owned executor workers. OS
+FDs plateaued at 47. Strong handle observers showed current-thread teardown left
+two WorkspaceDB worker handles (six FDs) and one AgentRunsDB worker handle (four
+FDs); calling each store's `close()` on its exact creating worker reduced all
+three named stores to zero handles/FDs before GC. The observers deliberately
+retain connections, so this proves explicit-close ownership rather than natural
+release. One worker deadlocked the native agent runner awaiting marshalled storage;
+two real workers are needed for that probe topology. These bounded samples do
+not attribute the earlier +729 aggregate growth or qualify unrelated app owners.
 
 ## Capture queued UI ownership in the row, not only in the event
 
@@ -10813,6 +10842,17 @@ runtime drain remains task10's responsibility.
 writer has drained. A `with connection` block, a successful transaction, and delayed
 fixture garbage collection establish different properties. Keep writer exclusion
 and deliberately drained snapshot setup as separate behavioral tests.
+
+**Follow-up incident (TASK35584, PR3162).** A passing storage cohort retained295
+file descriptors after GC: test-created Workspace owners were never closed, and
+five correctly rolled-back Workspace migration failures left the constructor's
+held native connection reachable through custody leases. Finite archive reads
+also needed owning-thread retirement. Probe after complete fixture teardown,
+identify actual files and native owners, and close at those owners; raising the
+warning threshold or relying on GC would conceal these defects. Include cleanup
+in operation deadlines: a0.5s archive read completed SQL in0.052s but its ordinary
+WAL checkpoint then waited1.175s on another reader. Preserve borrowed handles,
+timeouts and transactions when bounding only the departing operation-owned handle.
 
 ## A consumed fixed-name sidecar is not owned by the previous writer (TASK-31993)
 
@@ -20838,6 +20878,16 @@ left no SQLite file records. The final 181-case run passed without warnings and
 with total session growth of three descriptors. Keep the owner's close routes and
 leak sentinel; GC cannot retire these retained native handles.
 
+**Follow-up incident (TASK35584, PR3162).** Direct runtime disposal left the
+runtime attached to the backing factory app; its later factory finalizer disposed
+it again and reopened chat SQLite after quiescence. Use the existing disposal
+helper that also detaches the completed owner. This harness also queued receipt
+render callbacks on the unmounted backing app. Routing only `call_later` through
+the actual mounted host let the real view/generation acknowledgement retire the
+unseen mark. Wait for that acknowledgement before testing hidden-source feedback;
+turn custody completion alone does not establish rendered-receipt completion.
+Keep notification/navigation spies and acknowledgement checks intact.
+
 ## TASK-32108: read the recorded human acceptance before reopening UAT
 
 On October 4, the Buddy continuation requested another microphone/playback and
@@ -23037,3 +23087,39 @@ The board's 13 existing tests passed, including a bootstrap/create test whose re
 
 
 PR #3157's independent review also found that direct action calls in a test named keyboard navigation missed terminal uppercase Shift keys and descendant scroll bindings. Actually pushed screens with `pilot.press()` reproduced four broken interactions, including off-screen selection and an inaccessible long inspector. Use parser-shaped key names and assert visible viewport state for keyboard promises; a selected ID alone does not prove that users can see it.
+## Bind the intended real agent bridge before mounting Console
+
+**TASK-33019, archive recovery, 2026-09-27.** A mounted native recovery test
+constructed its controller with one real `AgentRunsDB`, then let screen startup
+create a second runtime bridge before replacing it. Selection refresh timing
+could leave the controller creating the manual work chain in one database and
+native dispatch reading the other, failing with `unknown automatic work chain`.
+Binding `owner.set_agent_bridge(bridge)` before mount and asserting that the
+owner and controller retain that exact bridge removed the split; retrying the
+flow would have hidden the fixture defect.
+
+## Clean merges can reverse the canonical owner comparison (PR3162 rebase,2026-10-18)
+
+Rebasing archive recovery onto current dev combined two individually valid thinking-owner adaptations: incoming validated adapter aliases were normalized to the canonical owner key, while an older comparison renamed the admitted canonical base row back to that alias. Git reported no conflict. The exact-owner positive test failed while all seven negative controls passed; a real captured-thinking follow-up then failed completed-turn surface admission because its saved assistant had lost revision provenance. Deleting only the stale reverse rename produced9passing factory/native checks, preserving every source/value/witness guard. Compare the complete composed normalization at a shared boundary; negative refusal controls alone cannot prove a valid owner survives.
+
+### PR3162 first-paint census and Textual exit timing (2026-10-18)
+
+Hosted Perf Guard's first profile-warming boot failed because archive control sync mounted into a detached root during app exit. An `is_mounted` check alone reproduced the same crash locally: Textual keeps that flag after detachment. Real app-exit and exit-during-mount probes required entry/post-await attachment checks; a deterministic overlapping-sync control also required serialization once post-custody first-use preparation became a second caller. Preserve those native negative controls instead of treating a passing ordinary card test as lifecycle evidence.
+
+After deferring all12 recovery residents, a local1032 count was still above1031. Three serial boots of unchanged dev5eb on one warmed profile measured1030/1033/1030, with only existing automatic-submission/change-review/character-search timing residents varying. The final isolated PR census passed1031 and explicit absence pins prove recovery stays off first paint. Separate named source attribution from baseline timer wobble; do not raise the budget or edit unrelated modules to make a single count green.
+
+
+## Locate the Windows preparation owner before blaming archive storage (2026-10-31)
+
+During PR #3162 integration, a 15s dispatch wait failed once and passed unchanged
+on an observation-only rerun. The sampled worker was still in native storage
+admission. A separate mounted-agent failure sampled the main Textual loop in
+profile-backed skill discovery before the fake provider was entered; all 16
+sampled admission/skill files matched the exact dev base. The archive fixture's
+captured execution context had no skills, so its UI discovery now uses that same
+empty inventory. Native admission and archive deadlines remain real. Retain the
+failed receipts, distinguish preparation from retirement, and do not label an
+unresolved assertion baseline-only merely because the host was slow. Ordinary
+Windows TEMP also failed admission before pytest collection; these runs needed
+native 0700 config/temp directories rather than relaxed permission validation.
+Evidence: `Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md`.

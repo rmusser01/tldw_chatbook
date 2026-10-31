@@ -696,6 +696,10 @@ class LoopDeps:
         ]
         | None
     ) = None
+    # Appended to preserve existing positional dependency slots. Native dispatch
+    # supplies the restore call identity outside model-controlled arguments.
+    search_archived_conversations: Callable[[dict], ToolResult] | None = None
+    request_conversation_restore: Callable[..., ToolResult] | None = None
 
 
 def _continuation_calls_match(
@@ -2600,11 +2604,15 @@ def run_agent_loop(
                 if continuation_checkpoint is None:
                     logger.opt(exception=True).warning(
                         f"review_tool_calls hook raised for batch "
-                        f"{[c.name for c in review_required_calls]}; treating all "
-                        f"{len(review_required_calls)} "
-                        f"calls as proceed"
+                        f"{[c.name for c in review_required_calls]}; refusing recovery "
+                        f"calls and preserving legacy review behavior for other tools"
                     )
-                verdicts = {}
+                verdicts = {
+                    str(call.call_id or call.name): "Recovery tool review failed."
+                    for call in review_required_calls
+                    if call.name
+                    in {"search_archived_conversations", "request_conversation_restore"}
+                }
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
@@ -3294,6 +3302,20 @@ def run_agent_loop(
                             str(call.args.get("script_path", "")),
                             [str(item) for item in raw_args],
                         )
+                elif (
+                    call.name == "search_archived_conversations"
+                    and deps.search_archived_conversations is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.search_archived_conversations(dict(call.args))
+                elif (
+                    call.name == "request_conversation_restore"
+                    and deps.request_conversation_restore is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.request_conversation_restore(
+                        dict(call.args), call_id=current_call_correlation
+                    )
                 elif call.name == FORK_CHAT_TOOL_NAME and deps.fork_chat is not None:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.fork_chat(dict(call.args))

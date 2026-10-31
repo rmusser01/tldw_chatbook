@@ -30,6 +30,7 @@ from loguru import logger
 from tldw_chatbook.Utils.private_paths import lexical_path
 
 from .private_sqlite import connect_private_sqlite
+from .private_sqlite_process import HelperTimeoutError
 
 SEMANTIC_MUTATION_GUARD_FUNCTION = "console_semantic_mutation_authorized"
 TRACE_GC_DELETE_GUARD_FUNCTION = "console_trace_gc_delete_authorized"
@@ -41,7 +42,9 @@ _OPERATION_OWNERS = threading.local()
 
 
 @contextmanager
-def operation_owned_connection(database: object) -> Iterator[None]:
+def operation_owned_connection(
+    database: object, *, operation_deadline: float | None = None
+) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
@@ -49,6 +52,7 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     during the operation; a newly acquired replacement is operation-owned.
     A nested operation on the same thread and database defers to the
     outermost owner, which retires the handle when the whole operation ends.
+    A monotonic deadline also bounds the departing handle's checkpoint wait.
     """
     owners = getattr(_OPERATION_OWNERS, "ids", None)
     if owners is None:
@@ -58,14 +62,18 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         return
     owners.add(id(database))
     try:
-        with _operation_owned_connection(database):
+        with _operation_owned_connection(
+            database, operation_deadline=operation_deadline
+        ):
             yield
     finally:
         owners.discard(id(database))
 
 
 @contextmanager
-def _operation_owned_connection(database: object) -> Iterator[None]:
+def _operation_owned_connection(
+    database: object, *, operation_deadline: float | None = None
+) -> Iterator[None]:
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
     close = getattr(database, "close_connection", None)
@@ -111,7 +119,22 @@ def _operation_owned_connection(database: object) -> Iterator[None]:
     finally:
         current = getattr(local, "conn", None)
         if current is not None and (not borrowed or current is not previous):
-            close()
+            try:
+                if operation_deadline is not None:
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(current)
+                    except sqlite3.ProgrammingError:
+                        pass  # Native retirement already completed.
+                    else:
+                        timeout = current.execute("PRAGMA busy_timeout").fetchone()[0]
+                        remaining_ms = max(
+                            0, int((operation_deadline - time.monotonic()) * 1000)
+                        )
+                        current.execute(
+                            f"PRAGMA busy_timeout = {min(timeout, remaining_ms)}"
+                        )
+            finally:
+                close()
 
 
 async def run_owned_db_call[**_CallParameters, _CallResult](
@@ -1056,7 +1079,9 @@ class BaseDB(ABC):
         """
         pass
 
-    def _get_connection(self, **connect_kwargs: Any) -> sqlite3.Connection:
+    def _get_connection(
+        self, *, operation_deadline: float | None = None, **connect_kwargs: Any
+    ) -> sqlite3.Connection:
         """
         Get a database connection with row factory.
         Can be overridden by subclasses for custom connection handling.
@@ -1068,7 +1093,21 @@ class BaseDB(ABC):
                 ``check_same_thread=False``). The connection is still
                 opened HERE, under this module's ``db.base`` owner.
         """
-        conn = connect_private_sqlite("db.base", self.db_path_str, **connect_kwargs)
+        if operation_deadline is None:
+            conn = connect_private_sqlite("db.base", self.db_path_str, **connect_kwargs)
+        else:
+            remaining = operation_deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Database connection budget exhausted")
+            try:
+                conn = connect_private_sqlite(
+                    "db.base",
+                    self.db_path_str,
+                    operation_deadline=operation_deadline,
+                    **{"timeout": remaining, **connect_kwargs},
+                )
+            except HelperTimeoutError as exc:
+                raise TimeoutError("Database connection admission timed out") from exc
         conn.row_factory = sqlite3.Row
         return conn
 

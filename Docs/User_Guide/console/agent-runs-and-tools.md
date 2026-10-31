@@ -3233,3 +3233,56 @@ require an explicit export/release or narrower scope; no report is silently evic
 Individual review/source/output caps and context capacity can yield honest partials.
 The [qualification record](../../superpowers/qa/2026-10-18-multi-model-code-review/README.md)
 distinguishes tested deterministic behavior from unverified live-provider quality.
+## Find and restore an archived chat with the assistant
+
+With **Assistant Library access: Allowed**, an interactive main-agent run in an
+ordinary local Console Chat can search saved archives and request restoration.
+The dedicated recovery tools work in **Direct** and **RAG-only** mode, even
+without an embedding index. With access **Blocked**, use the existing manual
+[Library recovery route](sessions-tabs-workspaces.md#archive-find-review-and-resume-a-saved-chat).
+Temporary chats, subagents, unattended runs and remote-only conversations are
+outside this recovery feature.
+
+```text
+You: Find conversations I archived today. I don't remember the workspace.
+Assistant: Here are the matching local chats, with their workspaces and archive dates.
+You: Restore the second one.
+App: Confirm the named chat and the exact chat/workspace restoration scope.
+```
+
+The app renders numbered results with **Preview** and the applicable recovery
+action. Choose a result's button or ask the assistant to restore it; both lead
+to the same confirmation. If several result cards make “the second one”
+ambiguous, identify the card first. Agent-written text and imported transcripts
+cannot create recovery buttons or authorize a restore.
+
+While the original results remain live, follow-ups carry their selection references,
+row numbers, titles, workspace labels and available recovery scopes to the same
+model destination that performed the search. This retained selection context
+contains no excerpts or message history. A changed destination needs a fresh
+search. **Next Send** does not display or estimate this metadata; the actual
+request budget includes it.
+
+Review the exact title, workspace, scope and any replacement name before
+**Confirm**. Every operation needs fresh confirmation; remembered Allow does
+not approve recovery. Cancel or an unanswered confirmation makes no new write.
+Confirmation expires after five minutes, including while its source Chat is
+in the background. See the [recovery choices](sessions-tabs-workspaces.md#assistant-recovery-choices)
+for workspace effects and separate **Open**.
+
+Results expire after thirty minutes; at most ten pages are retained per source
+Chat. Closing that Chat or restarting also expires its references. Use
+**Refresh** for expired or stale results. A manual refresh stays in the local
+UI; a conversational follow-up needs a fresh assistant search before the agent
+can select a result it has not seen. **More** continues the current search,
+which may observe changed local state rather than a frozen inventory.
+
+A partial receipt identifies which change completed. A workspace may already
+be restored while the selected chat remains archived. Refresh and confirm only
+the remaining work; recovery does not undo the completed workspace change or
+move the chat. Restoring or opening manually does not send a prompt. If an
+agent is waiting for your confirmation, its ordinary continuation can consume
+the operation's outcome.
+
+The permission and ownership boundaries are defined in
+[ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md).

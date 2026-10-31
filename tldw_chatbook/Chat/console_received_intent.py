@@ -53,6 +53,7 @@ class ConsoleReceivedTurnIntent:
     queue_revision: int | None = None
     _pressed_inputs: ConsoleSessionInputSnapshot | None = field(default=None, repr=False)
     _pressed_stash: Any | None = field(default=None, repr=False)
+    recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from .console_configuration_preparation import ConsoleTurnCaptureSelection

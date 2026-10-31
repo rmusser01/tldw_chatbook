@@ -880,7 +880,7 @@ class DreamsDB(BaseDB):
     def get_story(self, story_id: int) -> dict | None:
         """Return one story row by id, or ``None``.
 
-        task-33164 (Phase 2 Track story): the Artifacts screen's Tracked
+        task-35586 (Phase 2 Track story): the Artifacts screen's Tracked
         rows resolve their ``origin_story_id`` through this targeted read
         because the ``list_recent_stories`` window may no longer contain
         the origin -- a long-lived watch outlives the bounded recent-stories

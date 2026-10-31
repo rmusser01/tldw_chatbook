@@ -1,0 +1,94 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 60,
+      "row": 33
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_semantic_revision.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport base64\nimport json\nimport re\nimport sqlite3\nfrom collections.abc import Callable, Mapping\nfrom dataclasses import dataclass\nfrom typing import Protocol, cast\n\nfrom tldw_chatbook.Chat.console_trace_custom_pii import (\n    custom_pii_ruleset_for_revision,\n    redact_pii_value_for_ruleset_revision,\n)\nfrom tldw_chatbook.Chat.console_trace_models import new_opaque_id\nfrom tldw_chatbook.Chat.console_trace_redaction import (\n    BUILTIN_PII_RULESET_REVISION_ID,\n    CREDENTIAL_FILTER_VERSION,\n    CREDENTIAL_SANITIZER_UNAVAILABLE,\n    PII_DETECTOR_UNAVAILABLE,\n    CredentialSanitizationResult,\n    CredentialSanitizer,\n    PIIRedactionSpan,\n    apply_frozen_pii_masks,\n)\nfrom tldw_chatbook.Chat.console_trace_repository import (\n    ConsoleTraceRepository,\n    SemanticRevisionRecord,\n    TraceCallRecord,\n)\nfrom tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 36
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 74,
+      "row": 440
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_semantic_revision.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 440
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 440,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 57,
+      "row": 506
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_semantic_revision.py",
+    "fix": null,
+    "location": {
+      "column": 9,
+      "row": 506
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 506,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 61,
+      "row": 509
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_semantic_revision.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 509
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 509,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  }
+]

@@ -2159,6 +2159,7 @@ class AgentService:
             Callable[[str, str, list[str]], ToolResult] | None
         ) = None,
         post_tool_call: Callable[[str, str, dict, str, bool, str], None] | None = None,
+        archive_recovery_provider: Any | None = None,
         fork_chat_tool: Callable[[dict], ToolResult] | None = None,
         new_chat_tool: Callable[[dict], ToolResult] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
@@ -2368,6 +2369,7 @@ class AgentService:
         # this seam existed.
         self._post_tool_call = post_tool_call
         # Primary-only by design (ADR-150): children never create chats in v1.
+        self._archive_recovery_provider = archive_recovery_provider
         self._fork_chat_tool = fork_chat_tool
         self._new_chat_tool = new_chat_tool
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
@@ -4482,17 +4484,24 @@ class AgentService:
         finally:
             try:
                 if (
-                    automatic_work is not None
-                    and automatic_child_reservation is not None
+                    kwargs["agent_kind"] == AGENT_KIND_PRIMARY
+                    and self._archive_recovery_provider is not None
                 ):
-                    # Only uncommitted work can refund. Model setup may already
-                    # own a driver before raising, so a committed launch stays.
-                    automatic_work.ledger.release(
-                        automatic_child_reservation, owner_id=automatic_work.owner_id
-                    )
+                    self._archive_recovery_provider.finish()
             finally:
-                if finish_root:
-                    owner.finish_root()
+                try:
+                    if (
+                        automatic_work is not None
+                        and automatic_child_reservation is not None
+                    ):
+                        # Only uncommitted work can refund; preserve owned driver cleanup.
+                        automatic_work.ledger.release(
+                            automatic_child_reservation,
+                            owner_id=automatic_work.owner_id,
+                        )
+                finally:
+                    if finish_root:
+                        owner.finish_root()
 
     @guarded
     def _run_one(
@@ -4673,6 +4682,12 @@ class AgentService:
                 else self._next_owner_seq(run_id)
             )
             lifecycle_event_id = self._latest_durable_event_id(run_id)
+        if (
+            agent_kind == AGENT_KIND_PRIMARY
+            and self._archive_recovery_provider is not None
+            and not self._archive_recovery_provider.activate(run_id)
+        ):
+            raise RuntimeError("Archive recovery run admission refused")
         owner = current_execution_owner()
         if owner is not None:
             owner.bind_run(run_id)
@@ -4728,6 +4743,17 @@ class AgentService:
         peer_messenger = peer_messenger_factory() if peer_messenger_factory else None
         progress_reader: MessageReader | None = None
 
+        if agent_kind != AGENT_KIND_PRIMARY:
+            from .archive_recovery_tool_provider import RECOVERY_RESERVED_TOOL_NAMES
+
+            config = dataclasses.replace(
+                config,
+                allowed_tools=tuple(
+                    name
+                    for name in config.allowed_tools
+                    if name not in RECOVERY_RESERVED_TOOL_NAMES
+                ),
+            )
         schema_plan = first_request_schema_plan
         if schema_plan is None:
             # ADR-147 Task 7: the master sees provider/model override args
@@ -8710,6 +8736,48 @@ class AgentService:
                     ),
                     run_id=run_id,
                 )
+        recovery_search = recovery_restore = None
+        if (
+            agent_kind == AGENT_KIND_PRIMARY
+            and self._archive_recovery_provider is not None
+        ):
+            raw_search, raw_restore = self._archive_recovery_provider.build_closures()
+
+            def recovery_gate(name: str) -> ToolResult | None:
+                if name not in config.allowed_tools or name not in disclosed_names:
+                    return ToolResult.blocked(f"Tool not permitted: {name}")
+                return self.registry.check_archive_recovery_call(name)
+
+            def recovery_invoke(
+                name: str, callback: Any, arguments: dict, **kwargs: Any
+            ) -> ToolResult:
+                refusal = recovery_gate(name)
+                if refusal is not None:
+                    return refusal
+                if should_cancel():
+                    return ToolResult.blocked("Recovery call cancelled before start.")
+                try:
+                    operation = owner.reserve_tool() if owner is not None else None
+                except CapacityRefused as exc:
+                    return ToolResult.blocked(f"tool call refused: {exc}")
+                try:
+                    return callback(arguments, **kwargs)
+                finally:
+                    if operation is not None:
+                        operation.finish()
+
+            def recovery_search(arguments: dict) -> ToolResult:
+                return recovery_invoke(
+                    "search_archived_conversations", raw_search, arguments
+                )
+
+            def recovery_restore(arguments: dict, *, call_id: str) -> ToolResult:
+                return recovery_invoke(
+                    "request_conversation_restore",
+                    raw_restore,
+                    arguments,
+                    call_id=call_id,
+                )
 
         deps = LoopDeps(
             prepare_hook_call=prepare_hook_call if hook_run else None,
@@ -8839,6 +8907,12 @@ class AgentService:
                 )
                 if self._post_tool_call is not None
                 else None
+            ),
+            search_archived_conversations=(
+                recovery_search if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            request_conversation_restore=(
+                recovery_restore if agent_kind == AGENT_KIND_PRIMARY else None
             ),
             fork_chat=self._fork_chat_tool,
             new_chat=self._new_chat_tool,

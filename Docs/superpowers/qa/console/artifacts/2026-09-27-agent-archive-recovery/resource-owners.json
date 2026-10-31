@@ -1,0 +1,208 @@
+{
+  "samples": [
+    {
+      "phase": "stores_created",
+      "os_fd_total": 18,
+      "owned_os_fds": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 0
+      },
+      "live_handles": {
+        "chat": 1,
+        "workspace": 1,
+        "runs": 0
+      },
+      "threads_seen": {
+        "chat": 1,
+        "workspace": 1,
+        "runs": 0
+      },
+      "chat_registered": 1
+    },
+    {
+      "phase": "settled_cycle_1",
+      "os_fd_total": 47,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 5
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "settled_cycle_2",
+      "os_fd_total": 47,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 5
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "settled_cycle_3",
+      "os_fd_total": 47,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 5
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "settled_cycle_4",
+      "os_fd_total": 47,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 5
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "settled_cycle_5",
+      "os_fd_total": 47,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 5
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "source_closed",
+      "os_fd_total": 47,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 5
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "runtime_disposed",
+      "os_fd_total": 46,
+      "owned_os_fds": {
+        "chat": 7,
+        "workspace": 7,
+        "runs": 4
+      },
+      "live_handles": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 1
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 3
+    },
+    {
+      "phase": "current_thread_stores_closed",
+      "os_fd_total": 38,
+      "owned_os_fds": {
+        "chat": 0,
+        "workspace": 6,
+        "runs": 4
+      },
+      "live_handles": {
+        "chat": 0,
+        "workspace": 2,
+        "runs": 1
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 0
+    },
+    {
+      "phase": "all_owned_store_handles_closed",
+      "os_fd_total": 28,
+      "owned_os_fds": {
+        "chat": 0,
+        "workspace": 0,
+        "runs": 0
+      },
+      "live_handles": {
+        "chat": 0,
+        "workspace": 0,
+        "runs": 0
+      },
+      "threads_seen": {
+        "chat": 3,
+        "workspace": 3,
+        "runs": 2
+      },
+      "chat_registered": 0
+    }
+  ],
+  "cycles": 5,
+  "executor_workers": 2,
+  "observer_retains_handles": true,
+  "gc_requested": false
+}
