@@ -967,7 +967,9 @@ class ConsolePromptQueueUIController:
 
     def _capture_user_configuration(self, session_id: str) -> Any:
         """Issue actor provenance only from user queue/edit event producers."""
-        return self._with_user_origin(session_id, self._capture_configuration(session_id))
+        return self._with_user_origin(
+            session_id, self._capture_configuration(session_id)
+        )
 
     def _with_user_origin(self, session_id: str, configuration: Any) -> Any:
         from dataclasses import replace
@@ -980,7 +982,9 @@ class ConsolePromptQueueUIController:
                 runtime = owner.ensure_archive_recovery()
         if runtime is None or configuration is None:
             return configuration
-        return replace(configuration, recovery_user_origin=runtime.issue_user_proof(session_id))
+        return replace(
+            configuration, recovery_user_origin=runtime.issue_user_proof(session_id)
+        )
 
     def edit_waiting(
         self,

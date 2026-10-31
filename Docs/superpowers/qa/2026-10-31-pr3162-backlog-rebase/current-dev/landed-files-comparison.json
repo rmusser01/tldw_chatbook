@@ -1,0 +1,41 @@
+[
+  {
+    "landed_merge": "4d6764b132",
+    "same_as_current_base": [
+      "tldw_chatbook/UI/Screens/settings_search_index.py",
+      "tldw_chatbook/Utils/os_notifications.py",
+      "tldw_chatbook/config.py"
+    ],
+    "intersections_reviewed_separately": [
+      "tldw_chatbook/UI/Screens/chat_screen.py",
+      "tldw_chatbook/UI/Screens/settings_screen.py"
+    ]
+  },
+  {
+    "landed_merge": "6946ea0492",
+    "same_as_current_base": [
+      "tldw_chatbook/Agents/mcp_tool_provider.py",
+      "tldw_chatbook/MCP/execution_log.py",
+      "tldw_chatbook/MCP/permission_prompt_reducer.py",
+      "tldw_chatbook/MCP/permission_store.py",
+      "tldw_chatbook/MCP/unified_control_plane_service.py",
+      "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py",
+      "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py"
+    ],
+    "intersections_reviewed_separately": []
+  },
+  {
+    "landed_merge": "0d05d27fa1",
+    "same_as_current_base": [
+      "tldw_chatbook/Constants.py",
+      "tldw_chatbook/UI/Kanban/__init__.py",
+      "tldw_chatbook/UI/Kanban/board_models.py",
+      "tldw_chatbook/UI/Kanban/board_widgets.py",
+      "tldw_chatbook/UI/Kanban/kanban_board_screen.py",
+      "tldw_chatbook/UI/Navigation/screen_registry.py",
+      "tldw_chatbook/UI/Navigation/shell_destinations.py",
+      "tldw_chatbook/css/widget_defaults_scoped.tcss"
+    ],
+    "intersections_reviewed_separately": []
+  }
+]

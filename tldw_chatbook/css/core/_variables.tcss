@@ -382,6 +382,9 @@ $ds-agentic-mcp-compact-row-share: 9fr;
    (features/_wizards.tcss), single-consumer feature geometry named like
    the groups above. Each share follows its labels' width: "No voice for
    now", then PocketTTS/OmniVoice, then OpenAI/Custom. */
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 /* task 11 (ADR-161 §3.10): the Research Workspace chat pane's minimum
    columns in its two fr-sharing layout modes (single consumer). */
 $ds-research-chat-pane-floor: 58;

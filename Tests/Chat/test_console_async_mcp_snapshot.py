@@ -1422,3 +1422,62 @@ async def test_actual_wired_preparation_still_refuses_real_draft_drift(
             )
         finally:
             await _retire_wired_preparation(case, task, probe)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["normal", "queued"])
+async def test_actual_wired_user_entry_issues_archive_proof_without_changing_captured_configuration(
+    wired_case, route
+):
+    """User entry adds exact provenance after the real configuration producer."""
+    from dataclasses import fields
+
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        _controller_capture_turn_configuration_snapshot,
+    )
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
+
+    case = wired_case
+    queue = case.screen._prompt_queue
+    runtime = case.screen._console_runtime()
+    produced = []
+    previous_profile = sys.getprofile()
+
+    def observe(frame, event, value):
+        if previous_profile is not None:
+            previous_profile(frame, event, value)
+        if (
+            event == "return"
+            and frame.f_code is _controller_capture_turn_configuration_snapshot.__code__
+            and type(value) is ConsoleTurnConfigurationSnapshot
+        ):
+            produced.append(value)
+
+    sys.setprofile(observe)
+    try:
+        if route == "normal":
+            turn_id = await queue._launch_chain_async("actual wired input", case.session.id)
+            captured = runtime._turn_custody[turn_id].request.configuration
+            proof = captured.recovery_user_origin
+            recovery = runtime.ensure_archive_recovery()
+            assert recovery._accepted_proofs[id(proof)] == (proof, turn_id)
+        else:
+            captured = await queue._capture_configuration_for_dispatch(case.session.id)
+            proof = captured.recovery_user_origin
+            recovery = runtime.ensure_archive_recovery()
+            assert recovery._proofs[id(proof)] is proof
+        assert proof.session_id == case.session.id
+        assert len(produced) == 1
+        assert produced[0].recovery_user_origin is None
+        for field in fields(captured):
+            if field.name != "recovery_user_origin":
+                assert getattr(captured, field.name) == getattr(produced[0], field.name)
+    finally:
+        sys.setprofile(previous_profile)
+        tasks = tuple(
+            record.task for record in runtime._turn_custody.values() if record.task
+        )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await runtime.dispose(timeout_seconds=3)

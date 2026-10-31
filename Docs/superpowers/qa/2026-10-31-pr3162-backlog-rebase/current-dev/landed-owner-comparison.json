@@ -1,0 +1,66 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "checked_methods": [
+      "_console_os_notification_display",
+      "_fire_console_os_notification",
+      "_notify_console_fleet_teardown_if_any",
+      "_notify_console_rail_preference_save_failure",
+      "_notify_console_responsive_rail_collapse",
+      "_notify_console_run_failure",
+      "_notify_console_run_outcome",
+      "_notify_conversation_settings_return",
+      "_notify_guardian_visit_summary_if_any",
+      "_spawn_os_notification_thread",
+      "notify_terminal_focus_regained"
+    ],
+    "removed": [],
+    "changed": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "checked_methods": [
+      "_console_os_notification_value",
+      "_loaded_console_os_notifications",
+      "_open_plugins",
+      "_stage_console_os_notification_value",
+      "handle_console_os_notifications_enabled_changed",
+      "handle_console_os_notifications_needs_approval_changed",
+      "handle_console_os_notifications_run_failed_changed",
+      "handle_console_os_notifications_run_finished_changed"
+    ],
+    "removed": [],
+    "changed": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "checked_methods": [
+      "_notify_terminal_receipt",
+      "_plugin_test_owner",
+      "discard_plugin_test",
+      "execute_plugin_test",
+      "prepare_plugin_test"
+    ],
+    "removed": [],
+    "changed": []
+  },
+  {
+    "path": "tldw_chatbook/Agents/tool_catalog.py",
+    "checked_methods": [],
+    "removed": [],
+    "changed": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "checked_methods": [
+      "_notify_fleet_activity",
+      "_notify_fleet_consumers",
+      "bind_plugin_actor",
+      "bind_plugin_root",
+      "plugin_checked_chat_call",
+      "plugin_run_terminal"
+    ],
+    "removed": [],
+    "changed": []
+  }
+]

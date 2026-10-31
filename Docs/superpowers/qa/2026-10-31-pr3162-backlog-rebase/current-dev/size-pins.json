@@ -1,0 +1,82 @@
+[
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "previous": 29016,
+    "measured": 29104
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "previous": 6303,
+    "measured": 6303
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "previous": 35748,
+    "measured": 35674
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "previous": 8545,
+    "measured": 8549
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "previous": 25705,
+    "measured": 25870
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "previous": 11703,
+    "measured": 11729
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Agents/agent_service.py",
+    "previous": 9582,
+    "measured": 9656
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "previous": 8774,
+    "measured": 8774
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "previous": 6751,
+    "measured": 6943
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Chat/console_trace_service.py",
+    "previous": 6662,
+    "measured": 6679
+  },
+  {
+    "guard": "Tests/Architecture/test_module_size_ratchet.py",
+    "path": "tldw_chatbook/Workspaces/registry_service.py",
+    "previous": 4304,
+    "measured": 4304
+  },
+  {
+    "guard": "Tests/Architecture/test_screen_size_ratchet.py",
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "previous": [
+      "ChatScreen",
+      24377,
+      739
+    ],
+    "measured": [
+      "ChatScreen",
+      24301,
+      739
+    ]
+  }
+]

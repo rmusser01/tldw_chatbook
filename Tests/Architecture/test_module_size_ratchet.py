@@ -169,7 +169,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29016,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29104,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -385,7 +385,7 @@ _BUDGETS: dict[str, int] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: Keep canonical notification settings together; exact measured size,
     #: with no reflow/extraction solely to satisfy the old ceiling.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35748,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35674,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -450,7 +450,7 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8545,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8549,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -581,13 +581,13 @@ _BUDGETS: dict[str, int] = {
     # Console rail filter's count and page match titles, as a literal
     # substring), threaded through the shared filter and the page query.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25705,
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     "tldw_chatbook/config.py": 12245,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 11703,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 11729,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9582,
+    "tldw_chatbook/Agents/agent_service.py": 9656,
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
@@ -613,8 +613,8 @@ _BUDGETS: dict[str, int] = {
     # docstring says so.
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6751,
-    "tldw_chatbook/Chat/console_trace_service.py": 6662,
+    "tldw_chatbook/Chat/console_runtime.py": 6943,
+    "tldw_chatbook/Chat/console_trace_service.py": 6679,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,

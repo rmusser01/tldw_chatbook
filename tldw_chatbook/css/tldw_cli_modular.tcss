@@ -250,6 +250,9 @@ $ds-agentic-mcp-compact-canvas-share: 7fr;
 $ds-agentic-mcp-row-share: 8fr;
 $ds-agentic-mcp-compact-row-share: 9fr;
 
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 
 $ds-research-chat-pane-floor: 58;
 
