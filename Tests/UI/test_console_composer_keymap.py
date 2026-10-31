@@ -265,7 +265,8 @@ async def test_ctrl_z_undoes_a_typed_run_and_ctrl_shift_z_redoes_it():
 
 
 @pytest.mark.asyncio
-async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
+async def test_ctrl_e_expands_a_collapsed_paste_in_place():
+    """Owner decision 2026-10-30: Ctrl+E expands a token; Enter only sends."""
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
         composer = await _focused_composer(host, pilot)
@@ -274,19 +275,15 @@ async def test_enter_uses_expand_confirmation_copy_for_a_collapsed_paste():
         await pilot.pause()
 
         assert composer._display_draft_text() == (
-            f"Pasted text | {len(pasted)} characters | Expand"
+            f"Pasted text | {len(pasted)} characters | Ctrl+E expand"
         )
 
-        # TASK-37800: right after the token the caret is not on it (Enter
-        # would send); Left puts it on the token's left edge, which is.
-        await pilot.press("left")
-        await pilot.press("enter")
+        await pilot.press("ctrl+e")
         await pilot.pause()
 
-        assert composer._display_draft_text() == (
-            f"Expand pasted text ({len(pasted)} characters)? Enter: yes · Esc: no"
-        )
+        assert composer._display_draft_text() == pasted
         assert composer.draft_text() == pasted
+        assert composer.cursor_index == len(pasted)
 
 
 # ---------------------------------------------------------------------------
