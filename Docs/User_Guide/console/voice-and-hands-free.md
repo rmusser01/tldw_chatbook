@@ -178,6 +178,10 @@ each fully-silent reply says so.
   WAV) or the TTS provider failed (Settings ▸ Speech & TTS).
 - **"No audio was captured from the microphone."** — check the OS
   microphone permission for your terminal.
+- **"Dictation failed: The '…' speech model could not be downloaded or
+  loaded."** — nothing was recorded and Hands-free turns Off. Check the
+  network and press **Dictate** (or turn Hands-free on) to try again; the
+  app log names the underlying error.
 - **Turns send too early / too late** — adjust **Send delay** in Settings
   (or `dictation.handsfree_send_delay_seconds`).
 

@@ -151,7 +151,6 @@ _CONSOLE_VOICE_INPUT_NAMES = (
     "VoiceFinal",
     "VoiceLocalSTTBusy",
     "VoiceModelPreparing",
-    "VoiceModelWarmupFailed",
     "VoicePartial",
     "VoiceProviderOverridden",
     "VoiceSegmentNoFinal",
@@ -207,7 +206,6 @@ if TYPE_CHECKING:
         VoiceFinal,
         VoiceLocalSTTBusy,
         VoiceModelPreparing,
-        VoiceModelWarmupFailed,
         VoicePartial,
         VoiceProviderOverridden,
         VoiceSegmentNoFinal,
@@ -1601,6 +1599,9 @@ class ConsoleDictationController:
             # sitting on "Mic…" with no explanation is indistinguishable from
             # a hang. Only meaningful while the screen is still starting: a
             # notice that drains late must not repaint a live capture's chip.
+            # TASK-33621.21: also repeats while a download runs, carrying the
+            # bytes downloaded so far ("Downloading speech model… 412 MB").
+            # A failed or stalled load is a `VoiceFailed` from the start call.
             if self._console_dictation_state != "starting":
                 return
             composer = self._console_composer_or_none()
@@ -1622,14 +1623,6 @@ class ConsoleDictationController:
             composer = self._console_composer_or_none()
             if composer is not None:
                 composer.set_voice_preparing_message(event.message)
-            return
-        if isinstance(event, VoiceModelWarmupFailed):
-            # Advisory, not fatal: the capture is going ahead. Making this
-            # fatal would mean one transient error permanently disables
-            # dictation, since the Console warms on every press.
-            self.app_instance.notify(
-                f"{event.reason} {event.remedy}".strip(), severity="warning"
-            )
             return
         if isinstance(event, VoiceFailed):
             # Only ever a mid-capture failure: the session forwards a
