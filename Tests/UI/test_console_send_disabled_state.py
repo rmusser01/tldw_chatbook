@@ -153,7 +153,7 @@ async def test_setup_block_shows_reason_and_clears_when_unblocked(request, monke
                 code="model_missing",
             )
         )
-        monkeypatch.setattr(console, "_console_setup_blocked_reason", blocker)
+        monkeypatch.setattr(console, "_console_composer_send_blocker", blocker)
         composer.load_draft("draft ready")
         console._sync_console_composer_action_state(can_save_chatbook=False)
         await pilot.pause(0.1)
