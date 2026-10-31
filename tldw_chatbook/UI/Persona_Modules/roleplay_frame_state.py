@@ -1019,6 +1019,23 @@ def import_landed_toast(name: str, kind: str, *, existed: bool = False) -> str:
     return f"{head} {resolve_glyph(_SEPARATOR)} in {ITEM_KINDS[kind][2]}"
 
 
+def imported_toast(name: str) -> str:
+    """The plain copy for an import that was selected: ``<name> imported.``
+
+    Where it went is named only when it was not selected
+    (``import_landed_toast``); lore books and chat dictionaries said
+    "Imported X · in Kind" either way until B2b's final fix wave. Painted
+    with markup off, so ``name`` goes in as typed (on one line).
+
+    Args:
+        name: The imported item's name.
+
+    Returns:
+        The toast text.
+    """
+    return f"{_one_line(name)} imported."
+
+
 # ---- The items toolbar (frame slice B2b, spec 1.5.1; owner decision D2) ----
 
 #: The search box never gets fewer cells than this (spec 1.5.1).

@@ -845,7 +845,24 @@ async def test_a_clean_import_of_another_kind_switches_to_it_and_selects_it(
         await settle(pilot)
         assert screen.state.active_mode == "lore"
         assert screen.state.selected_entity_kind == "lore"
-        assert notices[-1:] == ["Imported Kepler Atlas · in Lore books"]
+        # Selected, so the plain imported copy (final review F3, spec 1.4.6):
+        # "Imported X · in Kind" names where an import went only when it was
+        # NOT selected, as the character path already did. The branch before
+        # this fix said "Imported Kepler Atlas · in Lore books" here too.
+        assert notices[-1:] == ["Kepler Atlas imported."]
+        # The same file again: renamed, selected, and the rename note kept.
+        await _press_import(pilot)
+        await wait_until(
+            pilot,
+            lambda: screen.state.selected_entity_name == "Kepler Atlas 2",
+            what="the renamed lore book selected",
+        )
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await settle(pilot)
+        assert notices[-1:] == [
+            "Kepler Atlas 2 imported. Renamed to avoid a name clash."
+        ]
+        assert import_env.lore_books() == ["Kepler Atlas", "Kepler Atlas 2"]
 
 
 async def test_an_import_that_lands_after_a_kind_switch_still_toasts(
@@ -897,7 +914,33 @@ async def test_a_dictionary_import_in_dictionaries_mode_toasts(
             what="the dictionary selected",
         )
         await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
-        assert notices[-1:] == ["Imported Medical Abbrev · in Chat dictionaries"]
+        # Selected: the plain imported copy (final review F3); before this fix
+        # the branch said "Imported Medical Abbrev · in Chat dictionaries".
+        assert notices[-1:] == ["Medical Abbrev imported."]
+
+
+async def test_a_dictionary_import_beside_a_dirty_draft_toasts_where_it_went(
+    import_env, mock_app_instance, monkeypatch
+):
+    """Final review F3, the other branch: a dictionary that lands beside a
+    dirty draft is not selected, so the toast names where it went (R33), as
+    a lore book's and a character's do. On dev a dictionary import was
+    selected whenever Dictionaries showed, and said nothing."""
+    fake_file_picker(monkeypatch, import_env.files["dictionary_export.json"])
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, character_db=import_env.db
+    ) as pilot:
+        screen = pilot.app.screen
+        name = await _dirty_character_draft(pilot)
+        notices = _record_notices(monkeypatch, screen)
+        await _press_import(pilot)
+        toast = "Imported Medical Abbrev · in Chat dictionaries"
+        await wait_until(pilot, lambda: toast in notices, what="the toast")
+        await wait_until(pilot, lambda: _import_idle(screen), what="the import done")
+        await settle(pilot)
+        assert import_env.dictionaries() == ["Medical Abbrev"]
+        assert screen.state.active_mode == "characters"
+        assert pilot.app.screen is screen and _draft_kept(screen, name)
 
 
 async def test_an_import_while_a_save_is_in_flight_does_not_auto_select(
