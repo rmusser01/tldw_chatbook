@@ -236,6 +236,9 @@ def host_environment(data: Path, attempt: str) -> None:
     home = data / WORK_NAME / attempt / "home"
     temporary = data / WORK_NAME / attempt / "tmp"
     _directory(temporary)
+    # Keep the pet publication parent disjoint from the bootstrap authority.
+    for parent in (home / "AppData", home / "AppData" / "Roaming"):
+        _directory(parent)
     os.environ.update(
         HOME=str(home),
         USERPROFILE=str(home),
@@ -393,7 +396,11 @@ def _resume_staged(attempt: Path) -> None:
         plan.mode != "isolated"
         or plan.target is not None
         or plan.retire
-        or any(not path.is_relative_to(attempt / "profiles") for _, path in targets)
+        or any(
+            not path.is_relative_to(attempt / "profiles")
+            and not _pet_destination(attempt, path)
+            for _, path in targets
+        )
     ):
         raise ValueError("portable_stage_plan_changed")
     document = _descriptor(candidate, plan)
@@ -417,6 +424,48 @@ def _resume_staged(attempt: Path) -> None:
         Event(),
         initial_selectors=(Path(profiles[0].config),),
     )
+
+
+def _pet_destination(attempt: Path, path: Path) -> bool:
+    """Allow only the installed pet container and its exact file family."""
+    parent = attempt / "home" / "AppData" / "Roaming" / "tldw_chatbook"
+    return (
+        path == parent
+        or path.parent == parent
+        and (
+            path.name == "tamagotchi_pets.json"
+            or re.fullmatch(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", path.name)
+            is not None
+        )
+    )
+
+
+def _selected_environment(entry, control_root: Path) -> dict[str, str]:
+    """Derive portable selectors only after the caller verifies committed authority."""
+    attempt = control_root.parent
+    if (
+        control_root.name != "control"
+        or attempt.parent.name != WORK_NAME
+        or not _ATTEMPT.fullmatch(attempt.name)
+    ):
+        return {}  # Ordinary isolated restores retain the existing shared home.
+    if not all(
+        Path(path).is_relative_to(attempt / "profiles")
+        for path in (entry.config, entry.data)
+    ):
+        raise ValueError("portable_selection_changed")
+    home = attempt / "home"
+    drive, suffix = os.path.splitdrive(str(home))
+    return {
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "HOMEDRIVE": drive,
+        "HOMEPATH": suffix,
+        "APPDATA": str(home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(home / "AppData" / "Local"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+    }
 
 
 def acquire_selected_source(
@@ -453,6 +502,11 @@ def acquire_selected_source(
         ),
         (base / "control", canonical / "recovery" / "control"),
     )
+    pets = base / "home" / "AppData" / "Roaming" / "tldw_chatbook"
+    if pets.exists():
+        roots += (
+            (pets, destination / "home" / "AppData" / "Roaming" / "tldw_chatbook"),
+        )
     reviews = tuple(review_source(root) for root, _ in roots)
     create_private_directory(destination)
     for review, (_, target) in zip(reviews, roots, strict=True):
@@ -636,16 +690,23 @@ def relocate(data: Path, confirm) -> PortableSelection | None:
             _write(attempt, "cancelled.json", {"version": 1, "source_digest": digest})
             return None
         recheck()
-        _write(
-            attempt,
-            "publication-started.json",
-            {
-                "version": 1,
-                "location": str(data.parent),
-                "source_digest": digest,
-            },
+
+        def publication_staged():
+            # A completed marker always has a recoverable candidate receipt.
+            # Failed staging/marker writes leave this attempt inert and retained.
+            _write(
+                attempt,
+                "publication-started.json",
+                {
+                    "version": 1,
+                    "location": str(data.parent),
+                    "source_digest": digest,
+                },
+            )
+
+        profile_id = restore_isolated(
+            sealed, plan, attempt / "control", Event(), on_staged=publication_staged
         )
-        profile_id = restore_isolated(sealed, plan, attempt / "control", Event())
         return _select(data, attempt, profile_id, digest)
 
 

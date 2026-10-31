@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import stat
 import struct
@@ -544,6 +545,28 @@ def produce_detached_archive(
     return DetachedImportResult(sealed.path, report)
 
 
+def _pet_members(source: Path) -> tuple[Path, ...]:
+    """Declare only the installed Windows pet file and exact dated backups."""
+    from .native_files import pinned_directory
+
+    parent = source / "home" / "AppData" / "Roaming" / "tldw_chatbook"
+    canonical = parent / "tamagotchi_pets.json"
+    if not parent.exists():
+        return (canonical,)
+    with pinned_directory(parent) as descriptor:
+        names = os.listdir(descriptor)
+    if len(names) > 100000:
+        raise ValueError("detached_pet_inventory_limit")
+    return (
+        canonical,
+        *(
+            parent / name
+            for name in sorted(names)
+            if re.fullmatch(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", name)
+        ),
+    )
+
+
 def _owner_items(source, selected, root, config, context, owners, normal, cancel):
     """Resolve installed owners from confined fixed paths, never saved authority."""
     from tldw_chatbook.DB.recovery_core import core_adapters
@@ -815,6 +838,12 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
             (root if owner.location == "data" else selected.parent) / owner.leaf,
             tree=owner.tree,
         )
+    for path in _pet_members(source):
+        add(
+            "tamagotchi.config",
+            path,
+            suffix="" if path.name == "tamagotchi_pets.json" else path.name,
+        )
     add("chatbooks.registry", root / "tldw_chatbook_chatbooks.json")
     for owner_id, leaf in (
         ("runtime.source_state", "runtime_policy.json"),
@@ -1013,6 +1042,7 @@ def _declared_layout(source, selected, root, config, observation=None):
         root / ".generated_videos.capacity.lock",
     }
     known.update(_restored_cache_paths(config, root))
+    known.update(_pet_members(source))
     known.update(
         Path(str(root / "tldw_chatbook_notes_sync_state.db") + suffix)
         for suffix in ("", "-wal", "-shm", "-journal")

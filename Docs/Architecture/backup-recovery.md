@@ -95,3 +95,17 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 ## Archive chronology schema integration (ADR166)
 
 Core recovery retains the frozen predecessor catalogs and appends exact schema85 successors after the preserved schema81/82/83/84 lineages and installed shared Subscriptions layouts. Canvas payload validation remains limited to those exact catalogs. Restricted backup migration admits only the fixed chat84→85 chronology step and its declared column/index/trigger effects. Workspace backup validation retains frozen schema8/9 catalogs and admits the fixed9→10 chronology step before exact successor qualification. The existing schema8 migration refusal remains unchanged. Existing source, quiescence, payload and native-handle guards remain binding.
+
+
+Portable detached relocation (ADR-256) records outer publication intent only after
+`restore_isolated` has durably written `candidate_staged` and retired its source
+lease, before namespace registration or publication. A pre-receipt interruption
+leaves an inert retained attempt; a completed outer marker resumes the existing
+receipt-bound operation. Malformed or ambiguous older pending states still refuse.
+
+The installed `tamagotchi.config` owner includes only the portable copied roaming
+canonical JSON and exact dated backups. Publication retains its existing shared-home
+owner policy inside the private attempt home. After committed profile validation,
+both fresh selection and launch derive portable home/roaming selectors from that
+attempt, ignoring inherited APPDATA. A subsequent move acquires those pet files
+again. Other files under the pet directory remain unsupported durable content.

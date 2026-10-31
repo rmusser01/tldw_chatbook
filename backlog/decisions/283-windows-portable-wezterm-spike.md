@@ -1,8 +1,12 @@
-# ADR-254: Windows portable WezTerm spike
+# ADR-283: Windows portable WezTerm spike
 
 Status: Accepted for an explicitly requested proof of concept only
 Date: 2026-10-28
 Related task: TASK-37205
+
+Renumbered from portable ADR-254 on 2026-10-31 to preserve the separate CLI
+ADR-254 on current dev. The accepted decision and historical artifact evidence
+are unchanged.
 
 ## Decision
 

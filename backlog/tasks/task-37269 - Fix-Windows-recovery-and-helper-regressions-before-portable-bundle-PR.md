@@ -54,7 +54,7 @@ Verification: frozen combined affected recovery + portable cohort361 passed, one
 
 The first combined attempt was interrupted when a sandbox write grant made a worktree ancestor shared-writable:325 passed then one refusal/35 setup errors. Guards correctly refused; it is not counted green. Subsequent collection also exposed sandbox-owned source files lacking workspace-owner access after narrowing inheritance. Only this task-owned tree was corrected and source readability/native ancestors were checked before the successful frozen rerun; primary checkout and runtime guard policy remained unchanged.
 
-ADR required:no new decision. Existing ADR-125/126/127 and accepted portable ADR-254/255/256 govern the behavior. Provisional portable ADR IDs252/253/254 were renumbered because current dev already uses252/253. Decision content and approval are unchanged; native patch bytes/provenance stay cd9196d6b7df2e620d906d9e748654ddef604b28672f5f72fcb7b4fc5112669b, now protected by LF checkout policy.
+ADR required:no new decision. Existing ADR-125/126/127 and accepted portable ADR-283/255/256 govern the behavior. Provisional portable ADR IDs252/253/254 were renumbered because current dev already uses252/253. Decision content and approval are unchanged; native patch bytes/provenance stay cd9196d6b7df2e620d906d9e748654ddef604b28672f5f72fcb7b4fc5112669b, now protected by LF checkout policy.
 
 Plan/evidence/rulings: Docs/superpowers/plans/2026-10-28-windows-recovery-test-fixes.md. Existing exact-ZIP/native GUI qualification remains historical to798f8fca75+portable source; these fixture fixes require no new binary. Final dev integration, fresh startup recheck and PR publication are in progress. No full sweep was run under repository opt-in policy.
 
@@ -62,5 +62,17 @@ Final integration: rebased onto dev3efe8476ce and preserved both lesson entries 
 
 Post-rebase cold startup exposed a remaining functional-fixture timing assumption. The test now performs one actual CLI launch, then the public profile-selection/admission path for data assertions instead of importing the full TUI twice. Bounds reflect actual native work (restore120s, cold CLI90s, read process150s); this is not a startup performance SLA. The complete isolated-restore/model-import run passed20 cases in178.14s. An explicit child observer captures selectors before argument parsing, asserts the exact selected profile/control pair at exit, and rejects an unselected child even after argv consumption (old observer RED rc0, fixed GREEN rc74). The final real CLI/data/client-identity case passed in64.13s. Existing privacy, source-byte, authority and activation assertions are preserved.
 
-All requested failure groups are resolved. Combined cohort361 passed with one intentional duplicate-ZIP warning; final affected-file and packaging checks, strict/fatal lint scopes, format/whitespace and independent review are recorded in the plan. No product crypto/recovery guard changed, no safety cases skipped and no full sweep run. Canonical portable ADRs254/255/256 supersede their provisional numbers. The historical171MB ZIP remains the qualified798f8fca75+portable artifact; a newly rebuilt dev-tip GUI or clean-machine release is not claimed. Ready for portable PR publication on codex/windows-portable-wezterm-bundle.
+All requested failure groups are resolved. Combined cohort361 passed with one intentional duplicate-ZIP warning; final affected-file and packaging checks, strict/fatal lint scopes, format/whitespace and independent review are recorded in the plan. No product crypto/recovery guard changed, no safety cases skipped and no full sweep run. Canonical portable ADRs283/255/256 supersede their provisional numbers. The historical171MB ZIP remains the qualified798f8fca75+portable artifact; a newly rebuilt dev-tip GUI or clean-machine release is not claimed. Ready for portable PR publication on codex/windows-portable-wezterm-bundle.
 <!-- SECTION:NOTES:END -->
+
+### 2026-10-31 review-repair plan (current dev integration)
+
+ADR required: no
+ADR paths: existing portable decisions (colliding ADR-283 will be renumbered), ADR-255, ADR-256; existing isolated recovery ADR-126.
+Reason: repair existing interruption and complete installed-owner contracts; preserve current authority and shared-home pet policy.
+
+1. Rebase onto verified dev 04f6680dc210ac341d72c294cbd68123d4700c20, retaining both lesson/census histories and current schemas.
+2. Add RED interruption regressions around the real executor's first candidate receipt and outer marker; move outer publication intent to the durable candidate boundary, preserving malformed/ambiguous-state refusal.
+3. Add real persisted pet import/selection coverage; declare only the confined installed pet file/backup family and preserve private portable startup selection without host writes.
+4. Renumber the colliding portable decision consistently, verify current schema/owner integration and measured pins, then run targeted recovery/packaging and static checks only.
+5. Record exact RED/GREEN receipts, source hashes, self-review and limits. Historical ZIP/361-test evidence remains tied to its original heads; no release rebuild or publication.

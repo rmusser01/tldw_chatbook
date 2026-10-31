@@ -3,7 +3,7 @@
 Status: Accepted for the Windows portable prototype
 Date: 2026-10-28
 Related task: TASK-37205
-Extends: [ADR-254](254-windows-portable-wezterm-spike.md)
+Extends: [ADR-283](283-windows-portable-wezterm-spike.md)
 
 ## Decision
 

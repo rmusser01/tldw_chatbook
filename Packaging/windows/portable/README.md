@@ -111,5 +111,5 @@ packaged migrations, and creates/reopens a fixed real Chatbook note. Repeat to
 verify persistence. A moved used profile requires relocation review before opening.
 It is a storage/packaging check, not a claim that all product features passed.
 
-Governance: ADR-254, ADR-255, ADR-256 and TASK-37205. Exact qualification results
+Governance: ADR-283, ADR-255, ADR-256 and TASK-37205. Exact qualification results
 are recorded in the repository task notes.

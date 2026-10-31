@@ -670,3 +670,176 @@ def test_absent_default_store_with_residual_state_is_never_unused(tmp_path, suff
         )
     assert evidence.read_bytes() == b"retained unresolved state"
     assert not (tmp_path / "work.tldw-backup.zip").exists()
+
+
+def _persisted_portable_pets(source):
+    import os
+    import subprocess
+    import sys
+
+    home = source / "home"
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "APPDATA": str(home / "AppData" / "Roaming"),
+        "TLDW_CONFIG_PATH": str(home / ".config" / "tldw_cli" / "config.toml"),
+    }
+    code = """
+from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+store=ConfigFileStorage()
+assert store.save('portable',{'name':'Nebula','happiness':72,'hunger':31,'energy':84,'health':93,'age':4})
+assert store.save('portable',{'name':'Nebula','happiness':81,'hunger':31,'energy':84,'health':93,'age':4})
+assert store.load('portable')['happiness']==81
+"""
+    seed = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert seed.returncode == 0, seed.stderr[-5000:]
+    pets = home / "AppData" / "Roaming" / "tldw_chatbook"
+    before = {p.name: p.read_bytes() for p in pets.iterdir()}
+    assert "tamagotchi_pets.json" in before
+    assert any(".backup_" in name for name in before)
+    return pets, before
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_installed_roaming_pet_and_backup_are_confined(tmp_path, unknown):
+    import os
+
+    if os.name != "nt":
+        pytest.skip("Windows portable installed pet location")
+    source, _root, _old = _base_profile(tmp_path)
+    pets, before = _persisted_portable_pets(source)
+    if unknown:
+        (pets / "unknown-durable.json").write_text("{}")
+        with pytest.raises(ValueError, match="detached_unknown_content"):
+            _layout().produce_detached_archive(source, tmp_path / "work", Event())
+    else:
+        result = _layout().produce_detached_archive(source, tmp_path / "work", Event())
+        with zipfile.ZipFile(result.archive) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            rows = [
+                row
+                for row in manifest["files"]
+                if row["owner_id"] == "tamagotchi.config"
+            ]
+            assert {
+                row["relative_path"]: archive.read(row["payload"]) for row in rows
+            } == before
+    assert all((pets / name).read_bytes() == data for name, data in before.items())
+
+
+def test_portable_pet_fresh_selection_and_repeat_move(tmp_path):
+    import os
+    import subprocess
+    import sys
+
+    if os.name != "nt":
+        pytest.skip("Windows portable installed pet location")
+    bundle = tmp_path / "first bundle \u00fc"
+    bundle.mkdir()
+    # Owner discovery retains native custody for its process lifetime. Seed in
+    # a child so the later physical move exercises a retired source process.
+    seed_code = """
+import sys
+from pathlib import Path
+from Tests.Backup_Recovery.test_detached_layout import _base_profile,_persisted_portable_pets
+source,_,_=_base_profile(Path(sys.argv[1]))
+_persisted_portable_pets(source)
+"""
+    seeded = subprocess.run(
+        [sys.executable, "-c", seed_code, str(bundle)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert seeded.returncode == 0, seeded.stderr[-5000:]
+    source = bundle / "Data"
+    pets = source / "home" / "AppData" / "Roaming" / "tldw_chatbook"
+    before = {p.name: p.read_bytes() for p in pets.iterdir()}
+    source_bytes = {
+        p.relative_to(source).as_posix(): p.read_bytes()
+        for p in source.rglob("*")
+        if p.is_file()
+    }
+    relocate = r"""
+import sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.portable_relocation import relocate,WORK_NAME
+from tldw_chatbook.Backup_Recovery import isolated_restore as executor
+data=Path(sys.argv[1])
+original=executor._finish_isolated
+def crash(*args,**kwargs):raise OSError('pet staged interruption')
+executor._finish_isolated=crash
+try:relocate(data,lambda *_:True)
+except OSError as error:assert str(error)=='pet staged interruption',str(error)
+else:raise AssertionError('missing interruption')
+finally:executor._finish_isolated=original
+selected=relocate(data,lambda *_:True)
+requirements=executor.profile_requirements(selected.profile_id,data/WORK_NAME/selected.attempt/'control')
+assert 'tamagotchi.config' in requirements['pending_owners']
+assert requirements['pending_owners']==requirements['required_owners']
+print('RESTORED_PRIVATE_PET',flush=True)
+"""
+    read = r"""
+import json,os,sys
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.portable_relocation import verified_selection,WORK_NAME
+from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile,launch_profile
+import tldw_chatbook.Backup_Recovery.isolated_restore as executor
+data=Path(sys.argv[1]);expected=json.loads(sys.argv[2])
+selected=verified_selection(data);control=data/WORK_NAME/selected.attempt/'control'
+os.environ['APPDATA']=sys.argv[3]
+def observe_child(*args,**kwargs):
+    assert kwargs['env']['APPDATA']==str(control.parent/'home/AppData/Roaming')
+    return 0
+executor.subprocess.call=observe_child
+assert launch_profile(selected.profile_id,control)==0
+os.environ['APPDATA']=sys.argv[3]
+select_profile(selected.profile_id,control)
+from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+store=ConfigFileStorage()
+parent=control.parent/'home/AppData/Roaming/tldw_chatbook'
+assert store.filepath==parent/'tamagotchi_pets.json',str(store.filepath)
+assert {p.name:p.read_bytes().hex() for p in parent.iterdir()}==expected
+assert store.load('portable')['happiness']==81
+assert not Path(sys.argv[3]).exists()
+print('FRESH_PRIVATE_PET_READ',flush=True)
+"""
+    expected = json.dumps({name: data.hex() for name, data in before.items()})
+    host_probe = tmp_path / "must never write inherited roaming"
+    for iteration in range(2):
+        result = subprocess.run(
+            [sys.executable, "-c", relocate, str(source)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr[-5000:] + result.stdout[-1000:]
+        assert "RESTORED_PRIVATE_PET" in result.stdout
+        result = subprocess.run(
+            [sys.executable, "-c", read, str(source), expected, str(host_probe)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr[-5000:] + result.stdout[-1000:]
+        assert "FRESH_PRIVATE_PET_READ" in result.stdout
+        assert all(
+            (source / relative).read_bytes() == data
+            for relative, data in source_bytes.items()
+        )
+        if iteration == 0:
+            moved = tmp_path / "second moved bundle \u96f2"
+            bundle.rename(moved)
+            assert not bundle.exists()
+            source = moved / "Data"

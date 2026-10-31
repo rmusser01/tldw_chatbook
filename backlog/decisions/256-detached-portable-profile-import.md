@@ -3,7 +3,7 @@
 Status: Accepted (user approval, 2026-10-28)
 Date: 2026-10-28
 Related task: TASK-37205
-Extends: [ADR-254](254-windows-portable-wezterm-spike.md)
+Extends: [ADR-283](283-windows-portable-wezterm-spike.md)
 Preserves: ADR-029, ADR-125, ADR-126
 
 ## Decision
