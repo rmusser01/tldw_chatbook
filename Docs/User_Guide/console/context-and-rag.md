@@ -1048,18 +1048,25 @@ The Inspector tray is not the only place staged evidence shows up: a
 the control deck above the status chips, so staging is visible without
 opening the Inspector at all. Staged, it lists the titles (up to three, "+N more"
 beyond that) with an **Un-stage** button that drops the whole bundle in
-one click; after a send that used it, the strip briefly instead reads
-"Evidence sent with this message · N sources". Staged evidence rides only
-the **next** send — once a send consumes it, the field clears itself, so
-the strip and the settings modal's "staged for your next send" wording
-are both literally true (an earlier build let one staged bundle silently
-ride every later send too; that is fixed).
+one click. Staged evidence rides only the **next** send. Once a send
+consumes it, the strip disappears, the **Sources** chip reads 0 and
+Inspect's "What happens if I send now?" card reads "Sources: None
+staged". The reply to that message shows a dim **Sources (N) · sent with
+this turn** line with the number of sources that went with it, and
+Inspect's Run card says "sources sent with the last message · N" until
+your next send. A send with nothing staged claims no sources anywhere.
+Un-stage on a strip whose evidence was already sent just hides the strip.
 
-Staged evidence also survives leaving Console and coming back: it lives
-in the Console's own session state, not only in memory, so navigating to
-Library (or anywhere else) and returning still shows the same bundle
-staged — the strip, the Inspector's Sources tray, and the settings
-estimate all keep reporting it. Staging a *new* item from Library while
+Staged evidence belongs to the chat you staged it in. A new tab
+(Ctrl+T), another open chat, or a newly entered workspace chat starts
+with nothing staged and clean Inspect source cards. Switching back to
+the first chat shows its staging again, and a send in another chat never
+uses it.
+
+Staged evidence also survives leaving Console and coming back: navigating
+to Library (or anywhere else) and returning still shows the same bundle
+staged in the same chat — the strip, the Inspector's Sources tray, and
+the settings estimate all keep reporting it. Staging a *new* item from Library while
 something is already staged replaces it outright: a fresh "Use in
 Console" click always wins, even over a bundle restored from an earlier
 visit. Whatever is currently staged, the strip's count, the tray's
