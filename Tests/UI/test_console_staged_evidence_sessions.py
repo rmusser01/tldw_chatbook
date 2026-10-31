@@ -544,3 +544,29 @@ def test_a_failing_reply_source_count_never_costs_the_send(monkeypatch) -> None:
     )
 
     assert store.get_message(reply.id).evidence_source_count is None
+
+
+def test_a_failing_staged_evidence_redraw_never_reaches_the_view_pump() -> None:
+    """The redraw is posted to the view's pump, where an exception ends the app.
+
+    The screen's own release used to swallow a surface-refresh failure
+    ("rail body vanished mid-send"); the runtime-routed redraw must too.
+    """
+    store = ConsoleChatStore()
+    runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+    runtime.set_chat_store(store)
+    posted: list = []
+
+    def explode() -> None:
+        raise RuntimeError("rail body vanished mid-send")
+
+    runtime.view = SimpleNamespace(
+        console_view_hooks=lambda: {"staged_evidence": explode},
+        call_later=posted.append,
+    )
+    store.create_session(title="Chat 1")
+    runtime.stage_console_staged_evidence(_launch(1))
+    store.create_session(title="Chat 2")
+    assert len(posted) == 1
+
+    posted[0]()  # must not raise

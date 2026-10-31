@@ -602,7 +602,9 @@ _BUDGETS: dict[str, int] = {
     # 6752 -> 6760 (+8): a newly admitted turn clears the last receipt.
     # 6760 -> 6770 (+10): a chat switch or reattach redraws only when some
     # chat shows evidence (boot redraws crashed the Inspect card swap).
-    "tldw_chatbook/Chat/console_runtime.py": 6770,
+    # 6770 -> 6784 (+14): a failed redraw is logged instead of raising in
+    # the view's pump, where it would end the app.
+    "tldw_chatbook/Chat/console_runtime.py": 6784,
     "tldw_chatbook/Chat/console_trace_service.py": 6674,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,

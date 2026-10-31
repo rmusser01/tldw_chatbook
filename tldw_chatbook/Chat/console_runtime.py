@@ -1571,15 +1571,29 @@ class ConsoleRuntime:
         TASK-33620.7: the strip, Sources chip and Inspect cards project the
         active chat's state, so a chat switch must redraw them. Posted to the
         view's own pump: it may run off the turn's task or a store callback.
+        Display only: an exception in the pump would end the app, so a failed
+        redraw is logged and the next sync heals the surfaces.
         """
         provider = getattr(self.view, "console_view_hooks", None)
         sync = (provider() if callable(provider) else {}).get("staged_evidence")
         call_later = getattr(self.view, "call_later", None)
-        if callable(sync) and callable(call_later):
+        if not callable(sync) or not callable(call_later):
+            return
+
+        def redraw() -> None:
             try:
-                call_later(sync)
-            except RuntimeError:  # a closing view redraws nothing
-                pass
+                sync()
+            except Exception as exc:  # noqa: BLE001 -- display only
+                logger.warning(
+                    "Console staged-evidence surfaces did not redraw "
+                    "(exception_category={})",
+                    type(exc).__name__,
+                )
+
+        try:
+            call_later(redraw)
+        except RuntimeError:  # a closing view redraws nothing
+            pass
 
     def _request_visible_receipt_render(self) -> None:
         """Re-arm the on-screen view's transcript sync (thread-safe post)."""
