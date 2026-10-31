@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › New character · editing                                  No chat provider · Settings ›   Local
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭─ Characters 28 ──────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+│ │  Search...               ││ Character Editor                                       ││  Inspector              >  │ │
+│ │           New            ││  Context: whole character  Generate whole character…   ││ Selected: none             │ │
+│ │      New Actor Pack      ││  Name                                                  ││ Type: -                    │ │
+│ │          Import          ││  ┌─────────────────────────────────────────────────┐   ││ Pick a character or        │ │
+│ │    Import Actor Pack     ││  │  Character name                                 │ ▂ ││ persona to start chatting. │ │
+│ │        Duplicate         ││  └─────────────────────────────────────────────────┘   ││        Manage Buddy        │ │
+│ │        Sort: Name        ││  First message  Generate                               ││         Show Buddy         │ │
+│ │         Tag: All         ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││        Close Buddy         │ │
+│ │  ▸  Ada (Debu…Partner)   ││  ▊                                                 ▎   ││       Disable Buddy        │ │
+│ │     ARIA-7               ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││                            │ │
+│ │     Brother Anselm       ││  Description  Generate                                 ││                            │ │
+│ │     Captain I…de Varga   ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                            │ │
+│ │     Chef Auguste         ││  ▊                                                 ▎   ││                            │ │
+│ │     Coach Pemberton      ││  ▊                                                 ▎   ││                            │ │
+│ │     Default Assistant    ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││                            │ │
+│ │     Detective…Calderón   ││  Personality  Generate                                 ││                            │ │
+│ │     Dungeon Master Vex   ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                            │ │
+│ │     Grumpy Barista Bot   ││  ▊                                                 ▎   ││                            │ │
+│ │     Hana Kobayashi       ││                                                        ││                            │ │
+│ │     Kestrel              ││    Save     Cancel                                     ││                            │ │
+│ │     Lady Evan…hornwood   ││                   ▸ Dictionaries (0)                   ││                            │ │
+│ │     Luna — Ni…e Teller   ││                   ▸ World Books (0)                    ││                            │ │
+│ ╰─────────────── #1 of 28 ─╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+s save | esc back | f6 pane | c/p/d/l mode | [ ] mode | F1 · Ctrl+P · Ctrl+Q

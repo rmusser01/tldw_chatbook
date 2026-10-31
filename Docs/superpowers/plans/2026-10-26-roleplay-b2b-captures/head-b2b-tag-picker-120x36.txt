@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › Ada (Debugging Partner)                                  No chat provider · Settings ›   Local
+Characters — who the AI plays · 28
+ Modes:    Characters    Perso╭──────────────────────────────────────────────────────────╮
+┌─────────────────────────────│                                                          │─────────────────────────────┐
+│                             │  Filter by tag                                           │                             │
+│ ╭─ Characters 28 ──────────╮│  ┌────────────────────────────────────────────────────┐  │───────────────────────────┐ │
+│ │  Library      Import… <  ││  │  Filter tags...                                    │  │                           │ │
+│ │ │ Search characters…     ││  └────────────────────────────────────────────────────┘  │ Inspector             >   │ │
+│ │  Name Tag + New          ││   All (clear filter)                                     │Selected: Ada (Debugging   │ │
+│ │  ▸  Ada (Debu…Partner)   ││   1950s                                                  │Partner)                   │ │
+│ │     ARIA-7               ││   adventure                                              │Type: character            │ │
+│ │     Brother Anselm       ││   aetheria                                               │Validation: OK             │ │
+│ │     Captain I…de Varga   ││   ai                                                     │Conversations (0)          │ │
+│ │     Chef Auguste         ││   ambiguous-ai                                           │  Search this              │ │
+│ │     Coach Pemberton      ││   assistant                                              │ No saved conversations.   │ │
+│ │     Default Assistant    ││   built-in                                               │                           │ │
+│ │     Detective…Calderón   ││   captain                                                │Readiness                  │ │
+│ │     Dungeon Master Vex   ││   character                                              │Chat now blocked: openai   │ │
+│ │     Grumpy Barista Bot   ││   chatbook                                               │is not ready: Missing API  │ │
+│ │     Hana Kobayashi       ││   city                                                   │key. Set OPENAI_API_KEY    │ │
+│ │     Kestrel              ││   coding                                                 │or add api_key under       │ │
+│ │     Lady Evan…hornwood   ││   collaborator                                           │[api_settings.openai].     │ │
+│ │     Luna — Ni…e Teller   ││   comedy                                                 │        Chat now           │ │
+│ │     Marisol t…erbalist▅▅ ││   companion                                              │  Send to Console draft    │ │
+│ │     Mo                   ││  Enter to pick - Esc to cancel                           │       Export JSON         │ │
+│ │     Nyx                  ││                                                          │       Export PNG          │ │
+│ │     Old Man Willow       │╰──────────────────────────────────────────────────────────╯    Export Actor Pack      │ │
+│ │     Pip the Courier      ││                                                      ▆ ││         Duplicate          │ │
+│ │     pixel-migu           ││    Edit     Conversations (0)                          ││                            │ │
+│ ╰─────────────── #1 of 28 ─╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q
