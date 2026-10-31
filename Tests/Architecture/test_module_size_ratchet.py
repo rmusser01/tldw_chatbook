@@ -154,8 +154,9 @@ _BUDGETS: dict[str, int] = {
     # _continuation_binding; rows below re-pinned at their measured sizes.
     # 2026-10-30, TASK-33621.11: shrank to the exact measurement, 29055 -> 29053.
     # 2026-10-30, TASK-33621.11: shrank to the exact measurement on dev
-    # 7536ac3b87, 29038 -> 29036.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29036,
+    # 7536ac3b87, 29038 -> 29036; its review's blocked-row fix (no copy
+    # rewritten by its words) shrinks it again, 29036 -> 29034.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29034,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -592,7 +593,11 @@ _BUDGETS: dict[str, int] = {
     # the Workbench, fed by the screen's send-gate attachment predicate.
     # 2026-10-30, TASK-33621.11 (same owner decision): 7043 -> 7047 (+4). The
     # setup-wizard link follows the blocker's code, not any non-empty reason.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7047,
+    # 2026-10-30 (owner decision, 2026-10-04 rule: a genuine fix raises the
+    # row by exactly its growth rather than contorting code): TASK-33621.11's
+    # review fix carries the Send blocker's code beside its sentence (a typed
+    # value, not a str subclass), +3: 7047 -> 7050.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7050,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     "tldw_chatbook/UI/Console_Modules/session.py": 6990,
