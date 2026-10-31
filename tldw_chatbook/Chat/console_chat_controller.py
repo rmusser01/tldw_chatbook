@@ -7477,21 +7477,8 @@ class ConsoleChatController:
                 "Prepared turn changed before continuation.",
             )
         try:
-            trace_request = self._build_durable_trace_request(
-                preparation=committing,
-                resolution=resolution,
-                provider_messages=self._provider_messages_with_prefill(
-                    continuation.provider_messages,
-                    continuation.prefill,
-                ),
-                trace_source_messages=continuation.trace_source_messages,
-                echoed_user_id=continuation.echoed_user_id,
-                committed_user_id=continuation.commit.user_message_id,
-                route=(
-                    ConsoleRequestRoute.DIRECT_PREFILL
-                    if continuation.prefill
-                    else ConsoleRequestRoute.FRESH
-                ),
+            trace_request = self._rebuild_continuation_trace_request(
+                committing, continuation, resolution
             )
         except Exception as exc:
             return self._handle_durable_trace_provenance_failure(continuation, exc)
@@ -7522,10 +7509,86 @@ class ConsoleChatController:
             )
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
+<<<<<<< HEAD
     def trace_call_provider_contact(self, preparation_id: str) -> object | None:
         """Return whether a trace-paused send reached the provider (TASK-33621.5)."""
 
         return self._trace_call_provider_contacts.get(preparation_id)
+=======
+    def _rebuild_continuation_trace_request(
+        self,
+        preparation: ConsoleTurnPreparation,
+        continuation: _DurablePostcommitContinuation,
+        resolution: Any,
+    ) -> PreparedConsoleRequest | None:
+        """Freeze a durable continuation's Capture-On request again."""
+
+        return self._build_durable_trace_request(
+            preparation=preparation,
+            resolution=resolution,
+            provider_messages=self._provider_messages_with_prefill(
+                continuation.provider_messages,
+                continuation.prefill,
+            ),
+            trace_source_messages=continuation.trace_source_messages,
+            echoed_user_id=continuation.echoed_user_id,
+            committed_user_id=continuation.commit.user_message_id,
+            route=(
+                ConsoleRequestRoute.DIRECT_PREFILL
+                if continuation.prefill
+                else ConsoleRequestRoute.FRESH
+            ),
+        )
+
+    def _restore_missing_trace_request(
+        self,
+        preparation: ConsoleTurnPreparation,
+        admission: ConsoleTurnPreparation,
+        resolution: Any,
+    ) -> ConsoleSubmitResult | None:
+        """Rebuild the request a TRACE_CALL pause lost before Retry resumes.
+
+        TASK-33621.23: ``resume_durable_postcommit`` pauses as TRACE_CALL when
+        a Capture-On continuation reaches dispatch with no frozen request.
+        Without this, Retry met the same check and paused again on every
+        press. A failed rebuild returns a refusal and leaves the pause and its
+        card in place; otherwise returns None.
+        """
+
+        preparation_id = preparation.preparation_id
+        continuation = self._durable_postcommit_continuations.get(preparation_id)
+        if (
+            preparation.pause_kind is not ConsolePreparationPauseKind.TRACE_CALL
+            or admission.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+            or continuation is None
+            or continuation.trace_request is not None
+        ):
+            return None
+        try:
+            trace_request = self._rebuild_continuation_trace_request(
+                preparation, continuation, resolution
+            )
+        except Exception as exc:  # noqa: BLE001 -- the card stays; type only
+            logger.warning(
+                "Console trace request could not be rebuilt; exception_type={}",
+                type(exc).__name__,
+            )
+            trace_request = None
+        with self.store.durable_preparation_lock:
+            if (
+                trace_request is not None
+                and self._durable_postcommit_continuations.get(preparation_id)
+                is continuation
+            ):
+                self._durable_postcommit_continuations[preparation_id] = replace(
+                    continuation, trace_request=trace_request
+                )
+                return None
+        return self._prepared_action_refusal(
+            preparation,
+            "Trace provenance could not be saved. Send without capture, or Cancel.",
+        )
+>>>>>>> 237d9cd16d (fix(console): make the missing-trace-request card's Cancel and Retry work (TASK-33621.23))
 
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
         """Return only the active preparation offering a pre-dispatch card."""
@@ -7770,6 +7833,11 @@ class ConsoleChatController:
                 and preparation_id not in self._trace_call_boundaries_by_preparation
             ):
                 return self._prepared_action_refusal(current)
+            refusal = self._restore_missing_trace_request(
+                current, trace_call_admission, resolution
+            )
+            if refusal is not None:
+                return refusal
             if current.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE:
                 current = self.store.compare_and_set_preparation(
                     current.session_id,
@@ -12730,8 +12798,9 @@ class ConsoleChatController:
                 and continuation.trace_request is None
             ):
                 # TASK-33621.23: this returned BLOCKED and published nothing.
-                # The trace-call handler below pauses with the transcript card.
-                raise TraceCallPersistenceError()
+                # The trace-call handler below pauses with the transcript card;
+                # nothing was reserved, so its Cancel can end the send.
+                raise TraceCallPersistenceError(reservation_status="not_established")
             bind_trace_owner = getattr(
                 self.provider_gateway, "_bind_trace_preparation", None
             )
