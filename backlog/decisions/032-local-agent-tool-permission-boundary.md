@@ -433,3 +433,25 @@ root confinement with hidden components explicitly allowed under it.
 - [Watchlists agent boundary and provenance plan](../../Docs/superpowers/plans/2026-08-27-watchlists-agent-boundary-and-provenance.md)
 - [Console Watchlists commands and operations plan](../../Docs/superpowers/plans/2026-08-27-console-watchlists-commands-and-operations.md)
 - [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)
+
+
+## Addendum: approval-history suggestions retain reviewed authority (TASK-18928, 2026-10-31)
+
+Suggestions count explicit `approved` execution decisions only. The first
+`approve_session` decision already records `approved`; `approved-session`
+records reuse of its session grant and is not another human decision.
+
+The existing bounded, metadata-only execution log may retain an optional
+SHA-256 `definition_hash` supplied from the reviewed tool at the explicit
+approval execution boundary. Its sanitizer accepts only canonical digest
+strings. No descriptions, schemas, arguments, or results are added. Legacy
+rows remain readable but cannot support suggestions without a matching hash.
+This additive metadata field requires no new store or permission schema version.
+
+A suggestion remains proposal-only. Accept retains the displayed definition
+hash and selected permission-profile context, rechecks the current catalog
+and eligibility in that profile, and uses the existing permission-store
+profile digest/revision compare-and-set writer. Definition, selection, or
+policy drift refuses the stale acceptance. Re-reading a newer definition
+without comparing the reviewed hash is insufficient consent. Settings remains
+the canonical host under ADR-240.

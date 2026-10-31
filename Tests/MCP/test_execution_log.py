@@ -486,3 +486,17 @@ def test_a_concurrent_append_is_not_pinned_by_the_cache(tmp_path, monkeypatch):
     names = [row["tool_name"] for row in execution_log.read_recent()]
     assert names == ["other", "ours", "warm"], names
     assert private not in active.read_text(encoding="utf-8")
+
+
+def test_reviewed_definition_fingerprint_survives_log_sanitization(log):
+    record = _record(initiator="agent", decision="approved", definition_hash="a" * 64)
+    log.append(record)
+    assert log.read_recent()[0]["definition_hash"] == "a" * 64
+
+
+@pytest.mark.parametrize(
+    "fingerprint", [None, "", "private description", "A" * 64, "a" * 65]
+)
+def test_log_drops_unqualified_definition_fingerprints(fingerprint):
+    row = MCPExecutionLog._metadata_only_payload({"definition_hash": fingerprint})
+    assert "definition_hash" not in row

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@Robert'
 created_date: 2026-08-19 09:55
-updated_date: 2026-10-18 16:30
+updated_date: 2026-10-31 17:00
 labels:
 - console
 - agents
@@ -23,8 +23,8 @@ Port of hermes-agent's `approvals suggest` (2026-08-19 hermes-release review). C
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A Settings surface lists suggestions mined from approval history (tool identity + definition fingerprint aware; a tool whose definition changed is not proposed against the stale fingerprint)
-- [x] #2 Accepting a suggestion writes an explicit Always-allow entry through the existing permission-store API — the same path the MCP screen uses today
+- [x] #1 A Settings surface lists suggestions supported by repeated explicit approved decisions for the current tool definition; legacy rows without a matching fingerprint and automatic session-grant reuse do not count
+- [x] #2 Accepting a suggestion writes an explicit Always-allow entry to the selected permission profile through the existing profile digest/revision CAS API; a changed selection, policy, or displayed definition is refused
 - [x] #3 Dismissing a suggestion is remembered (not re-proposed) and dismissals are reviewable/clearable from the same surface
 - [x] #4 Tools in the existing high-risk classes are never suggested; the exclusion set is shared with the approval card's high-risk badge so the two cannot drift
 - [x] #5 Tests prove no runtime approval behavior changes merely because suggestions exist (until one is accepted), plus mining, fingerprint, and dismissal-persistence coverage
@@ -33,16 +33,15 @@ Port of hermes-agent's `approvals suggest` (2026-08-19 hermes-release review). C
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Reducer: count approved-session decisions alongside approved (execution-log rows are the durable history; mining core permission_prompt_reducer.build_permission_prompt_report already exists and is kept)
-2. MCPPermissionStore: optional top-level suggestion_dismissals map (key '<server_key>::<tool_name>' -> dismissed_at ISO), strict validators extended, SCHEMA_VERSION stays 1 (additive); APIs dismiss_suggestion / restore_suggestion / clear_suggestion_dismissals / list_suggestion_dismissals via the guarded _mutate_locked pattern
-3. UnifiedControlPlaneService.permission_suggestions(): reducer report minus dismissed keys; fingerprint awareness stays live-resolved (state.config_changed) and high-risk exclusion stays shared via risk_floored/HIGH_RISK_TAGS (drift-guard test)
-4. Accept writes through service.set_tool_state(server_key, tool_name, 'allow', tool=<live HubTool>, profile context) — the same path the permissions mode state-cycle uses
-5. Surface: MCP Permissions mode Suggestions review subsection (accept/dismiss + dismissed restore/clear), keyboard actions per ADR-031
-6. Tests: no-runtime-change proof (resolution unchanged while suggestions exist), dismissal persistence round-trip, mining matrix additions, accept write, UI surface; docs mcp + settings guide
-7. 2026-10-31 backlog repair: rebase onto dev198eca8b93, retain canonical Settings host and permission ownership. Replace the newly census-flagged suggestion-accept notification with explicit literal text (markup=False), preserving arbitrary tool/server names. Run targeted reducer/store/service/mode/action-ownership tests and independent review.
+1. Preserve the existing proposal-only Settings surface and dismissal store. Correct the mining premise: MCPToolProvider records the first explicit approve_session as approved; approved-session means automatic reuse and must not count.
+2. Add targeted failing reducer, execution-log, service, and workbench integration regressions for repeated explicit approvals, missing/mismatched historical fingerprints, selected-profile acceptance, stale profile CAS, and definition drift after display.
+3. Add optional SHA-256 definition_hash metadata to the existing bounded execution log and its sanitizer. The explicit approval execution path supplies the reviewed HubTool fingerprint. No new store or schema version; old rows remain readable but cannot support suggestions.
+4. Carry the selected PermissionProfileContext and displayed definition hash through recommendation rendering and accept messages. Re-resolve current eligibility in that profile, reject changed definitions, and call the existing permission writer with the captured profile digest/revision. Keep legacy report APIs callable; unqualified acceptance fails closed.
+5. Preserve recovery guards, single-writer ownership, dismissal behavior, canonical Settings host, and literal notification output. Refresh publication must not install recommendations for a superseded profile.
+6. Run targeted red/green tests with normal pytest options, static checks on changed code, and obtain a fresh independent review before completion. No full test sweep or release actions.
 ADR required: no new ADR
-ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md
-Reason: preserve existing explicit acceptance and permission boundaries; notification repair changes no authority.
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md (approval-evidence addendum); backlog/decisions/079-workspace-assistant-defaults.md; backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md
+Reason: extend the existing metadata log and preserve established explicit-consent, definition, profile-CAS, and Settings-host boundaries; no parallel authority or log store.
 <!-- SECTION:PLAN:END -->
 ## Deferral note (2026-10-11, dev `9f8533686c`)
 
@@ -65,16 +64,14 @@ for the next session:
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented on branch feat/18928-approval-suggestions (worktree .worktrees/tasks-18925-28-34, base dev b07fc04252).
+The Settings Permissions surface proposes reviewed Always-allow entries and persists dismissals independently of permission policy. Explicit acceptance uses the existing permission writer; no suggestion changes runtime authorization on its own.
 
-Approach — the mining core already existed (permission_prompt_reducer + service.permission_prompt_recommendations + /fewer command); this task added the missing review surface, dismissal persistence, and widened the mined decisions:
-- Reducer: COUNTED_APPROVAL_DECISIONS = {approved, approved-session} (Approve-for-session is as explicit a human approval as Approve-once; the old exclusion test was updated, a new mixing test added).
-- Store: optional top-level suggestion_dismissals map (tool-id -> ISO ts) in mcp_permissions.json, SCHEMA_VERSION stays 1 (additive); strict validators extended; invalid dismissal shape is COERCED (dropped) by _normalize_payload_shape instead of tripping the corrupt-reset path (nuisance data, not policy — the servers-coercion precedent). APIs dismiss/restore/clear/list via the guarded _mutate_locked pattern; key omitted while empty.
-- Service: dismissal filtering lives at the ONE choke point (_permission_prompt_recommendation_snapshot), so report, apply, and the new surface all agree — a dismissed suggestion is absent everywhere and not appliable. Thin forwards dismiss/restore/clear/list; accept reuses the existing apply_permission_prompt_recommendation (hash-safe: re-verifies against the CURRENT catalog snapshot at apply time). Fingerprint awareness stays live-resolved (state.config_changed); high-risk exclusion stays shared via risk_floored from resolve_effective_state — the same flag the approval card badge renders (drift-guard test pins both consumers).
-- Surface: MCP Permissions mode gains a suggestion-review section under the matrix (DataTable + hint; hidden when nothing to review). Keys a/d/r/c act ONLY while the suggestions table holds focus, and Space on the matrix is a no-op while it does — the two key surfaces cannot cross-fire. Workbench applies all four messages through the service (single-writer contract) and resyncs; suggestions refresh on every _sync_permissions_mode pass.
-- ADR-032 governs (extends its permission surfaces; no new trust boundary, nothing auto-applies — pinned by test_existing_suggestions_do_not_change_runtime_resolution).
+2026-10-31 independent-review repair:
+- Corrected the original mining premise: the first explicit session grant records approved; approved-session is automatic reuse and is excluded.
+- Added optional canonical SHA-256 definition_hash metadata to the existing bounded audit log and sanitizer. The explicit approval execution path supplies the reviewed HubTool hash; legacy adapters remain executable without producing qualified history. Legacy/mismatched historical rows cannot support suggestions.
+- Captured the selected PermissionProfileContext and displayed fingerprint in each acceptance request. Report resolution uses that profile; acceptance rejects changed definitions and forwards captured digest/revision to the existing store CAS writer. Stale selection and stale refresh publication are rejected.
+- Preserved guarded dismissal storage, high-risk exclusions, Settings hosting, and the literal markup=False success notification.
+- Updated the user guide, architecture reference, and ADR-032 approval-evidence addendum (also governed by ADR-079 and ADR-240). Recorded the producer-token incident in lessons-testing-evidence.md.
 
-Files: MCP/permission_prompt_reducer.py, MCP/permission_store.py, MCP/unified_control_plane_service.py, UI/MCP_Modules/mcp_permissions_mode.py, UI/MCP_Modules/mcp_workbench.py, Docs/User_Guide/mcp.md. Tests: +1 reducer, +4 store, +5 service-level (incl. no-runtime-change + drift guard), +5 mode-surface.
-
-Verification: 281 passed across the 9-file battery (reducer/store/resolution/service/mode/ownership//fewer); the 2 setup errors in the /fewer file are the pre-existing local RecoveryRequired environment condition (verified identical on pristine via stash). Ruff: only pre-existing findings in touched files (blind-Exception style matches the files' established defensive idiom); the one new-code finding was fixed.
+Targeted evidence: reducer/log/service/provider run had 139 passes and 6 POSIX skips; its one changed-contract test was corrected and a final focused run passed 23 tests. All five native workbench acceptance cases passed: named-profile write, changed selection, changed policy, changed displayed definition even with new successor approvals, and a policy change at the final write boundary. Three existing execution-log tests fail identically with the original 1b36436 module: steady append parsing (495), rotated append parsing (440), and Windows newline conversion in the same-size replacement fixture (1433 vs 1432 bytes). Three suggestion rendering/real-keyboard cases also passed. The full markup-interpolation guard and changed-range formatting checks passed. No new Ruff findings versus that head; six pre-existing findings remain. Full suite not run. Status remains In Progress pending fresh independent review and final verification disposition.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

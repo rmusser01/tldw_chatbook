@@ -3769,6 +3769,10 @@ class MCPWorkbench(Container):
                 canvas = self.query_one(MCPPermissionsMode)
         except Exception:
             return
+        context = self._tool_policy_profile_context
+        if context is None:
+            canvas.populate_suggestions([], {})
+            return
         report_getter = getattr(service, "permission_prompt_recommendations", None)
         list_dismissals = getattr(service, "list_permission_suggestion_dismissals", None)
         if not callable(report_getter):
@@ -3778,7 +3782,9 @@ class MCPWorkbench(Container):
             # plus a store load -- run it off the event loop like every
             # other permission read this canvas triggers. The getter is an
             # async service method, so it gets its own loop on the thread.
-            report = await asyncio.to_thread(lambda: asyncio.run(report_getter()))
+            report = await asyncio.to_thread(
+                lambda: asyncio.run(report_getter(profile_id=context.profile_id))
+            )
             dismissals: dict[str, str] = {}
             if callable(list_dismissals):
                 dismissals = dict(await asyncio.to_thread(list_dismissals))
@@ -3788,7 +3794,17 @@ class MCPWorkbench(Container):
                 type(exc).__name__,
             )
             return
-        canvas.populate_suggestions(report.recommendations, dismissals)
+        if (
+            context != self._tool_policy_profile_context
+            or context.profile_id != self._tool_policy_profile_id
+            or context.selector_generation != self._tool_policy_selector_generation
+            or not self.is_attached
+            or not canvas.is_attached
+        ):
+            return
+        canvas.populate_suggestions(
+            report.recommendations, dismissals, profile_context=context
+        )
 
     async def on_mcp_permissions_mode_suggestion_accept_requested(
         self, event: MCPPermissionsMode.SuggestionAcceptRequested
@@ -3798,6 +3814,9 @@ class MCPWorkbench(Container):
         (re-verified against the CURRENT catalog snapshot at apply time, so
         a definition that changed since the row was rendered refuses)."""
         event.stop()
+        context = self._validate_profile_context(event.profile_context)
+        if context is None:
+            return
         service = self._service()
         if service is None:
             return
@@ -3812,7 +3831,13 @@ class MCPWorkbench(Container):
             # sibling dismissal handlers, not just its tail.
             recommendation = await asyncio.to_thread(
                 lambda: asyncio.run(
-                    apply_suggestion(event.server_key, event.tool_name)
+                    self._call_profile_scoped(
+                        apply_suggestion,
+                        event.server_key,
+                        event.tool_name,
+                        context=context,
+                        expected_definition_hash=event.definition_hash,
+                    )
                 )
             )
         except KeyError:
@@ -3840,7 +3865,8 @@ class MCPWorkbench(Container):
             severity="information",
             markup=False,
         )
-        await self._sync_permissions_mode()
+        async with self._sync_children_lock:
+            await self._sync_permissions_mode()
 
     async def on_mcp_permissions_mode_suggestion_dismiss_requested(
         self, event: MCPPermissionsMode.SuggestionDismissRequested

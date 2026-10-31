@@ -11829,3 +11829,82 @@ async def test_owned_profile_cannot_use_independent_lifecycle_but_standalone_can
         workbench._start_lifecycle("local:docs", "docs", "connect")
         await app.workers.wait_for_complete()
         assert ("connect", "docs") in app.unified_mcp_service.lifecycle_calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "change", ["none", "selection", "policy", "definition", "write_race"]
+)
+async def test_suggestion_accept_preserves_displayed_authority(
+    request, tmp_path, monkeypatch, change
+):
+    from Tests.MCP.test_control_plane_prompt_reducer import (
+        _append_approved,
+        _profile_record,
+        _service,
+    )
+
+    real, history_store = _service(tmp_path, [_profile_record()])
+    store = real.permission_store
+    store.ensure_profile("research")
+    for ts in ("2026-08-01T20:00:00Z", "2026-08-01T20:01:00Z"):
+        _append_approved(history_store, ts=ts)
+    app = PermissionsApp(store.path)
+    app.unified_mcp_service._store = store
+    app.unified_mcp_service.permission_prompt_recommendations = (
+        real.permission_prompt_recommendations
+    )
+    app.unified_mcp_service.apply_permission_prompt_recommendation = (
+        real.apply_permission_prompt_recommendation
+    )
+    app.unified_mcp_service.list_permission_suggestion_dismissals = (
+        real.list_permission_suggestion_dismissals
+    )
+    async with app.run_test(size=(140, 60)) as pilot:
+        workbench = app.query_one(MCPWorkbench)
+        await workbench._reload_guarded()
+        await app.workers.wait_for_complete()
+        assert workbench.query(MCPPermissionsMode)
+        assert await workbench.select_tool_policy_profile("research")
+        canvas = app.query_one(MCPPermissionsMode)
+        table = canvas.query_one("#mcp-perm-suggestions-table", DataTable)
+        assert table.row_count == 1
+        table.focus()
+        await pilot.pause()
+        events = []
+        with monkeypatch.context() as capture:
+            capture.setattr(canvas, "post_message", events.append)
+            canvas.action_accept_suggestion()
+        assert len(events) == 1
+        event = events[0]
+        if change == "selection":
+            await workbench.select_tool_policy_profile("default")
+        elif change == "policy":
+            store.set_tool_state("local:docs", "other", "deny", profile_id="research")
+        elif change == "definition":
+            real.local_service._records = [
+                _profile_record(description="Upload private docs")
+            ]
+            for ts in ("2026-08-02T20:00:00Z", "2026-08-02T20:01:00Z"):
+                _append_approved(
+                    history_store, ts=ts, description="Upload private docs"
+                )
+        elif change == "write_race":
+            original_set = real.set_tool_state
+
+            def changed_before_write(*args, **kwargs):
+                store.set_tool_state(
+                    "local:docs", "other", "deny", profile_id="research"
+                )
+                return original_set(*args, **kwargs)
+
+            monkeypatch.setattr(real, "set_tool_state", changed_before_write)
+        await workbench.on_mcp_permissions_mode_suggestion_accept_requested(event)
+        profiles = store.load()["profiles"]
+        assert profiles["default"]["servers"] == {}
+        tools = profiles["research"]["servers"].get("local:docs", {}).get("tools", {})
+        if change == "none":
+            assert tools["search"]["state"] == "allow"
+        else:
+            assert "search" not in tools

@@ -71,6 +71,19 @@ Path containment, file-size and UTF-8 checks remain at the workbench boundary. T
 3. Card decisions apply: `approve_once` executes; `approve_session` approves in-memory for the session; `allow_matching` writes an exact-args rule (degraded to approve-once for high-risk tools); `always_allow` persists `state=allow` with the live definition hash into the active workspace profile. Unanswered keys fail closed to deny/timeout and are carried as `unresolved_keys` so audit rows never claim a human Deny.
 4. Execution routes through `execute_hub_tool` (local external profile → on-demand connect; builtin → in-process), bounded by `[mcp] tool_call_timeout_seconds`; results are JSON-redacted, non-text content becomes a placeholder, and sizes are capped; exactly one audit row is recorded per call.
 
+## Approval-history suggestions
+
+The Permissions canvas captures the selected `PermissionProfileContext` and
+recommendation definition hash. Acceptance re-mines explicit `approved` rows
+against the current catalog and selected profile, checks the displayed hash,
+and writes through the existing profile digest/revision CAS setter. The first
+explicit session approval records `approved`; `approved-session` is reuse and
+is excluded. The bounded execution log optionally retains a canonical SHA-256
+`definition_hash` supplied by the explicit-approval producer. Legacy rows
+without this metadata remain readable but cannot support suggestions.
+Reports keep their default-profile API; acceptance without reviewed definition
+and profile authority fails closed. Dismissals remain policy-independent.
+
 ## Standalone server
 
 `MCP/server.py` exposes the app's own capabilities over stdio: the tool catalog is AST-walked from the module (`_register_tools`), and — only when `[mcp] expose_local_tools` is on — the local `fs_*`/`git_*`/`web_*` tools are exposed to external clients, each call still gated by a freshly loaded permission store (so Console "Always allow" grants apply). Ask outcomes fail closed with `EXTERNAL_NO_CALLBACK_REFUSAL` — there is no human to ask. The server's workspace root is `[console] workspace_root` expanded, else the process cwd.

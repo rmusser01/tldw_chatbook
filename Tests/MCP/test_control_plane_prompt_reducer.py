@@ -8,7 +8,12 @@ from tldw_chatbook.MCP.execution_log import ExecutionRecord, MCPExecutionLog
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.local_store import LocalMCPStore
 from tldw_chatbook.MCP.permission_prompt_reducer import build_permission_prompt_report
-from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
+from tldw_chatbook.MCP.permission_store import (
+    EffectiveToolState,
+    definition_hash,
+    profile_policy_digest,
+    ProfileMutationError,
+)
 from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
@@ -79,7 +84,9 @@ def _service(
     return service, store
 
 
-def _append_approved(store: LocalMCPStore, *, ts: str) -> None:
+def _append_approved(
+    store: LocalMCPStore, *, ts: str, description: str = "Search docs"
+) -> None:
     log = MCPExecutionLog(Path(store.path).with_name("mcp_execution_log.jsonl"))
     log.append(
         ExecutionRecord(
@@ -98,6 +105,7 @@ def _append_approved(store: LocalMCPStore, *, ts: str) -> None:
             unknown_argument_count=0,
             result_type="dict",
             result_size=1,
+            definition_hash=definition_hash(description, {"type": "object"}),
         )
     )
 
@@ -129,7 +137,7 @@ async def test_apply_permission_prompt_recommendation_persists_hash_safe_allow(
     _append_approved(store, ts="2026-08-01T20:05:00+00:00")
 
     recommendation = await service.apply_permission_prompt_recommendation(
-        "local:docs", "search"
+        "local:docs", "search", **_reviewed_acceptance(service)
     )
 
     assert recommendation.server_key == "local:docs"
@@ -163,7 +171,9 @@ async def test_apply_permission_prompt_recommendation_uses_one_catalog_snapshot(
     _append_approved(store, ts="2026-08-01T20:00:00+00:00")
     _append_approved(store, ts="2026-08-01T20:05:00+00:00")
 
-    await service.apply_permission_prompt_recommendation("local:docs", "search")
+    await service.apply_permission_prompt_recommendation(
+        "local:docs", "search", **_reviewed_acceptance(service)
+    )
 
     tool_entry = service.permission_store.load()["profiles"]["default"]["servers"][
         "local:docs"
@@ -182,7 +192,9 @@ async def test_apply_permission_prompt_recommendation_rejects_non_recommended_to
     service, _store = _service(tmp_path, [_profile_record()])
 
     with pytest.raises(KeyError, match="No prompt-reduction recommendation"):
-        await service.apply_permission_prompt_recommendation("local:docs", "search")
+        await service.apply_permission_prompt_recommendation(
+            "local:docs", "search", **_reviewed_acceptance(service)
+        )
 
 
 @pytest.mark.asyncio
@@ -361,3 +373,118 @@ def test_high_risk_exclusion_is_shared_with_the_approval_card_badge():
 
     assert report.recommendations == []
     assert report.excluded[("local:docs", "process")] == "high-risk-floor"
+
+
+def _reviewed_acceptance(service, *, profile_id="default", description="Search docs"):
+    profile = service.permission_store.load()["profiles"][profile_id]
+    return {
+        "profile_id": profile_id,
+        "expected_profile_digest": profile_policy_digest(profile),
+        "expected_definition_hash": definition_hash(description, {"type": "object"}),
+    }
+
+
+@pytest.mark.asyncio
+async def test_suggestion_acceptance_writes_only_reviewed_profile(tmp_path):
+    service, store = _service(tmp_path, [_profile_record()])
+    service.permission_store.set_global_default("ask", profile_id="research")
+    for ts in ("2026-08-01T20:00:00Z", "2026-08-01T20:01:00Z"):
+        _append_approved(store, ts=ts)
+    await service.apply_permission_prompt_recommendation(
+        "local:docs", "search", **_reviewed_acceptance(service, profile_id="research")
+    )
+    profiles = service.permission_store.load()["profiles"]
+    assert profiles["default"]["servers"] == {}
+    assert (
+        profiles["research"]["servers"]["local:docs"]["tools"]["search"]["state"]
+        == "allow"
+    )
+
+
+@pytest.mark.asyncio
+async def test_suggestion_acceptance_rejects_policy_changed_after_review(tmp_path):
+    service, store = _service(tmp_path, [_profile_record()])
+    for ts in ("2026-08-01T20:00:00Z", "2026-08-01T20:01:00Z"):
+        _append_approved(store, ts=ts)
+    reviewed = _reviewed_acceptance(service)
+    service.permission_store.set_tool_state("local:docs", "other", "deny")
+    with pytest.raises(ProfileMutationError):
+        await service.apply_permission_prompt_recommendation(
+            "local:docs", "search", **reviewed
+        )
+    assert (
+        "search"
+        not in service.permission_store.load()["profiles"]["default"]["servers"][
+            "local:docs"
+        ]["tools"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_suggestion_acceptance_rejects_definition_changed_after_display(tmp_path):
+    service, store = _service(tmp_path, [_profile_record()])
+    for ts in ("2026-08-01T20:00:00Z", "2026-08-01T20:01:00Z"):
+        _append_approved(store, ts=ts)
+    reviewed = _reviewed_acceptance(service)
+    service.local_service._records = [
+        _profile_record(description="Upload private docs")
+    ]
+    # Even fresh approvals for the successor cannot authorize a stale displayed row.
+    for ts in ("2026-08-02T20:00:00Z", "2026-08-02T20:01:00Z"):
+        _append_approved(store, ts=ts, description="Upload private docs")
+    with pytest.raises(KeyError):
+        await service.apply_permission_prompt_recommendation(
+            "local:docs", "search", **reviewed
+        )
+    assert service.permission_store.load()["profiles"]["default"]["servers"] == {}
+
+
+@pytest.mark.asyncio
+async def test_legacy_apply_without_reviewed_authority_fails_closed(tmp_path):
+    service, store = _service(tmp_path, [_profile_record()])
+    for ts in ("2026-08-01T20:00:00Z", "2026-08-01T20:01:00Z"):
+        _append_approved(store, ts=ts)
+    with pytest.raises(KeyError):
+        await service.apply_permission_prompt_recommendation("local:docs", "search")
+    assert service.permission_store.load()["profiles"]["default"]["servers"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("decision", ["approved", "approved-session", "allowed"])
+async def test_execution_audit_retains_fingerprint_only_for_explicit_approval(
+    tmp_path, monkeypatch, decision
+):
+    service, _store = _service(tmp_path, [_profile_record()])
+
+    async def execute_external_tool(_profile, _tool, _arguments):
+        return {"content": []}
+
+    monkeypatch.setattr(
+        service.local_service,
+        "execute_external_tool",
+        execute_external_tool,
+        raising=False,
+    )
+    await service.execute_hub_tool_result(
+        "local:docs",
+        "search",
+        {},
+        initiator="agent",
+        decision=decision,
+        approval_definition_hash="a" * 64,
+    )
+    row = service.execution_log.read_recent()[0]
+    assert row.get("definition_hash") == ("a" * 64 if decision == "approved" else None)
+
+
+@pytest.mark.asyncio
+async def test_suggestion_acceptance_forwards_expected_profile_revision(tmp_path):
+    service, store = _service(tmp_path, [_profile_record()])
+    for ts in ("2026-08-01T20:00:00Z", "2026-08-01T20:01:00Z"):
+        _append_approved(store, ts=ts)
+    with pytest.raises(ProfileMutationError):
+        await service.apply_permission_prompt_recommendation(
+            "local:docs", "search", expected_revision=7, **_reviewed_acceptance(service)
+        )
+    assert service.permission_store.load()["profiles"]["default"]["servers"] == {}

@@ -23009,3 +23009,15 @@ actual service calls after the original controls detached, and reached
 publication with `is_running` made all eleven pass while confirmed owner saves
 and explicit tests still completed. Preserve owner work and freshness checks;
 do not replace this proof with fake mounted flags, mocked queries or a broad catch.
+
+## Read audit-token producers before treating execution rows as human decisions
+
+**TASK-18928 / PR #3156, 2026-10-31.** Approval-history mining initially counted
+`approved-session` as another explicit approval. The provider actually emits
+`approved` for the first human session grant and `approved-session` when later
+calls reuse it without a prompt. A producer-backed regression showed one
+human decision plus one automatic use crossing the proposed threshold. Read
+the producer branch, not just the token name or a synthetic reducer fixture.
+The repair also required fingerprint metadata: an ordinary Ask tool has no
+stored Allow hash, so `config_changed=False` cannot prove that its historical
+approvals or displayed suggestion refer to today's definition.

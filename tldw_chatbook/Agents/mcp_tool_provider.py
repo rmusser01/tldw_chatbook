@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import inspect
 import json
 import sys
 import threading
@@ -1978,6 +1979,20 @@ class MCPToolProvider:
             # audited with real provenance instead of the pre-Task-4
             # always-empty `argument_names: []`.
             def create_execution():
+                # Legacy adapters remain executable but cannot produce qualified
+                # history until they accept the optional reviewed fingerprint.
+                approval_metadata = {}
+                if decision == "approved":
+                    try:
+                        parameters = inspect.signature(execute).parameters
+                    except (TypeError, ValueError):
+                        parameters = {}
+                    if "approval_definition_hash" in parameters:
+                        from tldw_chatbook.MCP.permission_store import definition_hash
+
+                        approval_metadata["approval_definition_hash"] = definition_hash(
+                            tool.description, tool.input_schema
+                        )
                 return execute(
                     tool.server_key,
                     tool.name,
@@ -1985,6 +2000,7 @@ class MCPToolProvider:
                     initiator="agent",
                     decision=decision,
                     registered_argument_names=schema_argument_names(tool.input_schema),
+                    **approval_metadata,
                 )
 
             async def execute_observed():

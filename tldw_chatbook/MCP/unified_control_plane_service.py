@@ -2539,6 +2539,7 @@ class UnifiedMCPControlPlaneService:
         result: Any,
         initiator: str = "test",
         decision: str = "allowed",
+        approval_definition_hash: str | None = None,
         _audit_observation: MCPDispatchObservation | None = None,
     ) -> None:
         # Recording is best-effort: it must never mask the tool result or
@@ -2567,6 +2568,11 @@ class UnifiedMCPControlPlaneService:
                 tool_name=tool_name,
                 initiator=initiator,
                 decision=decision,
+                definition_hash=(
+                    approval_definition_hash
+                    if initiator == "agent" and decision == "approved"
+                    else None
+                ),
                 ok=ok,
                 status=status,
                 duration_ms=duration_ms,
@@ -2665,6 +2671,7 @@ class UnifiedMCPControlPlaneService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
+        approval_definition_hash: str | None = None,
     ) -> MCPToolResult | dict[str, Any]:
         """Typed external results through the shared execution/audit owner.
 
@@ -2679,6 +2686,7 @@ class UnifiedMCPControlPlaneService:
             decision=decision,
             timeout_seconds=timeout_seconds,
             registered_argument_names=registered_argument_names,
+            approval_definition_hash=approval_definition_hash,
             _typed_result=True,
         )
 
@@ -2694,6 +2702,7 @@ class UnifiedMCPControlPlaneService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
+        approval_definition_hash: str | None = None,
         _typed_result: bool = False,
     ) -> MCPToolResult | dict[str, Any]:
         """Execute one tool call against a local or built-in server.
@@ -2795,6 +2804,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                approval_definition_hash=approval_definition_hash,
                 _audit_observation=observation,
                 result=None,
                 initiator=initiator,
@@ -2817,6 +2827,7 @@ class UnifiedMCPControlPlaneService:
                     status_code=None,
                     arguments=normalized_arguments,
                     registered_argument_names=registered_argument_names,
+                    approval_definition_hash=approval_definition_hash,
                     _audit_observation=observation,
                     result=None,
                     initiator=initiator,
@@ -2863,6 +2874,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                approval_definition_hash=approval_definition_hash,
                 _audit_observation=observation,
                 result=None,
                 initiator=initiator,
@@ -2897,6 +2909,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=status_code,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                approval_definition_hash=approval_definition_hash,
                 _audit_observation=observation,
                 result=None,
                 initiator=initiator,
@@ -2923,6 +2936,7 @@ class UnifiedMCPControlPlaneService:
             status_code=None,
             arguments=normalized_arguments,
             registered_argument_names=registered_argument_names,
+            approval_definition_hash=approval_definition_hash,
             _audit_observation=observation,
             result=(
                 project_tool_result(result)
@@ -4743,11 +4757,12 @@ class UnifiedMCPControlPlaneService:
         *,
         min_approved_count: int,
         limit: int,
+        profile_id: str = "default",
     ) -> tuple[PermissionPromptReport, dict[tuple[str, str], HubTool]]:
         """Build a report and tool lookup from one live catalog snapshot."""
         records = self._recent_execution_records(limit)
         tools = await self._local_prompt_reduction_tools()
-        states = self.effective_tool_states(tools)
+        states = self.effective_tool_states(tools, profile_id=profile_id)
         report = build_permission_prompt_report(
             records,
             tools,
@@ -4796,6 +4811,7 @@ class UnifiedMCPControlPlaneService:
         *,
         min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
         limit: int = 200,
+        profile_id: str = "default",
     ) -> PermissionPromptReport:
         """Return local MCP permission prompt-reduction recommendations.
 
@@ -4803,6 +4819,7 @@ class UnifiedMCPControlPlaneService:
             min_approved_count: Minimum prompted approvals required for a
                 recommendation.
             limit: Maximum recent local execution records to analyze.
+            profile_id: Permission profile whose current eligibility is reviewed.
 
         Returns:
             A telemetry-free report based on local MCP metadata and current
@@ -4811,6 +4828,7 @@ class UnifiedMCPControlPlaneService:
         report, _tools = await self._permission_prompt_recommendation_snapshot(
             min_approved_count=min_approved_count,
             limit=limit,
+            profile_id=profile_id,
         )
         return report
 
@@ -4820,6 +4838,10 @@ class UnifiedMCPControlPlaneService:
         tool_name: str,
         *,
         min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
+        profile_id: str = "default",
+        expected_definition_hash: str | None = None,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
     ) -> PermissionPromptRecommendation:
         """Persist a currently recommended tool-level allow.
 
@@ -4828,13 +4850,17 @@ class UnifiedMCPControlPlaneService:
             tool_name: Name of the recommended tool.
             min_approved_count: Minimum prompted approvals required for a
                 recommendation.
+            profile_id: The reviewed permission profile to update.
+            expected_definition_hash: Fingerprint retained by the displayed suggestion.
+            expected_profile_digest: Policy digest retained by that review.
+            expected_revision: Imported-profile revision retained by that review.
 
         Returns:
             The recommendation whose hash-safe tool-level allow was persisted.
 
         Raises:
             KeyError: If the requested server and tool pair is not a current
-                prompt-reduction recommendation.
+                prompt-reduction recommendation or reviewed authority is missing.
             RuntimeError: If the MCP permission store is unavailable.
         """
         normalized_key = str(server_key or "").strip()
@@ -4842,9 +4868,14 @@ class UnifiedMCPControlPlaneService:
         store = self.permission_store
         if store is None:
             raise RuntimeError("MCP permission store unavailable")
+        if not expected_definition_hash or not expected_profile_digest:
+            raise KeyError(
+                "Review the current suggestion and permission profile before accepting"
+            )
         report, tools_by_key = await self._permission_prompt_recommendation_snapshot(
             min_approved_count=min_approved_count,
             limit=200,
+            profile_id=profile_id,
         )
         recommendation = next(
             (
@@ -4855,7 +4886,10 @@ class UnifiedMCPControlPlaneService:
             ),
             None,
         )
-        if recommendation is None:
+        if (
+            recommendation is None
+            or recommendation.definition_hash != expected_definition_hash
+        ):
             raise KeyError(
                 "No prompt-reduction recommendation for "
                 f"{normalized_key}/{normalized_tool}"
@@ -4866,7 +4900,15 @@ class UnifiedMCPControlPlaneService:
             raise KeyError(
                 f"No live MCP tool found for {normalized_key}/{normalized_tool}"
             )
-        self.set_tool_state(normalized_key, normalized_tool, "allow", tool=tool)
+        self.set_tool_state(
+            normalized_key,
+            normalized_tool,
+            "allow",
+            tool=tool,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+        )
         return recommendation
 
     # -- suggestion dismissals (TASK-18928) ----------------------------------

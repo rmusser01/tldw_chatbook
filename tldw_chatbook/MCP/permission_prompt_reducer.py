@@ -11,26 +11,27 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from tldw_chatbook.MCP.execution_log import APPROVED_SESSION_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import (
     ALWAYS_ASK_TOOLS,
     HIGH_RISK_TAGS,
     EffectiveToolState,
+    definition_hash,
 )
 
 APPROVED_DECISION = "approved"
 AGENT_INITIATOR = "agent"
 DEFAULT_MIN_APPROVED_COUNT = 2
-#: TASK-18928: "Approve for session" is as explicit a human approval as
-#: "Approve once" -- both decision rows mine into the same approval count.
-COUNTED_APPROVAL_DECISIONS = frozenset({APPROVED_DECISION, APPROVED_SESSION_DECISION})
+# The first explicit approve_session records "approved" too. Subsequent
+# "approved-session" rows reuse that grant and are not human decisions.
+COUNTED_APPROVAL_DECISIONS = frozenset({APPROVED_DECISION})
 
 _EXCLUSION_LABELS = {
     "below-threshold": "below threshold",
     "already-allowed": "already allowed",
     "denied": "explicitly denied",
     "definition-changed": "definition changed",
+    "definition-unverified": "approval definition unavailable or changed",
     "high-risk-floor": "high-risk safety floor",
     "tool-not-found": "missing from the current catalog",
     "tool-unavailable": "currently unavailable",
@@ -52,6 +53,7 @@ class PermissionPromptRecommendation:
     last_seen: str
     current_state: str
     reason: str
+    definition_hash: str = ""
 
     @property
     def tool_id(self) -> str:
@@ -171,6 +173,11 @@ def build_permission_prompt_report(
     threshold = max(1, int(min_approved_count or DEFAULT_MIN_APPROVED_COUNT))
     tool_by_key = {(tool.server_key, tool.name): tool for tool in tools}
     stats_by_key: dict[PromptKey, _ApprovalStats] = {}
+    qualified_stats: dict[PromptKey, _ApprovalStats] = {}
+    live_hashes = {
+        key: definition_hash(tool.description, tool.input_schema)
+        for key, tool in tool_by_key.items()
+    }
     approval_records = 0
 
     for record in records:
@@ -185,6 +192,11 @@ def build_permission_prompt_report(
         approval_records += 1
         stats = stats_by_key.setdefault((server_key, tool_name), _ApprovalStats())
         stats.add_seen(str(record.get("ts") or ""))
+        key = (server_key, tool_name)
+        if key in live_hashes and record.get("definition_hash") == live_hashes[key]:
+            qualified_stats.setdefault(key, _ApprovalStats()).add_seen(
+                str(record.get("ts") or "")
+            )
 
     recommendations: list[PermissionPromptRecommendation] = []
     excluded: dict[PromptKey, str] = {}
@@ -235,6 +247,14 @@ def build_permission_prompt_report(
             excluded[key] = "high-risk-floor"
             continue
 
+        reviewed_stats = qualified_stats.get(key)
+        if reviewed_stats is None:
+            excluded[key] = "definition-unverified"
+            continue
+        if reviewed_stats.count < threshold:
+            excluded[key] = "below-threshold"
+            continue
+        stats = reviewed_stats
         recommendations.append(
             PermissionPromptRecommendation(
                 server_key=tool.server_key,
@@ -245,6 +265,7 @@ def build_permission_prompt_report(
                 last_seen=stats.last_seen,
                 current_state=state.state,
                 reason="Repeatedly approved while still ask-gated.",
+                definition_hash=live_hashes[key],
             )
         )
 
