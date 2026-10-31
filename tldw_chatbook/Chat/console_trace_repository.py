@@ -457,7 +457,7 @@ class ConsoleTraceRepository:
         if type(request) is not PostDispatchTraceImport:
             raise TypeError("request must be a PostDispatchTraceImport")
         connection = db.get_connection()
-        managed_depth = getattr(db._local, "transaction_depth", 0)
+        managed_depth = db.managed_transaction_depth()
         if managed_depth or connection.in_transaction:
             raise TraceIdentityConflict("post_dispatch_transaction_owner")
         self._validate_post_dispatch_request(request)
