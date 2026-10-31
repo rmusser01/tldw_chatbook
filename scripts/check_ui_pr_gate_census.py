@@ -630,7 +630,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Library outcome line on a mounted ChatScreen (four cases, about 24 s
 # locally) and its projection helper (16 cases, about 12 s), so no
 # existing entry changes shard: dev's 1149 + 2 = 1151.
-MINIMUM_FILES = 1163
+# TASK-36382 appends 9 entries at the tail: four Tests/UI files no lane ran
+# (focus contracts, Evals skill eval, the llama.cpp refresh gate, the CSS
+# staleness manifest) and five static contracts of test_modal_wide_tier.py
+# by node id, whose whole file is over the per-file rule; the anchor check
+# among them is one test, ~1 s. The floor now equals the entry count, which
+# also absorbs any lag in dev's floor (tail entries a merge added without
+# raising it).
+MINIMUM_FILES = 1172
 
 
 def read_census(path: Path) -> list[str]:
