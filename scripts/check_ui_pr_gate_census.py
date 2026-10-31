@@ -632,9 +632,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # existing entry changes shard: dev's 1149 + 2 = 1151.
 # TASK-36380 (2026-10-29) appends 1 node entry at the tail: the koboldcpp
 # Discover journey (about 23 s locally), so no existing entry changes shard.
-# An increment of 1 for that entry; the floor now equals the entry count,
-# which absorbs dev's 7-entry lag (tail entries an earlier merge added
-# without raising the floor).
+# An increment of 1 for that entry. The floor now equals the entry count,
+# which also absorbs any lag in dev's floor (tail entries a merge added
+# without raising it).
 MINIMUM_FILES = 1164
 
 
