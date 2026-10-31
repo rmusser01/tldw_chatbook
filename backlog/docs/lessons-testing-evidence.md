@@ -34,20 +34,30 @@ outside this guarantee.
 
 ## Code after on_screen_resume's attach check does not run when a Console dialog closes (TASK-37840, 2026-10-30)
 
+## A refresh in on_screen_resume's tail repeats the attach reconcile's sync when a Console dialog closes (TASK-37840, 2026-10-30)
+
 **Incident.** The Temporary status segment had to repaint after a Trace Privacy
 choice made in a dialog over the Console. The first fix added a refresh call to
 `ChatScreen.on_screen_resume` after `apply_status_chips_position`, plus a call
 in the full sync pass. The mounted test went green, and stayed green with the
-resume call mutated out. A spy showed why: pushing any screen over the Console
-runs `on_screen_suspend`, which clears `_console_attach_reconciled`, so the
-next resume schedules `_reconcile_console_after_attach` and returns before the
-later lines. The repaint came from the full sync pass that the reconcile runs.
-The resume call was dead code and was removed.
+resume call mutated out. The first write-up said the resume call never ran.
+The pre-merge review disproved that with a one-line spy after
+`apply_status_chips_position`: it fired once per dialog close, three times in
+the test, each with `_console_attach_resume_in_progress` set. Pushing a screen
+over the Console runs `on_screen_suspend`, which clears
+`_console_attach_reconciled`, so the first resume schedules
+`_reconcile_console_after_attach` and returns early. The reconcile runs the
+full sync pass and then calls `on_screen_resume()` again with
+`_console_attach_resume_in_progress` set, and that second call reaches the
+tail. The resume call did run, but after the full sync pass had already
+repainted. It was redundant, not unreachable, and was removed.
 
 **What to do.** For anything that must refresh when a dialog over the Console
 closes, rely on the full sync pass (`_sync_native_console_chat_ui`) that the
-attach reconcile runs. Mutate each new hook out on its own before claiming it
-is the one doing the work.
+attach reconcile runs. A refresh in the resume tail only repeats it. Mutate
+each new hook out on its own before claiming it is the one doing the work.
+When a mutant stays green, put a spy on the hook and read whether it runs
+before writing down why it did not matter.
 
 ## Opening the Conversation Inspector fails `_received_console_case`'s teardown (TASK-37840, 2026-10-30)
 
