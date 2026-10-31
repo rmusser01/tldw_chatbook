@@ -539,7 +539,6 @@ class ArchiveRecoveryRuntime:
             raise ArchiveRecoveryError(
                 "unavailable", "Native recovery call identity required"
             )
-        self.results.resolve(session_id, request.result_ref, for_agent=True)
         key = RecoveryCallKey(
             session_id, run_id, call_id, argument_digest(request.model_dump())
         )

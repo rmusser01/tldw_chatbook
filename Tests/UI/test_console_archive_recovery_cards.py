@@ -427,3 +427,81 @@ async def test_recovery_controls_are_inert_when_app_exits(
             assert not app.view.is_answerable("source")
         finally:
             app._exit = False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,own_operation", [("busy", False), ("expired", False), ("expired", True)]
+)
+async def test_receipt_only_retires_its_own_mounted_confirmation(status, own_operation):
+    from types import SimpleNamespace
+
+    from textual.containers import Vertical
+
+    from tldw_chatbook.Chat.archive_recovery.contracts import RecoveryOperationSnapshot
+    from tldw_chatbook.Chat.archive_recovery.operations import recovery_outcome
+    from tldw_chatbook.UI.Console_Modules.archive_recovery import (
+        ConsoleArchiveRecoveryView,
+    )
+
+    pending = confirmation()
+    snapshot = RecoveryOperationSnapshot(
+        "operation", "source", "awaiting_confirmation", pending, None
+    )
+    receipts = []
+
+    class ReceiptApp(App):
+        def compose(self):
+            self.screen._console_chat_store = SimpleNamespace(
+                active_session_id="source", messages_for_session=lambda _: []
+            )
+            runtime = SimpleNamespace(
+                presentations=lambda _: [],
+                coordinator=SimpleNamespace(
+                    snapshot=lambda _: snapshot, receipts=lambda _: receipts
+                ),
+            )
+            self.screen._console_runtime = lambda: SimpleNamespace(
+                view=self.screen, ensure_archive_recovery=lambda: runtime
+            )
+            self.view = ConsoleArchiveRecoveryView(self.screen)
+            with Vertical(id="console-archive-recovery"):
+                yield Button("Refresh", id="recovery-refresh")
+
+    app = ReceiptApp()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await app.view.sync()
+        card = app.query_one(ArchiveRecoveryConfirmCard)
+        scope = app.query_one("#recovery-scope", Select)
+        scope.value = "chat_and_workspace"
+        await pilot.pause()
+        button = app.query_one("#recovery-confirm", Button)
+        button.focus()
+        await pilot.pause()
+        assert app.focused is button
+        assert card.confirmation is pending and card.display
+        receipt = RecoveryOperationSnapshot(
+            pending.operation_id if own_operation else "other-operation",
+            "source",
+            "settled",
+            None,
+            recovery_outcome(status, pending.target, next_action="refresh"),
+        )
+        assert await app.view.show_receipt(receipt)
+        receipts.append(receipt)
+        if own_operation:
+            snapshot = None
+            assert card.confirmation is None and not card.display
+            assert app.focused is app.query_one("#recovery-refresh")
+        else:
+            assert card.confirmation is pending
+            assert card.display and card.visible
+            assert scope.value == "chat_and_workspace"
+            assert app.focused is button
+            await app.view.sync()
+            await pilot.pause()
+            assert card.confirmation is pending
+            assert card.display and card.visible
+            assert scope.value == "chat_and_workspace"
+            assert app.focused is button
+            assert not button.disabled

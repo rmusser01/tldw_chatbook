@@ -12,7 +12,7 @@ references:
 documentation:
 - backlog/decisions/166-agent-assisted-archive-recovery.md
 - backlog/decisions/228-sqlite-store-kernel.md
-updated_date: 2026-10-31 20:44
+updated_date: 2026-10-31 21:02
 ---
 
 ## Description
@@ -55,6 +55,14 @@ Reason: compatibility rebase preserving the existing archive and native custody 
 2. Resolve conflicts, inspect range-diff, reconcile canonical CSS and reviewed diagnostic entries, retain the current1174 census prefix and append only the verified archive cards file (1175).
 3. Measure only affected size rows under the dated user waiver; run narrowly scoped conflict/static checks without repeating known mounted failures or broader tests.
 4. Record remaining mounted-agent and stock received-send qualification blockers, commit a clean local handoff, and leave task In Progress. Root owns fresh independent review and remote actions; no full suite or live calls.
+2026-10-31 independent-review follow-up on608ad5418a.
+ADR required: no
+ADR path: backlog/decisions/166-agent-assisted-archive-recovery.md
+Reason: restore the approved bounded native-call deduplication and pinned confirmation contracts.
+1. Add focused RED controls for pending/completed retries after result-page eviction, changed arguments and bounded receipt eviction through ArchiveRecoveryRuntime.
+2. Remove only the redundant outer result resolution; retain the coordinator new-agent evidence check and bounded history.
+3. Add a minimal mounted busy/expired receipt control proving the displayed request, manual scope, visibility and focus survive unrelated settlement; clear controls only for their owning operation.
+4. Run the smallest affected GREEN controls, record exact source hashes and receipts alongside all prior failures, and commit a clean local handoff for fresh independent review. No remote, full-suite or live actions.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -69,6 +77,11 @@ Fresh focused evidence: both dedicated native normal/queued archive-origin regre
 The single current-base mounted archive representative still fails before provider entry:60s stack shows activation/config reads waiting on storage initialization, with qualification evidence and AgentRuns private-artifact workers active. Cleanup completes. Original mounted/received failures remain open. Two pre-existing eager-MCP wired assertions also fail; setup-only probe proves unchanged valid source/profile/alias ownership, and current stock capture defers persisted definitions while temporary sessions can stay empty. Original assertions remain untouched; the dedicated proof tests avoid that superseded eager-read assumption. A single authorized plain-turn control using the same fixture/cleanup is running read-only to distinguish shared initialization cost, with no timeout padding. Receipts and source provenance: Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase/current-dev/.
 Task remains In Progress with AC2 unchecked. Root owns full independent review and remote steps; no broad sweep, live request or remote action.
 The one authorized non-archive native-turn control has now finished:1 failed87.93s total/78.10s call under the same60s state bound, with full cleanup and zero provider/tool calls. Its activation worker was inside bootstrap._registry→native Windows stat/open_handle while another database worker waited at storage_admission.initializing. It reproduces the pre-provider failure without archive tool execution, distinguishing shared startup/admission work from an archive-result operation; it does not qualify the archive journey or establish platform-wide cause. Exact source, command, JUnit and trace are in current-dev/nonarchive-control*; no retry or received-send rerun followed. Dedicated normal/queued exact archive-proof tests pass2/2, retaining every other field observed from the actual configuration producer. Clean handoff for independent review; no further tests running.
+2026-10-31 independent-review repairs on608ad5418a (fixed current-dev base0d05).
+Removed the runtime pre-resolution that bypassed the coordinator native-call deduplication order. Identical pending/completed calls retain their original outcome after FIFO page eviction or TTL expiry; changed arguments still refuse, new agent calls still cannot select manual-only evidence, and receipt eviction leaves old calls/consumed decisions expired. No cache or retention limit changed.
+Receipt projection now clears controls and redirects expired focus only when the displayed confirmation belongs to the settled operation. Minimal mounted controls prove foreign busy/expired receipts preserve exact request identity, manually chosen scope, visibility and focus across sync; the own-expired positive control still clears/moves focus.
+RED: both runtime eviction variants failed at the redundant lookup; after correcting only the test scope-event setup, both foreign receipt variants failed and own-expired passed. GREEN:10 targeted cases passed in25.67s, including existing deduplication/receipt-eviction/one-shot/stale-event controls. Four changed code files parse with no duplicate tests; no introduced F821/F811 findings versus608ad (15 existing imported-fixture warnings remain). A final fixture-specific noqa comment is AST-identical to the passing test source; both tested and final source hashes are retained.
+Evidence: Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase/review-followup/. Prior failures remain recorded. Parent reports fresh independent review accepted the shared pre-provider and stale eager-MCP classification as bounded baseline evidence; these repairs do not turn those failed journeys into passes. ADR required:no; existingADR166 applies. Task remains In Progress pending review/publication. No broad retry, full-suite, live or remote action.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

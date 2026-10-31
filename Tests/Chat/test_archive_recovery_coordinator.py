@@ -575,3 +575,111 @@ async def test_display_title_fitting_preserves_exact_recovery_identity(
         assert not app.workspace_registry_service.get_workspace("project").archived
     finally:
         await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("eviction", ["fifo", "ttl"])
+async def test_runtime_retry_retains_pending_and_completed_outcomes_after_page_eviction(
+    recovery_stores, eviction  # noqa: F811 - imported pytest fixture parameter
+):
+    from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveRecoveryError
+    from tldw_chatbook.Chat.archive_recovery.coordinator import MAX_SESSION_RECEIPTS
+    from tldw_chatbook.Chat.archive_recovery.result_store import (
+        MAX_SESSION_PAGES,
+        RESULT_TTL_SECONDS,
+    )
+    from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
+
+    app, cid, db = recovery_stores
+    runtime = ArchiveRecoveryRuntime(app)
+    runtime.is_answerable = lambda _: True
+    shown = asyncio.Event()
+    runtime.present_confirmation = lambda _: (shown.set() or True)
+
+    async def acknowledge(_):
+        return True
+
+    runtime.on_settled = acknowledge
+    coordinator = runtime.coordinator
+    assert coordinator.open_run("source", "run")
+    now = [0.0]
+    runtime.results._monotonic = lambda: now[0]
+    page = ArchiveSearchService(
+        app.local_chat_conversation_service, app.workspace_registry_service
+    ).search(ArchiveSearchRequest())
+
+    def publish(*, model_visible=True):
+        return runtime.results.publish(
+            "source", ArchiveSearchRequest(), page, model_visible=model_visible
+        )["items"][0]["result_ref"]
+
+    ref = publish()
+    arguments = {"result_ref": ref, "scope": "chat_only"}
+    first = asyncio.create_task(
+        runtime.request_restore("source", "run", "call", arguments)
+    )
+    tasks = [first]
+    try:
+        await asyncio.wait_for(shown.wait(), 5)
+        original = coordinator.snapshot("source").confirmation
+        if eviction == "fifo":
+            for _ in range(MAX_SESSION_PAGES):
+                publish()
+        else:
+            now[0] = RESULT_TTL_SECONDS + 1
+        with pytest.raises(ArchiveRecoveryError, match="expired"):
+            runtime.results.resolve("source", ref, for_agent=True)
+
+        retry = asyncio.create_task(
+            runtime.request_restore("source", "run", "call", arguments)
+        )
+        tasks.append(retry)
+        await asyncio.sleep(0)
+        assert (
+            not retry.done()
+        ), "a retained pending call must still await its original decision"
+        assert coordinator.snapshot("source").confirmation is original
+        changed = await runtime.request_restore(
+            "source", "run", "call", {**arguments, "scope": "chat_and_workspace"}
+        )
+        assert changed.status == "stale"
+        outcome = await coordinator.decide(
+            "source", original.request_id, allow=True, scope="chat_only"
+        )
+        assert outcome.status == "restored"
+        assert await first is outcome
+        assert await retry is outcome
+        assert (
+            await runtime.request_restore("source", "run", "call", arguments) is outcome
+        )
+        assert not db.get_conversation_by_id(cid)["archived"]
+        assert app.workspace_registry_service.get_workspace("project").archived
+
+        # New agent calls still cannot select manual-only evidence.
+        manual_ref = publish(model_visible=False)
+        refused = await runtime.request_restore(
+            "source", "run", "manual", {"result_ref": manual_ref}
+        )
+        assert refused.status == "unavailable"
+        assert coordinator.snapshot("source") is None
+
+        # Existing bounded receipt eviction cannot revive consumed authorization.
+        for index in range(MAX_SESSION_RECEIPTS):
+            expired = await runtime.request_restore(
+                "source", "run", f"expired-{index}", {"result_ref": "missing"}
+            )
+            assert expired.status == "expired"
+        assert len(coordinator.receipts("source")) == MAX_SESSION_RECEIPTS
+        assert len(coordinator._operations) == MAX_SESSION_RECEIPTS
+        assert (
+            await runtime.request_restore("source", "run", "call", arguments)
+        ).status == "expired"
+        assert (
+            await coordinator.decide(
+                "source", original.request_id, allow=True, scope="chat_only"
+            )
+        ).status == "expired"
+        assert coordinator.snapshot("source") is None
+    finally:
+        await runtime.shutdown()
+        await asyncio.gather(*tasks, return_exceptions=True)

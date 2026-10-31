@@ -1,0 +1,26 @@
+[
+  {
+    "file": "tldw_chatbook/Chat/archive_recovery/runtime.py",
+    "base_findings": 0,
+    "current_findings": 0,
+    "introduced": []
+  },
+  {
+    "file": "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+    "base_findings": 0,
+    "current_findings": 0,
+    "introduced": []
+  },
+  {
+    "file": "Tests/Chat/test_archive_recovery_coordinator.py",
+    "base_findings": 15,
+    "current_findings": 15,
+    "introduced": []
+  },
+  {
+    "file": "Tests/UI/test_console_archive_recovery_cards.py",
+    "base_findings": 0,
+    "current_findings": 0,
+    "introduced": []
+  }
+]

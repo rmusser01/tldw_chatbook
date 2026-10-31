@@ -266,15 +266,23 @@ class ConsoleArchiveRecoveryView:
         ):
             return False
         card = self._confirmation()
+        owns_confirmation = bool(
+            outcome.outcome
+            and card
+            and card.confirmation
+            and card.confirmation.operation_id == outcome.operation_id
+        )
         focused = self.screen.focused
         expired_focus = bool(
-            outcome.outcome
+            owns_confirmation
+            and outcome.outcome
             and outcome.outcome.status == "expired"
             and card
             and focused
             and (focused is card or card in focused.ancestors)
         )
-        self.show_confirmation(None)
+        if owns_confirmation:
+            self.show_confirmation(None)
         if expired_focus:
             buttons = self.screen.query("#recovery-refresh")
             if buttons:
