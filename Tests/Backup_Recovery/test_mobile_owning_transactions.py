@@ -12,6 +12,7 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
     from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.Chat.console_trace_models import (
         FrozenTracePolicy,
+        SemanticRevisionRef,
         TraceCallState,
         TraceContentRef,
         new_opaque_id,
@@ -389,7 +390,13 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
             finally:
                 writer.close()
             result["log_dir"] = writer.log_dir
-        if legacy and source_case == "detached":
+        if legacy and source_case in {
+            "detached",
+            "detached_original",
+            "detached_current",
+            "detached_twice",
+            "empty_detached",
+        }:
             deleted_conversation = chat.add_conversation(
                 {"title": "Native detached trace"}
             )
@@ -400,22 +407,83 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
                     conversation_id=deleted_conversation,
                     root_segment_id=detached_segment.segment_id,
                 )
-                trace.append_surface_node(
-                    cursor,
-                    segment_id=detached_segment.segment_id,
-                    sequence=0,
-                    predecessor_node_id=None,
-                    component_kind="native_message",
-                    reference=TraceContentRef(artifact.artifact_id, "native_message"),
-                )
+                if source_case != "empty_detached":
+                    trace.append_surface_node(
+                        cursor,
+                        segment_id=detached_segment.segment_id,
+                        sequence=0,
+                        predecessor_node_id=None,
+                        component_kind="native_message",
+                        reference=TraceContentRef(
+                            artifact.artifact_id, "native_message"
+                        ),
+                    )
+                if source_case not in {"detached", "empty_detached"}:
+                    revision = trace.ensure_semantic_revision(
+                        cursor,
+                        source_conversation_id=deleted_conversation,
+                        source_message_id="historical-detached-message",
+                        revision_sequence=0,
+                        normalized_role="user",
+                        content_kind="text",
+                        creation_reason="message_create",
+                        live_locator_retired_at="2026-10-27T00:00:00Z",
+                    )
+                    trace.append_surface_node(
+                        cursor,
+                        segment_id=detached_segment.segment_id,
+                        sequence=1,
+                        predecessor_node_id=cursor.execute(
+                            "SELECT node_id FROM console_trace_surface_nodes WHERE segment_id=?",
+                            (detached_segment.segment_id,),
+                        ).fetchone()[0],
+                        component_kind="native_message",
+                        reference=SemanticRevisionRef(revision.revision_id),
+                    )
                 trace.detach_owner(
                     cursor,
                     owner_id=detached_owner.owner_id,
                     detached_at="2026-10-27T01:00:00Z",
                 )
-                cursor.execute(
-                    "DELETE FROM conversations WHERE id=?", (deleted_conversation,)
-                )
+                if source_case == "detached":
+                    cursor.execute(
+                        "DELETE FROM conversations WHERE id=?", (deleted_conversation,)
+                    )
+                elif source_case in {"detached_current", "detached_twice"}:
+                    current_segment = trace.create_segment(cursor)
+                    current_owner = trace.attach_owner(
+                        cursor,
+                        conversation_id=deleted_conversation,
+                        root_segment_id=current_segment.segment_id,
+                    )
+                    trace.append_surface_node(
+                        cursor,
+                        segment_id=current_segment.segment_id,
+                        sequence=0,
+                        predecessor_node_id=None,
+                        component_kind="native_message",
+                        reference=SemanticRevisionRef(revision.revision_id),
+                    )
+                    if source_case == "detached_twice":
+                        trace.detach_owner(
+                            cursor,
+                            owner_id=current_owner.owner_id,
+                            detached_at="2026-10-27T02:00:00Z",
+                        )
+                        final_segment = trace.create_segment(cursor)
+                        trace.attach_owner(
+                            cursor,
+                            conversation_id=deleted_conversation,
+                            root_segment_id=final_segment.segment_id,
+                        )
+                        trace.append_surface_node(
+                            cursor,
+                            segment_id=final_segment.segment_id,
+                            sequence=0,
+                            predecessor_node_id=None,
+                            component_kind="native_message",
+                            reference=SemanticRevisionRef(revision.revision_id),
+                        )
             result["blocked_identity"] = detached_owner.owner_id
         if legacy and source_case == "promoted":
             from dataclasses import replace
@@ -540,7 +608,7 @@ def test_fixed_schedule_preserves_native_owner_before_trace_nodes(
             plan = _plan_runs(reads, _read_budget=budget)
             assert not plan.blockers
             ordered = _prepare_rows(plan, budget)
-            names = [row.table for row, values in ordered]
+            names = [row.table for row, values, _detach in ordered]
             assert len(ordered) == len(plan.rows)
             assert names.index("conversations") < names.index("messages")
             assert names.index("console_trace_segments") < names.index(
@@ -552,7 +620,9 @@ def test_fixed_schedule_preserves_native_owner_before_trace_nodes(
             assert names.index("console_trace_artifacts") < names.index(
                 "console_trace_surface_nodes"
             )
-            assert all(tuple(values.items()) == row.values for row, values in ordered)
+            assert all(
+                tuple(values.items()) == row.values for row, values, _detach in ordered
+            )
 
 
 def test_fixed_rows_preserve_native_reserved_artifact_ids_and_clocks(
@@ -622,7 +692,7 @@ def test_fixed_rows_preserve_native_reserved_artifact_ids_and_clocks(
         ):
             with captured.owner(owner_id) as owner:
                 with pytest.raises(RollbackProbe), owner.transaction() as connection:
-                    for row, values in ordered:
+                    for row, values, _detach in ordered:
                         spec = specs[row.table]
                         if spec.family != family:
                             continue
@@ -762,10 +832,10 @@ def test_real_chat_commit_resumes_receipt_first_after_next_owner_rollback(
     destination.mkdir(mode=0o700)
     insert = mobile_native_rows._insert_row
 
-    def fail_workspace(connection, row, values):
+    def fail_workspace(connection, row, values, detach=False):
         if row.table == "workspace_records":
             raise OSError("native workspace transaction interrupted")
-        return insert(connection, row, values)
+        return insert(connection, row, values, detach=detach)
 
     with _capture_fixture(tmp_path, monkeypatch) as (  # noqa: SIM117 -- Native resource lifetime boundary.
         session,
@@ -829,12 +899,12 @@ def test_real_chat_commit_resumes_receipt_first_after_next_owner_rollback(
                     == 0
                 )
 
-    def reject_chat_replay(connection, row, values):
+    def reject_chat_replay(connection, row, values, detach=False):
         if row.table == "conversations":
             raise AssertionError(
                 "committed Chat was replayed before receipt verification"
             )
-        return insert(connection, row, values)
+        return insert(connection, row, values, detach=detach)
 
     with monkeypatch.context() as fault:
         fault.setattr(mobile_native_rows, "_insert_row", reject_chat_replay)
@@ -1091,10 +1161,10 @@ def _resume_crashed_import(evidence):
         assert journal._records(fd)[-1].event == "mobile_owner_opened"
     insert = mobile_native_rows._insert_row
 
-    def reject_replay(conn, row, values):
+    def reject_replay(conn, row, values, detach=False):
         if row.table == "conversations":
             raise AssertionError("committed Chat insertion replayed")
-        return insert(conn, row, values)
+        return insert(conn, row, values, detach=detach)
 
     monkeypatch.setattr(mobile_native_rows, "_insert_row", reject_replay)
     with admission_authority(Path(evidence["bootstrap"])).maintenance(  # noqa: SIM117 -- Native resource lifetime boundary.

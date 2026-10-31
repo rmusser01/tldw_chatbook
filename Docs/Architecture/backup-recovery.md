@@ -943,3 +943,20 @@ Public B final verification, cutover, completion and pending retirement remain
 pending, as does ordinary RunLog/consumer E2E on the same produced target. Full
 Task8/API/mobile and hardware qualification are not complete; this owner delivery
 does not activate public migration or cutover.
+
+Native-owner FIX1 retains every actual runtime directory iterator on
+`mobile_imported_run_log._PinnedHistory` before enumeration. Iterator retirement
+precedes descriptor and lease retirement. An uncertain close strongly retains the
+iterator, pins and native file leases in quarantine, without retry or a GC-based
+release. Healthy and exhausted iterators retire normally.
+
+`mobile_native_rows._prepare_rows` also qualifies native detached-owner replay
+before publication or owner opening. Proved original conversation mappings admit
+an attached insertion, all effective-owner guarded descendants (including response
+links and nested owner attachment), then the native one-way detach with the exact
+source timestamp. Dependency edges and the conversation's unique attached slot
+are checked for the whole schedule on the original allowance. The same actual
+Chat transaction executes these transitions and verifies the original final rows
+before committing their existing receipt; temporary attached states never enter
+receipt provenance. Empty detached graphs remain supported and unproved originals
+retain their precise pre-effect refusal under ADR-244 R109.

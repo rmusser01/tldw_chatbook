@@ -60,11 +60,24 @@ class _PinnedHistory:
             self.close_failed = True
             raise ValueError("imported_history_retirement_uncertain") from None
 
+    def close_directory_iterator(self, iterator):
+        if self.close_failed:
+            raise ValueError("imported_history_retirement_uncertain")
+        try:
+            iterator.close()
+        except BaseException:  # noqa: BLE001 -- Uncertain iterator closure retains its actual native leases.
+            self.close_failed = True
+            _QUARANTINED.add(self)
+            raise ValueError("imported_history_retirement_uncertain") from None
+        self.directory_iterators.remove(iterator)
+
     def retire(self):
         if self.close_failed:
             _QUARANTINED.add(self)
             raise ValueError("imported_history_retirement_uncertain")
         try:
+            while self.directory_iterators:
+                self.close_directory_iterator(self.directory_iterators[-1])
             while self.fds:
                 fd = self.fds[-1]
                 self.close_descriptor(fd)
@@ -83,11 +96,16 @@ class _PinnedHistory:
         expected = self.children[relative]
         self.budget.container(2 * len(expected) + 2)
         found = set()
-        with os.scandir(fd) as entries:
+        self.budget.container(1)
+        entries = os.scandir(fd)
+        self.directory_iterators.append(entries)
+        try:
             for entry in entries:
                 if entry.name not in expected or entry.name in found:
                     _changed()
                 found.add(entry.name)
+        finally:
+            self.close_directory_iterator(entries)
         if found != set(expected):
             _changed()
 
@@ -292,6 +310,7 @@ def _pins(database, connection, root, members, root_witness, directory, budget):
     value.root, value.root_witness, value.members = root, root_witness, by_path
     value.children, value.order, value.budget = children, order, budget
     value.pins, value.stats, value.leases, value.fds = {}, {}, [], []
+    value.directory_iterators = []
     value.close_failed, value.passes = False, 0
     value.buffer = bytearray(65536)
     value.view = memoryview(value.buffer)

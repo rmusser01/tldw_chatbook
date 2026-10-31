@@ -725,7 +725,7 @@ def _prepare_rows(plan, budget):
         if set(values) != set(spec.columns):
             raise ValueError("mobile_native_row_projection_changed")
         index = len(rows)
-        rows.append((row, values))
+        rows.append((row, values, False))
         by_table.setdefault(row.table, []).append(index)
     budget.container(len(rows) * 3)
     edges = [set() for _ in rows]
@@ -754,15 +754,30 @@ def _prepare_rows(plan, budget):
         rows[i][1]["root_segment_id"]: i
         for i in by_table.get("console_trace_owners", ())
     }
-    for index, (row, values) in enumerate(rows):
+    budget.container(len(rows) * 4)
+    fenced = {index: set() for index in owners.values()}
+    custody = {}
+    calls = {
+        rows[i][1]["call_id"]: rows[i][1]
+        for i in by_table.get("console_trace_calls", ())
+    }
+    for index, (row, values, _detach) in enumerate(rows):
         if row.table in {
             "console_trace_surface_nodes",
             "console_trace_surface_replacements",
             "console_trace_calls",
             "console_trace_events",
             "console_trace_segments",
+            "console_trace_owners",
+            "console_trace_response_links",
         }:
             segment = values.get("segment_id")
+            if row.table == "console_trace_owners":
+                segment = rows[segments[values["root_segment_id"]]][1][
+                    "parent_segment_id"
+                ]
+            elif row.table == "console_trace_response_links":
+                segment = calls[values["call_id"]]["segment_id"]
             if row.table == "console_trace_segments":
                 segment = values["parent_segment_id"]
             seen = set()
@@ -772,7 +787,11 @@ def _prepare_rows(plan, budget):
                 budget.container(2)
                 seen.add(segment)
                 if segment in owners:
-                    edges[index].add(owners[segment])
+                    owner_index = owners[segment]
+                    budget.container(3)
+                    edges[index].add(owner_index)
+                    fenced[owner_index].add(index)
+                    custody[index] = owner_index
                     break
                 segment = rows[segments[segment]][1]["parent_segment_id"]
         if row.table == "console_trace_events" and values["sequence"]:
@@ -784,24 +803,119 @@ def _prepare_rows(plan, budget):
                 ):
                     budget.container(1)
                     edges[index].add(candidate)
-    budget.container(len(rows) * 4)
-    remaining, emitted, ordered = set(range(len(rows))), set(), []
+    # Proved original owners replay attached; their final detach is a scheduled
+    # native transition, so every guarded child precedes it in this same TX.
+    budget.container(len(rows) * 8)
+    revisions = {
+        rows[i][1]["revision_id"]: rows[i][1]
+        for i in by_table.get("console_trace_semantic_revisions", ())
+    }
+    messages = {rows[i][1]["id"]: rows[i][1] for i in by_table.get("messages", ())}
+    conversations = {rows[i][1]["id"]: i for i in by_table.get("conversations", ())}
+    attached, detaches = {}, {}
+    for index in owners.values():
+        row, values, _detach = rows[index]
+        if values["attached"]:
+            attached[index] = values["conversation_id"]
+            continue
+        if not fenced[index]:
+            continue
+        budget.container(len(fenced[index]) * 2)
+        witnessed = set()
+        for child in fenced[index]:
+            child_row, child_values, _ = rows[child]
+            if (
+                child_row.table == "console_trace_surface_nodes"
+                and child_values["semantic_revision_id"] is not None
+            ):
+                witnessed.add(
+                    revisions[child_values["semantic_revision_id"]][
+                        "source_conversation_id"
+                    ]
+                )
+            elif (
+                child_row.table == "console_trace_calls"
+                and child_values["turn_id"] in messages
+            ):
+                witnessed.add(messages[child_values["turn_id"]]["conversation_id"])
+        if len(witnessed) != 1 or next(iter(witnessed)) not in conversations:
+            raise ValueError("native_detached_trace_original_owner_unproved")
+        conversation = next(iter(witnessed))
+        budget.container(len(values) * 2 + len(fenced[index]) + 8)
+        initial = dict(values)
+        initial.update(conversation_id=conversation, attached=1, detached_at=None)
+        rows[index] = (row, initial, False)
+        attached[index] = conversation
+        edges[index].add(conversations[conversation])
+        detaches[index] = len(rows)
+        rows.append((row, values, True))
+        edges.append(fenced[index] | {index})
+
+    # A conversation's UNIQUE attached slot cannot overlap. Cross-owner native
+    # dependencies choose the required order; independent histories may go first.
+    for index, detach in detaches.items():
+        budget.container(sum(map(len, edges)) + len(edges) * 3)
+        pending, seen = list(edges[detach]), set()
+        while pending:
+            dependency = pending.pop()
+            if dependency in seen:
+                continue
+            seen.add(dependency)
+            other = dependency if dependency in attached else custody.get(dependency)
+            if (
+                other != index
+                and other in attached
+                and attached[other] == attached[index]
+            ):
+                if other not in detaches:
+                    raise ValueError("mobile_native_row_lifecycle_cycle")
+                budget.container(1)
+                edges[index].add(detaches[other])
+            pending.extend(edges[dependency])
+    for index, conversation in attached.items():
+        if index not in detaches:
+            for other, detach in detaches.items():
+                if attached[other] == conversation:
+                    budget.container(1)
+                    edges[index].add(detach)
+    budget.container(len(rows) * 5 + len(attached) * 2)
+    remaining, emitted, ordered, active = set(range(len(rows))), set(), [], {}
     while remaining:
+        budget.container(len(remaining))
         ready = [index for index in remaining if edges[index] <= emitted]
-        budget.container(len(ready))
-        if not ready:
-            raise ValueError("mobile_native_row_lifecycle_cycle")
+        progressed = False
         for index in ready:
+            if index in attached:
+                conversation = attached[index]
+                if conversation in active:
+                    continue
+                active[conversation] = index
+            row, values, detach = rows[index]
+            if detach:
+                owner_index = owners[values["root_segment_id"]]
+                del active[attached[owner_index]]
             ordered.append(rows[index])
             emitted.add(index)
             remaining.remove(index)
+            progressed = True
+        if not progressed:
+            raise ValueError("mobile_native_row_lifecycle_cycle")
     budget.container(len(ordered))
     return tuple(ordered)
 
 
-def _insert_row(connection, row, values):
+def _insert_row(connection, row, values, detach=False):
     """Execute the fixed row's legal insertion, without changing its native clock."""
-    if row.table == "conversation_dictionary_attachments":
+    if detach:
+        if row.table != "console_trace_owners":
+            raise ValueError("mobile_native_row_lifecycle_changed")
+        updated = connection.execute(
+            "UPDATE console_trace_owners SET conversation_id=NULL,attached=0,detached_at=:detached_at WHERE owner_id=:owner_id AND attached=1",
+            values,
+        )
+        if updated.rowcount != 1:
+            raise ValueError("mobile_native_row_lifecycle_changed")
+    elif row.table == "conversation_dictionary_attachments":
         saved = connection.execute(
             "SELECT conversation_id,dictionary_id FROM conversation_dictionary_attachments WHERE conversation_id=:conversation_id AND dictionary_id=:dictionary_id",
             values,

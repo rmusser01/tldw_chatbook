@@ -701,15 +701,15 @@ def _consolidate(captured, *, password, cancel):
             families = {spec.table: spec.family for spec in _TABLES}
             grouped = {"chat": [], "workspaces": [], "runs": []}
             holds = {"workspaces": [], "runs": []}
-            for row, values in ordered:
+            for row, values, detach in ordered:
                 family = families[row.table]
                 budget.container(len(values) * 2 + 3)
-                final_values = dict(values)
+                final_values = dict(row.values)
                 if row.table == "automatic_work_chains":
                     final_values.update(
                         status="review_required", pause_reason="import_review_required"
                     )
-                grouped[family].append((row, values, final_values))
+                grouped[family].append((row, values, final_values, detach))
                 if row.table in _HOLDS:
                     kind, column = _HOLDS[row.table]
                     holds["runs"].append((kind, values[column]))
@@ -883,7 +883,7 @@ def _consolidate(captured, *, password, cancel):
         return True
 
     def verify_rows(connection, family):
-        for row, _values, final_values in grouped[family]:
+        for row, _values, final_values, _detach in grouped[family]:
             _verify_row(connection, row, final_values)
         if family == "chat":
             _verify_sync(connection, sync)
@@ -1118,8 +1118,8 @@ def _consolidate(captured, *, password, cancel):
                 if verify_receipt(connection, family, entries):
                     verify_rows(connection, family)
                     continue
-                for row, values, _final in grouped[family]:
-                    _insert_row(connection, row, values)
+                for row, values, _final, detach in grouped[family]:
+                    _insert_row(connection, row, values, detach=detach)
                 if family == "chat":
                     _apply_sync(connection, sync)
                 elif family == "workspaces":

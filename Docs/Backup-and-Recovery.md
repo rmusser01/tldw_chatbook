@@ -332,7 +332,11 @@ The native import implementation also refuses two specific trace histories befor
 any import effect: a populated detached trace whose deleted original conversation
 cannot be lawfully reconstructed, and calls recorded as `post_dispatch_promoted`
 through the current Voice authorization path. An empty detached trace is not
-blocked merely because it is detached. These restrictions preserve native parentage
+blocked merely because it is detached. With the exact original conversation proved
+and retained, preflight qualifies an attached/replay/one-way-detach schedule in one
+Chat transaction. Each historical owner releases the unique conversation slot
+before a later owner attaches; final rows and detach timestamps remain exact.
+These restrictions preserve native parentage
 and call provenance; they do not discard those records or import the rest of a
 blocked profile. Keep the original stores and authenticated recovery captures with
 the exact owner/call diagnostic. Do not edit provenance flags, create replacement
@@ -380,3 +384,16 @@ worktree authority. Otherwise valid profiles containing those unresolved physica
 dependencies therefore block the whole consolidation before publication or owner
 writes. A path, hash or recorded SHA is not physical authority; original history,
 files and statuses are retained, and no failure/pruned status is manufactured.
+
+### Native-owner qualification environment
+
+The saved native-owner integration tests emitted a Pydantic warning from
+`AudioCppAcceptedPackage.managed_artifact` in `TTS/audio_cpp_guided_config.py`:
+`Field(exclude_if=...)` was treated as an extra keyword by the recorded Pydantic
+2.11 environment (`pydantic/fields.py:1093`). This declaration predates the owner
+fix and belongs to the audio configuration serialization contract. Its compatible
+correction remains tracked there; changing or suppressing it is outside the
+native-owner fix. The already installed Pydantic 2.12.5 environment used for FIX1
+has an explicit `exclude_if` parameter. Those newer results do not erase the older
+warning or establish compatibility with older Pydantic versions. No dependency
+was installed or updated for FIX1.
