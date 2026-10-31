@@ -250,6 +250,20 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    measurement includes it. After it, a boot freeze costs one more walk
    (about 2 ms per 700K objects on 3.12.11).
 
+   **Boot freezes count, they do not walk (2026-10-30, TASK-33620.15.18).**
+   Live, in a running app, one walk of the frozen set held the GIL 15-34 ms
+   on an idle host and 160-290 ms at a load average of about 110, far above
+   the micro-benchmark figure: the frozen set is scattered across the heap.
+   Every boot point walked once before the first measurement (only for its
+   DEBUG line) and twice after it, and the first-send warm-up's freeze runs
+   while the user may already be typing: a key or click sent during it
+   reached the app 21-41 ms late on an idle host. Now a boot freeze before
+   the first measurement only freezes, and after it counts the unfrozen
+   generations it is about to move (`gc.get_objects`, which touches only
+   unfrozen objects) and adds that to the baseline. The next budget check
+   still walks once. Objects another thread allocates between the count and
+   the freeze go uncounted, the same tolerance the walks had.
+
    So the baseline is now the frozen set's size after the last compaction
    plus what boot points froze since, and the bound above reads against
    it: the set never outgrows that baseline by more than the budget plus
@@ -354,7 +368,10 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
   the real Console transcript's switched-away rows (negative control: without
   it they survive), and survives a dropped request. Run while another
   collection is in progress, a re-freeze freezes nothing, and a compaction
-  freezes the heap again and stays owed.
+  freezes the heap again and stays owed. A boot freeze walks the frozen set
+  neither before nor after the first measurement, and adds what it counted
+  to the baseline (TASK-33620.15.18; negative control: the next budget check
+  still walks).
 - `Tests/UI/test_console_idle_heap_refreeze.py` (amendment): on the mounted
   Console, a re-freeze is requested when a conversation is painted and when a
   run settles, and the busy check holds on every loop turn from Enter to the
