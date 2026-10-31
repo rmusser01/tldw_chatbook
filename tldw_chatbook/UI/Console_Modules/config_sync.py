@@ -320,13 +320,8 @@ def begin_console_sync(screen: Any) -> bool:
 SEND_START_LIMIT_SECONDS = 3.0
 
 
-def note_send_accepted(screen: Any) -> None:
-    """Record that the Console accepted a send (its start begins now)."""
-    screen._console_send_accepted_at = time.monotonic()
-
-
 def send_start_in_progress(screen: Any) -> bool:
-    """Whether a send the screen accepted has not made its provider request yet.
+    """Whether a send on the screen's store has not made its provider request yet.
 
     TASK-33620.15.4 (measured live 2026-10-23, 8 first sends per arm): an
     off-loop display read opens its own SQLite connection (34 ms wall, 10 ms
@@ -335,22 +330,26 @@ def send_start_in_progress(screen: Any) -> bool:
     after the durable commit took that CPU from the send's own work, so first
     sends reached the provider a median 66 ms later than with the same reads
     made on the loop (0.3-3 ms each, as on the base). During a send's start
-    those reads stay synchronous; elsewhere they stay off the loop. The start
-    ends at the provider request (any send's: a later request cannot predate
-    this acceptance) or after ``SEND_START_LIMIT_SECONDS``.
+    those reads stay synchronous; elsewhere they stay off the loop.
+
+    TASK-36610: each send owns its start (``console_send_start``), opened when
+    the runtime accepts it (any origin: the composer's sends, a queued
+    prompt's dispatch, an agent wake, a goal iteration) or when an agent's
+    chat start submits, and ended by that send's own provider request, its
+    end, or ``SEND_START_LIMIT_SECONDS``. Another session's request ends
+    nothing here.
 
     Args:
         screen: The Console screen.
 
     Returns:
-        True from acceptance until the provider request (or the limit).
+        True while any send's start on the screen's store is open.
     """
-    accepted = getattr(screen, "_console_send_accepted_at", None)
-    if accepted is None or time.monotonic() - accepted >= SEND_START_LIMIT_SECONDS:
+    starts = sys.modules.get("tldw_chatbook.Chat.console_send_start")
+    if starts is None:  # Loaded by the first acceptance.
         return False
-    diagnostics = sys.modules.get("tldw_chatbook.Chat.console_send_diagnostics")
-    entered = diagnostics.provider_entered_at() if diagnostics is not None else 0.0
-    return entered < accepted
+    store = getattr(screen, "_console_chat_store", None)
+    return store is not None and starts.send_start_open(store, SEND_START_LIMIT_SECONDS)
 
 
 def warm_run_presentation(screen: Any) -> None:

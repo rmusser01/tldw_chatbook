@@ -2758,10 +2758,10 @@ class ConsoleRuntime:
         )
         return record.turn_id
 
-    @staticmethod
-    def _create_custody_task(coroutine):
-        """Retain the lazy Task before any configurable factory could step it."""
-        return asyncio.Task(coroutine, loop=asyncio.get_running_loop())
+    def _create_custody_task(self, coroutine):
+        """Retain the lazy Task before any factory can step it; open its send start."""
+        from .console_send_start import start_custody_task  # TASK-36610: any origin.
+        return start_custody_task(self._chat_store, coroutine)
 
     def accept_received_intent(self, intent: Any, *, _configuration_preparation=None) -> str:
         """Register authored receipt inputs before checked native preparation."""

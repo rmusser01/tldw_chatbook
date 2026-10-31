@@ -101,17 +101,6 @@ _CURRENT: ContextVar[SendDiagnostic | None] = ContextVar(
 )
 
 
-#: TASK-33620.15.4: when a send last made its provider request (monotonic
-#: seconds, any send in the process). A Console send's start ends there; see
-#: ``config_sync.send_start_in_progress``.
-_provider_entered_at = 0.0
-
-
-def provider_entered_at() -> float:
-    """When a send last made its provider request (monotonic; 0.0 if never)."""
-    return _provider_entered_at
-
-
 def record_send_stage(
     phase: str,
     status: str = "entered",
@@ -123,8 +112,8 @@ def record_send_stage(
 
     Call within ``send_diagnostic_scope`` or its inherited worker context;
     without an active scope this records nothing, except that a provider
-    request is still noted (``provider_entered_at``). No file I/O runs on the
-    caller.
+    request still ends its own send's start (``console_send_start``). No file
+    I/O runs on the caller.
 
     Args:
         phase: Code-owned lifecycle stage, never user-provided text.
@@ -136,8 +125,9 @@ def record_send_stage(
     """
     with contextlib.suppress(Exception):
         if phase == "provider_entry" and status == "entered":
-            global _provider_entered_at
-            _provider_entered_at = time.monotonic()  # TASK-33620.15.4
+            starts = sys.modules.get("tldw_chatbook.Chat.console_send_start")
+            if starts is not None:  # Loaded by any send's acceptance.
+                starts.note_provider_request()  # TASK-36610: this send's own.
         current = _CURRENT.get()
         if current is None:
             return
