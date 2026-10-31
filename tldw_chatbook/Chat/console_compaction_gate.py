@@ -10,8 +10,8 @@ follow-up and a Persona Buddy reply cannot show it either; they are refused
 before commit by ``refuse_without_card``: the queued entry returns to the
 head of the queue, and Buddy keeps its text. A send with no preparation (a
 "$" or "/" draft while exchange capture is off) has no card to show and is
-refused by ``refuse_unprepared``; it waits on the unsent-turn shelf, whose
-Restore puts it back in the composer.
+refused by ``refuse_unprepared``; the composer keeps its text, and the
+unsent-turn shelf lists it for Restore.
 
 The controller imports this module at each call site, not at module scope:
 it is needed only once a turn is sent, and the UI-ready module census
@@ -129,8 +129,8 @@ def refuse_unprepared(
 
     Without exchange capture a "$" or "/" draft gets no preparation, so it has
     no hold card. Its echo is dropped, the way cancelling a preparation drops
-    it; the runtime lists a refused composer send as an unsent turn, whose
-    Restore puts the text back in the composer.
+    it; the composer keeps its text, and the runtime lists the refused send
+    as an unsent turn whose Restore puts it back once the composer is clear.
 
     Args:
         controller: The Console chat controller.
