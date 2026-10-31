@@ -55,6 +55,23 @@ load already running, so kill the app. Prove failure paths with a loopback host
 instead: an unreachable port fails fast, and a listener that accepts and never
 answers keeps the load "preparing" long enough to observe bounds and labels.
 
+## A toast that lands under another toast can be unreadable at 80x24 while every capture looks fine (TASK-33621.21, 2026-10-30)
+
+**Incident.** The dictation failure toast passed two rounds of live evidence,
+80x24 included. Those 80x24 captures were all of the 120 s stall path, where
+the first-run "Preparing the speech model…" detail toast (5 s) had long
+expired. On the fast path (an unreachable model host, about 1.5 s) the failure
+lands while the detail is still up; the two do not fit in 24 rows, so the
+failure showed only "Dictation failed: The" and its first line. Polling the
+pane every 0.25 s measured the whole message, next step included, on screen
+for about 1 s before both toasts timed out. A 10 s failure timeout gave about
+6 s.
+
+**What to do.** When a flow shows an information toast and then an error, check
+the fast error path at the smallest size, not only the slow one. One capture
+cannot tell you how long text is readable: poll `capture-pane` every 0.25 s and
+count the captures that contain the last sentence of the message.
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured
