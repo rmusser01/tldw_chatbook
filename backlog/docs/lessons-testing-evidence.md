@@ -32,6 +32,39 @@ that the timer survives teardown nor that the child is reaped. Record the exit
 wait tradeoff; forced termination and uninterruptible process creation remain
 outside this guarantee.
 
+## Code after on_screen_resume's attach check does not run when a Console dialog closes (TASK-37840, 2026-10-30)
+
+**Incident.** The Temporary status segment had to repaint after a Trace Privacy
+choice made in a dialog over the Console. The first fix added a refresh call to
+`ChatScreen.on_screen_resume` after `apply_status_chips_position`, plus a call
+in the full sync pass. The mounted test went green, and stayed green with the
+resume call mutated out. A spy showed why: pushing any screen over the Console
+runs `on_screen_suspend`, which clears `_console_attach_reconciled`, so the
+next resume schedules `_reconcile_console_after_attach` and returns before the
+later lines. The repaint came from the full sync pass that the reconcile runs.
+The resume call was dead code and was removed.
+
+**What to do.** For anything that must refresh when a dialog over the Console
+closes, rely on the full sync pass (`_sync_native_console_chat_ui`) that the
+attach reconcile runs. Mutate each new hook out on its own before claiming it
+is the one doing the work.
+
+## Opening the Conversation Inspector fails `_received_console_case`'s teardown (TASK-37840, 2026-10-30)
+
+**Incident.** A mounted test drove Trace Privacy through the real Inspector
+(`action_view_chat_context`, then `c`). Every assertion passed, and teardown
+failed at `assert await _until(probe.retired, 5)`. The Inspector's Next Send
+estimate reaches `resolve_turn_tool_policy_profile_id` and reads the workspace
+on the UI thread. The harness's configuration-read probe records the first
+such read, and its teardown waits for that connection to close. The main
+thread's connection never closes during the test.
+
+**What to do.** In `_received_console_case`, push `ConsoleTracePrivacyDialog`
+with `build_inspector_capture_policy_wiring(controller).bindings`, which are the
+bindings the Inspector passes. Closing the dialog resumes the Console the same
+way. Wait for the dialog's Apply button to take focus before choosing radios:
+`on_mount` re-syncs them to the stored choice and overwrites an earlier pick.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
