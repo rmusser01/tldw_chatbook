@@ -640,6 +640,13 @@ ADMISSION_2_TARGETS = (
     # own control, never the rail's subtree (the mounted Console;
     # bootstrap_profile, two tests, ~18 s).
     "Tests/UI/test_console_edge_focus_restyle_scope.py",
+)
+
+#: The third admission-sensitive job's invocation, exactly, in order (Roleplay
+#: frame B2b, TASK-33910.4, the owner's decision of 2026-10-31): B2b's mounted
+#: Roleplay suites, split out of ``pr-fast-lane-admission-2`` when lane 2 with
+#: them hit its 35-min cap at 99% on PR #3334's run 41169081459.
+ADMISSION_3_TARGETS = (
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
     # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,
     # about 95 s serial).
@@ -761,6 +768,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
+        "pr-fast-lane-admission-3",
         "ui-fast-lane",
         "console-p0-gate",
         "dreams-boundary",
@@ -778,6 +786,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("pr-fast-lane", "Require successful PR fast lane"),
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
         ("pr-fast-lane-admission-2", "Require successful PR fast lane (admission-sensitive 2)"),
+        ("pr-fast-lane-admission-3", "Require successful PR fast lane (admission-sensitive 3)"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
         ("dreams-tracking", "Require successful Dreams tracking tests"),
     ):
@@ -791,6 +800,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     for job_name in (
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
+        "pr-fast-lane-admission-3",
         "dreams-boundary",
         "dreams-tracking",
     ):
@@ -846,6 +856,12 @@ EXACT_STEPS = {
         "pr-fast-lane-admission-2",
         "Run admission-sensitive suites 2",
         ADMISSION_2_TARGETS,
+        300,
+    ),
+    "admission-sensitive 3": (
+        "pr-fast-lane-admission-3",
+        "Run admission-sensitive suites 3",
+        ADMISSION_3_TARGETS,
         300,
     ),
 }
@@ -945,6 +961,12 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
             "pr-fast-lane-admission-2",
             "PR Fast Lane (admission-sensitive 2)",
             "Run admission-sensitive suites 2",
+        ),
+        # Roleplay frame B2b (owner decision 2026-10-31): the third, shaped the same.
+        (
+            "pr-fast-lane-admission-3",
+            "PR Fast Lane (admission-sensitive 3)",
+            "Run admission-sensitive suites 3",
         ),
     ],
 )
@@ -1069,6 +1091,7 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         for job, name, _, _ in (
             EXACT_STEPS["admission-sensitive"],
             EXACT_STEPS["admission-sensitive 2"],
+            EXACT_STEPS["admission-sensitive 3"],
         )
         for target in _pytest_targets(
             _named_step(_workflow("derived-artifacts.yml")["jobs"][job], name)["run"]
@@ -1176,6 +1199,25 @@ def test_second_admission_target_set_is_exact() -> None:
         assert shared == []
 
 
+def test_third_admission_target_set_is_exact() -> None:
+    """Roleplay frame B2b (owner decision 2026-10-31): the third
+    admission-sensitive job is pinned the same way, and the three jobs (and the
+    sandboxed lane) share no target, each would otherwise run twice."""
+    _assert_exact_step(_workflow("derived-artifacts.yml"), "admission-sensitive 3")
+    assert ADMISSION_3_TARGETS
+    assert len(set(ADMISSION_3_TARGETS)) == len(ADMISSION_3_TARGETS)
+    for other in (ADMISSION_TARGETS, ADMISSION_2_TARGETS, FAST_LANE_TARGETS):
+        shared = [
+            (first, second)
+            for first in other
+            for second in ADMISSION_3_TARGETS
+            if first == second
+            or first.startswith(second + "::")
+            or second.startswith(first + "::")
+        ]
+        assert shared == []
+
+
 def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
     """Keep the "no silent winner" and no-hold pins on every pull request.
 
@@ -1243,7 +1285,10 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         _assert_required_aggregation(mutated)
 
 
-@pytest.mark.parametrize("lane", ["pr-fast-lane-admission", "pr-fast-lane-admission-2"])
+@pytest.mark.parametrize(
+    "lane",
+    ["pr-fast-lane-admission", "pr-fast-lane-admission-2", "pr-fast-lane-admission-3"],
+)
 def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: str) -> None:
     """TASK-35575: the required check waits on each admission-sensitive job;
     dropping one from its ``needs`` fails the contract.
@@ -1268,6 +1313,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("pr-fast-lane-admission-2", None),
         ("pr-fast-lane-admission-2", "Run admission-sensitive suites 2"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 2)"),
+        ("pr-fast-lane-admission-3", None),
+        ("pr-fast-lane-admission-3", "Run admission-sensitive suites 3"),
+        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive 3)"),
         ("dreams-tracking", None),
         ("dreams-tracking", "Run the Dreams tracking tests"),
         ("derived-artifacts", "Require successful Dreams tracking tests"),

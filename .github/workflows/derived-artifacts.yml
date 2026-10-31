@@ -458,12 +458,6 @@ jobs:
     # tests), about 10-15 s each serial.
     # TASK-33620.15.1.4 appends the rail edge focus restyle file (two mounted
     # Console tests, ~18 s serial).
-    # Roleplay frame B2b (TASK-33910.4, owner decision D7 of 2026-10-26)
-    # appends the mounted one-Import-picker file (bootstrap_profile; 44 cases,
-    # about 95 s serial) and the painted search-placeholder contrast test (89
-    # themes in one app, about 45 s).
-    # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-30): moved from admission lane 1, whose worst case with B2b's cases was 32.3-32.7 of 35 min
-    # (the item list's mounted file, Tests/UI/test_roleplay_item_list_app.py).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -621,6 +615,44 @@ jobs:
             Tests/UI/test_console_environment_root_reads.py \
             Tests/UI/test_console_session_admitted_roots.py \
             Tests/UI/test_console_edge_focus_restyle_scope.py \
+            --timeout=300 \
+            --tb=short
+
+  pr-fast-lane-admission-3:
+    # Roleplay frame B2b (TASK-33910.4, owner decision D7 of 2026-10-26)
+    # appends the mounted one-Import-picker file (bootstrap_profile; 44 cases,
+    # about 95 s serial) and the painted search-placeholder contrast test (89
+    # themes in one app, about 45 s).
+    # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-30): moved from admission lane 1, whose worst case with B2b's cases was 32.3-32.7 of 35 min
+    # (the item list's mounted file, Tests/UI/test_roleplay_item_list_app.py).
+    # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-31): a third admission lane, because on PR #3334's run 41169081459 lane 2 with these suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, ~485 s serial locally). One more runner per PR (ADR-103 note, 2026-10-31).
+    #
+    # Same runner, install line, cap and --timeout=300 as
+    # pr-fast-lane-admission-2, and its own pytest process and bootstrap
+    # profile, as there. The project-chat UAT steps stay in lane 2.
+    name: PR Fast Lane (admission-sensitive 3)
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+
+      # bootstrap_profile suites, kept out of a sandboxed invocation for the
+      # reason pr-fast-lane-admission's note gives (TASK-32873): Roleplay
+      # frame B2b's mounted suites (Tests/CI's ADMISSION_3_TARGETS names them).
+      - name: Run admission-sensitive suites 3
+        run: |
+          pytest \
             Tests/UI/test_roleplay_import_app.py \
             Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
@@ -1001,7 +1033,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking]
+    needs: [pr-fast-lane, pr-fast-lane-admission, pr-fast-lane-admission-2, pr-fast-lane-admission-3, ui-fast-lane, console-p0-gate, dreams-boundary, dreams-tracking]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1042,6 +1074,14 @@ jobs:
         run: |
           echo "PR Fast Lane (admission-sensitive 2) result: ${{ needs.pr-fast-lane-admission-2.result }}"
           echo "::error::The required PR fast lane (admission-sensitive 2) did not succeed."
+          exit 1
+
+      # Roleplay frame B2b (owner decision 2026-10-31): same shape, for the third admission-sensitive job.
+      - name: Require successful PR fast lane (admission-sensitive 3)
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane-admission-3.result != 'success' }}
+        run: |
+          echo "PR Fast Lane (admission-sensitive 3) result: ${{ needs.pr-fast-lane-admission-3.result }}"
+          echo "::error::The required PR fast lane (admission-sensitive 3) did not succeed."
           exit 1
 
       # TASK-32908: same shape as the step above. Without it the new UI job
