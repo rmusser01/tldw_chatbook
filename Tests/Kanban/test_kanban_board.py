@@ -636,7 +636,7 @@ async def test_focused_inspector_scrolls_to_last_description_line(request):
         screen = app.screen
         await screen.workers.wait_for_complete()
         await pilot.press("enter", "end")
-        await pilot.pause()
+        await pilot.wait_for_scheduled_animations()
         inspector = screen.query_one(CardInspector)
         assert inspector.scroll_y > 0
         assert inspector.scroll_y == inspector.max_scroll_y
