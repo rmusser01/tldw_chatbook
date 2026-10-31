@@ -209,7 +209,8 @@ async def test_a_hub_download_in_the_warm_up_completes_inside_the_app(
     A real `hf_hub_download` from the warm-up, under Textual's stderr, must
     deliver the file; then the capture starts. Before the fix it died on
     `fds_to_keep` inside tqdm wherever the lock starts the resource tracker
-    (macOS's spawn start method; Linux's fork default never starts it).
+    (macOS's spawn start method). The fixture forces spawn, so this fails on
+    the pre-fix code on Linux CI as well, where fork is the default.
     """
     body = json.dumps({"model": "tiny"}).encode()
     model_host.files = {"config.json": body}

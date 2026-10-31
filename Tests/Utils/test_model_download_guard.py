@@ -11,7 +11,6 @@ guard prevents it.
 from __future__ import annotations
 
 import contextlib
-import multiprocessing
 import os
 import sys
 import threading
@@ -28,17 +27,14 @@ tqdm_std = _support.tqdm_std
 first_download_in_process = _support.first_download_in_process
 
 
-#: The defect needs a semaphore that registers with the resource tracker: a
-#: POSIX start method other than fork (macOS's spawn default). Under fork
-#: (Linux before Python 3.14) the lock builds without a tracker, so there is
-#: nothing to reproduce there.
-_TRACKER_SPAWNED_ON_LOCK_BUILD = (
-    sys.platform != "win32"
-    and multiprocessing.get_context().get_start_method() != "fork"
-)
+#: The defect needs a semaphore that registers with the resource tracker, which
+#: a POSIX start method other than fork does. `first_download_in_process`
+#: forces spawn (macOS's default) for each test, so Linux CI reproduces it too;
+#: Windows unlinks its semaphores at once and never starts the tracker.
+_TRACKER_SPAWNED_ON_LOCK_BUILD = sys.platform != "win32"
 _NEEDS_TRACKER_SPAWN = pytest.mark.skipif(
     not _TRACKER_SPAWNED_ON_LOCK_BUILD,
-    reason="tqdm's lock only starts the resource tracker under spawn/forkserver",
+    reason="Windows never starts the resource tracker for a lock",
 )
 
 
