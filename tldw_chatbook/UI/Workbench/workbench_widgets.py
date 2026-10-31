@@ -73,8 +73,11 @@ def _sync_status_classes(widget: Widget, status: WorkbenchStatus) -> None:
     adding the other restyled the header's whole subtree twice, speech
     controls included: 4.4 ms of the send window's first projection. No rule
     styles a descendant from a status class (every rule keys the node that
-    carries it; ``Tests/UI/test_console_projection_restyles.py`` scans every
-    loaded and built sheet), so the flip restyles that node alone, once.
+    carries it), and the status rules set only ``border-title-color``, which
+    the node paints itself, never a colour, background or text style its
+    children read from it (``Tests/UI/test_console_projection_restyles.py``
+    scans every loaded and built sheet for both), so the flip restyles that
+    node alone, once.
     """
     wanted = {f"status-{name}": name == status for name in _STATUS_NAMES}
     if all(widget.has_class(name) == on for name, on in wanted.items()):
