@@ -27081,7 +27081,9 @@ class ConsoleChatController:
                 _generation_handoff=_generation_handoff,
                 profile_context_service=profile_context_service,
             )
-            provider_task = asyncio.ensure_future(provider_worker)
+            # The submit may stop before this wrapper's native call returns.
+            # Its existing maintenance owner observes late wrapper failures too.
+            provider_task = self._retain_maintenance_task(provider_worker)
             self._active_provider_workers[session_id] = provider_task
 
             async def _shielded_provider_operation() -> Any:

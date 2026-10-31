@@ -756,3 +756,17 @@ used that unsupported field for both pending-send refusals. Real monitor plus
 persistent-sink regressions were RED until the calls used the already-admitted
 operation field. Exercise the actual sink once; observing a producer call alone
 cannot prove that its schema-approved event survives admission.
+
+### PR3173 review: guard the shared hydration operation and retain every wrapper
+
+On 2026-10-31, the initial resume regression covered the workspace rail, whose caller
+held the activation window. Library's handoff and Ctrl+K called the shared resume
+method directly and still dispatched Enter against the old chat during hydration.
+Holding the tree load through both actual callers reproduced the missing refusal;
+the window belongs in the shared operation, before its first await.
+
+The same review found that observing a retained inner native task does not observe
+an outer coroutine task that propagates its exception. A real held provider failed
+after submit cancellation and produced `Task exception was never retrieved` even
+though the maintenance owner had consumed the inner error. Retaining the wrapper
+through that same owner preserves prompt Stop and observes its eventual outcome.

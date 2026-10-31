@@ -56,6 +56,8 @@ the refusal UX follows the shipped TASK-33622.7 tab-switch guard.
 4. Louden the silent branches; add the send-stage breadcrumb.
 5. GREEN + adjacent suites.
 PR3173 repair (2026-10-31): preserve current dev repaint/received-intent custody while reconciling the resume guard; verify held hydration and settled sends with targeted tests; inspect actual diagnostic changes and regenerate affected inventory/census pins. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: routine fixes within existing owners. Owner waived size limits for this repair; retain measured pins and document any adjustment. Independent requesting-code-review replaces Qodo for this authorized backlog cleanup; the user later waived CI waiting; independent review and resolved threads still apply.
+
+Review repair plan (2026-10-31): reproduce held hydration through the actual Library handoff and Ctrl+K choice paths, then move the reentrant activation window to their shared hydration operation. Verify refusals, draft preservation, settled dispatch and depth retirement with targeted cases only. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: apply the existing admission boundary consistently to all current callers.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -84,3 +86,17 @@ PR3173 repair (2026-10-31): preserve current dev repaint/received-intent custody
   diagnostic inventory, exact size pins, UI census and Console architecture docs.
   Independent review/publication belongs to the coordinating agent. Status stays
   In Progress until that review; the user waived waiting for CI, not local evidence.
+
+- Independent review found that the rail-only window missed Library and Ctrl+K.
+  Both real caller regressions reproduced a missing refusal during held hydration.
+  The window now belongs to the shared resume operation, including its first await;
+  current claim predicates and activation rollback remain inside that window.
+
+- Review verification: all three mounted caller variants pass with draft preservation,
+  no dispatch during hydration and a settled send to the resumed chat; the other four
+  resume/diagnostic cases also pass. An initial test-only draft accessor typo was
+  corrected before the clean three-case rerun (review-callers-green.log).
+- Diagnostic statement review against d36f7cf confirms workspace.py remains at
+  54 calls: two re-indented, zero added/removed, no content or privacy change.
+  Exact size checks pass at workspace 8766 and controller 29184 lines under the
+  existing owner waiver. The existing census node includes all caller parameters.

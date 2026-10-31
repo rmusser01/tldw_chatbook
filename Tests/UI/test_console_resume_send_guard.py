@@ -189,7 +189,10 @@ async def _seed_saved_conversation(console, store):
 
 
 @pytest.mark.asyncio
-async def test_enter_during_a_conversation_resume_is_refused_visibly(monkeypatch):
+@pytest.mark.parametrize("entrypoint", ("rail", "library", "switcher"))
+async def test_enter_during_a_conversation_resume_is_refused_visibly(
+    monkeypatch, entrypoint
+):
     """AC#1/#2: nothing dispatches mid-resume and the user is told why."""
     host = _host()
     async with _running(host) as pilot:
@@ -207,13 +210,44 @@ async def test_enter_during_a_conversation_resume_is_refused_visibly(monkeypatch
         await until(lambda: host.focused is composer)
         gate = _hold_resume_hydration(monkeypatch)
 
-        resume = asyncio.create_task(
-            console._workspace.open_console_workspace_conversation(conversation_id)
-        )
+        if entrypoint == "library":
+            from tldw_chatbook.UI.Console_Modules.archive import (
+                consume_conversation_resume,
+            )
+            from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+                ConsoleConversationResumeIntent,
+                HandoffChannel,
+            )
+
+            host.app_instance.pending_handoffs.stage(
+                HandoffChannel.CONSOLE_CONVERSATION_RESUME,
+                ConsoleConversationResumeIntent(conversation_id),
+            )
+            operation = consume_conversation_resume(console)
+        elif entrypoint == "switcher":
+            from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
+                ConsoleSwitcherChoice,
+            )
+
+            page = await console._workspace.load_console_session_switcher_history(
+                query="", offset=0, limit=50
+            )
+            entry = next(
+                item for item in page.entries if item.conversation_id == conversation_id
+            )
+            operation = console._session._apply_console_switcher_choice(
+                ConsoleSwitcherChoice("activate", entry)
+            )
+        else:
+            operation = console._workspace.open_console_workspace_conversation(
+                conversation_id
+            )
+        resume = asyncio.create_task(operation)
         try:
             await until(gate.entered.is_set, timeout=10)
             press(host, "enter")
             await until(lambda: _refused(notices), timeout=10)
+            assert composer.draft_text() == "typed during the resume"
             assert dispatched == [], (
                 "nothing may dispatch while the resume activation is in flight; "
                 f"dispatched={dispatched!r}"
@@ -223,6 +257,7 @@ async def test_enter_during_a_conversation_resume_is_refused_visibly(monkeypatch
             # The test owns this detached resume, including its native reads.
             # Retire it before the harness can close the executor/databases.
             await resume
+        assert console._session._conversation_activation_depth == 0
         resumed = await until_result(
             lambda: _resumed_session(store, conversation_id), timeout=15
         )

@@ -184,7 +184,8 @@ record actual model/tool outcomes, saved policies and full Console snapshots,
 including platform and harness limits.
 
 Saved-conversation hydration holds the session controller's reentrant activation
-window. Enter and Send visibly refuse during that window, preserving the draft
+window in the shared resume operation used by the rail, Library handoff and Ctrl+K
+switcher. Enter and Send visibly refuse during that window, preserving the draft
 until activation settles (TASK-35310).
 
 ## Send lifecycle (dataflow)
@@ -199,13 +200,14 @@ until activation settles (TASK-35310).
 8. **Approvals**: before dispatch the review hook collects pending calls and makes one `request_mcp_approvals` round trip — it mints a round id, mounts a `ChatApprovalCard` on the UI thread (or parks it for background sessions), and polls the event. Unanswered keys fail closed to deny/timeout so audit rows never claim a human Deny. Despite the "mcp" name, builtin tools use the same path.
 9. Turn terminal: the controller maps the agent outcome (`RUN_DONE`/`RUN_CANCELLED`/`RUN_ERROR`/`RUN_STUCK`) to final content and stamps the run state — which discards pending-approval flags, retries deferred wakes, fires the armed `Stop` hook, and schedules micro-compaction on a fresh COMPLETED transition.
 10. Persistence: the store flushes terminal content/thinking/usage through `ChatPersistenceService.commit_durable_turn` — the sole outer `BEGIN IMMEDIATE` that creates the conversation, library policy, and context policy atomically, returning a dispatch checkpoint. The finite native owner retains the original callback, physical handle and actual save outcome through repeated cancellation; shutdown drains issued work before creator close. A canceled accepted save settles through its retained terminal/recovery owner, without replaying an uncertain write.
+11. Transcript render: `group_console_transcript_messages` folds each ASSISTANT message with its immediately following agent-owned TOOL markers into a `ConsoleAssistantTurn`; user-owned markers stay standalone and close the pending turn.
+
 A completed provider outcome recovered after shutdown finalizes on the original
 stream task so citation selection retains its owner; shutdown cancels any remaining
 citation repair without sending another request. Explicit user Stop and unfinished
-streams keep their stopped outcomes. Stop reasons and retained provider workers
-retire with the owning turn (TASK-35311).
-
-11. Transcript render: `group_console_transcript_messages` folds each ASSISTANT message with its immediately following agent-owned TOOL markers into a `ConsoleAssistantTurn`; user-owned markers stay standalone and close the pending turn.
+streams keep their stopped outcomes. The existing maintenance owner retains the
+provider wrapper and observes its eventual exception even after the submit and its
+per-session lookup have retired (TASK-35311).
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).
 

@@ -171,7 +171,8 @@ _BUDGETS: dict[str, int] = {
     # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
     # continuation binding moved to console_review_delivery/_project_dispatch/
     # _continuation_binding; rows below re-pinned at their measured sizes.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29250,
+    # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29252,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
@@ -599,7 +600,7 @@ _BUDGETS: dict[str, int] = {
     # so the two can no longer disagree.
     # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8941,
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8938,
     "tldw_chatbook/Chat/console_provider_gateway.py": 8160,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):

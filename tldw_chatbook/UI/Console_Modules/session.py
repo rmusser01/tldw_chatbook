@@ -5900,7 +5900,7 @@ class ConsoleSessionController:
     def conversation_activation_window(self):
         """Mark a conversation-resume activation as in flight (TASK-35310).
 
-        ``open_console_workspace_conversation``'s slow path hydrates a saved
+        ``_resume_console_workspace_conversation`` hydrates a saved
         conversation across multiple awaits during which the active session
         and the composer binding still name the OLD chat; a Send pressed in
         that window would be pinned to the OLD chat and die silently. Holding

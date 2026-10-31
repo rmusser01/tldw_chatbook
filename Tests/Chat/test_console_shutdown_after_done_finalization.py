@@ -233,3 +233,51 @@ async def test_provider_failure_retires_retained_worker(tmp_path):
     await controller.submit_draft("hi")
     assert store.get_message(_assistant_for_active_session(store)).status == "failed"
     assert controller._active_provider_workers == {}
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_after_submit_cancellation_is_observed(tmp_path):
+    import gc
+    import threading
+
+    controller, store = _controller(tmp_path, "late-provider-failure")
+    entered = threading.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    unhandled = []
+    old_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+
+    def fail_after_stop(**kwargs):
+        entered.set()
+        if not release.wait(30):
+            raise AssertionError("test did not release the provider")
+        raise RuntimeError("provider failed after submit cancellation")
+
+    controller._agent_bridge.run_reply = fail_after_stop
+    submit = asyncio.create_task(controller.submit_draft("hi"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 30)
+        controller._signal_stop(session_id=store.active_session_id, reason="user")
+        submit.cancel()
+        # Stop must settle while the real native provider is still held.
+        await asyncio.wait_for(submit, timeout=5)
+        assert not release.is_set()
+        assert (
+            store.get_message(_assistant_for_active_session(store)).status == "stopped"
+        )
+        release.set()
+        async with asyncio.timeout(10):
+            while controller._maintenance_background:
+                await asyncio.sleep(0.01)
+        gc.collect()
+        await asyncio.sleep(0)
+        assert controller._active_provider_workers == {}
+        assert unhandled == [], unhandled
+    finally:
+        release.set()
+        await asyncio.gather(submit, return_exceptions=True)
+        async with asyncio.timeout(10):
+            while controller._maintenance_background:
+                await asyncio.sleep(0.01)
+        loop.set_exception_handler(old_handler)

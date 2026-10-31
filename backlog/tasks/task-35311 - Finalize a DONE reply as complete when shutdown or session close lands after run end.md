@@ -56,6 +56,8 @@ parametrization and must not change.
    outcome-aware; shield the finalize call site (bounded drain).
 3. Variant tests for user-stop and mid-stream shutdown.
 PR3173 repair (2026-10-31): verify completed-result recovery against current provider and citation custody; retain explicit Stop and live-stream shutdown outcomes; add focused lifecycle regressions for any discovered issue, then test affected contracts. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: repair within existing terminal and cancellation owners. Owner waived size limits and CI waiting, with independent requesting-code-review before publication.
+
+Review repair plan (2026-10-31): reproduce a provider failure after submit cancellation with the real retained native call; keep Stop prompt and retain/observe its wrapper until terminal using the existing maintenance owner. Verify exception observation and retirement without a full sweep. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md. Reason: repair lifetime custody within the current owner.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -82,3 +84,9 @@ PR3173 repair (2026-10-31): verify completed-result recovery against current pro
 - Controller, shutdown regressions, measured size pin, existing test lane and
   Console architecture docs updated. The owner waived size limits and CI waiting;
   independent review is still pending, so status remains In Progress.
+
+- Independent review exposed an unobserved late exception from the provider wrapper
+  after submit cancellation. A held real native call reproduced the loop error while
+  Stop had already settled. The wrapper now uses the existing maintenance task owner
+  for retention and terminal exception observation; no new owner or blocking Stop
+  drain was added. All eight focused lifecycle cases pass (review-provider-green.log).
