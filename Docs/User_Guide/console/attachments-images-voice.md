@@ -161,7 +161,17 @@ is never sent automatically, so you can edit before pressing Enter.
 
 - **First run:** "Preparing the speech model for the first time. The first
   run downloads it and can take several minutes. Nothing is being recorded
-  yet — the microphone opens once the model is ready."
+  yet — the microphone opens once the model is ready." While the download
+  runs, the chip counts it: "◐ Downloading speech model… 412 MB".
+- **Model download or load fails:** the attempt ends with one message —
+  "Dictation failed: The 'parakeet-mlx' speech model could not be downloaded
+  or loaded. Nothing was recorded. Check your network connection and press
+  Dictate to try again. The log has the details." The microphone never
+  opens, the chip clears and the button reads **Dictate** again; pressing it
+  is the retry. A load that shows no progress for 2 minutes ends the same
+  way ("…stopped loading: no progress for 120 seconds."); raise
+  `dictation.model_prepare_stall_seconds` in config.toml for a provider whose
+  download the chip cannot count.
 - **Length cap:** a capture stops itself at 60 seconds — "Dictation limit
   reached; transcribing the captured audio."
 - **Requires optional extras.** Without a microphone backend: "Microphone

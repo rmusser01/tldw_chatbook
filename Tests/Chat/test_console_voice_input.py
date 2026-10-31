@@ -2021,31 +2021,211 @@ def test_the_first_run_detail_says_what_the_chip_cannot(monkeypatch):
     assert len(cvi.WARMUP_DETAIL_FIRST_RUN) > cvi.WARMUP_MESSAGE_MAX_CELLS
 
 
-def test_a_failed_warm_up_degrades_instead_of_disabling_dictation(monkeypatch):
-    """A warm-up that fails after the service was built must not be fatal.
+#: What a real first-run failure looked like (TASK-33621.21): parakeet-mlx
+#: swallowed the fetch error and retried the repo id as a local path.
+_RAW_LOAD_ERROR = (
+    "Failed to load model: [Errno 2] No such file or directory: "
+    "'mlx-community/parakeet-tdt-0.6b-v2/config.json'"
+)
 
-    The Console warms on *every* press, so a fatal warm-up would turn one
-    transient error -- a provider that dislikes digital silence, a blip with
-    the weights already on disk -- into permanently unusable dictation. The
-    capture goes ahead; that is safe now only because an empty result can no
-    longer be misreported as a dead microphone.
+
+def _failure_text(events) -> str:
+    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
+    assert len(failures) == 1, failures
+    return f"{failures[0].reason} {failures[0].remedy}"
+
+
+def _assert_plain_model_failure(text: str) -> None:
+    """One plain sentence about the model, a next step, nothing from the log."""
+    lowered = text.lower()
+    assert "speech model" in lowered
+    assert "try again" in lowered
+    assert "nothing was recorded" in lowered
+    # Raw diagnostics belong in the log, never in the toast.
+    assert "errno" not in lowered
+    assert "/" not in text, text
+    assert "config.json" not in lowered
+    # The capture is not going ahead, so nothing may say it is.
+    assert "may be slow" not in lowered
+    assert "microphone" not in lowered
+
+
+def test_a_failed_model_load_is_fatal_and_never_opens_the_microphone(monkeypatch):
+    """TASK-33621.21: a warm-up that cannot load the model ends the attempt.
+
+    The warm-up transcribes silence through the transcriber the capture will
+    use. When that load fails, recording anyway records into a transcriber
+    that already failed -- the live defect: a "may be slow" warning, then a
+    streaming load that hung forever. Every press re-warms on a fresh service,
+    so this costs one press, not dictation.
     """
-    transcriber = _Transcriber(error=RuntimeError("could not download model weights"))
+    transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
     service = _WarmableService(transcriber=transcriber)
     controller, events, _ = _controller(monkeypatch, service=service)
 
     controller.start()
 
-    assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
-    warnings = [e for e in events if isinstance(e, cvi.VoiceModelWarmupFailed)]
-    assert len(warnings) == 1
-    text = f"{warnings[0].reason} {warnings[0].remedy}".lower()
-    assert "model" in text
-    assert "could not download model weights" in text
-    assert "microphone" not in text
-    # The capture still opened, and the machine is live.
+    _assert_plain_model_failure(_failure_text(events))
+    assert service.started is False, "capture started after a failed model load"
+    assert controller.state == cvi.STATE_IDLE
+    kinds = [
+        type(e).__name__
+        for e in events
+        if isinstance(e, (cvi.VoiceFailed, cvi.VoiceStateChanged))
+    ]
+    assert kinds[-2:] == ["VoiceFailed", "VoiceStateChanged"]
+
+
+def test_a_second_press_after_a_failed_load_fails_the_same_way(monkeypatch):
+    """No hidden state survives a failed attempt (TASK-33621.21 AC#3)."""
+    transcriber = _Transcriber(error=RuntimeError(_RAW_LOAD_ERROR))
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _controller(monkeypatch, service=service)
+
+    controller.start()
+    first = _failure_text(events)
+    events.clear()
+    controller.start()
+    second = _failure_text(events)
+
+    assert first == second
+    assert len(transcriber.buffer_calls) == 2, "the second press never re-warmed"
+    assert service.started is False
+
+
+class _ScriptedProgress:
+    """Stands in for the Hugging Face cache probe, returning queued byte counts."""
+
+    def __init__(self, values, then=None):
+        self._values = list(values)
+        self._then = then
+        self.reads = 0
+
+    def downloaded_bytes(self) -> int:
+        self.reads += 1
+        if self._values:
+            return self._values.pop(0)
+        return self._then if self._then is not None else 0
+
+
+def _threaded_controller(monkeypatch, service, *, stall_seconds, progress):
+    monkeypatch.setattr(
+        cvi, "model_prepare_stall_seconds", lambda: stall_seconds, raising=False
+    )
+    monkeypatch.setattr(cvi, "download_progress_probe", lambda: progress, raising=False)
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController,
+        "WARMUP_PROGRESS_POLL_SECONDS",
+        0.05,
+        raising=False,
+    )
+    return _controller(
+        monkeypatch,
+        service=service,
+        spawn=lambda thunk: threading.Thread(target=thunk, daemon=True).start(),
+    )
+
+
+def _wait_for_state(controller, state, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and controller.state != state:
+        time.sleep(0.02)
+    return controller.state
+
+
+def test_a_load_that_stops_making_progress_fails_within_the_bound(monkeypatch):
+    """'Preparing speech model…' never persists indefinitely (TASK-33621.21).
+
+    The live hang was a load blocked on a lock forever, with a 0-byte
+    `.incomplete` beside it. Whatever blocks next, a load with no progress
+    for the stall bound ends with a plain error, and the microphone stays
+    closed even if the stuck load finishes later.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.3, progress=_ScriptedProgress([0])
+    )
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        state = _wait_for_state(controller, cvi.STATE_IDLE, timeout=3.0)
+
+        assert state == cvi.STATE_IDLE, "preparing outlived the stall bound"
+        text = _failure_text(events)
+        _assert_plain_model_failure(text)
+        assert "progress" in text.lower()
+        assert service.started is False
+    finally:
+        gate.set()
+    # The stuck load finishing afterwards must not resurrect the capture.
+    time.sleep(0.2)
+    assert service.started is False
+    assert controller.state == cvi.STATE_IDLE
+
+
+def test_a_download_that_keeps_growing_is_shown_and_never_cut_off(monkeypatch):
+    """A real download outlasts the stall bound as long as bytes keep landing.
+
+    Each growth resets the stall clock and repaints the chip with the bytes
+    downloaded so far; the capture starts once the load completes.
+    """
+    gate = threading.Event()
+    entered = threading.Event()
+    transcriber = _Transcriber(gate=gate, entered=entered)
+    service = _WarmableService(transcriber=transcriber)
+    growth = [0] + [n * 40_000_000 for n in range(1, 30)]
+    controller, events, _ = _threaded_controller(
+        monkeypatch,
+        service,
+        stall_seconds=0.3,
+        progress=_ScriptedProgress(growth, then=growth[-1]),
+    )
+
+    try:
+        controller.start()
+        assert entered.wait(timeout=5), "the warm-up never ran"
+        # Well past the 0.3 s bound, but the download is still growing.
+        time.sleep(0.9)
+        assert controller.state == cvi.STATE_PREPARING
+        assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
+    finally:
+        gate.set()
+    state = _wait_for_state(controller, cvi.STATE_LISTENING, timeout=3.0)
+
+    assert state == cvi.STATE_LISTENING
     assert service.started is True
-    assert controller.state == cvi.STATE_LISTENING
+    progress = [
+        e.message
+        for e in events
+        if isinstance(e, cvi.VoiceModelPreparing) and "MB" in e.message
+    ]
+    assert progress, "the running download was never shown"
+    assert progress[0].startswith("Downloading speech model")
+    assert all(
+        len(f"◐ {message}") <= cvi.WARMUP_MESSAGE_MAX_CELLS for message in progress
+    )
+    # Repainted only when the shown size changes, not on every poll.
+    assert len(progress) == len(set(progress))
+
+
+@pytest.mark.parametrize("raw", [0, -5, "soon", float("nan"), float("inf"), None])
+def test_an_invalid_stall_bound_falls_back_to_the_default(monkeypatch, raw):
+    settings = {}
+    if raw is not None:
+        settings["dictation.model_prepare_stall_seconds"] = raw
+    _stub_settings(monkeypatch, settings)
+
+    assert cvi.model_prepare_stall_seconds() == cvi.DEFAULT_MODEL_PREPARE_STALL_SECONDS
+
+
+def test_a_configured_stall_bound_is_used(monkeypatch):
+    _stub_settings(monkeypatch, {"dictation.model_prepare_stall_seconds": "300"})
+
+    assert cvi.model_prepare_stall_seconds() == 300.0
 
 
 def test_a_transcriber_that_cannot_be_built_is_a_fatal_model_problem(monkeypatch):
@@ -2060,11 +2240,9 @@ def test_a_transcriber_that_cannot_be_built_is_a_fatal_model_problem(monkeypatch
 
     controller.start()
 
-    failures = [e for e in events if isinstance(e, cvi.VoiceFailed)]
-    assert len(failures) == 1
-    text = f"{failures[0].reason} {failures[0].remedy}".lower()
-    assert "model" in text
-    assert "microphone" not in text
+    text = _failure_text(events)
+    _assert_plain_model_failure(text)
+    assert "models are not installed" not in text
     assert service.started is False
     assert controller.state == cvi.STATE_IDLE
 
