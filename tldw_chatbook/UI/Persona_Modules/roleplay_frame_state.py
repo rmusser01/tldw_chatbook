@@ -1098,9 +1098,13 @@ def search_placeholder(mode: str, *, short: bool) -> str:
     return f"Search {ITEM_KINDS[kind][1]}{ellipsis}"
 
 
-def import_label() -> str:
-    """The interim ``Import…`` on the rail's title row (spec 5.3; owner D2)."""
-    return f"Import{resolve_glyph(_ELLIPSIS)}"
+def import_label(*, short: bool = False) -> str:
+    """The interim ``Import…`` on the rail's title row (spec 5.3; owner D2).
+
+    ``short`` drops the ellipsis: the one rung where the header row cannot
+    hold ``Import...`` beside the collapse button (12 cells, ASCII mode).
+    """
+    return "Import" if short else f"Import{resolve_glyph(_ELLIPSIS)}"
 
 
 @dataclass(frozen=True)
@@ -1130,7 +1134,8 @@ def fit_items_toolbar(mode: str, *, width: int, sort_key: str) -> ToolbarFit:
     One row with the full labels, then one row with the short ones, then two
     rows (full, then short), then every control on its own row. The search
     keeps at least ``TOOLBAR_SEARCH_MIN_CELLS`` beside the controls and shows
-    its long placeholder only where it fits.
+    its long placeholder only where it fits. On the header row, Import loses
+    its ellipsis only where it and the collapse button cannot otherwise fit.
 
     Args:
         mode: The workbench mode (``toolbar_controls``).
@@ -1160,6 +1165,12 @@ def fit_items_toolbar(mode: str, *, width: int, sort_key: str) -> ToolbarFit:
         return full if fits else search_placeholder(mode, short=True)
 
     import_words = import_label()
+    if CONTROL_GAP_CELLS + cell_len(import_words) + RAIL_COLLAPSE_CELLS > width:
+        # The header row holds Import and the collapse button whole, or the
+        # ellipsis goes: at 80x24 (12 cells) ASCII's "Import..." took 9
+        # cells and the button spilled one cell past the pane (new with B2b,
+        # closed in its final fix wave; the Unicode "Import…" always fit).
+        import_words = import_label(short=True)
     beside_title = width - CONTROL_GAP_CELLS - cell_len(import_words)
     title = beside_title - RAIL_COLLAPSE_CELLS >= (
         cell_len(RAIL_TITLE) + RAIL_TITLE_CHROME_CELLS
