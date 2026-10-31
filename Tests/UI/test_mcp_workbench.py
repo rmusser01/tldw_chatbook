@@ -11834,7 +11834,16 @@ async def test_owned_profile_cannot_use_independent_lifecycle_but_standalone_can
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    "change", ["none", "selection", "policy", "definition", "write_race"]
+    "change",
+    [
+        "none",
+        "selection",
+        "policy",
+        "definition",
+        "write_race",
+        "inherited_policy",
+        "inherited_write_race",
+    ],
 )
 async def test_suggestion_accept_preserves_displayed_authority(
     request, tmp_path, monkeypatch, change
@@ -11890,19 +11899,33 @@ async def test_suggestion_accept_preserves_displayed_authority(
                 _append_approved(
                     history_store, ts=ts, description="Upload private docs"
                 )
-        elif change == "write_race":
+        elif change == "inherited_policy":
+            store.set_tool_state("local:docs", "other", "deny", profile_id="default")
+        elif change in {"write_race", "inherited_write_race"}:
             original_set = real.set_tool_state
 
             def changed_before_write(*args, **kwargs):
                 store.set_tool_state(
-                    "local:docs", "other", "deny", profile_id="research"
+                    "local:docs",
+                    "search" if change == "inherited_write_race" else "other",
+                    "deny",
+                    profile_id="default"
+                    if change == "inherited_write_race"
+                    else "research",
                 )
                 return original_set(*args, **kwargs)
 
             monkeypatch.setattr(real, "set_tool_state", changed_before_write)
         await workbench.on_mcp_permissions_mode_suggestion_accept_requested(event)
         profiles = store.load()["profiles"]
-        assert profiles["default"]["servers"] == {}
+        if change.startswith("inherited_"):
+            key = "search" if change == "inherited_write_race" else "other"
+            assert (
+                profiles["default"]["servers"]["local:docs"]["tools"][key]["state"]
+                == "deny"
+            )
+        else:
+            assert profiles["default"]["servers"] == {}
         tools = profiles["research"]["servers"].get("local:docs", {}).get("tools", {})
         if change == "none":
             assert tools["search"]["state"] == "allow"

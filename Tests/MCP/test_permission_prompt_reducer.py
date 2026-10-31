@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
+from tldw_chatbook.MCP.execution_log import MCPExecutionLog, build_record
+
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_prompt_reducer import (
     PermissionPromptReport,
@@ -348,3 +354,58 @@ def test_excludes_always_ask_tools_by_identity():
 
     assert report.recommendations == []
     assert report.excluded[("local:__local__", "character_save")] == "high-risk-floor"
+
+
+@pytest.mark.parametrize("source", ["producer", "raw_record"])
+@pytest.mark.parametrize(
+    "field, original, sanitized",
+    [
+        ("tool_name", "secret_search", "invalid"),
+        ("server_key", "local:secret_docs", "invalid"),
+        ("tool_name", " search ", "search"),
+        ("server_key", " local:docs ", "local:docs"),
+    ],
+)
+def test_lossy_audit_identity_cannot_support_another_tool(
+    tmp_path, source, field, original, sanitized
+):
+    live_server = sanitized if field == "server_key" else "local:docs"
+    live_name = sanitized if field == "tool_name" else "search"
+    tool = _tool(live_server, live_name)
+    kwargs = dict(
+        server_key=live_server,
+        tool_name=live_name,
+        initiator="agent",
+        decision="approved",
+        ok=True,
+        duration_ms=1,
+        definition_hash=definition_hash(tool.description, tool.input_schema),
+    )
+    if source == "producer":
+        kwargs[field] = original
+        record = build_record(**kwargs)
+    else:
+        record = replace(
+            build_record(**kwargs),
+            **{field: original},
+            definition_hash=kwargs["definition_hash"],
+        )
+    log = MCPExecutionLog(tmp_path / "audit.jsonl")
+    log.append(record)
+    log.append(record)
+    rows = log.read_recent()
+    assert len(rows) == 2
+    assert all(row[field] == sanitized for row in rows)
+    report = build_permission_prompt_report(
+        rows, [tool], {(live_server, live_name): _state("ask")}
+    )
+    assert report.recommendations == []
+
+
+def test_legacy_sentinel_identity_never_qualifies_even_with_matching_hash():
+    tool = _tool("local:docs", "invalid")
+    rows = [_record("local:docs", "invalid", "approved") for _ in range(2)]
+    report = build_permission_prompt_report(
+        rows, [tool], {("local:docs", "invalid"): _state("ask")}
+    )
+    assert report.recommendations == []

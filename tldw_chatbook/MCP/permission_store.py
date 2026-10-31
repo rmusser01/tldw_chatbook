@@ -195,6 +195,16 @@ def profile_policy_digest(profile: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def profile_policy_chain_digest(payload: Mapping[str, Any], profile_id: str) -> str:
+    """Bind the selected policy and the same fallback chain resolution uses."""
+    profiles = _as_mapping(payload.get("profiles"))
+    chain = [
+        (chain_id, profile_policy_digest(_as_mapping(profiles.get(chain_id))))
+        for chain_id in _profile_chain_ids(payload, profile_id)
+    ]
+    return hashlib.sha256(json.dumps(chain, separators=(",", ":")).encode()).hexdigest()
+
+
 def _resolved_path_lock(path: Path) -> threading.RLock:
     """Return the one process-wide reentrant lock for ``path``."""
     resolved = path.expanduser().resolve(strict=False)
@@ -1175,10 +1185,17 @@ class MCPPermissionStore:
         *,
         expected_profile_digest: str | None,
         expected_revision: int | None,
+        expected_policy_chain_digest: str | None = None,
     ) -> bool:
         """Apply one field edit with profile-scoped CAS and lifecycle upkeep."""
         with self.mutation_fence():
             payload = self.load()
+            if (
+                expected_policy_chain_digest is not None
+                and profile_policy_chain_digest(payload, profile_id)
+                != expected_policy_chain_digest
+            ):
+                raise ProfileMutationError("stale_policy_chain")
             profiles = payload.setdefault("profiles", {})
             existing = profiles.get(profile_id)
             if isinstance(existing, Mapping):
@@ -1727,6 +1744,7 @@ class MCPPermissionStore:
         profile_id: str = _DEFAULT_PROFILE_ID,
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
+        expected_policy_chain_digest: str | None = None,
     ) -> None:
         """Set or clear a tool-level permission override.
 
@@ -1745,6 +1763,8 @@ class MCPPermissionStore:
                 ``HASH_FREE_SERVER_KEYS``.
             profile_id: Profile to write; defaults to the ``default``
                 profile (byte-identical to the pre-profiles behavior).
+            expected_policy_chain_digest: Optional reviewed selected/fallback
+                policy identity, compared under the final mutation fence.
 
         Raises:
             ValueError: If ``state`` is not None and not one of
@@ -1798,6 +1818,7 @@ class MCPPermissionStore:
             change,
             expected_profile_digest=expected_profile_digest,
             expected_revision=expected_revision,
+            expected_policy_chain_digest=expected_policy_chain_digest,
         )
 
 

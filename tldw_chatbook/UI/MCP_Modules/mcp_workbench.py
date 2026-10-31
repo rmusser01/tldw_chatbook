@@ -83,6 +83,7 @@ from tldw_chatbook.MCP.permission_store import (
     definition_hash,
     profile_lifecycle_disposition,
     profile_policy_digest,
+    profile_policy_chain_digest,
     resolve_builtin_state,
 )
 from tldw_chatbook.MCP.readiness import (
@@ -2254,6 +2255,9 @@ class MCPWorkbench(Container):
                     selector_generation=self._tool_policy_selector_generation,
                     policy_digest=digest,
                     revision=revision,
+                    policy_chain_digest=profile_policy_chain_digest(
+                        payload, profile_id
+                    ),
                 )
         return (
             profiles,
@@ -3837,6 +3841,7 @@ class MCPWorkbench(Container):
                         event.tool_name,
                         context=context,
                         expected_definition_hash=event.definition_hash,
+                        expected_policy_chain_digest=context.policy_chain_digest,
                     )
                 )
             )

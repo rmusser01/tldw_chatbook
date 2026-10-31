@@ -489,6 +489,7 @@ class PermissionProfileContext:
     selector_generation: int
     policy_digest: str
     revision: int | None
+    policy_chain_digest: str = ""
 
 
 @dataclass(frozen=True)

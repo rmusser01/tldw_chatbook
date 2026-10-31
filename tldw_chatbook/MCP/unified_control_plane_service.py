@@ -4842,6 +4842,7 @@ class UnifiedMCPControlPlaneService:
         expected_definition_hash: str | None = None,
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
+        expected_policy_chain_digest: str | None = None,
     ) -> PermissionPromptRecommendation:
         """Persist a currently recommended tool-level allow.
 
@@ -4854,6 +4855,8 @@ class UnifiedMCPControlPlaneService:
             expected_definition_hash: Fingerprint retained by the displayed suggestion.
             expected_profile_digest: Policy digest retained by that review.
             expected_revision: Imported-profile revision retained by that review.
+            expected_policy_chain_digest: Reviewed inheritance chain; required
+                for a named profile and atomically checked by the store writer.
 
         Returns:
             The recommendation whose hash-safe tool-level allow was persisted.
@@ -4868,7 +4871,11 @@ class UnifiedMCPControlPlaneService:
         store = self.permission_store
         if store is None:
             raise RuntimeError("MCP permission store unavailable")
-        if not expected_definition_hash or not expected_profile_digest:
+        if (
+            not expected_definition_hash
+            or not expected_profile_digest
+            or (profile_id != "default" and not expected_policy_chain_digest)
+        ):
             raise KeyError(
                 "Review the current suggestion and permission profile before accepting"
             )
@@ -4908,6 +4915,7 @@ class UnifiedMCPControlPlaneService:
             profile_id=profile_id,
             expected_profile_digest=expected_profile_digest,
             expected_revision=expected_revision,
+            expected_policy_chain_digest=expected_policy_chain_digest,
         )
         return recommendation
 
@@ -5688,6 +5696,7 @@ class UnifiedMCPControlPlaneService:
         profile_id: str = "default",
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
+        expected_policy_chain_digest: str | None = None,
     ) -> None:
         """Set (or clear, when ``ui_state`` is None) a tool-level override.
 
@@ -5708,6 +5717,8 @@ class UnifiedMCPControlPlaneService:
                 compare-and-set boundary.
             expected_revision: Captured imported-profile revision, when
                 applicable.
+            expected_policy_chain_digest: Reviewed selected/fallback policy
+                identity for the final store compare-and-set boundary.
 
         Raises:
             ValueError: ``ui_state`` is ``"allow"``, ``tool`` is None, and
@@ -5731,6 +5742,7 @@ class UnifiedMCPControlPlaneService:
             profile_id=profile_id,
             expected_profile_digest=expected_profile_digest,
             expected_revision=expected_revision,
+            expected_policy_chain_digest=expected_policy_chain_digest,
         )
 
     def set_server_default(

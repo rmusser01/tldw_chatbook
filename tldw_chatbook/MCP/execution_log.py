@@ -164,12 +164,17 @@ def build_record(
         unknown_argument_count=unknown_argument_count,
         result_type=result_type,
         result_size=result_size,
-        definition_hash=_definition_fingerprint(definition_hash),
+        definition_hash=_definition_fingerprint(definition_hash, server_key, tool_name),
     )
 
 
-def _definition_fingerprint(value: Any) -> str | None:
-    """Keep canonical SHA-256 metadata only; never persist a raw definition."""
+def _definition_fingerprint(value: Any, server_key: Any, tool_name: Any) -> str | None:
+    """Keep canonical fingerprints only when audit identities remain exact."""
+    if any(
+        identity == "invalid" or safe_metadata_token(identity) != identity
+        for identity in (server_key, tool_name)
+    ):
+        return None
     return (
         value
         if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
@@ -385,7 +390,13 @@ class MCPExecutionLog:
             "result_size": result_size,
             **(
                 {"definition_hash": fingerprint}
-                if (fingerprint := _definition_fingerprint(raw.get("definition_hash")))
+                if (
+                    fingerprint := _definition_fingerprint(
+                        raw.get("definition_hash"),
+                        raw.get("server_key"),
+                        raw.get("tool_name"),
+                    )
+                )
                 else {}
             ),
         }

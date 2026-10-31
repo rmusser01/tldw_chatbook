@@ -19,6 +19,8 @@ from tldw_chatbook.MCP.permission_store import (
     definition_hash,
 )
 
+from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
+
 APPROVED_DECISION = "approved"
 AGENT_INITIATOR = "agent"
 DEFAULT_MIN_APPROVED_COUNT = 2
@@ -185,9 +187,12 @@ def build_permission_prompt_report(
             continue
         if record.get("initiator") != AGENT_INITIATOR:
             continue
-        server_key = str(record.get("server_key") or "").strip()
-        tool_name = str(record.get("tool_name") or "").strip()
-        if not server_key or not tool_name:
+        server_key = record.get("server_key")
+        tool_name = record.get("tool_name")
+        if any(
+            identity == "invalid" or safe_metadata_token(identity) != identity
+            for identity in (server_key, tool_name)
+        ):
             continue
         approval_records += 1
         stats = stats_by_key.setdefault((server_key, tool_name), _ApprovalStats())
