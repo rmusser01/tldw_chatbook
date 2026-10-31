@@ -30,7 +30,7 @@ def is_empty_search(
         "cmd",
         "cmd.exe",
     }
-    if windows_cmd and "%" in command:
+    if windows_cmd and ("%" in command or "^" in command):
         return False
     lexer = shlex.shlex(command, posix=True, punctuation_chars=operators)
     if windows_cmd or shell_name in {

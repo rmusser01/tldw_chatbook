@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: 2026-10-29 22:34
-updated_date: '2026-10-30T10:58:00Z'
+updated_date: '2026-10-31T18:37:00Z'
 labels: []
 dependencies: []
 ---
@@ -51,6 +51,8 @@ The existing real Rename persistence test also reproduces raw_source_selection_c
 Select the new cold package/session Rename export regression in the existing Perf Guard boot-ratchet step and trigger that workflow for changes to the regression itself. Preserve the Python version, permissions, concurrency and timeout; verify existing workflow safety contracts. This keeps the new import-boundary check exercised on PRs.
 
 Fast Lane found only generated remote worker growth: 5730 lines versus 5706. Preserve the generator and ratchet. Reduce duplicated canonical write-source logic: combine optional open flags with equivalent getattr defaults, share complete descriptor reads using the stdlib sentinel iterator, and unify successful temp cleanup bookkeeping. Add multi-chunk preview/CAS coverage, regenerate the artifact, and verify size, real local writes, native confinement and bundled worker parity. Select existing bundle ceiling/slack checks in the focused Linux workflow so this gate runs early. ADR required: no new ADR; behavior-preserving implementation under ADR-254 and existing bundle contract.
+
+Direct merge review: reproduce the real cmd caret-escaped quote compound before changing production; add pure/native empty-search and failure controls; conservatively reject cmd caret syntax, preserving other shells and execution text; run focused recovery/provider/integration checks and fresh exact-head review. Existing ADR-254 applies; no new ADR or CI-policy change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -67,4 +69,6 @@ The controller-import candidate was reverted after it moved cost into preimport.
 Modified raw shell projection/execution, native and parser regression fixtures, the Console lazy-export/session import boundary, CI selection, architecture docs and testing lessons. Existing ADR-254 and ADR-097 govern the changes; no new ADR is required. Tasks 37631/37632 retain virtual listing and Windows write evidence. PR #3314 is the integration target.
 
 Fast Lane artifact follow-up: the unchanged worker size guard failed at 5730/5706. Canonical write-source deduplication restored exactly 5706 lines with builder/budget unchanged. Multi-chunk preview/CAS, native write/listing/loopback, write/edit/locking, size and workflow checks pass; bare Python 3.10.5 source/artifact execution is verified. Full POSIX bundle contracts are explicitly selected in Linux CI. Fresh independent review found no findings and independently passed the size/routing and multi-chunk controls. No full suite or budget override was used; publication still requires fresh GitHub checks.
+
+The user-requested fresh full-PR review found one cmd caret-escape ambiguity: findstr with caret-escaped quotes executed COMPOUND_RAN and an explicit exit1, but shlex hid its compound operators and projected success. Two pure regressions and the real cmd/provider reproduction failed first (3failed6passed controls). The classifier now conservatively rejects cmd caret syntax alongside percent expansion. A plain cmd no-match and POSIX caret-regex controls remain successful. All93 focused recovery/provider/integration checks passed; scoped formatter/lint passed. No execution text, shell launch, permissions, bounds, builder, worker artifact, CI workflow or guard changed. ADR-254 documents the existing conservative boundary. Fresh exact-head review gates the requested direct merge attempt. Evidence: cmd-caret-review-red.txt and cmd-caret-review-green.txt. No full suite or hosted-workflow dispatch.
 <!-- SECTION:NOTES:END -->

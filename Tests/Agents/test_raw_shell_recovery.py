@@ -52,6 +52,8 @@ def test_truncated_stderr_cannot_turn_a_search_error_into_success(tmp_path):
         ('findstr /C:"a|b" sample.txt', True),
         ("findstr 'a|b' sample.txt", False),
         ("findstr %PATTERN% sample.txt", False),
+        ('findstr ^"absent& echo COMPOUND_RAN & exit /b 1 & rem ^"', False),
+        ("findstr /C:a^b sample.txt", False),
         ('"C:\\Program Files\\Git\\usr\\bin\\grep.exe" missing sample.txt', True),
     ],
 )
@@ -191,3 +193,71 @@ def test_three_empty_searches_continue_to_next_model_turn(tmp_path, command):
         for step in outcome.steps
         if step.kind == "tool_result"
     )
+
+
+def test_empty_search_keeps_posix_caret_regex():
+    from tldw_chatbook.Tools.shell_search_outcomes import is_empty_search
+
+    assert is_empty_search("grep '^absent' sample.txt", 1, "", shell="/bin/bash")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native cmd caret quoting")
+@pytest.mark.parametrize("compound", [False, True])
+def test_native_cmd_search_distinguishes_caret_compound_failure(tmp_path, compound):
+    import shutil
+
+    from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
+    from tldw_chatbook.Tools.raw_cli_executor import (
+        RawCliRequest,
+        RawCliResult,
+        _launch_shell,
+    )
+
+    shell = shutil.which("cmd.exe")
+    if shell is None or shutil.which("findstr.exe") is None:
+        pytest.skip("cmd and findstr are required")
+    command = (
+        'findstr ^"absent& echo COMPOUND_RAN & exit /b 1 & rem ^"'
+        if compound
+        else "findstr /C:cli_recovery_absent NUL"
+    )
+    request = RawCliRequest(
+        invocation_id="caret-search",
+        caller="model",
+        command=command,
+        shell="cmd",
+        initial_directory=tmp_path,
+        timeout_seconds=15,
+        console_session_id="caret-session",
+    )
+    process = _launch_shell((shell, "/D", "/S", "/C", command), request)
+    try:
+        stdout, stderr = process.communicate(timeout=15)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+    assert process.returncode == 1
+    assert stderr == b""
+    assert stdout.strip() == (b"COMPOUND_RAN" if compound else b"")
+    result = RawShellToolProvider._tool_result(
+        RawCliResult(
+            invocation_id=request.invocation_id,
+            caller="model",
+            resolved_shell=shell,
+            initial_directory=tmp_path,
+            elapsed_seconds=0.1,
+            stdout_preview=stdout.decode("utf-8"),
+            stderr_preview="",
+            record_output=stdout.decode("utf-8"),
+            exit_code=process.returncode,
+            terminal_state="exited",
+            truncated=False,
+            cleanup_proven=True,
+        ),
+        command=command,
+    )
+    assert result.ok is (not compound)
+    if compound:
+        assert result.outcome == "failed"
+        assert "COMPOUND_RAN" in result.error

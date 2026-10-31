@@ -160,3 +160,16 @@ The queue integration includes upstream host-only ReviewGitReader code inside th
 2. Move the unchanged review-only reader, entry and argv chunker into the existing Agents/code_review_source.py owner. Retain dynamic calls to the shared hardened Git runner and all validations. Simplify only the public text wrapper's one-use decoded-result locals while preserving truncation predicates.
 3. Regenerate with the unchanged builder; verify byte parity, unchanged size guards, stdlib/platform contracts, real review capture, Git safety and native write controls. Correct the existing UTF-8/CRLF fixture to write its intended bytes explicitly on Windows.
 4. Select the existing host review/source and complete Git safety tests in their own Linux recovery invocation, retain its JUnit evidence, and pin the routing. Native source fixtures require unavailable file-symlink privileges; Linux must exercise them unchanged. Obtain independent exact-head review, update task/evidence notes, safely push the scoped repair and re-arm after confirming the head and review threads. No full local test sweep.
+
+
+## Direct merge review follow-up (TASK-37630)
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/254-cli-search-outcomes-and-listing-compatibility.md.
+Reason: preserve the established conservative classification of compound cmd failures.
+
+1. Reproduce the reviewer's caret-escaped quote compound through the real cmd launch wrapper and add pure/native regression controls, including a simple no-match control and a non-cmd caret regex.
+2. Conservatively reject cmd caret syntax alongside percent expansion; keep command execution and other shell handling unchanged.
+3. Run targeted raw recovery/provider/integration controls and scoped lint, obtain fresh exact-head review, then perform the user-requested direct merge attempt. The user explicitly selected direct rebase/review/merge instead of waiting on CI.
+
+The exact native compound printed COMPOUND_RAN, exited1 and had empty stderr while the old projection incorrectly returned success. Two pure caret cases and that native provider case failed before the guard. Rejecting caret syntax only for cmd fixed all three; a plain cmd no-match control and a POSIX caret regex still pass. Final targeted recovery/provider/integration selection passed93 and scoped lint/format passed. Execution text, other shells, limits and guards are unchanged.

@@ -11,7 +11,8 @@ For raw model shell calls, classify exit 1 with empty stderr as successful empty
 search only when the exact executed command is an unambiguous simple invocation
 of grep, rg or findstr. Preserve the exit code and output in the result. Other
 nonzero exits, uncertain shell expressions and actual executor failures retain
-their existing outcomes and retry limits. No user-authored command authority,
+their existing outcomes and retry limits. Cmd percent expansion and caret
+escapes remain ambiguous and are not classified as empty searches. No user-authored command authority,
 approval, timeout, cleanup or permission behavior changes.
 
 Remove the raw provider's redundant 4,000-character concatenated-result slice.
