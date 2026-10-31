@@ -22758,3 +22758,12 @@ pressed the real Retry button, and required fresh key and marker reads in the
 posture worker. Removing the explicit retry wiring left the rendered posture
 unavailable despite a recovered backend. Test the actual action through its
 worker and underlying caches; a direct service call cannot prove that wiring.
+
+The independent review then found that this test seeded an already-unblocked
+row: it proved the ready posture but missed the retained page still reporting
+blocked rows. Replacing that seed with an actual failing LocalSkillsService
+page made the test fail at blocked_total=1 after Retry succeeded. The corrected
+regression requires the row glyph, blocked total, and page actions to recover
+through the scoped browse refresh, and keeps cancellation/route/generation
+controls. Seed the real failure state when testing recovery; a healthy row
+can hide a missing refresh behind a healthy header.

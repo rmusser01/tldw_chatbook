@@ -4523,17 +4523,20 @@ async def test_skill_trust_buttons_carry_reason_tooltips():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "interruption", [None, "cancel", "route", "generation", "backend_failure"]
+)
 async def test_library_retry_recovers_immediately_through_real_posture_worker(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, interruption
 ):
-    """Retry must bypass both the automatic cooldown and cached backend errors."""
+    """Retry refreshes real blocked rows only while its worker still owns the page."""
     from textual.app import App
+    from textual.worker import WorkerCancelled
     from keyring.errors import KeyringError
     from Tests.Skills.test_skill_trust_keyring_autounlock import _fresh_service
     from Tests.Skills.test_skill_trust_service import (
         FakeSecureKeyring,
         _service,
-        _write_skill,
     )
     from tldw_chatbook.Skills_Interop import skill_trust_service as service_module
     from tldw_chatbook.Skills_Interop import skill_trust_store as store_module
@@ -4545,14 +4548,20 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
 
     class RecoveringKeyring(FakeSecureKeyring):
         failed = False
+        gate_reads = False
 
         def get_password(self, service_name, username):
+            if self.gate_reads:
+                retry_started.set()
+                assert retry_release.wait(30), "Retry keyring gate was not released."
             reads.append((service_name, threading.get_ident()))
             if self.failed:
                 raise KeyringError("keyring locked")
             return super().get_password(service_name, username)
 
     reads = []
+    retry_started = threading.Event()
+    retry_release = threading.Event()
     backend = RecoveringKeyring()
     # The backend validator identifies the installed secure backend namespace.
     RecoveringKeyring.__module__ = FakeSecureKeyring.__module__
@@ -4560,7 +4569,9 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
     marker = KeyringSkillTrustGenerationMarkerStore(keyring_backend=backend)
     setup, skills_dir = _service(tmp_path, key_cache=cache)
     setup.trust_store.marker_store = marker
-    _write_skill(skills_dir)
+    await LocalSkillsService(store_dir=tmp_path, trust_service=setup).create_skill(
+        name="demo", content="# Demo\n"
+    )
     setup.bootstrap_trust()
     setup.enable_keyring_convenience()
     fresh = _fresh_service(
@@ -4575,7 +4586,23 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
     monkeypatch.setattr(service_module, "time", clock)
     monkeypatch.setattr(store_module, "time", clock)
     backend.failed = True
-    instance = SimpleNamespace(app_config={}, local_skill_trust_service=fresh)
+    local_service = LocalSkillsService(store_dir=tmp_path, trust_service=fresh)
+    scope_service = SkillsScopeService(local_service=local_service)
+    scope = SkillBrowseScope(query="demo", sort="status")
+    initial_page = await asyncio.to_thread(
+        lambda: asyncio.run(
+            scope_service.list_skills(
+                mode="local", limit=20, query="demo", sort="status"
+            )
+        )
+    )
+    assert initial_page["blocked_total"] == 1
+    assert initial_page["skills"][0]["trust_blocked"] is True
+    instance = SimpleNamespace(
+        app_config={},
+        local_skill_trust_service=fresh,
+        skills_scope_service=scope_service,
+    )
 
     class Subject(LibraryScreen):
         def compose(self):
@@ -4598,19 +4625,7 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
             self.subject._library_selected_row_id = LIBRARY_ROW_BROWSE_SKILLS
             self.subject._skills_state.view = "list"
             controller = self.subject._library_skills_browse_controller
-            scope = SkillBrowseScope()
-            result = build_skill_browse_result(
-                scope,
-                {
-                    "skills": [{"name": "demo", "trust_blocked": False}],
-                    "count": 1,
-                    "total": 1,
-                    "limit": 20,
-                    "offset": 0,
-                    "blocked_total": 0,
-                    "first_blocked_skill_name": None,
-                },
-            )
+            result = build_skill_browse_result(scope, initial_page)
             controller.scope = scope
             controller.result = controller.applied_result = result
             controller.retained_items = result.items
@@ -4624,6 +4639,8 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
         await pilot.pause()
         screen = host.subject
         assert screen._skills_state.trust_posture == "unavailable"
+        assert screen._build_library_skills_state().blocked_total == 1
+        assert screen._build_library_skills_state().rows[0].blocked is True
         button = screen.query_one("#library-skills-trust-action", Button)
         assert str(button.label) == "Retry"
         assert {name for name, _thread in reads} == {
@@ -4631,13 +4648,59 @@ async def test_library_retry_recovers_immediately_through_real_posture_worker(
             "tldw_chatbook.skill_trust",
         }
         initial_reads = len(reads)
-        backend.failed = False
+        controller = screen._library_skills_browse_controller
+        prior_page = controller.applied_result
+        backend.failed = interruption == "backend_failure"
+        backend.gate_reads = True
         button.focus()
-        await pilot.press("enter")
+        try:
+            await pilot.press("enter")
+            await _wait_for_condition(
+                pilot, retry_started.is_set, message="Retry did not reach the keyring."
+            )
+            if interruption == "cancel":
+                cancelled = screen.workers.cancel_group(
+                    screen, "library_skills_trust_posture"
+                )
+            elif interruption == "route":
+                from tldw_chatbook.Library.library_shell_state import (
+                    LIBRARY_ROW_BROWSE_CONVERSATIONS,
+                )
+
+                screen._library_selected_row_id = LIBRARY_ROW_BROWSE_CONVERSATIONS
+            elif interruption == "generation":
+                screen._library_snapshot_state_generation += 1
+        finally:
+            retry_release.set()
+        if interruption == "cancel":
+            with pytest.raises(WorkerCancelled):
+                await host.workers.wait_for_complete(cancelled)
+        else:
+            await host.workers.wait_for_complete()
+        if interruption != "backend_failure":
+            await _wait_for_condition(
+                pilot,
+                lambda: fresh._keys is not None,
+                message="The released Retry did not unlock the trust service.",
+            )
         await pilot.pause()
-        await host.workers.wait_for_complete()
-        await pilot.pause()
+        if interruption is not None:
+            assert controller.applied_result is prior_page
+            assert controller.freshness == "fresh"
+            assert screen._build_library_skills_state().blocked_total == 1
+            assert screen._build_library_skills_state().rows[0].blocked is True
+            return
         assert screen._skills_state.trust_posture == "ready"
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._build_library_skills_state().blocked_total == 0,
+            message="Retry left the skill page's blocked total stale.",
+        )
+        state = screen._build_library_skills_state()
+        assert state.rows[0].blocked is False
+        assert state.rows[0].trust_glyph == "✓"
+        assert state.actions_disabled is False
+        assert controller.applied_result.scope == scope
         assert "ready" in str(
             screen.query_one("#library-skills-trust-header", Static).content
         )

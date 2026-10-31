@@ -19728,17 +19728,17 @@ class LibraryScreen(BaseAppScreen):
                 )
             return
         self.run_worker(
-            self._load_library_skills_trust_posture(posture_fn),
+            self._load_library_skills_trust_posture(posture_fn, retry=retry),
             exclusive=True,
             group="library_skills_trust_posture",
             exit_on_error=False,
         )
 
     async def _load_library_skills_trust_posture(
-        self, posture_fn
+        self, posture_fn, *, retry: bool = False
     ) -> LibraryEntryReconcileResult:
         return await self._skills_controller._load_library_skills_trust_posture(
-            posture_fn
+            posture_fn, retry=retry
         )
 
     async def _refresh_library_media_detail(

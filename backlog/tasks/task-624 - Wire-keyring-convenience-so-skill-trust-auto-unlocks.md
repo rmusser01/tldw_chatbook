@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-25 11:20'
-updated_date: '2026-10-31 09:46'
+updated_date: '2026-10-31 10:04'
 labels:
   - skills
   - trust
@@ -35,6 +35,7 @@ Found by live TUI verification (task-579). Unit tests cannot catch this class of
 - [x] #6 A regression test asserts the auto-unlock is actually invoked at startup, not merely that the method works when called
 - [x] #7 Repeated failed automatic unlocks avoid salt/keyring reads for 60 seconds after failure completes, then retry; all backend failure variants remain fail-closed
 - [x] #8 Explicit Library Retry and direct convenience unlock can recover immediately; passphrase unlock, reset and recovery activation guards remain effective
+- [x] #9 A successful explicit Retry refreshes the current Skills page so previously blocked rows and totals become usable immediately; cancelled, navigated-away, and superseded requests cannot refresh it
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -97,6 +98,29 @@ Task stays In Progress because backlog-py is broken on this host and independent
 review/remote integration are handled at handoff. No push, PR comment, auto-merge
 or merge was performed.
 
+### Independent review correction (2026-10-31)
+
+The first mounted test seeded a healthy row, so it missed a stale blocked page
+behind the recovered header. The revised test creates and lists a real local
+skill while the keyring is failing; it failed at blocked_total=1 after Retry
+reached ready. Explicit Retry now carries its intent through the existing
+posture worker and, only after success and the existing route/generation/view
+fences, reuses the scoped committed-mutation refresh. The real row becomes
+trusted, its blocked total clears, actions become usable, and query/sort remain
+intact. Cancelled, navigated-away, superseded, and still-failing retries retain
+their previous page.
+
+Fresh verification: 14 passed, 2 deselected in 43.84s across the five mounted
+Retry cases, all seven Skills browse-controller tests, and both Library size
+checks. The negative run failed at the intended stale blocked-count assertion.
+One intermediate cancellation control raised Textual's expected WorkerCancelled;
+the test now explicitly awaits that cancellation before checking retained state.
+The production files and new test block compile, git diff --check passes, and
+baseline comparison finds zero new lint findings (67 existing across the three
+touched Python files). The controller formats cleanly; the canvas test keeps
+only its two pre-existing formatter hunks. No full sweep, native OS keyring run,
+or remote operation was performed. ADR-009 remains the governing decision.
+
 <!-- SECTION:NOTES:END -->
 
 ## Implementation Plan
@@ -112,6 +136,7 @@ Reason: restores the existing recoverable, fail-closed convenience contract with
 2. Add failing behavioral tests for salt/backend retry suppression, expiry after slow failure, generic backend errors, explicit retry, passphrase/reset, and the mounted Library action.
 3. Limit the failure cooldown to automatic attempts and make explicit Retry invalidate transient keyring read caches within the existing activation guards; preserve worker dispatch.
 4. Run targeted Skills and Library/activation checks plus touched-file static analysis, review the diff and record exact evidence. No full suite.
+5. Review follow-up: reproduce Retry with a genuinely blocked source page, refresh that page only after a successful current Retry, and verify cancellation/navigation/generation fences before committing the correction.
 
 The installed backlog-py CLI currently fails before execution (uv trampoline cannot canonicalize its script path); this repair updates the existing record directly and leaves it In Progress pending CLI closeout.
 <!-- SECTION:PLAN:END -->
