@@ -301,6 +301,16 @@ def test_the_idle_pass_parses_the_manifest_source_for_the_first_send(pass_outcom
     )
 
 
+#: What a listed package imports only when it is installed (aiohttp 3.13:
+#: ``resolver.py`` tries aiodns, which loads pycares; ``compression_utils.py``
+#: tries brotlicffi or brotli and backports.zstd; ``aiohttp[speedups]``
+#: installs them). The measured venv had none of them, so live they never
+#: loaded; where they are installed they load inside aiohttp's own step.
+_OPTIONAL_ACCELERATORS: dict[str, frozenset[str]] = {
+    "aiohttp": frozenset({"aiodns", "pycares", "brotli", "brotlicffi", "backports"}),
+}
+
+
 @pytest.mark.integration
 def test_no_warm_up_step_loads_a_third_party_package_it_does_not_name(warm_up_steps):
     """A navigation waits behind one small step at most (TASK-33620.15.18).
@@ -309,21 +319,26 @@ def test_no_warm_up_step_loads_a_third_party_package_it_does_not_name(warm_up_st
     a step it has started runs to its end, sharing the GIL with the
     navigation. Live on origin/dev 7536ac3b87 (160x45, established profiles,
     an idle host), ``Canvas.native_authority`` was one step of 85-222 ms
-    (63-70 ms CPU): importing it loaded aiohttp, aiodns, html5lib, tinycss2
-    and their dependencies, 121 modules. A Library click landing in it drew
-    Library's first frame 181-216 ms after the click, against 141-165 ms on
-    origin/dev without the warm-up at the same moment (paired median
-    +52 ms, slower in 8 of 8 pairs at all loads). Keys landing in it were
-    not slower.
+    (63-70 ms CPU): importing it loaded aiohttp, html5lib, tinycss2 and
+    their dependencies, 121 modules. A Library click landing in it drew
+    Library's first frame 181-216 ms after the click reached the app on a
+    lightly loaded host, against 141-165 ms on origin/dev without the
+    warm-up at the same moment (paired median +48.6 ms from the click's
+    send, slower in 8 of 8 pairs at all loads). Keys landing in it were not
+    slower.
 
     So each third-party package a send needs is its own step, after its
-    dependencies: a step loads no third-party package but the one it names.
+    dependencies: a step loads no third-party package but the one it names,
+    apart from an optional accelerator that package imports only when it is
+    installed (the list cannot name a package that may be absent).
     """
     assert len(warm_up_steps) > 60, "the warm-up recorded no steps"
     hidden = {
         step: packages
         for step, packages in warm_up_steps
-        if set(packages) - {step.split(".")[0]}
+        if set(packages)
+        - {step.split(".")[0]}
+        - _OPTIONAL_ACCELERATORS.get(step, frozenset())
     }
     assert not hidden, (
         "these warm-up steps load third-party packages they do not name; list "
@@ -429,7 +444,7 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
 
 
 def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
-    """No step starts within the input-quiet time of a click or key (TASK-33620.15.18).
+    """No step starts within the input-quiet time of any input (TASK-33620.15.18).
 
     A navigation takes the app's lock only when its click reaches the
     handler. Live (fix head d9320f721e, 160x45, idle host), the pass's park
@@ -488,6 +503,49 @@ def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
     assert app.events[6:8] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[1])]
 
 
+def test_quit_stops_the_warm_up_while_it_waits_out_input(monkeypatch):
+    """Quitting ends the input wait at once, whatever the user does (TASK-33620.15.18).
+
+    Input that never pauses keeps the warm-up waiting before its next step,
+    so that wait must watch for quit itself, or the pass's daemon thread
+    would outlive the app's shutdown. Here every read says input arrived
+    just now; quit lands in the third park, and the warm-up then imports
+    nothing and freezes nothing.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+
+    app = _PassApp(stop_after=3)
+    imported: list[str] = []
+    frozen: list[str] = []
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: 0.0)
+
+    class Clock:
+        @staticmethod
+        def monotonic() -> float:
+            return 0.0
+
+        @staticmethod
+        def sleep(seconds: float) -> None:
+            app.events.append(("sleep", round(seconds, 3)))
+            assert len(app.events) < 50, "the warm-up kept waiting after quit"
+
+    monkeypatch.setattr(warm, "time", Clock)
+    monkeypatch.setattr(warm.importlib, "import_module", imported.append)
+    monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
+
+    warm.preimport_first_send_modules(app)
+
+    quiet = round(warm.INPUT_QUIET_SECONDS, 3)
+    assert app.events == [
+        ("pause", 0.0),
+        ("sleep", quiet),
+        ("pause", 0.0),
+        ("sleep", quiet),
+        ("pause", 0.0),
+    ], "the warm-up did not stop waiting when the app quit"
+    assert imported == [] and frozen == []
+
+
 def test_each_step_that_loads_modules_freezes_them_before_the_next(monkeypatch):
     """The warm-up's objects never wait unfrozen for a UI-loop pass (TASK-33620.15.18).
 
@@ -498,8 +556,8 @@ def test_each_step_that_loads_modules_freezes_them_before_the_next(monkeypatch):
     with no import running when the click arrived in 7 of them. The modules
     already imported sat unfrozen until the warm-up's last step, so the
     navigation's allocations made a full pass over them due. A boot freeze
-    no longer walks the frozen set (about 1 ms), so each step that loads
-    modules now freezes them at once.
+    no longer walks the frozen set (typically under 1 ms), so each step
+    that loads modules now freezes them at once.
 
     Negative control: a step that loads nothing freezes nothing.
     """
