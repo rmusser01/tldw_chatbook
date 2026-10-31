@@ -85,3 +85,6 @@ Re-sync (2026-10-30): rebased onto dev ff815f8559. The only conflict was the les
 - The same command on dev's test file gave 148 passed and 14 failed, including this task's test 3.
 - Preflight passes.
 
+Re-sync (2026-10-31): the merge queue could not rebase this PR. Its first commits add the lesson at the top of the lessons file, where dev had since added lessons of its own. Rebased onto dev 7536ac3b87 by hand: each lesson conflict was resolved to dev's file plus this task's lesson as that commit wrote it. The lesson still ends in the 2026-10-23 group with its text unchanged, and outside the lessons file the PR's diff is identical to before.
+- The whole file with `-n 4` gave 152 passed and 10 failed, the same 10 ids as dev 7536ac3b87's run of it. This task's three tests pass. The 10 include `test_file_notes_linked_root_leads_with_friendly_folder_identity[size2]` (TASK-36513).
+- Preflight passes.
