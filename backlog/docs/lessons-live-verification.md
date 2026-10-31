@@ -1,5 +1,39 @@
 # Lessons: verifying against the real thing
 
+## At high load, the 4 ms samples of a slow, low-CPU callback show where the thread waited, not what cost (TASK-33620.15.21, 2026-10-30)
+
+**Incident.** TASK-33620.15.8 was filed from 4 ms samples taken at load 78-109.
+They put 34 samples in `ConsoleChatStore.publish_durable_turn_identity`.
+
+Re-measured at load 99-127 with exact timers on each piece (48 sends), that
+method took 0.17-0.25 ms (median), and it held 7 of the 184 samples taken
+inside its step.
+
+At that load, samples land wherever the main thread lost the CPU or the GIL:
+- A 161 ms callback with 1.6 ms of CPU had all 10 of its samples in
+  importlib's `ModuleSpec.parent`.
+- A 157 ms post-commit step with 14.8 ms of CPU had 14 of its 18 samples on
+  `SimpleQueue.put` inside `ThreadPoolExecutor.submit`. That is the moment the
+  loop wakes the prompt-history worker thread.
+
+Code that releases the GIL (SQLite calls, stat calls, handing work to a
+thread) collects these waits far more often than pure Python does. For
+example, the trace request's BEGIN IMMEDIATE transaction held the step for
+44-167 ms in 3 of 48 sends, on about 2 ms of CPU.
+
+**What to do.**
+- On a loaded host, rank suspects with per-site timers that record both wall
+  time and thread CPU, and compare the two.
+- If a callback's wall time is many times its CPU, its samples show only where
+  it waited. Do not file the method they land in as the cost.
+
+You can create the load yourself with a bounded generator. In
+`tools/evidence/bd5/M21/kit/m21load.py`, 88 busy `python -I -S` children each
+had their own deadline and a SIGALRM backstop, and the round script stopped
+them. On the 14-core host, load1 went from 4 to 75 in 70-75 s, and fell back
+under 12 within 145-175 s of the stop. Record load1 at every Enter, not only
+when the round starts.
+
 ## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
 
 **Incident.** The Library outcome line passed two review rounds: every test read
