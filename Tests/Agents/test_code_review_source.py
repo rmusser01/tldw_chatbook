@@ -1467,19 +1467,24 @@ def test_distinct_case_spelling_is_accepted_on_a_case_sensitive_filesystem(
     }
 
 
-def test_nfd_spelling_of_an_excluded_non_ascii_file_is_refused(source_case, tmp_path):
-    """An NFD spelling escapes the (unnormalized) exclusion match; the listing
-    check keeps it from reading the excluded NFC file on APFS."""
+@pytest.mark.parametrize(
+    ("excluded_form", "selected_form"), (("NFC", "NFD"), ("NFD", "NFC"))
+)
+def test_other_normalization_of_an_excluded_non_ascii_file_is_refused(
+    source_case, excluded_form, selected_form
+):
+    """The exclusion match itself normalizes (TASK-37655), ahead of the listing
+    check: APFS opens either spelling as the excluded stored file."""
     c = source_case
-    excluded = c.root / "na\u00efve.txt"
+    excluded = c.root / unicodedata.normalize(excluded_form, "na\u00efve.txt")
     excluded.write_text("private\n")
     authority = replace(
         c.authority,
         admitted=replace(c.authority.admitted, exclusions_provider=lambda: (excluded,)),
     )
-    variant = unicodedata.normalize("NFD", "na\u00efve.txt")
+    variant = unicodedata.normalize(selected_form, "na\u00efve.txt")
     context = c.store.create(target_digest="0" * 64)
-    with pytest.raises(ReviewRefused):
+    with pytest.raises(ReviewRefused, match="source_path_unavailable"):
         capture_review_source(
             c.working_tree_target.model_copy(update={"untracked_paths": (variant,)}),
             authority,

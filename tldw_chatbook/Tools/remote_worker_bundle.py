@@ -772,6 +772,7 @@ track is the real answer for shell execution.
 """
 import os
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
 _failures = threading.local()
@@ -1186,6 +1187,18 @@ def merge_sensitive_context(base: SensitivePathContext, *, extra_files: Iterable
             dirs.append(resolved)
     return base._replace(files=tuple(files), dirs=tuple(dirs))
 
+def fold_path_part(part: str) -> str:
+    """One path component in the form every denylist/exclusion compares.
+
+    Case-folded (TASK-19800, see :func:`_compare_key`) AND Unicode
+    normalization-folded (TASK-37655): APFS, like other filesystems that
+    ignore normalization when opening files, opens an NFD ``naïve.txt`` as
+    the stored NFC file, so an exact-codepoint compare let either spelling
+    past a rule written in the other. This is Unicode's canonical caseless
+    match, ``NFD(casefold(NFD(x)))``; ASCII folds exactly as ``casefold``.
+    """
+    return unicodedata.normalize('NFD', unicodedata.normalize('NFD', part).casefold())
+
 def _compare_key(path: Path) -> tuple[str, ...]:
     """The form two paths are compared in by the denylist (TASK-19800).
 
@@ -1224,9 +1237,9 @@ def _compare_key(path: Path) -> tuple[str, ...]:
         path: An already-resolved absolute path.
 
     Returns:
-        The path's components, each casefolded.
+        The path's components, each folded by :func:`fold_path_part`.
     """
-    return tuple((part.casefold() for part in path.parts))
+    return tuple((fold_path_part(part) for part in path.parts))
 
 def _same_path(a: Path, b: Path) -> bool:
     """Whether two resolved paths denote the same file (see :func:`_compare_key`)."""
@@ -3185,13 +3198,13 @@ def _grep_relative_files(pattern: str | re.Pattern[str], *, workspace: Path, mod
 _FoldedExclusion = tuple[str, tuple[str, ...], str]
 
 def _folded_exclusions(exclusions: tuple[SensitiveExclusion, ...]) -> tuple[_FoldedExclusion, ...]:
-    """Case-fold every exclusion's path parts ONCE per call.
+    """Fold every exclusion's path parts ONCE per call.
 
     ``_is_relative_sensitive_path`` used to re-fold ``Path(value).parts`` for
     every exclusion entry for every candidate — O(candidates x exclusions)
     tuple builds that are loop-invariant for one tool invocation.
     """
-    return tuple(((kind, tuple((part.casefold() for part in Path(value).parts)), value) for kind, value in exclusions))
+    return tuple(((kind, tuple((fold_path_part(part) for part in Path(value).parts)), fold_path_part(value)) for kind, value in exclusions))
 
 def _relative_target_is_safe(relative: Path, workspace: Path, exclusions: tuple[SensitiveExclusion, ...], *, is_directory: bool, resolved_workspace: Path | None=None, folded_exclusions: tuple[_FoldedExclusion, ...] | None=None, resolve_regular_targets: bool=True) -> bool:
     """Require both lexical and resolved targets to be admissible for I/O.
@@ -3237,12 +3250,15 @@ def _workspace_relative_path(path: Path, workspace: Path) -> Path:
 def _is_relative_sensitive_path(relative: Path, exclusions: tuple[SensitiveExclusion, ...], *, is_directory: bool, folded_exclusions: tuple[_FoldedExclusion, ...] | None=None) -> bool:
     """Apply parent-derived sensitive exclusions to one relative candidate.
 
+    Rule and candidate are both folded by :func:`fold_path_part` (case AND
+    Unicode normalization, TASK-37655), so neither spelling escapes a rule.
+
     ``folded_exclusions`` is :func:`_folded_exclusions`' once-per-call output;
     ``None`` folds here, which decides identically.
     """
     if folded_exclusions is None:
         folded_exclusions = _folded_exclusions(exclusions)
-    parts = tuple((part.casefold() for part in relative.parts))
+    parts = tuple((fold_path_part(part) for part in relative.parts))
     for kind, value_parts, value in folded_exclusions:
         if kind == 'subtree' and parts[:len(value_parts)] == value_parts:
             return True
@@ -3250,7 +3266,7 @@ def _is_relative_sensitive_path(relative: Path, exclusions: tuple[SensitiveExclu
             return True
         if kind == 'direct_children' and (not is_directory and parts[:-1] == value_parts):
             return True
-        if kind == 'name' and (not is_directory) and (relative.name.casefold() == value):
+        if kind == 'name' and (not is_directory) and (fold_path_part(relative.name) == value):
             return True
     return False
 
@@ -3840,14 +3856,14 @@ def _denylist_pathspecs(repo_root: Path, context: SensitivePathContext | None=No
 
 def _repo_relative_exclusions(workspace_root: Path, repo_root: Path, exclusions: tuple[SensitiveExclusion, ...]) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
-    repo_parts = tuple((part.casefold() for part in repo_root.relative_to(workspace_root).parts))
+    repo_parts = tuple((fold_path_part(part) for part in repo_root.relative_to(workspace_root).parts))
     translated: list[SensitiveExclusion] = []
     for exclusion in exclusions:
         if exclusion.kind == 'name':
             translated.append(exclusion)
             continue
         value_parts = PurePosixPath(exclusion.value).parts if exclusion.value else ()
-        folded_value = tuple((part.casefold() for part in value_parts))
+        folded_value = tuple((fold_path_part(part) for part in value_parts))
         if folded_value[:len(repo_parts)] == repo_parts:
             relative_parts = value_parts[len(repo_parts):]
             translated.append(SensitiveExclusion(exclusion.kind, PurePosixPath(*relative_parts).as_posix() if relative_parts else ''))
@@ -5702,4 +5718,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("7954131274050989da442c58af60a3586538d57cf4c574b6590fc0470f4494f9")
+BUNDLE_SHA256 = _enter_worker_exchange("84b2bdd3a017e573f2bccb52d58c8aca161cc879e5b6590b43dfe386215cd2d5")

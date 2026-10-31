@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,7 @@ import pytest
 from tldw_chatbook.Tools.git_tool_impls import (
     _denylist_pathspecs,
     _glob_escape,
+    _repo_relative_exclusions,
     git_diff,
     git_log,
     git_status,
@@ -675,6 +677,27 @@ def test_exclusions_survive_a_case_variant_spelling(tmp_path: Path) -> None:
     )
     assert ".NETRC" not in out
     assert "keep.txt" in out
+
+
+@pytest.mark.parametrize(("rule_form", "repo_form"), (("NFC", "NFD"), ("NFD", "NFC")))
+def test_repo_relative_exclusions_ignore_unicode_normalization(
+    tmp_path: Path, rule_form: str, repo_form: str
+) -> None:
+    """TASK-37655: git may report the repo root in the other normalization."""
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    repo = tmp_path / unicodedata.normalize(repo_form, "Données") / "repo"
+    rules = (
+        SensitiveExclusion(
+            "file", unicodedata.normalize(rule_form, "Données/repo/a.txt")
+        ),
+        SensitiveExclusion("subtree", unicodedata.normalize(rule_form, "Données")),
+    )
+
+    assert _repo_relative_exclusions(tmp_path, repo, rules) == (
+        SensitiveExclusion("file", "a.txt"),
+        SensitiveExclusion("subtree", ""),
+    )
 
 
 def test_a_location_exclusion_survives_a_case_variant_directory_spelling() -> None:

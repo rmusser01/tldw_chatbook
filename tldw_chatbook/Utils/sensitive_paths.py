@@ -205,6 +205,7 @@ from __future__ import annotations
 
 import os
 import threading
+import unicodedata
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
 
@@ -814,6 +815,19 @@ def merge_sensitive_context(
     return base._replace(files=tuple(files), dirs=tuple(dirs))
 
 
+def fold_path_part(part: str) -> str:
+    """One path component in the form every denylist/exclusion compares.
+
+    Case-folded (TASK-19800, see :func:`_compare_key`) AND Unicode
+    normalization-folded (TASK-37655): APFS, like other filesystems that
+    ignore normalization when opening files, opens an NFD ``naïve.txt`` as
+    the stored NFC file, so an exact-codepoint compare let either spelling
+    past a rule written in the other. This is Unicode's canonical caseless
+    match, ``NFD(casefold(NFD(x)))``; ASCII folds exactly as ``casefold``.
+    """
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", part).casefold())
+
+
 def _compare_key(path: Path) -> tuple[str, ...]:
     """The form two paths are compared in by the denylist (TASK-19800).
 
@@ -852,9 +866,9 @@ def _compare_key(path: Path) -> tuple[str, ...]:
         path: An already-resolved absolute path.
 
     Returns:
-        The path's components, each casefolded.
+        The path's components, each folded by :func:`fold_path_part`.
     """
-    return tuple(part.casefold() for part in path.parts)
+    return tuple(fold_path_part(part) for part in path.parts)
 
 
 def _same_path(a: Path, b: Path) -> bool:

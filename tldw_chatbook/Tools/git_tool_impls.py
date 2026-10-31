@@ -89,6 +89,7 @@ from tldw_chatbook.Tools.local_tool_impls import (
 from tldw_chatbook.Utils.sensitive_paths import (
     SensitiveExclusion,
     SensitivePathContext,
+    fold_path_part,
     is_sensitive_path,
     resolve_sensitive_context,
     sensitive_exclusions_under,
@@ -502,7 +503,7 @@ def _repo_relative_exclusions(
 ) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
     repo_parts = tuple(
-        part.casefold() for part in repo_root.relative_to(workspace_root).parts
+        fold_path_part(part) for part in repo_root.relative_to(workspace_root).parts
     )
     translated: list[SensitiveExclusion] = []
     for exclusion in exclusions:
@@ -510,7 +511,7 @@ def _repo_relative_exclusions(
             translated.append(exclusion)
             continue
         value_parts = PurePosixPath(exclusion.value).parts if exclusion.value else ()
-        folded_value = tuple(part.casefold() for part in value_parts)
+        folded_value = tuple(fold_path_part(part) for part in value_parts)
         if folded_value[: len(repo_parts)] == repo_parts:
             relative_parts = value_parts[len(repo_parts) :]
             translated.append(

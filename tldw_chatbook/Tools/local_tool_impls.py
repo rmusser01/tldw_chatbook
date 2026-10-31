@@ -62,6 +62,7 @@ from typing import Any, BinaryIO, Literal
 from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
 from tldw_chatbook.Utils.path_validation import validate_path
 from tldw_chatbook.Utils.sensitive_paths import (
+    fold_path_part,
     is_git_metadata_write,
     SensitivePathContext,
     SensitiveExclusion,
@@ -1735,24 +1736,28 @@ def _grep_relative_files(
 
 
 
-#: One denylist entry with its path parts case-folded once, ready for the
-#: per-candidate comparisons in :func:`_is_relative_sensitive_path`:
-#: ``(kind, folded value parts, raw value)``. The raw value is kept because
-#: the ``"name"`` rule compares against it verbatim.
+#: One denylist entry with its path parts folded (:func:`fold_path_part`)
+#: once, ready for the per-candidate comparisons in
+#: :func:`_is_relative_sensitive_path`: ``(kind, folded value parts, folded
+#: value)``. The whole folded value serves the ``"name"`` rule.
 _FoldedExclusion = tuple[str, tuple[str, ...], str]
 
 
 def _folded_exclusions(
     exclusions: tuple[SensitiveExclusion, ...],
 ) -> tuple[_FoldedExclusion, ...]:
-    """Case-fold every exclusion's path parts ONCE per call.
+    """Fold every exclusion's path parts ONCE per call.
 
     ``_is_relative_sensitive_path`` used to re-fold ``Path(value).parts`` for
     every exclusion entry for every candidate — O(candidates x exclusions)
     tuple builds that are loop-invariant for one tool invocation.
     """
     return tuple(
-        (kind, tuple(part.casefold() for part in Path(value).parts), value)
+        (
+            kind,
+            tuple(fold_path_part(part) for part in Path(value).parts),
+            fold_path_part(value),
+        )
         for kind, value in exclusions
     )
 
@@ -1831,12 +1836,15 @@ def _is_relative_sensitive_path(
 ) -> bool:
     """Apply parent-derived sensitive exclusions to one relative candidate.
 
+    Rule and candidate are both folded by :func:`fold_path_part` (case AND
+    Unicode normalization, TASK-37655), so neither spelling escapes a rule.
+
     ``folded_exclusions`` is :func:`_folded_exclusions`' once-per-call output;
     ``None`` folds here, which decides identically.
     """
     if folded_exclusions is None:
         folded_exclusions = _folded_exclusions(exclusions)
-    parts = tuple(part.casefold() for part in relative.parts)
+    parts = tuple(fold_path_part(part) for part in relative.parts)
     for kind, value_parts, value in folded_exclusions:
         if kind == "subtree" and parts[: len(value_parts)] == value_parts:
             return True
@@ -1846,6 +1854,10 @@ def _is_relative_sensitive_path(
             not is_directory and parts[:-1] == value_parts
         ):
             return True
-        if kind == "name" and not is_directory and relative.name.casefold() == value:
+        if (
+            kind == "name"
+            and not is_directory
+            and fold_path_part(relative.name) == value
+        ):
             return True
     return False
