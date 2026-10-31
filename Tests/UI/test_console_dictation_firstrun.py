@@ -24,6 +24,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from textual.app import App
+from textual.content import Content
 from textual.widgets import Button, Static
 
 from rich.cells import cell_len
@@ -578,6 +580,17 @@ async def test_a_failed_model_load_ends_preparing_with_one_plain_error(monkeypat
             assert len(transcriber.buffer_calls) == press
 
         assert str(errors[0].args[0]) == str(errors[1].args[0])
+        # Live at 80x24, a fast failure landed while the first-run detail
+        # toast was still up; the two do not fit in 24 rows, so the failure
+        # was cut off until the detail expired and gone about 1 s later. It
+        # must stay up well past the detail.
+        details = [
+            call for call in notify.call_args_list if "minutes" in str(call.args[0])
+        ]
+        assert details, "the first-run detail never showed"
+        detail_seconds = details[0].kwargs.get("timeout") or App.NOTIFICATION_TIMEOUT
+        error_seconds = errors[-1].kwargs.get("timeout") or App.NOTIFICATION_TIMEOUT
+        assert error_seconds >= detail_seconds + 5
         warnings = [
             call
             for call in notify.call_args_list
@@ -585,6 +598,49 @@ async def test_a_failed_model_load_ends_preparing_with_one_plain_error(monkeypat
         ]
         assert warnings == [], "a failed load must not also warn that it went ahead"
         assert composer.draft_text() == "keep this draft"
+
+
+def _painted_toast(call) -> str:
+    """The text a toast paints for one `notify` call, honouring its markup flag."""
+    message = str(call.args[0])
+    if call.kwargs.get("markup", True) is False:
+        return message
+    return Content.from_markup(message).plain
+
+
+@pytest.mark.asyncio
+async def test_a_failure_toast_paints_its_remedy_exactly(monkeypatch):
+    """The failure toast is plain text, never markup (TASK-33621.21).
+
+    Read as markup, the missing-microphone remedy's "[speech_recording]" was
+    taken for a style tag and dropped, so the toast told the user to run an
+    install that adds no microphone support; an error carrying "[/]" would
+    not render at all.
+    """
+    _patch_availability(
+        monkeypatch,
+        availability=voice_module.Availability(
+            ok=False,
+            kind="missing-capture",
+            reason=voice_module.CAPTURE_REASON,
+            remedy=voice_module.CAPTURE_REMEDY,
+        ),
+    )
+    _install_session(monkeypatch, _WarmableDictationService())
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert await pilot.click("#console-dictation")
+        errors = await _wait_for_notices(notify, pilot, 1)
+        await _wait_for_mic_label(composer, pilot, "Dictate")
+
+    assert len(errors) == 1, notify.call_args_list
+    painted = _painted_toast(errors[0])
+    assert "pip install 'tldw_chatbook[speech_recording]'" in painted
 
 
 class _GrowingDownload:
