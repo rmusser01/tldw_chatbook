@@ -484,6 +484,56 @@ def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
     assert app.events[6:8] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[1])]
 
 
+def test_each_step_that_loads_modules_freezes_them_before_the_next(monkeypatch):
+    """The warm-up's objects never wait unfrozen for a UI-loop pass (TASK-33620.15.18).
+
+    Live (head 8e9e9c3409, 160x45, idle host), a Library click at a random
+    moment of the warm-up's window ran a generation-2 collection on the UI
+    loop in 9 of 10 launches (median 5.6 ms) against 0 of 10 without the
+    warm-up, and drew Library's first frame a paired median +10.5 ms later,
+    with no import running when the click arrived in 7 of them. The modules
+    already imported sat unfrozen until the warm-up's last step, so the
+    navigation's allocations made a full pass over them due. A boot freeze
+    no longer walks the frozen set (about 1 ms), so each step that loads
+    modules now freezes them at once.
+
+    Negative control: a step that loads nothing freezes nothing.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.MCP import server as mcp_server
+
+    app = _PassApp()
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
+    first, second = warm.FIRST_SEND_MODULES[:2]
+
+    def fake_import(name):
+        app.events.append(("import", name))
+        if name == first:  # loads a module; the second step finds it loaded
+            monkeypatch.setitem(sys.modules, "_m18_fake_first_send_module", object())
+
+    monkeypatch.setattr(warm.importlib, "import_module", fake_import)
+    monkeypatch.setattr(mcp_server, "prime_local_manifest_source", lambda: None)
+    monkeypatch.setattr(
+        warm,
+        "freeze_long_lived_heap",
+        lambda reason: app.events.append(("freeze", reason)),
+        raising=False,
+    )
+
+    warm.preimport_first_send_modules(app)
+
+    freezes = [i for i, event in enumerate(app.events) if event[0] == "freeze"]
+    assert app.events[:4] == [
+        ("pause", 0.0),
+        ("import", first),
+        ("freeze", "first_send_step"),
+        ("pause", app.pauses[1]),
+    ], "the first step's modules stayed unfrozen into the next step"
+    assert app.events[4] == ("import", second)
+    assert len(freezes) == 2, "a step that loaded nothing froze the heap"
+    assert app.events[-1] == ("freeze", "first_send_preimport")
+
+
 def _raise(*_args, **_kwargs):
     raise RuntimeError("the pass's pacing is unavailable")
 
