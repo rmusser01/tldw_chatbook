@@ -36,3 +36,12 @@ Repairs bind uppercase H/L, give board arrows priority while declining them for 
 
 
 Independent follow-up confirmed all four product repairs. Its inspector regression caught a test race: generic `pilot.pause()` sampled the native scroll animation before completion. The test now awaits `pilot.wait_for_scheduled_animations()`; no product change. The one affected case passed in27.52seconds (`test-runtime/inspector-settlement-1793473494729356900/pytest.log`). Other three exact-head review controls passed independently.
+
+
+## Final ordered integration
+
+Final base: `6946ea0492b1591b8cbf2c4534ba13acebdc8a08` (after PR3156). All five previously reviewed commits remain. Plugins now owns F8, so Kanban is appended on F9; registry entries, palette count, guide, and rendered navigation expectations preserve both destinations. The stale retired-MCP row was removed from the touched rendered-label fixture. Existing destination shortcuts are unchanged.
+
+Canonical CSS regeneration also recovered twelve missing generated MCP suggestion-table/label/hint lines from the already-landed PR3156 source; this is an artifact integration repair, with no MCP source change. All seven changed Python product files have diagnostic, sink, and path-privacy projections identical to this base (new Kanban files contribute none), verified with the inventory scanner. Targeted Ruff and whitespace checks pass.
+
+`test-runtime/final-navigation-1793477130631795500/result.xml`: nine passes, zero failures/errors/skips,31.70seconds. The selection covers route registration, complete shortcut ownership, mounted navigation labels, shell order, palette entries, and actual first-use creation through LocalKanbanService. Source/test/CSS hashes in the sibling manifest still match the final worktree. Earlier feature evidence and limitations remain; no full sweep or release. Final independent integration review remains required.

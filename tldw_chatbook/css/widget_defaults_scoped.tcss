@@ -542,6 +542,18 @@ MCPPermissionsMode #mcp-perm-server-profiles-slot {
     min-height: 0;
 }
 
+MCPPermissionsMode #mcp-perm-suggestions-table {
+    height: auto;
+    max-height: 12;
+    min-height: 0;
+}
+MCPPermissionsMode #mcp-perm-suggestions-label,
+MCPPermissionsMode #mcp-perm-suggestions-hint {
+    height: auto;
+    min-height: 0;
+    color: $text-muted;
+}
+
 /* ===== WIDGET: MCPRail (UI/MCP_Modules/mcp_rail.py) ===== */
 
 

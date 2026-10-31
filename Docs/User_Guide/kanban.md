@@ -1,6 +1,6 @@
 # Kanban — a keyboard-first board of columns and cards
 
-The Kanban destination (nav strip: **Kanban**, or `f8`; command palette:
+The Kanban destination (nav strip: **Kanban**, or `f9`; command palette:
 "kanban" / "board") is a keyboard-first work board over the app's local
 Kanban store — the same `tldw_chatbook_kanban.db` the Kanban service layer
 owns. It is a local, private surface: nothing syncs to a server, and no
