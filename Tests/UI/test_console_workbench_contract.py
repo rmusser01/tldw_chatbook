@@ -23,6 +23,7 @@ from Tests.UI.test_console_native_chat_flow import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+    ConsoleBlockedReason,
     ConsoleControlState,
     build_console_disabled_reason,
 )
@@ -1363,57 +1364,62 @@ def test_console_disabled_reason_copy_prefers_setup_blocker():
         action_id="send",
         has_draft=False,
         send_blocked=True,
-        setup_blocked_reason="Provider setup needed: choose a model",
+        setup_blocked_reason=ConsoleBlockedReason(
+            "Choose a model in Chat settings before sending.", code="model_missing"
+        ),
     )
 
     assert reason == "Send blocked — choose a model to continue"
 
 
+#: TASK-33621.11: the strip follows the blocker CODE the reason carries (the
+#: sentence each code ships with is ``console_setup_blocked_reason``'s). The
+#: substring table this replaced named the wrong blocker whenever a sentence
+#: changed (TASK-2154.12: "model" in "Providers & Models" read "choose a
+#: model"); Tests/Chat/test_console_readiness_codes.py drives each real
+#: readiness blocker through it.
 @pytest.mark.parametrize(
     ("setup_blocked_reason", "expected_reason"),
     (
         (
-            "Provider setup needed: choose a provider",
+            ConsoleBlockedReason(
+                "Choose a provider in Chat settings before sending.",
+                code="provider_missing",
+            ),
             "Send blocked — choose a provider to continue",
         ),
         (
-            "Provider setup needed: API key missing for OpenAI",
+            ConsoleBlockedReason(
+                "Add API key in Settings > Providers & Models before sending.",
+                code="credential_missing",
+            ),
             "Send blocked — add an API key to continue",
         ),
         (
-            "Provider setup needed: configure endpoint",
+            ConsoleBlockedReason(
+                "Save provider endpoint in Chat settings before sending.",
+                code="endpoint_not_saved",
+            ),
             "Send blocked — save the endpoint to continue",
         ),
         (
-            "Provider setup needed: llama.cpp endpoint unavailable",
-            "Send blocked — save the endpoint to continue",
-        ),
-        (
-            "Provider setup needed: verify local runtime",
+            ConsoleBlockedReason(
+                "Finish provider setup before sending.", code="endpoint_invalid"
+            ),
             "Send blocked — finish provider setup to continue",
-        ),
-        # TASK-2154.12: the REAL blocker copy points at the "Providers &
-        # Models" settings screen -- a "model"-first substring match named
-        # the wrong blocker ("choose a model") for missing-key and
-        # missing-endpoint states.
-        (
-            "Add API key in Settings > Providers & Models before sending.",
-            "Send blocked — add an API key to continue",
-        ),
-        (
-            "Save provider endpoint in Settings > Providers & Models before sending.",
-            "Send blocked — save the endpoint to continue",
-        ),
-        # TASK-33005.7 (whole-PR review): the one endpoint copy the Console's
-        # setup gate sends (save_endpoint); the endpoint is set, not saved.
-        (
-            "Save provider endpoint in Chat settings before sending.",
-            "Send blocked — save the endpoint to continue",
         ),
         # TASK-33005.7: a rejected key is never "add an API key".
         (
-            "API key rejected. Update it in Settings > Providers & Models.",
+            ConsoleBlockedReason(
+                "API key rejected. Update it in Settings > Providers & Models.",
+                code="credential_rejected",
+            ),
             "Send blocked — key rejected; update the API key",
+        ),
+        # An uncoded sentence names no blocker, whatever its words say.
+        (
+            "Add API key in Settings > Providers & Models before sending.",
+            "Send blocked — finish provider setup to continue",
         ),
     ),
 )
@@ -1455,7 +1461,10 @@ def test_console_disabled_reason_names_queue_state_never_provider_setup():
             action_id="send",
             has_draft=True,
             send_blocked=True,
-            setup_blocked_reason="Add API key in Settings > Providers & Models before sending.",
+            setup_blocked_reason=ConsoleBlockedReason(
+                "Add API key in Settings > Providers & Models before sending.",
+                code="credential_missing",
+            ),
             queue_blocked_reason="Queue opens once this turn is accepted",
         )
         == "Send blocked — add an API key to continue"

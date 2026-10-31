@@ -148,3 +148,97 @@ def test_an_uncoded_row_never_reads_as_provider_setup():
     assert build_console_inspector_rail_badge(
         inspector_rows=(Row("FAILED run", value="see transcript"),)
     ) == ""
+
+
+# --- AC#2/#5: the Send strip is chosen by the blocker's code ---------------
+
+from tldw_chatbook.Chat.console_display_state import (  # noqa: E402
+    build_console_disabled_reason,
+    console_setup_blocked_reason,
+)
+from tldw_chatbook.Chat.console_session_settings import (  # noqa: E402
+    ConsoleSettingsReadiness,
+)
+
+
+def _structured(blocker, recovery_action, **facets) -> ConsoleSettingsReadiness:
+    """A validated readiness for a blocker only connection evidence yields."""
+    values = {
+        "label": "Not ready",
+        "detail": "A bounded recovery is required.",
+        "native_send_supported": False,
+        "operability": "not_ready",
+        "blocker": blocker,
+        "recovery_action": recovery_action,
+        "configuration": "configured",
+        "configuration_issue": None,
+        "credential": "not_required",
+        "credential_source": "none",
+        "endpoint": "not_tested",
+        "endpoint_category": None,
+        "model": "unconfirmed",
+        "generation": "not_tested",
+        "generation_category": None,
+    }
+    values.update(facets)
+    return ConsoleSettingsReadiness(**values)
+
+
+def _strip(reason) -> str:
+    return build_console_disabled_reason(
+        action_id="send", has_draft=True, send_blocked=True, setup_blocked_reason=reason
+    )
+
+
+STRIP_CASES = [
+    ("credential_missing", lambda: _readiness("openai", "gpt-4.1", _NO_KEY),
+     "Send blocked — add an API key to continue"),
+    ("model_missing", lambda: _readiness("openai", None, _KEY),
+     "Send blocked — choose a model to continue"),
+    # Dev: the strip had a "choose a provider" branch no blocker sentence
+    # ever reached, so a missing provider read "finish provider setup".
+    ("provider_missing", lambda: _readiness("", "gpt-4.1", _KEY),
+     "Send blocked — choose a provider to continue"),
+    ("provider_unsupported", lambda: _readiness("no-such-provider", "x", _KEY),
+     "Send blocked — finish provider setup to continue"),
+    ("credential_rejected", lambda: _structured(
+        "credential_rejected", "configure_credential",
+        endpoint="unreachable", endpoint_category="unauthorized"),
+     "Send blocked — key rejected; update the API key"),
+    ("endpoint_unreachable", lambda: _structured(
+        "endpoint_unreachable", "retry_connection",
+        endpoint="unreachable", endpoint_category="timeout"),
+     "Send blocked — retry the connection to continue"),
+    ("endpoint_not_saved", lambda: _structured(
+        "endpoint_not_saved", "save_endpoint", configuration="incomplete",
+        configuration_issue="credential_missing", credential="missing"),
+     "Send blocked — save the endpoint to continue"),
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "strip"),
+    [case[1:] for case in STRIP_CASES],
+    ids=[case[0] for case in STRIP_CASES],
+)
+def test_each_readiness_blocker_names_its_own_send_strip(build, strip):
+    readiness = build()
+    reason = console_setup_blocked_reason(readiness)
+    assert reason, readiness.blocker
+    assert _strip(reason) == strip
+    # The blocker's sentence is still what the tooltip and a refused Enter show.
+    assert str(reason).endswith(".")
+
+
+def test_the_strip_never_reads_the_blocker_sentence_s_words():
+    """AC#5: a sentence that merely CONTAINS "API key", "model" or
+    "endpoint" is not that blocker. Dev mapped each by substring -- which is
+    how the image refusal ("<model> can't accept images", riding this slot)
+    read "choose a model" (that case: Tests/UI/test_console_send_strip_codes.py).
+    Only the code a real blocker carries names it."""
+    for sentence in (
+        "Add API key in Settings > Providers & Models before sending.",
+        "Choose a model in Chat settings before sending.",
+        "Save provider endpoint in Chat settings before sending.",
+    ):
+        assert _strip(sentence) == "Send blocked — finish provider setup to continue"
