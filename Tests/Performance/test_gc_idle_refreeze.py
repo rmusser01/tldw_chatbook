@@ -72,7 +72,8 @@ class Ops:
     ``freed`` of each re-freeze's ``added`` objects are freed by reference
     counting right after it, as replaced render strips are. ``uncounted``
     more are frozen without being counted, as objects other threads allocate
-    between a re-freeze's count and its freeze are.
+    between a re-freeze's count and its freeze are. ``pending`` objects sit
+    in the unfrozen generations, where a boot freeze counts them.
     """
 
     def __init__(
@@ -86,6 +87,7 @@ class Ops:
         self.added = added
         self.freed = freed
         self.uncounted = uncounted
+        self.pending = 0
         self.calls: list[str] = []
         self.walks = 0
 
@@ -101,6 +103,10 @@ class Ops:
     def freeze_count(self) -> int:
         self.walks += 1
         return self.frozen
+
+    def get_objects(self, generation: int | None = None) -> list[None]:
+        """Fake ``gc.get_objects``: the ``pending`` objects, all in generation 2."""
+        return [None] * self.pending if generation in (None, 2) else []
 
 
 def make(clock: Clock, ops: Ops, **kwargs) -> IdleHeapRefreezer:
@@ -735,10 +741,15 @@ def boot_points_freeze_into(
     monkeypatch.setattr(ui_responsiveness.gc, "collect", lambda generation=2: 0)
     monkeypatch.setattr(ui_responsiveness.gc, "freeze", freeze)
     monkeypatch.setattr(ui_responsiveness.gc, "get_freeze_count", ops.freeze_count)
+    monkeypatch.setattr(ui_responsiveness.gc, "get_objects", ops.get_objects)
 
 
 def adds(ops: Ops, objects: int) -> Callable[[], None]:
-    """A fake ``gc.freeze()`` that moves ``objects`` more into the frozen set."""
+    """A fake ``gc.freeze()`` that moves ``objects`` more into the frozen set.
+
+    Each boot freeze finds ``objects`` in the unfrozen generations.
+    """
+    ops.pending = objects
 
     def freeze() -> None:
         ops.frozen += objects
@@ -768,7 +779,7 @@ def test_a_boot_freeze_after_the_first_maintenance_is_measured_by_the_next_budge
     boot_points_freeze_into(monkeypatch, refreezer, ops, adds(ops, 40_000))
 
     ui_responsiveness.freeze_long_lived_heap("ui_ready")
-    assert ops.walks == 1, "a freeze before the first look walked more than once"
+    assert ops.walks == 0, "a freeze before the first look walked the frozen set"
     refreezer.maintain("conversation_painted")  # first look: 1,040,000, then +100K
     assert not refreezer.compaction_due()  # 100,000 < 0.25 x 1,040,000
     walks = ops.walks
@@ -781,6 +792,46 @@ def test_a_boot_freeze_after_the_first_maintenance_is_measured_by_the_next_budge
     assert ops.walks == walks + 1, (
         "the budget check read the frozen set's size from before the boot freeze"
     )
+
+
+def test_a_boot_freeze_counts_what_it_moves_instead_of_walking_the_frozen_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No boot point walks the permanent generation (TASK-33620.15.18).
+
+    Live on origin/dev 7536ac3b87 (160x45, established profiles), one walk of
+    the permanent generation held the GIL 15-34 ms on an idle host and
+    160-290 ms at a load average of about 110. Before the refreezer's first
+    look each boot point walked it once, only for its DEBUG line; after the
+    first look, twice. The first-send warm-up's closing freeze is one: a key
+    or click sent while it ran reached the app 21-41 ms later than on
+    origin/dev without the warm-up on an idle host, about 280 ms later at
+    load 110.
+
+    Before the first look a boot freeze only freezes: that look measures
+    what it froze. After it, the freeze counts the unfrozen generations it
+    moves (they hold what the boot point froze, not the whole frozen set)
+    and adds that to the baseline.
+
+    Negative control: the next budget check still walks once.
+
+    Args:
+        monkeypatch: Routes the boot points to the fake collector.
+    """
+    ops = Ops(frozen=1_000_000, added=0)
+    refreezer = make(Clock(), ops, min_growth=1_000)
+    boot_points_freeze_into(monkeypatch, refreezer, ops, adds(ops, 40_000))
+
+    ui_responsiveness.freeze_long_lived_heap("ui_ready")
+    assert ops.walks == 0, "a boot freeze before the first look walked the frozen set"
+    refreezer.maintain("conversation_painted")  # the first look
+    walks = ops.walks
+
+    moved = ui_responsiveness.freeze_long_lived_heap("first_send_preimport")
+    assert ops.walks == walks, "a boot freeze after the first look walked the frozen set"
+    assert moved == 40_000
+    assert not refreezer.compaction_due(), "the boot point's objects counted as growth"
+    assert ops.walks == walks + 1, "negative control: the budget check did not re-measure"
 
 
 @pytest.mark.parametrize("frozen_by", ["screen_preimport", "refreeze"])
@@ -843,6 +894,8 @@ def test_a_maintenance_waits_for_a_boot_freeze_on_another_thread(
         ran.set()
 
     ui_loop = threading.Thread(target=maintain_on_the_ui_loop, daemon=True)
+
+    ops.pending = 300_000
 
     def freeze() -> None:
         ops.frozen += 300_000
