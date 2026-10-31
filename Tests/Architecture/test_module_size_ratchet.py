@@ -77,6 +77,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 776,
+    # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     "tldw_chatbook/Chat/console_display_state.py": 2882,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
