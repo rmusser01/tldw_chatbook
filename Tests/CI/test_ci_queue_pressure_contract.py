@@ -456,7 +456,6 @@ ADMISSION_TARGETS = (
     "Tests/UI/test_roleplay_header.py",
     "Tests/UI/test_roleplay_hostile_names.py",
     "Tests/UI/test_roleplay_journeys.py",
-    "Tests/UI/test_roleplay_item_list_app.py",
     "Tests/UI/test_app_factory_cleanup.py",
     # TASK-33008 (Phase 8 review): the footer drops a key the screen lists as
     # unavailable. The footer reads guarded config while it composes, so the
@@ -645,6 +644,9 @@ ADMISSION_2_TARGETS = (
     # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,
     # about 95 s serial).
     "Tests/UI/test_roleplay_import_app.py",
+    # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-30): moved from
+    # admission lane 1, whose worst case with B2b's cases was 32.3-32.7 of 35 min.
+    "Tests/UI/test_roleplay_item_list_app.py",
     # Frame slice B2b T8 (same decision): the items search's placeholder and
     # typed text painted at AA on every measurable theme (bootstrap_profile;
     # 89 themes in one app, about 45 s).

@@ -415,7 +415,6 @@ jobs:
             Tests/UI/test_roleplay_header.py \
             Tests/UI/test_roleplay_hostile_names.py \
             Tests/UI/test_roleplay_journeys.py \
-            Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_app_factory_cleanup.py \
             Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out \
             Tests/Wizards/test_first_run_setup_wizard.py::test_model_status_is_plain_text_that_space_and_enter_cannot_pick \
@@ -463,6 +462,8 @@ jobs:
     # appends the mounted one-Import-picker file (bootstrap_profile; 44 cases,
     # about 95 s serial) and the painted search-placeholder contrast test (89
     # themes in one app, about 45 s).
+    # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-30): moved from admission lane 1, whose worst case with B2b's cases was 32.3-32.7 of 35 min
+    # (the item list's mounted file, Tests/UI/test_roleplay_item_list_app.py).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission, and its own pytest process and bootstrap
@@ -621,6 +622,7 @@ jobs:
             Tests/UI/test_console_session_admitted_roots.py \
             Tests/UI/test_console_edge_focus_restyle_scope.py \
             Tests/UI/test_roleplay_import_app.py \
+            Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
             --timeout=300 \
             --tb=short
