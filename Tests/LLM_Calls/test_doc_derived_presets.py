@@ -350,11 +350,14 @@ def test_existing_presets_keep_their_payload_contract() -> None:
     """The new flags default off for every preset that predates them.
 
     Together asks for stream usage: its live capture showed usage arrives only
-    on request (Tests/fixtures/cloud_live/together.json, TASK-34362).
+    on request (Tests/fixtures/cloud_live/together.json, TASK-34362). Custom
+    endpoints ask too (TASK-35582, automatic-work usage accounting); being
+    tolerant, they retry once without the option when a server rejects it.
     """
     for key in EXISTING_ENGINE_KEYS:
         record = RECORDS_BY_KEY[key]
-        assert record.stream_include_usage is (key == "together"), key
+        asks_usage = key in {"together", "custom-hosted"}
+        assert record.stream_include_usage is asks_usage, key
         assert record.stream_usage_optional is False, key
         assert record.status_envelope_key is None, key
 

@@ -307,7 +307,9 @@ class ConsoleBoundedSection(Vertical):
             return
         self._reconcile_scheduled = False
         self._reconcile_scoped = False
-        self._reconcile()
+        # A closing app cannot deliver the layout needed to settle this pass.
+        if self.is_attached:
+            self._reconcile()
 
     def _wait_for_reconcile_layout(self) -> None:
         """Wait for a covered screen; retain normal visible-screen scheduling."""

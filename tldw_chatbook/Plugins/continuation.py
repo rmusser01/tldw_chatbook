@@ -262,30 +262,40 @@ def capture_pin(
     return canonical_json(pin)
 
 
+def _unsigned_checkpoint_value(checkpoint):
+    from tldw_chatbook.Chat.provider_continuation import _checkpoint_value
+
+    return _checkpoint_value(
+        replace(
+            checkpoint,
+            schema_version=3 if checkpoint.schema_version == 3 else 1,
+            managed_resume=None,
+        )
+    )
+
+
 def seal_checkpoint(
     service, pin_json: str, checkpoint, conversation_id: str, message_id: str
 ):
     """Seal every final store-resolved checkpoint under frozen original custody."""
-    from tldw_chatbook.Chat.provider_continuation import _checkpoint_value
-
     pin = ManagedPin.model_validate_json(pin_json).model_dump(mode="json")
     if (pin["conversation_id"], pin["message_id"]) != (conversation_id, message_id):
         raise PermissionError("managed checkpoint owner changed")
-    body = _checkpoint_value(replace(checkpoint, schema_version=1, managed_resume=None))
+    body = _unsigned_checkpoint_value(checkpoint)
     payload = dict(pin, checkpoint_digest=_digest(body))
     envelope = dict(
         payload, mac=service._coordinator.authority.sign_archive_pin(payload)
     )
     validate_envelope(envelope)
     return replace(
-        checkpoint, schema_version=2, managed_resume=canonical_json(envelope)
+        checkpoint,
+        schema_version=3 if checkpoint.schema_version == 3 else 2,
+        managed_resume=canonical_json(envelope),
     )
 
 
 def verify_constraint(service, constraint: ResumeConstraint) -> dict:
     """Authenticate owner/body and compare exact pins to current ordinary authority."""
-    from tldw_chatbook.Chat.provider_continuation import _checkpoint_value
-
     checkpoint = constraint.checkpoint
     envelope = validate_envelope(json.loads(checkpoint.managed_resume))
     payload = dict(envelope)
@@ -298,7 +308,7 @@ def verify_constraint(service, constraint: ResumeConstraint) -> dict:
         constraint.message_id,
     ):
         raise PermissionError("managed continuation owner changed")
-    body = _checkpoint_value(replace(checkpoint, schema_version=1, managed_resume=None))
+    body = _unsigned_checkpoint_value(checkpoint)
     if _digest(body) != envelope["checkpoint_digest"]:
         raise PermissionError("managed checkpoint body changed")
     verify_pin_authority(service, envelope, authority)

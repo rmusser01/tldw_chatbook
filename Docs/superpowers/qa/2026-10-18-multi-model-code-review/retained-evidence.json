@@ -1,0 +1,127 @@
+{
+  "purpose": "Concise retained reviews and ADR-imported design evidence; historical references to feature ADR240 mean ADR281 in the delivery candidate. Raw archives remain outside PR.",
+  "original_branch": "codex/task-35582-multi-model-review",
+  "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa",
+  "history_bundle": {
+    "path": "/private/tmp/task35582-bounded-recovery/implementation-history.bundle",
+    "sha256": "a34611fa85d92e1344ff5ab6f0457cb2e5c97ef0ef8097497569fbde43110fec",
+    "bytes": 6095386,
+    "prerequisite": "b07fc0425288fb51d17cde5f745051720a7c9db6"
+  },
+  "retained": [
+    {
+      "path": "final-fix/final-review.md",
+      "sha256": "d17215edb0fb5b73c06af4a6f104837342e223551abb20b6961cf7611da099a8",
+      "bytes": 12034,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "final-fix/final-fix-review.md",
+      "sha256": "ffa7f244f0243095dbc294320c8e1770fd55ebd41ba2dae3534c33384e909ac6",
+      "bytes": 8221,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac23/ac23-resource-review.md",
+      "sha256": "159a2d135dbadfaaf253755c3ff00325249ece4ee65c12c338d81b9c1e92b7da",
+      "bytes": 5383,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac23/ac23-regression-review.md",
+      "sha256": "532eeb7a517a890016637e0e419461a2766902e92222b5772ea3aa2e63bb876e",
+      "bytes": 5199,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/fresh43-after-haiku-outcome/outcome-review.md",
+      "sha256": "213b4533aff9c237aa13bba55e564e18d4d97a3c5414f2bbf8bd59d87e264ea2",
+      "bytes": 7848,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/fresh42-after-usage-outcome/haiku-fix/review.md",
+      "sha256": "b6a411f07f640e400cc66711b67082ae617f636a77347fbe5cc85a175d35f600",
+      "bytes": 4476,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/review-wake-repair-design/completed-replay-controller-assessment.md",
+      "sha256": "d10b01cb56d2a5e642585cb01bf194dff232df097fd3830911790f48f37615b5",
+      "bytes": 7209,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/review-wake-repair-design/controller-adoption.md",
+      "sha256": "e248c58523965f7872590aa41377aa52b9307ef3e21bba472856fbc90dee7cfe",
+      "bytes": 3221,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/review-wake-repair-design/design.md",
+      "sha256": "84fe84ad8078dbb089c573d08936dc161a88f1125c53596a252db043b308de7c",
+      "bytes": 18636,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/review-wake-repair-design/diagnosis-controller-correction.md",
+      "sha256": "7a148a9b67b6f19c99c544f280b167a1221211990e7ceb14d72f72d4d355ac13",
+      "bytes": 2090,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/review-wake-repair-design/completed-replay-correction.md",
+      "sha256": "8fae8cd5e26c70289b79fc35f5dbdd55d139c5326e69ef912e63105d83b462a4",
+      "bytes": 13727,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/continuation-identity-design/report.md",
+      "sha256": "dbc73dd6ee5e94f81be0931438e35589f85c707e6bc39a897b1759fd8bb18820",
+      "bytes": 34528,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/continuation-identity-design/controller-clarification.md",
+      "sha256": "e0465877d80f88e5cb6364791325f5e81fb05194f62cebcde800c28cdc67c2d4",
+      "bytes": 3249,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/native-trace-delta-design/controller-adoption.md",
+      "sha256": "02e754717342580890e0685a5caae5a6ca45a5f7003e18c37b989edf6c39543e",
+      "bytes": 2900,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "ac24/native-trace-delta-design/design.md",
+      "sha256": "21670ff1303054d5c8fc46a00609afd77c9eb3cf7be163bac77cd94acb877dbf",
+      "bytes": 26884,
+      "source_commit": "3bce87f15c25e0f2ffb3b4048d11ca6ee1842caa"
+    },
+    {
+      "path": "integration-report.md",
+      "sha256": "09364165c9be0ab1cae8c0d00546b5afb2d89b023e78e9a472ab20b2bc3196f0",
+      "bytes": 5494,
+      "source_commit": "delivery worktree before commit; base e3d07afa"
+    },
+    {
+      "path": "integration-review.md",
+      "sha256": "290882ba32c6515e71a05c7dab09d1ffd22a4eff86ffdaf6ace5076655db7d08",
+      "bytes": 5940,
+      "source_commit": "delivery worktree before commit; base e3d07afa"
+    }
+  ],
+  "historical_requests": 255,
+  "historical_children": 18,
+  "new_requests": 0,
+  "new_children": 0,
+  "ac24": "open",
+  "delivery_base": "e3d07afa65927b9d477fe9f13af619550da9e005",
+  "integration_checks": {
+    "targeted_tests_passed": 97,
+    "dev_stop_controls_passed": 2,
+    "scoped_review": "no findings",
+    "full_suite_run": false
+  }
+}

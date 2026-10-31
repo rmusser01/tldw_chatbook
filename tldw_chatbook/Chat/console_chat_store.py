@@ -62,8 +62,6 @@ from tldw_chatbook.Agents.agent_models import (
     FinalContinuation,
     ProviderContinuationEvent,
     ToolBatchReady,
-    ToolCallExecuting,
-    ToolCallFinished,
 )
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Character_Chat.character_mood import detect_character_mood
@@ -270,10 +268,11 @@ from tldw_chatbook.Chat.message_metadata import (
     terminal_receipt_id_for_message,
 )
 from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     read_provider_continuation_json,
-    transition_provider_call,
+    validate_continuation_restore,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.rag_scope import RagScope, SessionScopeHolder, serialize_scope
@@ -16503,13 +16502,29 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 len(self._generation_attempt_tokens),
             )
 
-    def begin_generation_attempt(self, message_id: str) -> int:
+    def begin_generation_attempt(
+        self,
+        message_id: str,
+        *,
+        expected_continuation: ProviderContinuationCheckpoint | None = None,
+        expected_continuation_message_version: int | None = None,
+    ) -> int:
         """Issue and freeze a new process-local token for one assistant attempt."""
         with self._generation_owner_scope(message_id):
             message = self._message_or_raise(message_id)
             self._reject_quarantined_generation_mutation(message)
             if message.role is not ConsoleMessageRole.ASSISTANT:
                 raise ValueError("Only assistant messages can own generations.")
+            from .console_continuation_binding import claims_resume_owner
+
+            if claims_resume_owner(
+                message,
+                expected_continuation,
+                expected_continuation_message_version,
+                self.persistence,
+            ):
+                message.status = "pending"
+                self._begin_new_terminal_attempt(message)
             with self._generation_owner_locks_guard:
                 self._generation_attempt_sequence += 1
                 token = self._generation_attempt_sequence
@@ -21018,11 +21033,29 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             )
         return ContinuationDurabilityResult(True, "portable_projection_durable")
 
+    def validate_live_native_trace_owner(
+        self, cursor, *, message_id, generation_token, checkpoint, message_version
+    ) -> None:
+        """Recheck acknowledged current ownership in the trace writer transaction."""
+        with self._generation_owner_scope(message_id):
+            self._require_generation_attempt_locked(message_id, generation_token)
+            from .console_continuation_binding import require_live_native_owner
+
+            require_live_native_owner(
+                cursor,
+                self._message_or_raise(message_id),
+                checkpoint=checkpoint,
+                message_version=message_version,
+                current=generation_token is not None
+                and self._message_is_on_active_path(message_id),
+            )
+
     @_fork_continuation_event_transition
     def persist_provider_continuation_event(
         self,
         event: ProviderContinuationEvent,
         *,
+        continuation_target: ContinuationRestoreTarget | None = None,
         checkpoint_finalizer: (
             Callable[..., ProviderContinuationCheckpoint] | None
         ) = None,
@@ -21057,7 +21090,19 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 "Provider continuation could not be saved; retry or discard the interrupted run."
             )
 
-        checkpoint, content = self._continuation_event_value(message, event)
+        from .console_continuation_binding import (
+            continuation_event_value,
+            validate_durable_continuation_binding,
+        )
+
+        checkpoint, content = continuation_event_value(message, event)
+        validate_durable_continuation_binding(
+            message,
+            checkpoint,
+            continuation_target,
+            self.dispatch_recovery_for_session(self._message_session_index[message.id]),
+            has_finalizer=checkpoint_finalizer is not None,
+        )
         if checkpoint_finalizer is not None:
             session_id = self._message_session_index[message.id]
             conversation_id = self.persist_session_if_needed(session_id)
@@ -21069,6 +21114,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 message.persisted_message_id or message.id,
                 context.run_id,
             )
+            validate_continuation_restore(checkpoint, continuation_target)
+            if checkpoint.managed_resume is None:
+                raise RuntimeError("Managed continuation seal is unavailable.")
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")
@@ -21291,54 +21339,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         ):
             return None
         return self._snapshot(message)
-
-    @staticmethod
-    def _continuation_event_value(
-        message: ConsoleChatMessage,
-        event: ProviderContinuationEvent,
-    ) -> tuple[ProviderContinuationCheckpoint, str]:
-        """Resolve a typed event without logging its private payload."""
-        current = message.provider_continuation
-        if isinstance(event, ToolBatchReady):
-            if event.expected_checkpoint_revision is None:
-                if current is not None:
-                    raise RuntimeError("Continuation revision conflict.")
-            elif (
-                current is None
-                or current.checkpoint_revision != event.expected_checkpoint_revision
-            ):
-                raise RuntimeError("Continuation revision conflict.")
-            return event.checkpoint, message.content
-        if isinstance(event, FinalContinuation):
-            if event.expected_checkpoint_revision is None:
-                if current is not None:
-                    raise RuntimeError("Continuation revision conflict.")
-            elif (
-                current is None
-                or current.checkpoint_revision != event.expected_checkpoint_revision
-            ):
-                raise RuntimeError("Continuation revision conflict.")
-            return event.checkpoint, event.assistant_content
-        if current is None:
-            raise RuntimeError("Durable continuation owner is unavailable.")
-        if isinstance(event, ToolCallExecuting):
-            checkpoint = transition_provider_call(
-                current,
-                call_id=event.call_id,
-                expected_revision=event.expected_checkpoint_revision,
-                target="executing",
-            )
-            return checkpoint, message.content
-        if isinstance(event, ToolCallFinished):
-            checkpoint = transition_provider_call(
-                current,
-                call_id=event.call_id,
-                expected_revision=event.expected_checkpoint_revision,
-                target=event.target_state,
-                result=event.result,
-            )
-            return checkpoint, message.content
-        raise RuntimeError("Unsupported continuation event.")
 
     def _enqueue_sync_v2_message_if_ready(
         self,

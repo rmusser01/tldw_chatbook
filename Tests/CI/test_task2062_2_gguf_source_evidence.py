@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -278,6 +281,30 @@ def test_workflow_runs_every_exact_node_once_with_only_bounded_flags() -> None:
         "in",
         *REQUIRED_UI_NODES,
         "do",
+        "if",
+        "[[",
+        "$RUNNER_OS",
+        "==",
+        "Windows",
+        "&&",
+        "$node",
+        "==",
+        REQUIRED_UI_NODES[1],
+        "]];",
+        "then",
+        "python",
+        "Tests/Backup_Recovery/startup_timing_diagnostic.py",
+        "--source",
+        "$PWD",
+        "--node",
+        "$node",
+        "--label",
+        "candidate",
+        "--no-profile",
+        "--timeout=$GGUF_APP_TIMEOUT",
+        "||",
+        "failed=1",
+        "else",
         "TLDW_TEST_PRIVATE_PROFILE_NODE=$node",
         "python",
         "-m",
@@ -287,13 +314,68 @@ def test_workflow_runs_every_exact_node_once_with_only_bounded_flags() -> None:
         "-v",
         "||",
         "failed=1",
+        "fi",
         "done",
         "exit",
         "$failed",
     )
-    selected += tuple(token for token in ui_tokens if token.startswith("Tests/"))
+    selected += tuple(
+        token
+        for token in ui_tokens[: ui_tokens.index("do")]
+        if token.startswith("Tests/")
+    )
     assert selected == REQUIRED_NODES + REQUIRED_UI_NODES
     assert len(selected) == len(set(selected))
+
+
+@pytest.mark.parametrize("runner_os", ["Windows", "Linux", "macOS"])
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_original_ui_nodes_execute_once_and_preserve_failure(runner_os, exit_code):
+    _text, workflow = _workflow()
+    step = _named_step(_only_job(workflow), EXPECTED_STEP_NAMES[-2])
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'printf "%s\\n" "$PWD"\npython() { printf "%s\\n" "$@"; printf "\\n"; return "$FAKE_EXIT"; }\n'
+            + step["run"],
+        ],
+        env={
+            **os.environ,
+            "RUNNER_OS": runner_os,
+            "GGUF_APP_TIMEOUT": "180" if runner_os == "Windows" else "60",
+            "FAKE_EXIT": str(exit_code),
+        },
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    source, _, output = result.stdout.partition("\n")
+    calls = [call.splitlines() for call in output.strip().split("\n\n")]
+    assert len(calls) == len(REQUIRED_UI_NODES)
+    for node, call in zip(REQUIRED_UI_NODES, calls, strict=True):
+        if runner_os == "Windows" and node == REQUIRED_UI_NODES[1]:
+            assert call == [
+                "Tests/Backup_Recovery/startup_timing_diagnostic.py",
+                "--source",
+                source,
+                "--node",
+                node,
+                "--label",
+                "candidate",
+                "--no-profile",
+                "--timeout=180",
+            ]
+        else:
+            assert call == [
+                "-m",
+                "pytest",
+                node,
+                "--timeout=180" if runner_os == "Windows" else "--timeout=60",
+                "-v",
+            ]
+    assert result.returncode == (1 if exit_code else 0)
 
 
 def test_every_workflow_node_names_one_existing_test_function() -> None:

@@ -540,6 +540,7 @@ exclude = [
     "assets/tiktoken_cache/NOTICE.txt",
     "assets/tiktoken_cache/manifest.json",
 ]
+"tldw_chatbook.Agents" = ["code_review_guides/review.md", "code_review_guides/verify.md"]
 "tldw_chatbook.Canvas" = [
     "guides/basics.md",
     "guides/controls.md",

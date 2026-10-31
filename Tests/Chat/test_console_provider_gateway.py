@@ -338,6 +338,7 @@ def _prepared_request_with_continuation(
         semantic,
         continuation_target=ContinuationRestoreTarget(
             provider=provider,
+            selected_provider=resolution.selected_provider or resolution.provider,
             model=resolution.model or "",
             protocol="chat_completions",
             api_base_url=resolution.base_url,
@@ -431,6 +432,96 @@ def test_final_value_reconstructor_matches_real_gateway_builder(
     actual = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
 
     assert reconstruct_provider_gateway_kwargs(resolution, prepared) == actual
+
+
+@pytest.mark.parametrize(
+    ("execution_key", "base_url", "expected"),
+    [
+        (
+            "custom-hosted",
+            "https://custom.invalid/v1/chat/completions",
+            "https://custom.invalid/v1",
+        ),
+        (
+            "custom-hosted",
+            "https://custom.invalid/v1/chat/completions/",
+            "https://custom.invalid/v1",
+        ),
+        ("custom-hosted", "https://custom.invalid/v1/", "https://custom.invalid/v1"),
+        ("custom-hosted", "https://custom.invalid/v1", "https://custom.invalid/v1"),
+        ("custom-hosted", "", None),
+        ("custom-hosted", "/", None),
+        (
+            "custom-openai-api",
+            "https://custom.invalid/v1/chat/completions/",
+            "https://custom.invalid/v1/chat/completions/",
+        ),
+        (
+            "custom-openai-api-2",
+            "https://custom.invalid/v1/chat/completions",
+            "https://custom.invalid/v1/chat/completions",
+        ),
+        ("vllm", "http://127.0.0.1:9099/v1/", "http://127.0.0.1:9099/v1/"),
+        (
+            "databricks",
+            "https://workspace.invalid/openai/v1",
+            "https://workspace.invalid/openai/v1",
+        ),
+        ("openai", "https://api.openai.com/v1", None),
+        ("openai", "https://proxy.invalid/v1/", "https://proxy.invalid/v1/"),
+    ],
+)
+def test_final_value_reconstructor_preserves_adapter_endpoint_projection(
+    execution_key, base_url, expected
+):
+    resolution = ConsoleProviderResolution(
+        provider=execution_key,
+        execution_key=execution_key,
+        base_url=base_url,
+        model="synthetic-model",
+        ready=True,
+    )
+    gateway = ConsoleProviderGateway()
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    actual = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+    reconstructed = reconstruct_provider_gateway_kwargs(resolution, prepared)
+
+    assert actual.get("api_base_url") == expected
+    assert reconstructed == actual
+    assert resolution.base_url == base_url
+
+
+def test_custom_hosted_forged_endpoint_still_refuses_final_value_alignment():
+    from tldw_chatbook.Chat.Chat_Functions import project_chat_handler_kwargs
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        verify_provider_request_shadow,
+    )
+    from tldw_chatbook.Chat.console_trace_provenance import TraceOmissionReason
+
+    resolution = ConsoleProviderResolution(
+        provider="custom-hosted",
+        execution_key="custom-hosted",
+        base_url="https://custom.invalid/v1/chat/completions",
+        model="synthetic-model",
+        ready=True,
+    )
+    gateway = ConsoleProviderGateway()
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    expected = reconstruct_provider_gateway_kwargs(resolution, prepared)
+    forged = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+    forged["api_base_url"] = "https://forged.invalid/v1"
+    shadow = verify_provider_request_shadow(
+        actual_kwargs=forged,
+        expected_kwargs=expected,
+        provenance=prepared.provenance,
+        project_handler_kwargs=lambda values: project_chat_handler_kwargs(
+            values.pop("api_endpoint"), values
+        ),
+    )
+
+    assert not shadow.available
+    assert shadow.omission_reason is TraceOmissionReason.ALIGNMENT_MISMATCH
+    assert shadow.boundary_kwargs == {} and shadow.handler_kwargs == {}
 
 
 @pytest.mark.asyncio
@@ -1982,7 +2073,13 @@ async def test_real_resolution_pins_provider_continuation_protocol_before_prepar
             ],
         }
     )
-    target = ContinuationRestoreTarget(provider_key, model, protocol, base_url)
+    target = ContinuationRestoreTarget(
+        provider_key,
+        model,
+        protocol,
+        base_url,
+        selected_provider=resolution.selected_provider or resolution.provider,
+    )
 
     assert resolution.ready is True
     assert resolution.continuation_protocol == protocol
@@ -2078,6 +2175,7 @@ def test_gateway_prepare_budgets_private_owner_group_on_real_production_path() -
     )
     target = ContinuationRestoreTarget(
         provider="deepseek",
+        selected_provider="deepseek",
         protocol="responses",
         model="deepseek-v4-flash",
         api_base_url="https://api.deepseek.com/v1",
@@ -2859,6 +2957,65 @@ async def test_resolve_for_send_openai_uses_env_key_and_execution_key() -> None:
     assert resolved.api_key_source == "env:OPENAI_API_KEY"
     assert "sk-test-secret" not in resolved.visible_copy
     assert "sk-test-secret" not in repr(resolved)
+
+
+@pytest.mark.asyncio
+async def test_shipped_default_continuation_destinations_stay_durable() -> None:
+    """Every ready continuation-capable provider keeps a durable tuple.
+
+    Only moonshot, zai, deepseek and engine presets produce provider
+    continuations. With the shipped default config each one that is ready
+    resolves to a destination that records its continuation tuple, so making
+    durability optional (credentialed/query/oversized bases) costs no default
+    setup its resume. Legacy ``chat_with_<provider>`` handlers have no
+    continuation protocol at all.
+    """
+    import tomllib
+
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    defaults = tomllib.loads(app_config.CONFIG_TOML_CONTENT)
+    environ = {
+        section["api_key_env_var"]: "probe-key-1234567890"
+        for section in defaults.get("api_settings", {}).values()
+        if isinstance(section, dict) and section.get("api_key_env_var")
+    }
+    environ.update(
+        {
+            name: "probe-key-1234567890"
+            for name in ("MOONSHOT_API_KEY", "ZAI_API_KEY", "DEEPSEEK_API_KEY")
+        }
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": []})
+        )
+    ) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client, config_provider=lambda: defaults, environ=environ
+        )
+
+        async def resolve(provider):
+            return await gateway.resolve_for_send(
+                ConsoleProviderSelection(
+                    provider=provider, explicit_model="probe-model"
+                )
+            )
+
+        ready = []
+        for key in ["moonshot", "zai", "deepseek"] + [r.key for r in ENGINE_RECORDS]:
+            resolved = await resolve(key)
+            if not resolved.ready:
+                # Workspace-URL presets block until a base URL is configured.
+                assert key in {"azure", "cloudflare", "custom-hosted", "databricks"}
+                continue
+            ready.append(key)
+            assert resolved.continuation_protocol, key
+            assert resolved.resolved_destination.continuation_provider, key
+        assert {"moonshot", "zai", "deepseek", "arcee", "together"} <= set(ready)
+        for legacy in ("openai", "anthropic"):
+            assert (await resolve(legacy)).continuation_protocol is None, legacy
 
 
 @pytest.mark.asyncio

@@ -450,3 +450,142 @@ def test_changing_back_to_on_device_clears_an_active_disclosure() -> None:
 
     assert returned.resolved_destination.egress_class is ConsoleEgressClass.ON_DEVICE
     assert returned.disclosure is None
+
+
+def test_frozen_continuation_tuple_preserves_full_base_and_private_provenance():
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpointValidationError,
+        dump_console_resolved_destination_json,
+        parse_console_resolved_destination_json,
+    )
+    from tldw_chatbook.Chat.console_endpoint_provenance import ConsoleEndpointProvenance
+    from tldw_chatbook.Chat.console_library_destination import (
+        resolve_console_destination,
+    )
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
+
+    resolution = ConsoleProviderResolution(
+        provider="custom-ep:identity-a",
+        selected_provider="custom-ep:identity-a",
+        execution_key="custom-hosted",
+        model="identity-model",
+        base_url="http://127.0.0.1:8010/v1",
+        ready=True,
+        continuation_protocol="chat_completions",
+    )
+    destination = resolve_console_destination(resolution)
+    assert destination.endpoint_identity == "http://127.0.0.1:8010"
+    assert destination.continuation_base_url == "http://127.0.0.1:8010/v1"
+    assert destination.continuation_provider == "custom-hosted"
+    assert destination.continuation_protocol == "chat_completions"
+    assert (
+        parse_console_resolved_destination_json(
+            dump_console_resolved_destination_json(destination)
+        )
+        == destination
+    )
+    for altered in (
+        replace(destination, continuation_protocol=None),
+        replace(destination, continuation_protocol="responses"),
+        replace(
+            destination, continuation_base_url="https://user:secret@example.com/v1"
+        ),
+    ):
+        with pytest.raises(ConsoleDispatchCheckpointValidationError):
+            dump_console_resolved_destination_json(altered)
+    ephemeral = resolve_console_destination(
+        replace(
+            resolution, endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION
+        )
+    )
+    assert ephemeral.continuation_base_url is None
+    assert "127.0.0.1" not in dump_console_resolved_destination_json(ephemeral)
+
+
+def test_destination_v1_bytes_and_v2_size_limit_are_unchanged():
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchCheckpointValidationError,
+        dump_console_resolved_destination_json,
+        parse_console_resolved_destination_json,
+    )
+
+    legacy = '{"provider":"deepseek","model":"model","endpoint_identity":"https://api.deepseek.com","egress_class":"public_network"}'
+    destination = parse_console_resolved_destination_json(legacy)
+    assert dump_console_resolved_destination_json(destination) == legacy
+    bound = replace(
+        destination,
+        continuation_provider="deepseek",
+        continuation_protocol="responses",
+        continuation_base_url="https://example.com/" + "x" * 2000,
+    )
+    with pytest.raises(ConsoleDispatchCheckpointValidationError):
+        dump_console_resolved_destination_json(bound)
+    for payload in (
+        legacy[:-1] + ',"schema_version":2}',
+        legacy[:-1] + ',"schema_version":3}',
+    ):
+        with pytest.raises(ConsoleDispatchCheckpointValidationError):
+            parse_console_resolved_destination_json(payload)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "",
+        "https://user:secret@example.com/v1",
+        "https://example.com/v1?key=value",
+        "https://example.com/v1#fragment",
+        "https://example.com/" + "x" * 2100,
+    ],
+    ids=["empty", "credentials", "query", "fragment", "oversized"],
+)
+def test_plain_send_destination_degrades_when_continuation_cannot_be_durable(
+    base_url,
+):
+    """A send never fails because its continuation cannot be recorded durably."""
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        dump_console_resolved_destination_json,
+    )
+
+    destination = resolve_console_destination(
+        ConsoleProviderResolution(
+            provider="custom-ep:plain",
+            selected_provider="custom-ep:plain",
+            execution_key="custom-hosted",
+            model="plain-model",
+            base_url=base_url,
+            ready=True,
+            continuation_protocol="chat_completions",
+        )
+    )
+
+    assert destination.provider == "custom-ep:plain"
+    assert (
+        destination.continuation_provider,
+        destination.continuation_protocol,
+        destination.continuation_base_url,
+    ) == (None, None, None)
+    assert "secret" not in dump_console_resolved_destination_json(destination)
+
+
+def test_engine_preset_without_configured_base_pins_the_engine_default():
+    """An unconfigured engine preset is durable at the URL the engine sends to."""
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    destination = resolve_console_destination(
+        ConsoleProviderResolution(
+            provider="arcee",
+            execution_key="arcee",
+            model="arcee-model",
+            base_url="",
+            ready=True,
+            continuation_protocol="chat_completions",
+        )
+    )
+
+    assert destination.continuation_provider == "arcee"
+    assert destination.continuation_base_url == RECORDS_BY_KEY["arcee"].default_base_url

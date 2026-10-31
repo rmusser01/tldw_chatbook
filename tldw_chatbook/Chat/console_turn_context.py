@@ -632,6 +632,9 @@ def _detached_destination(
         endpoint_identity=str(destination.endpoint_identity),
         egress_class=destination.egress_class,
         endpoint_provenance=destination.endpoint_provenance,
+        continuation_provider=destination.continuation_provider,
+        continuation_protocol=destination.continuation_protocol,
+        continuation_base_url=destination.continuation_base_url,
     )
 
 

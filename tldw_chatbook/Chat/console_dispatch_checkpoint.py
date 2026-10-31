@@ -143,6 +143,10 @@ class ConsoleResolvedDestination:
         ConsoleEndpointProvenance.DURABLE_CONFIGURATION
     )
 
+    continuation_provider: str | None = field(default=None, repr=False)
+    continuation_protocol: str | None = field(default=None, repr=False)
+    continuation_base_url: str | None = field(default=None, repr=False)
+
     @property
     def identity_key(self) -> tuple[str, str | None, str, ConsoleEgressClass]:
         """Return the stable destination identity used by retry revalidation."""
@@ -598,15 +602,48 @@ def dump_console_resolved_destination_json(
     )
     if not _credential_free_endpoint(endpoint_identity):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
-    return _bounded_dump(
-        {
-            "provider": _string(destination.provider),
-            "model": _string(destination.model, optional=True),
-            "endpoint_identity": endpoint_identity,
-            "egress_class": destination.egress_class.value,
-        },
-        CHECKPOINT_DESTINATION_MAX_BYTES,
+    data = {
+        "provider": _string(destination.provider),
+        "model": _string(destination.model, optional=True),
+        "endpoint_identity": endpoint_identity,
+        "egress_class": destination.egress_class.value,
+    }
+    values = (
+        destination.continuation_provider,
+        destination.continuation_protocol,
+        destination.continuation_base_url,
     )
+    if any(value is not None for value in values):
+        from tldw_chatbook.Chat.provider_continuation import (
+            ContinuationRestoreTarget,
+            validate_continuation_target,
+        )
+
+        try:
+            validate_continuation_target(
+                ContinuationRestoreTarget(
+                    provider=values[0],
+                    protocol=values[1],
+                    model=destination.model,
+                    api_base_url=values[2],
+                    selected_provider=destination.provider,
+                )
+            )
+        except ValueError:
+            raise ConsoleDispatchCheckpointValidationError(
+                "Invalid checkpoint data."
+            ) from None
+        if (
+            destination.endpoint_provenance
+            != ConsoleEndpointProvenance.EPHEMERAL_SESSION
+        ):
+            data.update(
+                schema_version=2,
+                continuation_provider=values[0],
+                continuation_protocol=values[1],
+                continuation_base_url=values[2],
+            )
+    return _bounded_dump(data, CHECKPOINT_DESTINATION_MAX_BYTES)
 
 
 def parse_console_resolved_destination_json(
@@ -618,7 +655,19 @@ def parse_console_resolved_destination_json(
         or len(value.encode("utf-8")) > CHECKPOINT_DESTINATION_MAX_BYTES
     ):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
-    data = _exact_mapping(_strict_load(value), _DESTINATION_KEYS)
+    raw = _strict_load(value)
+    version = raw.get("schema_version") if type(raw) is dict else None
+    keys = _DESTINATION_KEYS
+    if version is not None:
+        if type(version) is not int or version != 2:
+            raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
+        keys += (
+            "schema_version",
+            "continuation_provider",
+            "continuation_protocol",
+            "continuation_base_url",
+        )
+    data = _exact_mapping(raw, keys)
     endpoint_identity = cast(str, _string(data["endpoint_identity"]))
     if not _credential_free_endpoint(endpoint_identity):
         raise ConsoleDispatchCheckpointValidationError("Invalid checkpoint data.")
@@ -628,6 +677,15 @@ def parse_console_resolved_destination_json(
             model=_string(data["model"], optional=True),
             endpoint_identity=endpoint_identity,
             egress_class=ConsoleEgressClass(_string(data["egress_class"])),
+            continuation_provider=_string(data["continuation_provider"])
+            if version == 2
+            else None,
+            continuation_protocol=_string(data["continuation_protocol"])
+            if version == 2
+            else None,
+            continuation_base_url=_string(data["continuation_base_url"])
+            if version == 2
+            else None,
             endpoint_provenance=(
                 ConsoleEndpointProvenance.EPHEMERAL_SESSION
                 if endpoint_identity == EPHEMERAL_SESSION_ENDPOINT_OMITTED

@@ -1950,7 +1950,8 @@ async def test_console_registers_footer_workbench_shortcuts():
             # TASK-33004.7 review: the self-evident Enter, the rarer Y and the
             # F6-paired Shift+F6 trail, so 211x44 keeps Alt+I/Alt+A/Alt+C.
             "Ctrl+P palette | Y trace | Enter send / queue | "
-            "Shift+F6 previous pane | Ctrl+Q quit"
+            # TASK-35582: review reports trail, so narrow footers drop it first.
+            "Shift+F6 previous pane | U review reports | Ctrl+Q quit"
         )
 
         await console.remove()

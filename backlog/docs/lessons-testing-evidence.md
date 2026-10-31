@@ -129,6 +129,40 @@ tests read and leave out `Docs/superpowers` and `Docs/QA`. A red that appears
 only in such a tree (a missing `.git` or doc) is not a branch regression.
 Compare failing ids only.
 
+## A correct refusal still needs a usable recovery path (TASK-35582, 2026-10-29)
+
+**Incident.** After accepting four dispositions, the live verifier requested lines
+1–10 from captured seven/five-line files three times and became stuck. Strict
+range validation was correct, but the tool returned only `invalid_source_range`;
+the runtime also discarded detailed error content for reads. An offline replay
+of those arguments reached the consecutive failed-tool-call guard, correcting
+the initial attribution to the separate permission-denial guard. Bounded retry
+arguments passed through actual native/fenced model messages let scripted turns
+recover and complete with the original sealing checks intact.
+
+**What to do.** Reproduce the precise call sequence through the runtime before
+changing a safety limit. Check that actionable, capacity-bounded recovery feedback
+actually reaches the model and that ignoring it still stops. Scripted compliance
+proves the recovery contract, not that a live model will follow it.
+
+## Request-shape tests can miss stale continuation state (TASK-35582, 2026-10-29)
+
+**Incident.** The instruction-deferral regression exercised the real outgoing
+Console/provider request builder but returned plain `ModelTurn` objects without
+canonical checkpoints. It passed after correcting request fields. A later failed
+live run retained four pending reads with no dispatch between model requests.
+Offline replay of a valid local response against that exact checkpoint failed
+continuation validation. The deferral branch had sent protocol result stubs
+without terminalizing the canonical calls. Eight checkpoint-bearing regressions
+failed before settling the calls through normal persistence/acknowledgment and
+passed afterward. The old response was not retained, so exact historical error
+attribution remains limited.
+
+**What to do.** When testing a tool-result round trip, carry the real response
+checkpoint into the next request and response parser, including skipped or
+deferred tool calls. Assert terminal state and save/acknowledgment failures before
+the next request; valid outgoing JSON alone does not prove a valid round trip.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -830,6 +864,26 @@ the read, assert it returns). Check the stack's siblings too: here three display
 builders made the same call, and fixing only the first would have moved the wait.
 
 **Follow-up (2026-10-19).** That fix was not enough: after it merged the test failed 7 times in 31 runs, every time at a read on the same full UI sync that the first stacks never reached. A pin that runs the whole sync with the rebuild starting at its transcript step then found two more, and fixing those exposed another. Pin the whole path the stack ran on, from the await where the hold can begin, not only the read the stack named; and before making a live read defer, check how often ordinary work holds its lock (here: constantly, so the sync deferred on every pass and another test broke 5 of 5).
+## A fresh kernel connection is not retired by held-cache close (TASK-35582, 2026-10-26)
+
+**Incident.** One native Console review test passed but retained database handles
+after controller/app shutdown. Keeping its exact owners alive showed one Chat
+worker handle, one AgentRuns MainThread handle and seven Workspace foreign-thread
+handles. The test's `db._get_connection()` assertions created an unheld AgentRuns
+connection; ordinary `close()` only retires the held thread-local connection.
+Using the existing held accessor removed that test leak. Chat's existing
+post-shutdown `quiesce_connections` retired its registered handle. Workspace's
+thread-affine handles remained seven; crossing threads raised SQLite's ownership
+error. The ten-case gate still warned at +238 FDs.
+
+**What to do.** Keep read assertions inside the owner's held connection API or
+explicitly close each newly acquired connection at its creation scope. After
+runtime settlement, use existing per-owner quiescence where available and assert
+the native owner count. Do not infer all-thread retirement from ordinary close,
+registry bookkeeping or passing tests. The durable
+[qualification record](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+retains before/after counts and the unresolved Workspace boundary.
+
 
 ## Attach completion does not retire queued mount refreshes (TASK-34406.5, 2026-10-16)
 
@@ -22517,3 +22571,70 @@ test directly replaces settings and before acting on them. Its existing held-rea
 regression verifies old revision 1 is discarded and revision 2 renders; its bounded
 wait still refuses closed/disposed owners. Keep the real modal-open and unsaved-edit
 assertions, rather than retrying the action or weakening its ownership checks.
+
+## Exercise body-free tool projections through actual paging
+
+**TASK-35582 Task5, 2026-10-23.** Real review children reading an unchanged nested
+helper at a 1024-character result cap stopped after two pages even though direct
+source paging tests passed. The provider's privacy projection omitted all call
+arguments, so cycle detection treated resolve, read and cursor operations as the
+same repeated call. An opaque hash of canonical arguments preserves operation
+identity without publishing paths or bodies. Native and fenced gateway tests now
+assert the complete concatenated source, each bounded JSON page, instruction
+activation before evidence, and equal fingerprints only for identical calls.
+Direct source tests alone did not cover the runtime cycle/append boundary.
+
+
+## UI-thread guard routing does not prove Stop lock ordering
+
+**TASK-35582 Task9 review, 2026-10-26.** Owner-loop/worker guard tests passed while
+native report rendering still held the review publication lock across a synchronous
+Textual guard. A competing-thread lock probe failed on original reads, submissions
+and source reads. A mounted native schedule now retains an actual continuation
+boundary, runs Stop while the reader is awaiting its UI guard, and verifies both
+successful fencing and the reader's subsequent refusal. Pin the data with a lease,
+call UI authority outside publication locks (including outer callers), then check
+exact live identities again; correct thread dispatch alone does not prove this.
+
+## Error feedback must reach the model, and replayed pages are not current state (TASK-35582, 2026-10-28)
+
+The bounded multi-model review accepted a reviewer's replacement coverage under a
+new submission ID but retained its original rejection, so the report could not
+seal. Adding structured correction feedback only at the provider was insufficient:
+native/fenced runtime regressions showed that failed ToolResult.content was dropped
+before the model request. Test the actual recipient payload, including error paths.
+
+The same run retained accepted verifier decisions while history reduction removed
+their acknowledgment. Replaying the immutable initial batch correctly returned its
+old revision, which the model treated as current. Offline controls now keep that
+replay byte-identical and recover current revision/cursor/completion through the
+existing checkpoint owner. Test history reduction, replay and current-state recovery
+together; an empty pending-delivered list also needs a control with undelivered units.
+These controls establish protocol recovery, not later live-model compliance or AC24.
+
+
+## Exercise deferred tool results through the strict production request builder
+
+**TASK-35582, 2026-10-29.** A final review run's resumed primary returned a
+`code_review_read` call, then failed before another physical request; the UI
+classified the local refusal as HTTP400 although all physical receipts were200.
+A narrow offline test through the real loop, Console preparation, dispatcher
+projection and hosted payload builder found two sequential shape defects:
+native deferral rows retained the fenced-only `name`, then the context row leaked
+its internal delivery key. Removing only the first defect was insufficient.
+The repaired control preserves canonical receipt state, defers without execution
+and completes the reissued read. A scripted test that stops before
+the strict builder cannot establish request compatibility. The
+missing original live payload still limits retrospective attribution.
+
+## Test rejection recovery through the next history projection (TASK-35582, 2026-10-28)
+
+The final60 continuation run correctly refused V1's changed resubmission of three
+accepted decisions, but left no supported withdrawal path once every unit was
+already decided. The offline fix exposed another edge: treating its empty
+withdrawal acknowledgement as a decision checkpoint let history reduction erase
+the still-rejected completion ID. Real native/fenced loop controls caught that
+before publication. Empty withdrawals now retain those recovery rounds; accepted
+decisions and ordinary sealing checks remain unchanged. Exercise recovery through
+the next request's real history projection, not just the successful tool return.
+Evidence: `Docs/superpowers/qa/2026-10-18-multi-model-code-review/v1-conflict-offline/report.md`.

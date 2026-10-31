@@ -129,6 +129,24 @@ CREATE TABLE IF NOT EXISTS automatic_progress_wake_claims (
 );
 CREATE INDEX IF NOT EXISTS idx_automatic_progress_claims_attempt
     ON automatic_progress_wake_claims(attempt_id);
+CREATE TABLE IF NOT EXISTS automatic_review_boundary_claims (
+    boundary_id TEXT PRIMARY KEY,
+    attempt_id TEXT NOT NULL UNIQUE REFERENCES automatic_wake_attempts(id),
+    owner_id TEXT NOT NULL,
+    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),
+    review_id TEXT NOT NULL,
+    slot_id TEXT NOT NULL,
+    slot_attempt_id TEXT NOT NULL,
+    source_epoch INTEGER NOT NULL,
+    context_revision INTEGER NOT NULL,
+    grant_id TEXT NOT NULL,
+    target_fingerprint TEXT NOT NULL,
+    team_fingerprint TEXT NOT NULL,
+    override_fingerprint TEXT NOT NULL,
+    predecessor_run_ids_json TEXT NOT NULL,
+    predecessor_settlement_ids_json TEXT NOT NULL,
+    UNIQUE(owner_id, chain_id, review_id, slot_id, slot_attempt_id)
+);
 CREATE TRIGGER IF NOT EXISTS automatic_chain_identity_immutable
 BEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains
 WHEN OLD.id IS NOT NEW.id
@@ -315,7 +333,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 24
+    _CURRENT_SCHEMA_VERSION = 25
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-228): connections open through BaseDB's
@@ -848,6 +866,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 conn.execute(
                     "ALTER TABLE automatic_wake_attempts ADD COLUMN message_ids_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            # ADR-281: retain body-free identity even after a proven abort unlinks it.
+            if "review_boundary_id" not in wake_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN review_boundary_id TEXT"
+                )
             # ADR-227: goal storage is additive after shipped automatic-work v23.
             if "attempt_kind" not in wake_columns:
                 conn.execute(
@@ -909,6 +932,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (22)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (23)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (24)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (25)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection

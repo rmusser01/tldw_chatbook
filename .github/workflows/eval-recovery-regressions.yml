@@ -76,6 +76,13 @@ jobs:
           New-Item -ItemType Directory -Path $evalTemp -Force | Out-Null
           "TEMP=$evalTemp" >> $env:GITHUB_ENV
           "TMP=$evalTemp" >> $env:GITHUB_ENV
+      - name: Locate owned pytest diagnostics
+        shell: python {0}
+        run: |
+          import os
+          import tempfile
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as environment:
+              environment.write('EVAL_TEMP_ROOT=' + tempfile.gettempdir() + '\n')
       - name: Verify override classification and recovery lifetimes
         working-directory: ${{ env.EVAL_SOURCE_ROOT }}
         run: >-
@@ -85,6 +92,7 @@ jobs:
           Tests/Backup_Recovery/test_profile_launch_environment.py
           Tests/test_subprocess_pipes.py
           Tests/Backup_Recovery/test_eval_retained_definitions.py
+          Tests/Backup_Recovery/test_eval_restore_diagnostics.py
           Tests/Backup_Recovery/test_eval_selective_retention.py
           Tests/Backup_Recovery/test_eval_rollback_retention.py
           Tests/Backup_Recovery/test_eval_later_snapshot.py
@@ -96,12 +104,14 @@ jobs:
           path: ${{ runner.temp }}/eval-recovery.xml
           if-no-files-found: error
       - name: Preserve owned failed subprocess diagnostics
-        if: failure() && runner.os == 'Windows'
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: eval-recovery-windows-child-logs
+          name: eval-recovery-${{ matrix.os }}-child-logs
           path: |
-            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/original/restart-output.log
-            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/restored/restart-output.log
-            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/reopen.log
+            ${{ env.EVAL_TEMP_ROOT }}/pytest-of-*/pytest-*/*/original/restart-output.log
+            ${{ env.EVAL_TEMP_ROOT }}/pytest-of-*/pytest-*/*/restored/restart-output.log
+            ${{ env.EVAL_TEMP_ROOT }}/pytest-of-*/pytest-*/*/restored/home/restore-stacks.json
+            ${{ env.EVAL_TEMP_ROOT }}/pytest-of-*/pytest-*/*/restored/home/restore-stacks-fatal.log
+            ${{ env.EVAL_TEMP_ROOT }}/pytest-of-*/pytest-*/*/reopen.log
           if-no-files-found: ignore

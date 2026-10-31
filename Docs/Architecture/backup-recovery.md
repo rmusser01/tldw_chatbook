@@ -12,6 +12,7 @@ Qualification keeps native identity and operation verdicts fresh on every call. 
 | CLI + startup unlock | `Backup_Recovery/launcher.py` | `python -m tldw_chatbook.Backup_Recovery` (`inspect / extract / restore / recover / profiles / copies`); `startup_preflight` / `startup_unlock` (master-password prompt, rekey, reset); `minimal_recovery` host |
 | Admission | `Backup_Recovery/storage_admission.py`, `admission.py` | `admit_startup()` (called before runtime imports — the fence), `MaintenanceSession`, capture scopes/leases; nested admission forbidden |
 | Participants | `Backup_Recovery/participants.py` | `run_finite_local_worker`, installed persistence participants, exact-repository-type → owner-id mapping, participant-coverage requirement |
+| Agent worktree directory | `Backup_Recovery/agent_worktree_storage.py` | `prepare_agent_worktrees_base` — ordinary fresh admission for the fixed profile directory while retaining and restoring an enclosing core DB operation |
 | Inventory & groups | `Backup_Recovery/inventory.py`, `data_groups.py` | `discover` (no guessed targets on config failure), the 16 `BACKUP_GROUPS` and owner→group map |
 | Capture & archives | `capture_service.py`, `capture.py`, `archive_writer.py`, `archive_reader.py` | coherent capture, strict-manifest archive publication, bounded inspection (`CompressionReviewRequired`) |
 | Encryption | `crypto.py`, `age_worker.py` | package-owned **age v1**; isolated `python -I` single-scrypt pipe worker; no PATH lookup, no plaintext fallback |
@@ -24,6 +25,16 @@ Qualification keeps native identity and operation verdicts fresh on every call. 
 | Legacy helpers | `Backup_Recovery/settings_backup_helpers.py` | the retired settings-backup UI's surviving contracts (named-DB manifest publication, character-card serialization) kept for tests/TTS-profile backup |
 
 Control root is fixed at `<config dir>/recovery/control` (`service_storage.py`); there is no `[backup]` config section — destinations are chosen per operation.
+
+The fixed agent worktree directory is prepared under its own ordinary native
+storage admission. Its no-argument Backup_Recovery helper retains a counted outer
+AgentRuns operation, suspends only its discovery during that concrete directory
+preparation, then restores and revalidates it. The DB operation never grants
+filesystem authority; new acquisition still refuses on pause, profile selection
+changes or native private-path checks. A refused preparation returns a typed
+worktree storage refusal so the retained parent can terminalize an unstarted run.
+See ADR-126/228's TASK-35582 AC23-B amendment.
+
 
 ## Backup creation (dataflow)
 

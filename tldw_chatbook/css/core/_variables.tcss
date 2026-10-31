@@ -185,6 +185,7 @@ $ds-space-inset: $ds-space-1;
  * status lines, chip rows) use the compact height. */
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
+$ds-control-action-min-width: 6;
 /* Default/minimum height for multi-line text inputs. */
 $ds-textarea-min-height: 5;
 /* TASK-33004.4 (spec §6): Switch model is 140 columns at 211x44 and

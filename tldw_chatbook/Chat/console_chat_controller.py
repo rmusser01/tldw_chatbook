@@ -2607,72 +2607,6 @@ def _flatten_preflight_messages(
     return flattened
 
 
-def _continuation_restore_target_for_resolution(
-    resolution: Any,
-) -> ContinuationRestoreTarget | None:
-    """Build an exact target only from explicitly pinned resolution fields.
-
-    ``api_base_url`` is carried through VERBATIM. It used to be passed
-    through ``normalize_generic_endpoint_for_compare`` first, which expands
-    a base URL to its full chat-completions endpoint
-    (``https://api.moonshot.ai/v1`` -> ``.../v1/chat/completions``). That
-    silently broke every Resume: the checkpoint pins whatever
-    ``ConsoleAgentBridge`` recorded, and the bridge records
-    ``resolution.base_url`` RAW (see its ``ContinuationRestoreTarget(...)``
-    construction), so recovery compared an expanded URL against a
-    non-expanded one and ``validate_continuation_restore`` -- which is
-    byte-exact by design, down to a trailing slash -- rejected it with
-    "Pinned provider settings no longer match".
-
-    Normalizing BOTH sides instead would have been the wrong repair: the
-    exactness is deliberate (``test_provider_continuation`` pins that
-    ``https://api.deepseek.com/v1/`` and ``https://api.deepseek.com/v1``
-    are a MISMATCH), and this comparison is what stops a private
-    continuation from being replayed against a different endpoint than the
-    one that produced it. The two writers simply have to agree, and the
-    checkpoint's writer is the one that defines the format.
-
-    The provider field follows the same writer-agreement rule (ADR-179,
-    Qodo follow-up): checkpoints are pinned under the EXECUTION key
-    (engine records use their ``record.key`` -- "custom-hosted" for a
-    swapped custom-ep selection -- and moonshot/zai/deepseek spell theirs
-    identically), and ``ConsoleAgentBridge`` records targets from
-    ``resolution.execution_key`` VERBATIM. Building the target from
-    ``provider_config_key(resolution.provider)`` instead pinned the
-    IDENTITY spelling ("custom_ep:paid" for ``custom-ep:paid``), which no
-    checkpoint ever carries, so the durable resume/crash-recovery pre-gate
-    byte-compared a spelling that could never match. ``execution_key`` is
-    therefore preferred verbatim; only a resolution with an EMPTY
-    execution key (legacy doubles) falls back to the normalized
-    ``provider`` spelling, which is byte-identical to the old behavior for
-    every checkpoint-producing provider.
-    """
-    protocol = getattr(resolution, "continuation_protocol", None) or getattr(
-        resolution, "api_mode", None
-    )
-    base_url = getattr(resolution, "base_url", None)
-    model = getattr(resolution, "model", None)
-    if (
-        not protocol
-        or not isinstance(base_url, str)
-        or not base_url.startswith(("http://", "https://"))
-        or not model
-    ):
-        return None
-    execution_key = getattr(resolution, "execution_key", None)
-    provider_value = (
-        str(execution_key)
-        if isinstance(execution_key, str) and execution_key
-        else provider_config_key(str(getattr(resolution, "provider", "")))
-    )
-    return ContinuationRestoreTarget(
-        provider=provider_value,
-        model=str(model),
-        protocol=str(protocol),
-        api_base_url=base_url,
-    )
-
-
 def _normalize_world_info_history(
     messages: "list[dict[str, Any]]",
 ) -> "list[dict[str, Any]]":
@@ -3634,6 +3568,16 @@ class ConsoleChatController:
     #: and no way forward. Generous enough for a slow first TLS handshake;
     #: finite so the composer never wedges.
     PROVIDER_VALIDATION_TIMEOUT_SECONDS = 30.0
+
+    async def _resolve_accepted_review_capacity(
+        self, session, authorization, resolution, turn_context
+    ):
+        """Resolve only this accepted review target before capacity/schema freeze."""
+        from .console_review_delivery import resolve_accepted_review_capacity
+
+        return await resolve_accepted_review_capacity(
+            self, session, authorization, resolution, turn_context
+        )
 
     async def _auxiliary_compaction_resolution(self, main_selection, main_resolution):
         """Resolve a cheaper auxiliary model for compaction, or fall back.
@@ -4672,6 +4616,9 @@ class ConsoleChatController:
         #: state`'s terminal retry hook always has it; registered on the
         #: bridge fan-out next to the usage fold above.
         self._fleet_wake = ConsoleFleetWakeCoordinator(self)
+        self._code_review_lock = threading.RLock()
+        self._code_review = None
+        self._review_ledger = None
         self._chat_start = ConsoleChatStartCoordinator(self)
         self.store._agent_handoff_changed = self._chat_start.withdraw_prepared
         #: PR3a-2 Task 5, user-wins-ties: screen-wired probe returning
@@ -7080,7 +7027,7 @@ class ConsoleChatController:
                     or "",
                     message.persisted_message_id or message.id,
                 )
-            elif checkpoint.schema_version == 2:
+            elif checkpoint.managed_resume is not None:
                 raise PermissionError("Managed continuation service unavailable.")
             else:
                 maximum["plugin_resume_constraint"] = "zero"
@@ -7118,7 +7065,9 @@ class ConsoleChatController:
             )
             return False
         assert turn_context is not None
-        target = _continuation_restore_target_for_resolution(resolution)
+        from . import console_continuation_binding as binding
+
+        target = binding.continuation_restore_target_for_resolution(resolution)
         if target is None:
             self.store.set_provider_continuation_warning(
                 message.id,
@@ -7158,6 +7107,7 @@ class ConsoleChatController:
                     restore_provider_target=target,
                     expand_provider_continuation=translator,
                     resume_provider_continuation=True,
+                    restore_provider_message_version=expected_message_version,
                     continuation_sidecar=prior_sidecar,
                     continuation_history_target=prior_target or target,
                     turn_context=turn_context,
@@ -10530,6 +10480,17 @@ class ConsoleChatController:
                     session.id,
                     "Manual work has priority. Background results are saved.",
                 )
+        if (
+            origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            and wake_authorization.review_boundary is not None
+        ):
+            from .console_review_delivery import admit_review_wake
+
+            resolution = await admit_review_wake(
+                self, session, wake_authorization, resolution, turn_context
+            )
+            if isinstance(resolution, ConsoleSubmitResult):
+                return resolution
         citation_context: str | None = None
         citation_trace_builder: CitationTraceBuilder | None = None
         prompt_evidence_set_id: str | None = None
@@ -13067,9 +13028,26 @@ class ConsoleChatController:
             )
         destination = self._resolved_destination_for_context(resolution)
         frozen_authority = checkpoint.frozen_authority
+        recorded = checkpoint.resolved_destination
+        recorded_tuple = (
+            recorded.continuation_provider,
+            recorded.continuation_protocol,
+            recorded.continuation_base_url,
+        )
         if (
             not self._dispatch_authority_matches(authority, frozen_authority)
-            or destination.identity_key != checkpoint.resolved_destination.identity_key
+            or destination.identity_key != recorded.identity_key
+            # Pre-upgrade checkpoints carry no continuation tuple; their retry
+            # runs without durable continuation (see the bridge's durability).
+            or (
+                recorded_tuple != (None, None, None)
+                and recorded_tuple
+                != (
+                    destination.continuation_provider,
+                    destination.continuation_protocol,
+                    destination.continuation_base_url,
+                )
+            )
         ):
             raise _DispatchRecoveryRefusal(
                 "The provider destination or Library authority changed. Review it "
@@ -14247,6 +14225,8 @@ class ConsoleChatController:
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
         # parent cannot reserve a child in the cancellation-to-drain window.
+        if self._code_review is not None:
+            self._code_review.fence_session(session_id)
         fence_wake = getattr(self._fleet_wake, "fence_conversation", None)
         if callable(fence_wake):
             for conversation_id in fleet_conversation_ids:
@@ -14629,6 +14609,8 @@ class ConsoleChatController:
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
         """
+        if self._code_review is not None:
+            self._code_review.fence_session(session_id)
         self._interrupt_host.cancel_hook_reviews(session_id)
         received = self.store.received_turn_for_session(session_id)
         if received is not None:
@@ -17877,6 +17859,13 @@ class ConsoleChatController:
         ``leave_console`` supplies the reversible per-visit cancellation
         boundary for the same app-owned controller.
         """
+        if self._code_review is not None:
+            self._code_review.close()
+        if self._review_ledger is not None:
+            self._review_ledger.unregister_review_boundary_authority(
+                self._fleet_wake.runtime_owner_id
+            )
+            self._review_ledger = None
         self.begin_shutdown()
         recovery_cancelled = await self._fleet_wake.drain_recovery()
         from .console_preparation_reads import drain_preparation_reads
@@ -24741,6 +24730,40 @@ class ConsoleChatController:
         if callable(register):
             register("usage-reattach", self._on_fleet_drained_reattach_usage)
 
+    def _present_review_status(self, session_id, review_id, status):
+        from .console_review_delivery import present_review_status
+
+        present_review_status(self, session_id, review_id, status)
+
+    def _present_review_offer(self, session_id, review_id):
+        from .console_review_delivery import present_review_offer
+
+        return present_review_offer(self, session_id, review_id)
+
+    def _present_review_report(self, session_id, review_id, report):
+        from .console_review_delivery import present_review_report
+
+        return present_review_report(self, session_id, review_id, report)
+
+    @property
+    def code_review(self) -> Any:
+        """Load the review owner on first use, outside Console first paint."""
+        with self._code_review_lock:
+            if self._code_review is None:
+                from .console_code_review import ConsoleCodeReviewCoordinator
+
+                self._code_review = ConsoleCodeReviewCoordinator(
+                    self.store,
+                    runtime_owner_id=self._fleet_wake.runtime_owner_id,
+                    on_boundary=self._fleet_wake.on_review_boundary,
+                    on_boundary_retired=self._fleet_wake.on_review_boundary_retired,
+                )
+                self._code_review.present_report = self._present_review_report
+                self._code_review.present_offer = self._present_review_offer
+                self._code_review.present_status = self._present_review_status
+                self._register_fleet_wake(self._agent_bridge)
+            return self._code_review
+
     @property
     def fleet_wake(self) -> ConsoleFleetWakeCoordinator:
         """The auto-wake coordinator (PR3a-2 Task 5): the screen wires its
@@ -24763,6 +24786,12 @@ class ConsoleChatController:
             bridge: The Console agent bridge to register on, or ``None``.
         """
         self._fleet_wake.capture_loop_if_running()
+        with self._code_review_lock:
+            # A no-op until the review owner loads (which re-registers).
+            if self._code_review is not None or self._review_ledger is not None:
+                from .console_review_delivery import attach_review_ledger
+
+                attach_review_ledger(self, bridge)
         if bridge is None:
             return
         progress_register = getattr(bridge, "on_progress_enqueued", None)
@@ -26075,6 +26104,7 @@ class ConsoleChatController:
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
         ) = None,
         resume_provider_continuation: bool = False,
+        restore_provider_message_version: int | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_history_target: ContinuationRestoreTarget | None = None,
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
@@ -26320,84 +26350,20 @@ class ConsoleChatController:
                             project_selection
                         ),
                     )
-                destination_provider = str(
-                    getattr(resolution, "execution_key", "")
-                    or getattr(resolution, "provider", "")
-                    or "agent"
+                from .console_project_dispatch import build_project_dispatch_callbacks
+
+                (
+                    project_activation_callback,
+                    project_authority_guard,
+                    confirm_project_dispatch,
+                ) = build_project_dispatch_callbacks(
+                    self,
+                    session_id=session_id,
+                    registry=registry,
+                    project_selection=project_selection,
+                    state=state,
+                    resolution=resolution,
                 )
-                destination_endpoint = getattr(resolution, "base_url", None)
-                notice_key = project_instruction_notice_key(
-                    project_selection.locator_fingerprint,
-                    destination_provider,
-                    destination_endpoint,
-                )
-                expected_project_state = state
-
-                def on_owning_loop(callback):
-                    app = self.app
-                    call_from_thread = getattr(app, "call_from_thread", None)
-                    # Stock composition checks authority on the app loop too;
-                    # Textual only permits call_from_thread from another thread.
-                    if callable(call_from_thread) and threading.get_ident() != getattr(
-                        app, "_thread_id", None
-                    ):
-                        return call_from_thread(callback)
-                    return callback()
-
-                def project_activation_callback(event):
-                    return on_owning_loop(
-                        lambda: self._record_project_instruction_activation(
-                            session_id, event
-                        )
-                    )
-
-                def project_authority_guard():
-                    return bool(
-                        on_owning_loop(
-                            lambda: project_instruction_authority_is_current(
-                                store=self.store,
-                                session_id=session_id,
-                                registry=registry,
-                                expected_selection=project_selection,
-                            )
-                        )
-                    )
-
-                def confirm_project_dispatch(snapshot):
-                    def commit_and_record(decision):
-                        committed = commit_project_instruction_dispatch_decision(
-                            store=self.store,
-                            session_id=session_id,
-                            registry=registry,
-                            expected_state=expected_project_state,
-                            expected_selection=project_selection,
-                            notice_key=notice_key,
-                            decision=decision,
-                        )
-                        if committed != "prompt":
-                            if committed == "proceed":
-                                self._remember_project_instruction_delivery(
-                                    session_id, snapshot
-                                )
-                            else:
-                                self._clear_project_instruction_delivery(session_id)
-                        return committed
-
-                    initial = on_owning_loop(lambda: commit_and_record(None))
-                    if initial != "prompt":
-                        return initial
-                    if self._chat_start.is_accepted(session_id):
-                        return "cancel"
-                    callback = self._confirm_project_instruction_dispatch
-                    notice = build_project_instruction_dispatch_notice(
-                        snapshot,
-                        session_id=session_id,
-                        resolution=resolution,
-                    )
-                    decision = callback(notice) if callback is not None else "cancel"
-                    if decision not in {"proceed", "cancel", "disable"}:
-                        decision = "cancel"
-                    return on_owning_loop(lambda: commit_and_record(decision))
 
         self._active_assistant_message_ids[session_id] = assistant_message_id
         self._active_stream_tasks[session_id] = asyncio.current_task()
@@ -26727,7 +26693,17 @@ class ConsoleChatController:
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
             if generation_token is None:
                 generation_token = self.store.begin_generation_attempt(
-                    assistant_message_id
+                    assistant_message_id,
+                    expected_continuation=(
+                        restore_provider_continuation
+                        if resume_provider_continuation
+                        else None
+                    ),
+                    expected_continuation_message_version=(
+                        restore_provider_message_version
+                        if resume_provider_continuation
+                        else None
+                    ),
                 )
             _generation_handoff.issue(generation_token)
             if variant_mode:
@@ -26757,6 +26733,23 @@ class ConsoleChatController:
                         trusted_profile_user_message = candidate
                 except KeyError:
                     pass
+            from .console_review_delivery import compose_turn_review_provider
+
+            code_review_provider = await compose_turn_review_provider(
+                self,
+                session_id=session_id,
+                message=trusted_profile_user_message,
+                roots=run_admitted_roots,
+                resolution=resolution,
+                conversation_id=conversation_id,
+                wake_authorization=wake_authorization,
+                tool_configuration=turn_context.tool_configuration,
+                skill_bindings=skill_bindings,
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+                confirm_project_dispatch=confirm_project_dispatch,
+                startup_candidate=startup_candidate,
+            )
             profile_provider = None
             if personal_context_service is not None and session is not None:
                 profile_provider = await asyncio.to_thread(
@@ -26868,6 +26861,7 @@ class ConsoleChatController:
                 # them as the run's narrowing-only advertising filter and
                 # per-run call caps.
                 persona_policy_rules=turn_context.persona_policy_rules,
+                code_review_provider=code_review_provider,
                 profile_provider=profile_provider,
                 canvas_provider=canvas_provider,
                 canvas_authority=canvas_authority,
@@ -28059,7 +28053,9 @@ class ConsoleChatController:
             raise ContinuationConflictError(
                 "Active continuation requires explicit recovery."
             )
-        target = _continuation_restore_target_for_resolution(resolution)
+        from . import console_continuation_binding as binding
+
+        target = binding.continuation_restore_target_for_resolution(resolution)
         if target is None:
             return (), None
         owner_ids = {
@@ -28081,7 +28077,9 @@ class ConsoleChatController:
         tuple[ProviderContinuationSidecar, ...], ContinuationRestoreTarget | None
     ]:
         """Select policy-retained completed history before an active owner."""
-        target = _continuation_restore_target_for_resolution(resolution)
+        from . import console_continuation_binding as binding
+
+        target = binding.continuation_restore_target_for_resolution(resolution)
         if target is None:
             return (), None
         # TASK-19170: preserved-thinking retention follows the versioned kimi

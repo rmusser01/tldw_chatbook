@@ -10,6 +10,7 @@ from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from time import monotonic
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -346,3 +347,35 @@ _CONTEXT_CAPACITY_CACHE_ORIGINAL = (
     globals(), ContextWindowCache, ContextWindowCache.cached,
     ContextWindowCache.cached.__code__,
 )
+
+
+async def resolve_gateway_context_window(
+    self, settings: Any
+) -> ContextWindowResolution:
+    """Refresh optional serving metadata without running a generation."""
+    from tldw_chatbook.Chat import console_provider_gateway as gateway
+
+    if isinstance(settings, gateway.ConsoleProviderResolution):
+        from .console_context_window import ContextWindowTarget
+
+        if (
+            not settings.ready
+            or settings.resolved_destination is None
+            or settings.resolved_destination
+            != gateway.resolve_console_destination(settings)
+            or (
+                settings.selected_provider
+                and settings.selected_provider != settings.resolved_destination.provider
+            )
+        ):
+            raise ValueError("review_metadata_target_changed")
+        target = ContextWindowTarget(
+            settings.selected_provider or settings.provider,
+            settings.readiness_key or settings.provider,
+            settings.base_url,
+            settings.model or "",
+            settings.api_key,
+        )
+    else:
+        target = self._context_window_target(settings)
+    return await self._get_context_windows().resolve(target, self._active_http_client())

@@ -60,6 +60,7 @@ def build_runtime_schema_plan(
     new_chat_enabled: bool,
     run_log_active: bool,
     deferred_names: Callable[[], tuple[str, ...]],
+    review_spawn_enabled: bool = False,
 ) -> FirstRequestSchemaPlan:
     """Compose only runtime schemas enabled for this run and agent kind."""
     runtime: list[ToolSchema] = []
@@ -76,6 +77,10 @@ def build_runtime_schema_plan(
                 override_targets=spawn_override_targets,
             )
         )
+    if runtime and review_spawn_enabled:
+        from .tool_catalog import review_spawn_schema
+
+        runtime[0] = review_spawn_schema(runtime[0])
     if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
         runtime.extend((WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA))
         if worktree_merge_enabled:

@@ -1,0 +1,15 @@
+{
+  "archive": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/offline-repairs/offline-repair-evidence.tar.gz",
+  "sha256": "28a19dda22fb4cfaab2c9c8718c4e356b3923ad35c9b8ee0857f3c11d2a332c3",
+  "bytes": 529341,
+  "files": 69,
+  "source_commits": [
+    "3e5054c5ad2ac0d2299299ba2e129f13e8be631e",
+    "32f40af781"
+  ],
+  "new_provider_requests": 0,
+  "new_product_children": 0,
+  "cumulative_provider_requests": 314,
+  "cumulative_product_children": 21,
+  "excluded": "private test profiles, temporary baselines and test directories; originals remain in place"
+}

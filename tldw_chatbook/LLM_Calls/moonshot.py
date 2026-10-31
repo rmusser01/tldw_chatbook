@@ -22,7 +22,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
-    validate_continuation_restore,
+    validate_continuation_execution_target,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     ProviderPayloadValidators,
@@ -860,7 +860,7 @@ def _apply_continuations(
     cursor = 0
     for checkpoint in checkpoints:
         try:
-            validate_continuation_restore(
+            validate_continuation_execution_target(
                 checkpoint,
                 ContinuationRestoreTarget(
                     provider="moonshot",

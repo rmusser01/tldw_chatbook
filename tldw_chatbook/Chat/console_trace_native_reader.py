@@ -11,6 +11,10 @@ from tldw_chatbook.Chat.console_semantic_revision import (
     project_semantic_revision_provider_continuations,
     project_semantic_revision_trace_message,
 )
+from tldw_chatbook.Chat.console_trace_continuation import (
+    CONTINUATION_DELTA_COMPONENT,
+    resolve_continuation_node,
+)
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
 from tldw_chatbook.Chat.console_trace_provenance import TraceTransformKind
@@ -30,7 +34,11 @@ from tldw_chatbook.Chat.console_trace_service import (
 )
 
 _CONTINUATION_COMPONENTS = frozenset(
-    {"continuation", TraceTransformKind.CONTINUATION_ATTACHMENT.value}
+    {
+        "continuation",
+        CONTINUATION_DELTA_COMPONENT,
+        TraceTransformKind.CONTINUATION_ATTACHMENT.value,
+    }
 )
 _STATUS = {
     TraceCallState.COMPLETE: "complete",
@@ -213,6 +221,15 @@ class ConsoleTraceNativeReader:
                         policy_id=call.policy_id,
                     )
                 destination.append(value)
+            elif component_kind == CONTINUATION_DELTA_COMPONENT:
+                destination.append(
+                    resolve_continuation_node(
+                        self.repository,
+                        cursor,
+                        self.repository.get_surface_node(cursor, identity),
+                        policy_id=call.policy_id,
+                    )
+                )
             elif reference_kind == "artifact":
                 destination.append(
                     self._decode_artifact(

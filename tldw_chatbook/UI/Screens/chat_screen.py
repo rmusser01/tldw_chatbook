@@ -172,6 +172,7 @@ from ..Console_Modules.wiring import (
 )
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
+from ..Console_Modules import wiring
 from ..Console_Modules import config_sync  # Resident at compose (context_spend).
 from ..Console_Modules.session import (
     _has_selected_text,
@@ -1163,6 +1164,7 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Y", "trace"),  # Y/Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C (33004.7)
     ("Enter", "send / queue"),
     ("Shift+F6", "previous pane"),
+    ("U", "review reports"),  # last: the narrow footer drops it first
 )
 
 #: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
@@ -1831,6 +1833,7 @@ class ChatScreen(BaseAppScreen):
         # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
         # of the Console vocabulary.
         Binding("y", "open_trajectory_view", "Trace", show=True),
+        Binding("u", "open_code_review_reports", "Review reports", show=True),
         Binding("alt+m", "open_console_model_popover", "Switch model", show=True),
         Binding("ctrl+o", "open_console_session_settings", "Chat settings", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
@@ -1909,6 +1912,7 @@ class ChatScreen(BaseAppScreen):
         Binding("alt+8", "jump_console_tab(8)", "Tab 8", show=False),
         Binding("alt+9", "jump_console_tab(9)", "Tab 9", show=False),
     ]
+    action_open_code_review_reports = wiring.open_code_review_reports  # u
 
     def check_action(
         self,
@@ -9251,10 +9255,10 @@ class ChatScreen(BaseAppScreen):
         # MCP batch-approval bridge (task-5): `request_mcp_approvals` runs
         # on the agent bridge's worker thread and needs a
         # `call_from_thread`-capable App handle. Deliberately NOT a
-        # view-hook slot: this is the APP, which outlives every view, and
-        # clearing it at detach would break the bridge a surviving turn
-        # still needs.
-        self._console_chat_controller.app = self.app_instance
+        # view-hook slot: this is the APP, which outlives every view. The
+        # same call installs the review-report presenter and presents
+        # originals left pending while no view was attached (ADR-281).
+        wiring.attach_review_presenter(self._console_chat_controller, self.app_instance)
         # PR3a-2 Task 5 (auto-wake): the app object (durable-mark clear
         # seam + marks reads). getattr-guarded because several UI tests
         # swap in hand-built controller doubles before re-running this
@@ -22722,9 +22726,9 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
             )
         )
-        controller = self._console_chat_controller
-        if controller is not None:
+        if (controller := self._console_chat_controller) is not None:
             controller.on_console_view_visibility_changed(True)
+            wiring.review_view_resumed(controller)
         if self._pending_character_return_focus_id is not None:
             self.call_after_refresh(self._workspace.restore_character_navigation_focus)
         logger.debug("Chat screen resuming")

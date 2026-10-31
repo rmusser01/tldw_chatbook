@@ -164,7 +164,7 @@ def build_project_instruction_deferral_rows(
         {
             "role": "tool",
             "tool_call_id": call.call_id,
-            "name": call.name,
+            **({"name": call.name} if not call.call_id else {}),
             "content": _DEFERRAL_TEXT,
         }
         for call in calls

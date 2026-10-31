@@ -24,6 +24,7 @@ flipping the default made nine other suites need it too.
 import dataclasses
 import json
 import subprocess
+import sqlite3
 import threading
 import time
 from collections import Counter
@@ -87,6 +88,8 @@ from Tests.Agents.conftest import (
     pin_max_live_subagents,
     pin_turn_scoped_children,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _NoopWorkspaceExecutor:
@@ -190,9 +193,46 @@ def _todo_provider(workspace, store: SessionTodoStore) -> LocalToolProvider:
     )
 
 
+_owned_fleet_services: dict[AgentRunsDB, list[AgentService]] = {}
+
+
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    _owned_fleet_services[database] = []
+    try:
+        yield database
+    finally:
+        try:
+            # Released providers still need their exact native producers to retire.
+            for service in _owned_fleet_services.pop(database):
+                join_fleet_children(service)
+        finally:
+            connection = getattr(database._thread_local, "conn", None)
+            database.close()
+            if connection is not None:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    connection.execute("SELECT 1")
+            assert not database._maintenance_participant.connections
+
+
+@pytest.fixture()
+def reopen_db(db):
+    databases = []
+
+    def create(*, client_id):
+        database = AgentRunsDB(db.db_path, client_id=client_id)
+        databases.append(database)
+        return database
+
+    yield create
+    for database in reversed(databases):
+        connection = getattr(database._thread_local, "conn", None)
+        database.close()
+        if connection is not None:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+        assert not database._maintenance_participant.connections
 
 
 def make_fleet_service(
@@ -235,6 +275,9 @@ def make_fleet_service(
         run_log_writer=run_log_writer,
         worktree_repo_authority=worktree_repo_authority,
     )
+    owned = _owned_fleet_services.get(db)
+    if owned is not None:
+        owned.append(service)
     return service, chat, coordinator
 
 
@@ -1952,6 +1995,8 @@ def test_live_children_are_capped_across_turns(db, monkeypatch):
             if not [h for h in fleet.snapshot() if h.status == RUN_RUNNING]:
                 break
             time.sleep(0.02)
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(db, monkeypatch):
@@ -2076,6 +2121,8 @@ def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(db, monke
         assert fleet.get(survivor.handle_id).result == "released"
     finally:
         released.set()
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
@@ -2158,6 +2205,8 @@ def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
             lambda: fleet.get(survivor.handle_id).status != RUN_RUNNING,
             "the cancelled survivor never unwound",
         )
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_check_agents_shows_an_earlier_turns_survivor_in_its_own_section(
@@ -2227,6 +2276,8 @@ def test_check_agents_shows_an_earlier_turns_survivor_in_its_own_section(
         assert "long job" in rendered, rendered
     finally:
         released.set()
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
@@ -2681,12 +2732,15 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
     result: dict = {}
 
     def do_run():
-        result["outcome"] = service.run_turn(
-            conversation_id="c",
-            messages=[{"role": "user", "content": "go"}],
-            config=cfg,
-            api_endpoint="llama_cpp",
-        )
+        try:
+            result["outcome"] = service.run_turn(
+                conversation_id="c",
+                messages=[{"role": "user", "content": "go"}],
+                config=cfg,
+                api_endpoint="llama_cpp",
+            )
+        finally:
+            db.close()
 
     runner = threading.Thread(target=do_run, name="test-cancel-subagent-run")
     runner.start()
@@ -4112,7 +4166,9 @@ def test_isolated_child_writes_only_to_selected_repository_worktree(
             agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_worktree_creation_is_durable_until_exact_execution_owner_drains(db, git_repo):
+def test_worktree_creation_is_durable_until_exact_execution_owner_drains(
+    db, reopen_db, git_repo
+):
     """The created checkout stays held until its real owner physically drains."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -4154,7 +4210,7 @@ def test_worktree_creation_is_durable_until_exact_execution_owner_drains(db, git
     refusal = service._admit_agent_worktree(handle, run_id, owner)
     assert refusal is None
     created = service._agent_worktrees[handle.handle_id]
-    reopened = AgentRunsDB(db.db_path, client_id="reopened")
+    reopened = reopen_db(client_id="reopened")
     record = AgentWorktreeRepository(reopened).get_for_conversation(run_id, "c")
     assert record is not None
     assert record["writer_state"] == "held"
@@ -4245,7 +4301,9 @@ def test_drain_callback_closes_only_connection_created_on_callback_thread(
     agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(db, git_repo):
+def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(
+    db, reopen_db, git_repo
+):
     """Terminal status cannot drain a timed-out operation still executing."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -4290,9 +4348,7 @@ def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(db, git_
     assert not result.ok and "timed out" in str(result.error)
     db.set_status(run_id, RUN_ERROR, result="timed out")
     owner.finish_root()
-    repository = AgentWorktreeRepository(
-        AgentRunsDB(db.db_path, client_id="reopened-timeout")
-    )
+    repository = AgentWorktreeRepository(reopen_db(client_id="reopened-timeout"))
     assert repository.get_for_conversation(run_id, "c")["writer_state"] == "held"
     release.set()
     _wait_until(
@@ -4358,7 +4414,7 @@ def test_failed_record_insertion_retains_checkout_and_never_routes(
     agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
+def test_real_child_creation_is_durable_before_its_first_write(db, reopen_db, git_repo):
     """A gated child is durably held before its first provider tool call."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -4403,7 +4459,7 @@ def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
         )
         assert outcome.status == RUN_DONE
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-gated")
+        reopened = reopen_db(client_id="reopened-gated")
         repository = AgentWorktreeRepository(reopened)
         record = repository.get_for_conversation(child["id"], "c")
         assert record is not None and record["writer_state"] == "held"
@@ -4425,7 +4481,9 @@ def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
             agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(db, git_repo):
+def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(
+    db, reopen_db, git_repo
+):
     """Provider cleanup refusal durably poisons its admitted child owner."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutionError
@@ -4477,7 +4535,7 @@ def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(db, git_repo)
     with use_run_id(run_id):
         result = provider.invoke("local:fs_read", {"path": "note.txt"})
     assert not result.ok
-    reopened = AgentRunsDB(db.db_path, client_id="reopened-uncertain")
+    reopened = reopen_db(client_id="reopened-uncertain")
     repository = AgentWorktreeRepository(reopened)
     assert repository.get_for_conversation(run_id, "c")["writer_state"] == "uncertain"
 
@@ -4581,7 +4639,7 @@ def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
 
 
 def test_provider_admission_failure_retains_real_created_checkout(
-    db, git_repo, monkeypatch
+    db, reopen_db, git_repo, monkeypatch
 ):
     """A provider routing failure preserves the created checkout and branch."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
@@ -4632,7 +4690,7 @@ def test_provider_admission_failure_retains_real_created_checkout(
         assert _git(git_repo, "branch", "--list", created.branch).strip()
         assert provider._agent_roots == {}
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-admit-failure")
+        reopened = reopen_db(client_id="reopened-admit-failure")
         record = AgentWorktreeRepository(reopened).get_for_conversation(
             child["id"], "c"
         )
@@ -4648,7 +4706,7 @@ def test_provider_admission_failure_retains_real_created_checkout(
 
 
 def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
-    db, git_repo, monkeypatch
+    db, reopen_db, git_repo, monkeypatch
 ):
     """A failed fleet thread start retains Git work while removing its route."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
@@ -4706,7 +4764,7 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
         assert provider._agent_roots == {}
         assert coordinator.all_finished()
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-start-failure")
+        reopened = reopen_db(client_id="reopened-start-failure")
         record = AgentWorktreeRepository(reopened).get_for_conversation(
             child["id"], "c"
         )

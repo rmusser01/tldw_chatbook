@@ -3148,3 +3148,72 @@ refusal, and the `[tools] character_tools_enabled` gate; confirmed by the
 mounted run `Tests/UI/test_console_character_tools_mounted_uat.py`, which
 drives search → save → approve through the real Console and checks the saved
 card, its avatar, and the Personas refresh message.)*
+
+
+## Multi-model code review
+
+In **Settings → Agents**, create provider/model presets, then save an ordered
+reviewer team with optional additional focuses and a verifier preset. The default
+team is empty. Names can change without breaking saved preset IDs. Missing or
+disabled presets need attention; duplicate destinations are shown explicitly.
+Per-run provider/model choices use existing routing permission and consent and do
+not change the saved team. `[tools] code_review_enabled` controls the feature
+(on by default); its switch is **Multi-model code review** under
+Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates. With it off, no
+review tools are offered and review wording is ordinary chat; a review already in
+progress keeps its accepted automatic continuations.
+
+Ask “Review my changes with my default team”, identifying the selected workspace
+folder and scope. You can also supply exact commit-range/PR base and head commits
+with direct or merge-base comparison, or a patch with matching preimage. Include
+untracked files and mutable caller/test context explicitly. A PR URL alone cannot
+grant integration or repository access. Normal file permissions, exclusions,
+project instructions and destination consent still apply. No installed skill is
+required; the optional [inline skill example](../../Examples/skills/multi-model-review/SKILL.md)
+uses the same primary recipe. Without exactly one selected local workspace folder,
+only a request that names code review (code, multi-model, reviewer, PR, pull
+request, diff, commit, patch or changes) reports that a folder is needed; other
+“review …” wording, such as “Review my resume”, stays an ordinary chat.
+
+Each reviewer gets the same captured source and general brief, plus its optional
+focus. A changed binary, symlink, submodule, non-UTF-8 or over-size file is listed by path as
+a coverage gap, and changed files hidden by exclusions or sensitive-path rules are
+counted without names; neither blocks the rest of the review. The assistant states
+these gaps (up to eight, plus a count of the rest) before launching reviewers, and
+each reviewer's first listing of the review scope shows them. Originals open in **Review reports**
+before verification; press **u** in the
+owning Console chat to reopen them. A review that finished while you were away from
+Console opens when you return to Console, and one that finished while you were in another chat
+opens when you switch back to its chat. Read originals, raw output, target identity,
+requested/actual provider-model routes, fallback changes and coverage separately.
+A failed or incomplete report is not an empty successful review. Later edits to
+your files do not change captured evidence.
+
+Ask for verification initially (“Review my changes and verify every finding”), or
+accept the later offer; the first “yes” or “no” answers it, and a later “yes” is
+ordinary chat. A fresh verifier assesses blinded claims and a separate
+unified report maps every original to confirmed, refuted or unresolved evidence.
+Exact repeated claims share an assessment; different triggers remain separate.
+Refutations need specific counter-evidence, and unresolved claims state the next
+check. Model agreement alone is not proof. Stock executable checks currently report
+unavailable because the process owner lacks aggregate disposable-output limits;
+source-based verification can still complete, while execution-dependent claims
+remain unresolved.
+
+The default limit is two total children per primary turn. Two reviewers followed
+by pre-authorized verification need a later automatic turn on the same finite
+budget. Disabled automatic wake, exhaustion or uncertain acceptance preserves
+progress and shows the blocker. An explicit “Resume review” can request remaining
+reviewers; “Retry reviewer R1” requests a new attempt for that slot. Neither silently
+replays an accepted attempt or replenishes the old automatic chain. **Stop** and
+closing the chat fence pending work; cancellation does not prove a process or
+cleanup has finished.
+
+Reports and captured source are temporary session data. Use **Export** to save a
+Markdown report before closing the chat; saved transcript references cannot restore
+an expired bundle. **Discard** requires explicit confirmation and may show cleanup
+pending. Four retained contexts or the tab's 160 MiB reserved/retained allowance
+require an explicit export/release or narrower scope; no report is silently evicted.
+Individual review/source/output caps and context capacity can yield honest partials.
+The [qualification record](../../superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+distinguishes tested deterministic behavior from unverified live-provider quality.
