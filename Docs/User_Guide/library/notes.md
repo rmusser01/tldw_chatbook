@@ -159,7 +159,10 @@ editor's own Back control returns to its list.
   dates, version details, copy/export actions, and Delete. Save status and
   frequent actions remain in the header. On wide terminals the editor's own
   `‹ Notes` control returns to the exact prior list row, scope, and
-  scroll positions; on compact terminals use `‹ Back to list`. While you are
+  scroll positions; on compact terminals use `‹ Back to list`. A key or
+  click before the list has finished refreshing (`/` for the filter, say)
+  keeps focus where it took you rather than pulling it back to that row.
+  While you are
   typing, the title, body and keyword fields are each their own authority: a
   background refresh never rewrites the field under your hands, and it never
   moves your place in the Items list beside it. Tab out of any of them —
@@ -173,7 +176,16 @@ editor's own Back control returns to its list.
 - **Add from files…** — asks whether this is an **Import once** or a lasting
   **Keep a folder synced** relationship before reading a source. Both buttons
   sit together, each directly under its own description; the bar below holds
-  only **‹ Notes**.
+  only **‹ Notes**. With Import once, a Markdown file's YAML front matter is
+  read and removed from the body when every property in it is one Chatbook
+  reads (`title`, `tags`, `keywords`, `aliases`), or when the block is one
+  Chatbook exported — it names a `note_id` (**Export Markdown**), or an `id`
+  with `created_at` and `updated_at` (a bundle), so its `date` and ids are the
+  export's own — and a note you exported comes back as it left; any other
+  block, a daily note's `date:` beside its `tags:` included, stays in the body
+  exactly as written (inside an Obsidian vault with the toggle on, see
+  "Obsidian vaults" below). Keep a folder synced reads front matter only
+  inside a vault and always keeps the block in the body.
 - **Manage sync folders** — appears when roots or migration candidates exist;
   it shows text-explicit status and the valid action for each root.
 
@@ -382,11 +394,11 @@ both stay closed until you choose to reopen one.
 
 | Control | What it does |
 |---|---|
-| "Filter notes… (Enter)" | Type words in any order and press Enter; the last word may be the start of a word (`Lisb` finds "Trip planning: Lisbon"); every word must appear in the title, the body or one of the note's keywords; wrap words in double quotes to match them as an exact phrase. The status line then reads "filter: \<text\> · N results"; with no match it says "No notes match “\<text\>” in titles, bodies or keywords. Try fewer words, or clear the filter." |
+| "Filter notes… (Enter)" | Type words in any order and press Enter; the last word may be the start of a word (`Lisb` finds "Trip planning: Lisbon"); every word must appear in the title, the body or one of the note's keywords; wrap words in double quotes to match them as an exact phrase. The status line then reads "filter: \<text\> · N results"; with no match it says "No notes match “\<text\>” in titles, bodies or keywords. Try fewer words, or clear the filter." Enter again on the same filter opens its first result, and ↓ moves focus to the first result row (text you have not applied yet is applied first, as Enter would). Escape leaves the box and keeps what you typed in it; the filter that is applied does not change until you press Enter or **Clear filter**. |
 | "New" | Opens the **New note** view — the same destination as the rail's **New note** row: **Blank note**, or **From a template…**. (**Ctrl+N** skips the view and makes the blank note itself.) Disabled while another notes operation is running. |
 | "New folder" | Creates a folder in the tree beneath the toolbar. Disabled, with the reason in its tooltip, when the selected folder is sync-managed ("This folder is managed by sync; change its sync root instead.") or its branch is stale ("This branch may be out of date; retry it before changing it."). |
-| Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. |
-| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The folder picker opens with nothing selected, and **Choose** does nothing until you pick a folder. The picker lists the top-level folders the list has loaded (and the ones you have expanded); arriving through New note or the palette's New Note loads them the same way the Notes row does. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). |
+| Folder selected: "Rename" / "Move" / "Remove" | Act on the selected folder. Same two disabled reasons as **New folder**. **Move** opens 'Move folder "\<name\>" to…' with **Top level** first; the folder itself and everything beneath it are left out. After a move the destination opens with its own notes listed as well as the moved folder. If the folder changed somewhere else since the tree loaded, nothing is moved and the notice under the toolbar says so ("This folder was changed elsewhere since the tree loaded.") with a **Refresh** button that reloads the tree. |
+| Note selected: "Add to folder" / "Move note" / "Remove placement" | File the selected note into a folder, move its placement, or take it out again. The picker is titled 'Move "\<title\>" to…' or 'Add "\<title\>" to folder…'. The picker lists every active folder at any depth; type to narrow it, 20 at a time with the exact total ("5 folders", "Showing 1–20 of 37 folders", or "No folder matches “\<text\>”"), with Previous / Next when there are more. The filter has focus when it opens; **Down** moves to the first folder, **Up** / **Down** walk the list, and **Enter** on a folder chooses it. **Choose** confirms the folder last focused and does nothing until you have focused one; **Escape** or **Cancel** closes the picker without changing anything. A sync-managed placement is refused with "This placement is managed by sync; change its sync root instead."; a note sitting in the automatic **Unfiled** group cannot have its placement removed ("Unfiled is shown automatically; move the note into a folder."). A note moved out of **Unfiled** leaves that group straight away. If the tree is out of date, the notice says what changed (for example "This note's placement changed elsewhere since the tree loaded.", or "The notes database was busy — nothing was written.") and offers **Refresh**, which reloads the tree; the next successful folder action replaces the notice. After you delete the selected note nothing stays selected, so these three actions are disabled until you choose another note. |
 | "Restore folder" | Appears after a folder removal, to put it back. |
 | "Sort: Newest" | Opens a one-row strip of Newest / Oldest / Title (✓ on the active one) in place of the action row; pick one directly, or press Escape to cancel. **Newest is the default.** The value is the order the folder tree is paged in, so choosing a new one reloads the tree (open folders included). While a filter is showing the control cannot own the order, so it renders blocked ("○ Sort: Newest") and the line under the toolbar says why: "Sort unavailable — clear the filter" (task-32549). |
 | "Add from files…" | Choose **Import once** or **Keep a folder synced** before selecting a source. |
@@ -462,9 +474,9 @@ action so the list retains its row budget.
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
 | Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh when the note opens, from the sync relationship and from the file itself rather than from anything stored on the note. The time is the file's last write: a save schedules the write and the folder pass that performs it runs a moment later, so the row re-reads itself once that pass has landed (it waits up to five seconds for it) rather than on the save; reopen the note if it still names the previous write. That is the row being accurate rather than reassuring — it is telling you whether the file has been written (task-32640). When the note's sync folder is held for attention — an open sync entry, a conflict waiting for review, a failed pass — the row says so right after the world, "In a synced folder · ⚠ Sync needs attention · …", and the status line above the editor reads "Saved HH:MM in Notes · ⚠ Sync needs attention · Next: Open Manage sync folders." instead of a plain "Saved": your text is in Notes, but nothing reaches the file until the folder is resolved (TASK-34000.2). |
 | **Edit** | Shows the editable title, keywords and body. This is the default view when you open a note. Keywords sit on their own row under the title — comma-separated, edited in place, and reachable with one Tab from the title, so you no longer have to open **Info** to add one. It is the same shape as the Title field, which costs the body five rows at a wide size and one on a compact terminal. The same field appears in Info's Properties; whichever you type in, it is the same keywords. |
-| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. Clicking a note link in Preview opens that note; with the Preview focused, Enter follows the note's link or lists its links to choose from. Web links open in your browser; nothing else is handed to the operating system. |
+| **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. Clicking a note link in Preview opens that note; with the Preview focused, Enter follows the note's link or lists its links to choose from. The note you reach shows **‹ \<title\>** in its heading, which takes you back to the note you came from. Web links open in your browser; nothing else is handed to the operating system. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. Each property is on its own row, labelled — Created, Modified, Version, Words — rather than joined into one sentence: on a wide terminal the values line up in a second column, and on a compact one the rows keep a single column so a timestamp is never cut off the pane. |
-| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Type `[[` in the body to pick a note: the picker narrows as you type, Enter inserts the link, Esc leaves your text alone. Resizing the terminal closes the picker without inserting anything — keep typing to open it again. Only typing opens the picker: moving the caret with Home, the arrow keys or a click into a link you already have never opens it, so navigation keys alone can never change which note a link points to. A `[[Title]]` you type by hand counts too when exactly one note has that title (case is ignored for A–Z letters, so `[[weekly]]` finds "Weekly", but an accented letter must match exactly — `[[élan]]` does not find "Élan"); a title no note has, or two notes share, is left as plain text. Links are recorded when the note is saved, so a note written before this version picks up its typed `[[Title]]` links the next time it is saved. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. The stored `[[title]](note://…)` links an existing library already holds are picked up the first time this version opens it — nothing to re-import; only the hand-typed `[[Title]]` form waits for the note's next save. |
+| **Linked from (N)** (Info → Properties) | Lists the notes whose bodies link to this one, newest import or not — the `[[target\|title]](note://…)` links Import once writes for an Obsidian vault's `[[wikilinks]]` (see "Obsidian vaults"). Click an entry to open that note; its heading then shows **‹ \<title\>**, which returns to the note you came from — one hop, so the control is gone once you are back. While the lookup runs the line reads "Linked from — checking…", and "Linked from — couldn't check" if it failed, so a count is only claimed once the answer is in. When nothing points here the line reads "Linked from (0) — no notes link here yet". The list is capped at 50 entries; past that the count reads "50+". Type `[[` in the body to pick a note: the picker narrows as you type, Enter inserts the link, Esc leaves your text alone. Resizing the terminal closes the picker without inserting anything — keep typing to open it again. Only typing opens the picker: moving the caret with Home, the arrow keys or a click into a link you already have never opens it, so navigation keys alone can never change which note a link points to. A `[[Title]]` you type by hand counts too when exactly one note has that title (case is ignored for A–Z letters, so `[[weekly]]` finds "Weekly", but an accented letter must match exactly — `[[élan]]` does not find "Élan"); a title no note has, or two notes share, is left as plain text. Links are recorded when the note is saved, so a note written before this version picks up its typed `[[Title]]` links the next time it is saved. The answer is looked up rather than searched for: each note records the links its body carries when it is saved or imported, so the lookup costs what a note's own inbound links cost rather than growing with the size of your vault. The stored `[[title]](note://…)` links an existing library already holds are picked up the first time this version opens it — nothing to re-import; only the hand-typed `[[Title]]` form waits for the note's next save. |
 | Status line | Shows the autosave state: "Saved", "Saving…", "Unsaved changes", "Conflict — …", "Save failed — …", or "Unavailable — …". Its "Next: Keep editing; changes save automatically." appears only while a save is counting down, running, or paused behind an open dialog (or the note is clean, so your next keystroke starts one); a note with unsaved changes and no save pending reads "Next: Keep editing; press Save to save now." instead. Right after a save completes in this session the state names the time — "Saved 12:47" — **in your local time**, the same clock Info → Properties prints, so the two never disagree about when that save happened; leaving the note and reopening it later in the same session goes back to the bare "Saved". It does not carry a word count. Created/Modified/version details are under Info → Properties, one labelled row each, with an absolute local timestamp beside its relative age and the word count (e.g. a "Created" row reading "2026-09-08 21:14 · 3m ago", then "Modified", "Version" and "Words"). In Info, "Saved" appears once. |
 | Chrome strip | One row directly under the body, right-aligned: "N words · L:C" — the words in the note and the caret's line and column, both counted from 1. The count is the whole open note's, at any length: a 37 KB, 5,427-word note reads "5,427 words · 1:1" the moment it opens, whatever you had open before it, and the thousands separator is part of the number. It follows your typing and your arrow keys with no save and no reload. Nothing on it is a control; Tab never stops there. It appears while **Edit** is the open view on a terminal 80 columns or wider; **Preview** and **Info** have no caret, and a narrower terminal gives the row back to the body. The strip does not repeat the save state — that stays on the status line above the mode controls. The editor's Created/Modified/version line lives in one place, Info → Properties. |
 | **Save** | Saves immediately, without waiting for autosave. It remains visible at every terminal size: beside the mode controls when the editor pane is wide enough for the whole header on one row, otherwise on the row directly under Edit / Preview / Info, with the save state on its own line above them. The header never pushes Save past the pane's edge, and F6 only lands on a Save you can see. |
@@ -1207,7 +1219,8 @@ With it on:
 - `.obsidian/`, `.trash/` and `Templates/` are listed under **Skipped** as one
   row each, naming the vault reason ("Obsidian configuration — skipped…"),
   rather than one row per file inside them.
-- YAML frontmatter is read: `title` becomes the note title, and `tags` and
+- YAML frontmatter is read: `title` becomes the note title, and `tags` (or
+  `keywords`, the key this app's own older exports wrote) and
   `aliases` become keywords (there is no separate alias field, and keeping them
   as keywords is what makes the note findable by its alternate names). An alias
   is an alternate *name*, not a tag, so it is stored as `alias: <name>` — in
@@ -1216,7 +1229,25 @@ With it on:
   whole file, in which case the note keeps it and still takes its title and
   keywords from it. Any other property in that block (`mood`, `status`,
   `rating`) is not imported, and the review row says which ones ("… · not
-  imported: status"), so nothing disappears silently.
+  imported: status"), so nothing disappears silently — that includes a key
+  YAML does not read as text (`Yes:` is reported as `True`), a `title` that is
+  not text, and a `tags` list the import could not keep ("tags (more than
+  100)"). A `title` that is a number or a date (`title: 2026`, `12:30`) is used
+  exactly as written. Your own `date:` or `id:` property is reported like any
+  other — a daily note's `date:` beside nothing but its `tags:` too; only a
+  block Chatbook exported itself, one that names a `note_id` (**Export
+  Markdown**) or an `id` with `created_at` and `updated_at` (a bundle), drops
+  its `date` and ids silently, because they are the export's stamps, not
+  yours.
+- Outside a vault — a picked file, a plain folder, or the toggle off — the
+  block is read and removed only when every key in it is one of the above
+  (`title`, `tags`, `keywords`, `aliases`), or when the block is one Chatbook
+  exported (it names a `note_id`, or an `id` with `created_at` and
+  `updated_at`, so its `date` and ids are the export's own): that is how a
+  note you exported with **Export Markdown** or in a bundle comes back as it
+  left. Any other block — your own `Summary:` or `Decision:` properties, or a
+  daily note's `date:` beside its `tags:` — stays in the note body exactly as
+  written, and nothing is dropped.
 - An embed — `![[diagram.png]]`, or `![[Another note]]` — is not a link and is
   never rewritten: Chatbook has nowhere to render the embedded file, so the
   note keeps the `![[…]]` exactly as you wrote it and Preview prints it as
@@ -1246,7 +1277,11 @@ once instead. Nothing already synced changes when it comes back on —
 the pass only ever leaves files the sync has never taken alone.
 
 Turn the toggle off to import the vault exactly as any other folder — every
-directory walked, frontmatter left in the body, links left as text. The config
+directory walked, frontmatter left in the body (unless every property in the
+block is one Chatbook reads — `title`, `tags`, `keywords`, `aliases` — or the
+block is one Chatbook exported, naming its `note_id` or its `id`,
+`created_at` and `updated_at`, in which case it is read and removed as with
+the toggle on), links left as text. The config
 files inside are then listed one by one, still as **Skipped** ("Not a note file
 (app configuration).") rather than as failures. One rule
 applies either way: a title that is only a template placeholder, such as a
@@ -1340,7 +1375,7 @@ the same reasons: `.obsidian/`, `.trash/` and `Templates/` while the
 **Obsidian vault** toggle is on, and an empty or whitespace-only file
 whatever the toggle says. (Keep a folder synced does not remember the toggle
 across a restart — see "Obsidian vaults" above.) Both read the frontmatter, so `title` becomes the
-note's title and `tags`/`aliases` become its keywords. A synced note bounds
+note's title and `tags` (or `keywords`) and `aliases` become its keywords. A synced note bounds
 both: a tag or alias longer than 256 characters is dropped (half an alternate
 name is a name nothing has, and the note keeps its other keywords), while a
 `title:` longer than 4,096 characters is cut to the first 4,096 (a title is
@@ -1456,6 +1491,10 @@ written locally, and a note is a local write.
    first. **Cancel** is focused, so Enter or Escape keeps your file as it
    is; choose **Replace** to overwrite it.
 
+The front matter is real YAML (`title`, `date`, `tags`, `note_id`): a title
+with a colon or a leading `*` is quoted, and `tags` is a list, so Obsidian,
+Pandoc and **Add from files…** all read it back.
+
 ### Undo a deleted note
 
 1. Confirm **Delete** in the note editor.
@@ -1492,16 +1531,29 @@ permanent delete.
 | **/** | Focus the note filter ("find note"), without typing a literal "/" into it. Once the filter has focus, "/" is an ordinary typeable character rather than an accelerator — a second "/" adds a literal slash, since a filter can legitimately target a folder-style path such as "Work/Q3". The footer drops the "/ find note" chip while a text field has focus, for that reason. |
 | **g** | Go to the folder tree beside the list — focus lands on the selected placement when there is one, otherwise on the first folder row. |
 | **e** (in select mode) | Export the checked notes. Advertised only once at least one row is checked, which is also when the **Export selected** button stops being disabled. |
-| **Escape** | Focus the rail (in **Recently deleted**, go back to the list) |
+| **↑ / ↓** (Notes tree) | Move through folder rows, note rows and the "more" pager in the order shown — one list, top to bottom. Enter on a "more" pager loads the next page and puts focus on the first row it added. |
+| **→ / ←** (on a folder row) | Expand the folder; collapse it, or jump to its parent folder when it is already collapsed. Selecting a folder (Enter) stays separate from these. |
+| **Enter** (on **Sort**) | Opens the chooser with the current choice focused. **← / →** (or ↹ Tab) move between the choices without choosing, and Enter picks the focused one; Enter on a choice or Escape returns focus to **Sort**. |
+| **Escape** | Focus the rail (in **Recently deleted**, go back to the list). In the filter: leave the field, keeping what you typed; the applied filter is unchanged. |
 | **r** (in **Recently deleted**) | Restore the focused row |
-| Enter (in "Filter notes… (Enter)") | Apply the filter |
+| Enter (in "Filter notes… (Enter)") | Apply the filter; Enter again on the same filter opens the first result |
+| ↓ (in the filter) | Focus the first result row. Text you have not applied yet is applied first, the way Enter applies it, and focus lands on the first row of the new result; with no result, focus stays in the filter. An emptied box clears the filter, as Enter does, and focus lands on the first folder or note of the list — the same row ↓ reaches from an empty box with no filter applied. Any key or click while the result is still loading — including F6, Shift+F6 and Tab — or a dialog opening over Library cancels that move to the first row. A mouse-wheel scroll that moves a pane does not: the pane takes the wheel, and focus still lands on the first row when the result paints. |
+| **‹ \<note\>** (note heading) | After following a link or a backlink, returns to the note you came from (one hop) |
 | ↑ / ↓ (New note view) | Move between **Blank note**, **From a template…** and the template rows it opens |
 | Enter (New note view) | Create from the focused row |
 
 The footer advertises these as `n new note | / find note | g go to folder |
-esc focus rail`, and drops every printable one of them while a text field
-(the filter, or the rail's own search box) has focus — there they are
-literal characters, not accelerators. In select mode the tier becomes
+esc focus rail`. While a text field has focus the printable ones are literal
+characters, not accelerators, so the footer says so the way the rest of
+Library does. In the filter it reads `typing in field | esc focus rail` and
+names no keys "after esc", because Escape there moves the caret into the
+rail's "Search Library…" box, another text field (every Library list filter
+behaves the same). In that search box Escape leaves for the list, so the
+footer adds `after esc: n new note · / find note · g go to folder`. A note's
+Title, Keywords and body announce themselves the same way — `typing in field
+| esc back to notes`, plus `ctrl+end end of note` in the body. Below 64
+columns the Escape chip comes first, because the footer may have room for
+only one chip there. In select mode the tier becomes
 `enter select note | e export selected | esc done`, with the **e** chip
 present only while something is checked. Notes does not register **Ctrl+S** and does not replace it with
 another save shortcut. Use the visible

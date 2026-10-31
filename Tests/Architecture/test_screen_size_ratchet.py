@@ -1151,7 +1151,73 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-24, TASK-34000 P1-B rebased onto dev 96cae7eec0 (owner decision,
     #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
     #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37805, 1362),
+    #: 2026-10-25, TASK-34000.28 (polish-1a task 2 + fix rounds 1-2, rebased
+    #: onto dev e554f25812; owner decision 2026-10-04, expand-the-limits rule):
+    #: the Notes tree's Right/Left folder branch and the Sort strip's Left/Right
+    #: branch in ``on_key``, the Sort control's portable focus role, the pager
+    #: press hand-off (``_library_notes_tree_pager_still_focused`` + the no-row
+    #: branch of ``_focus_library_notes_tree_after_page``) and the
+    #: pager press's own ``set_focus`` parking (fix round 2 replaced the
+    #: round-1 private-API override with it): 37759 -> 37862 lines, methods
+    #: unchanged at 1361 (measured; the override was the round-1 +1).
+    #: 2026-10-25, TASK-34000.28 (polish-1a task 3; owner decision 2026-10-04,
+    #: expand-the-limits rule): the folder pickers page every active folder
+    #: (two call sites rewritten, the picker imported where it opens), the
+    #: locator's newly-opened folders ask the shared slice helper for both
+    #: slices, and two delegators in (``_page_library_notes_folder_targets``,
+    #: ``_ensure_library_notes_folder_slices``) for one out
+    #: (``_library_notes_folder_target_options``): 37862 -> 37897 lines,
+    #: 1361 -> 1362 methods (measured).
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 4 and its fix round 1;
+    #: owner decision 2026-10-04, expand-the-limits rule): the Refresh
+    #: delegator (``handle_library_notes_notice_refresh``, the +1 method) and
+    #: its portable focus role, the derived Refresh offer bound to the
+    #: conflict copy plus the whole-notice status line, the conflict branch
+    #: reading ``FOLDER_CONFLICT_COPY`` (the table itself lives in
+    #: ``Notes/note_folder_models.py``), the delete clearing the selection it
+    #: deleted, and the Unfiled reconcile line: 37897 -> 37926 lines,
+    #: 1362 -> 1363 methods (measured with ``_measure``; the first cut's
+    #: 37955 was taken before the copy table moved out).
+    #: 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a task 5; owner
+    #: decision 2026-10-04, expand-the-limits rule): the Notes filter's Down
+    #: branch in ``on_key`` and its four helpers (``_library_notes_filter_down``,
+    #: ``_library_notes_filter_loading``, ``_first_library_notes_note_row``,
+    #: ``_land_library_notes_filter`` -- the ruling T5-a hand-off), Enter on an
+    #: applied filter opening its first result (``_apply_library_notes_filter``
+    #: split out of the Enter handler), the shared typing-field footer
+    #: transform extracted into ``_library_typing_field_footer`` and called by
+    #: the Notes navigator, editor and Info tiers, Clear filter emptying the
+    #: box, and the link-back delegator plus its focus role: 37926 -> 38076
+    #: lines, 1363 -> 1370 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a task 5 fix round 1;
+    #: same owner decision): ruling T5-b's ``_library_escape_lands_in_text_field``
+    #: (the typing footer withholds "after esc:" keys when Escape lands in
+    #: another text field), the withdrawable ``(filter, live)`` Down hand-off
+    #: and its failure-branch clear (M4), an emptied box's Down landing on
+    #: ``_first_library_notes_tree_row`` through the browse receipt (M5), and
+    #: ``link_origin`` cleared on every plain open (I-1): 38076 -> 38138 lines,
+    #: 1370 -> 1372 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 5 fix round 2; same owner
+    #: decision): ``_withdraw_library_notes_filter_row_handoff`` called from
+    #: every input site ``on_key`` never sees (the wheel, the priority Tab
+    #: pair, Shift+F6) and from ``on_screen_suspend`` (R2-2), and Down from an
+    #: empty, unfiltered box landing on the tree's first row (R2-4): 38138 ->
+    #: 38164 lines, 1372 -> 1373 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 (polish-1a final review M-2; same owner
+    #: decision): a class-level ``_library_notes_filter_row_handoff = None``
+    #: default, so a screen built by ``__new__`` reads it on suspend: 38164 ->
+    #: 38166 lines, 1373 methods (measured with ``_measure``).
+    #: 2026-10-26, PR #3259 CI fix round 1 (TASK-34000.28; same owner
+    #: decision): ``_withdraw_library_notes_filter_row_handoff`` renamed
+    #: ``_withdraw_library_notes_pending_focus_handoffs`` and now also
+    #: withdraws Back's pending row hand-off (a ``/`` pressed before the
+    #: list's source snapshot landed had focus taken back to the row), and
+    #: Down's T5-a landing focuses the painted result at once instead of only
+    #: through the list-entry arm's after-refresh attempt: 38166 -> 38195
+    #: lines, 1373 methods (measured with ``_measure``).
+    #: 2026-10-31, PR #3259: user size waiver; New focus role, exact current measurement.
+    #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38242, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

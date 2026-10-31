@@ -592,7 +592,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_agent_bridge.py": 11729,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     "tldw_chatbook/Agents/agent_service.py": 9656,
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
+    # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
+    # actual current-base N-32 file-body F6 integration at 9,541 lines.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
@@ -639,7 +641,12 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
     "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4648,
+    # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
+    # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
+    # one-hop link-back on the Notes canvas). Owner rule "expand limits,
+    # don't contort code".
+    # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,

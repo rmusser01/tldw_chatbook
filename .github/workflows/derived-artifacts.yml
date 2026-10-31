@@ -163,6 +163,7 @@ jobs:
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
             Tests/App/test_detached_focus_guard.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \
+            Tests/Chatbooks/test_note_frontmatter_round_trip.py \
             Tests/Architecture/test_notes_sync_version_proxy_sites.py \
             Tests/Notes/test_sync_containment.py \
             'Tests/DB/test_subscriptions_db.py::test_base_exception_in_transaction_rolls_back_and_leaves_no_open_transaction[False]' \

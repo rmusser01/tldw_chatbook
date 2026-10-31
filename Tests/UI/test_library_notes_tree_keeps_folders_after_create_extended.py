@@ -25,10 +25,10 @@ from Tests.UI.test_library_notes_tree_keeps_folders_after_create import (
     ROOT_FOLDERS,
     SIZE,
     TITLE,
-    _assert_folders_above_unfiled,
     _folder_rows,
     _mounted,
     _open_folder_picker,
+    _painted_folders_above_unfiled,
     _painted_list,
     _profiled_app,
     _shell,
@@ -81,7 +81,7 @@ async def test_the_palette_message_from_the_default_screen_lands_on_a_whole_tree
         await _title_then_escape(screen, pilot, TITLE)
         await _tree_settled(screen, pilot)
 
-        _assert_folders_above_unfiled(_painted_list(app, screen), note_title=TITLE)
+        await _painted_folders_above_unfiled(app, screen, pilot, note_title=TITLE)
 
 
 async def test_move_note_lists_the_folders_straight_after_a_create(tmp_path) -> None:
@@ -121,7 +121,12 @@ async def test_rail_new_note_then_escape_shows_the_folders_at_80x24(tmp_path) ->
         assert [
             name for name in FOLDERS if any(name in label for label in labels)
         ] == list(FOLDERS), labels
-        assert "▸ Journal" in _painted_list(host, screen), _painted_list(host, screen)
+        # TASK-34000.95: the rows are mounted; wait for the paint to catch up.
+        await _until(
+            pilot,
+            lambda: "▸ Journal" in _painted_list(host, screen),
+            "the Journal row to paint at 80x24",
+        )
 
 
 async def test_the_list_return_re_requests_a_root_slice_a_fence_left_behind(
@@ -167,5 +172,4 @@ async def test_the_list_return_re_requests_a_root_slice_a_fence_left_behind(
             "the editor return to re-request the root folders slice",
             timeout=10.0,
         )
-        await pilot.pause(0.1)
-        _assert_folders_above_unfiled(_painted_list(host, screen), note_title=TITLE)
+        await _painted_folders_above_unfiled(host, screen, pilot, note_title=TITLE)

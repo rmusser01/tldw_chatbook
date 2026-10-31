@@ -582,10 +582,10 @@ def _lifted_note_metadata(
     from tldw_chatbook.Notes.note_import_parsers import (
         _frontmatter_keywords,
         _frontmatter_title,
-        _split_frontmatter,
+        split_frontmatter,
     )
 
-    metadata, _body = _split_frontmatter(text)
+    metadata, _body = split_frontmatter(text)
     # Import once bounds a keyword at 512; an execution request refuses one
     # over MAX_SYNC_KEYWORD_LENGTH, and the request is built inside a loop over
     # every safe action -- so one 300-character `aliases:` entry used to abort

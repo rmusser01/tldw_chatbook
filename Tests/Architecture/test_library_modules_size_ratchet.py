@@ -584,7 +584,37 @@ _BUDGETS: dict[str, int] = {
     # .17/.14/.12/.11/.71 controller work (Add-from-files reset, root-load
     # belt, link picker insert/follow, lazy-start settle) measured on the
     # rebased tree: 6484 -> 7200.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7200,
+    # 2026-10-24, TASK-34000.28 (polish-1a task 2; same owner decision): the
+    # folder-row Right/Left helper ``_library_notes_folder_row_arrow`` (one
+    # method, docstring included), the Sort chooser's two focus hand-offs
+    # (``then=`` pair, Skills shape), its strip-focus forwarding property and
+    # the ``sort``/``sort-choice:`` role targets (a vanished choice resolves
+    # to its opener): 7200 -> 7298 (measured).
+    # 2026-10-25, TASK-34000.28 fix round 1 (same owner decision): the
+    # expand/collapse step split out of the folder-row press handler
+    # (``_toggle_library_notes_folder``) so Right/Left toggle without
+    # selecting the folder: 7298 -> 7312 (measured).
+    # 2026-10-25, TASK-34000.28 (polish-1a task 3; same owner decision): the
+    # shared slice helper ``_ensure_library_notes_folder_slices`` (the toggle's
+    # loop, now also the locator's) and the folder pickers' all-folders loader
+    # ``_page_library_notes_folder_targets`` replacing the loaded-branches
+    # ``_library_notes_folder_target_options``: 7312 -> 7339 (measured).
+    # 2026-10-26, TASK-34000.28 (polish-1a task 4 and its fix round 1; same
+    # owner decision): the folder-conflict notice's Refresh handler
+    # (``handle_library_notes_notice_refresh``) and its focus role's
+    # selector, and a successful delete Undo withdrawing that notice and its
+    # Refresh offer, which used to outlive it until restart: 7339 -> 7362
+    # (measured).
+    # 2026-10-26, TASK-34000.28 (polish-1a task 5; same owner decision): the
+    # one-hop way back after a followed link -- ``link_origin`` set by the
+    # backlink and note-link opens and cleared by every other open in
+    # ``_begin_library_note_load``, their shared flush-then-open tail
+    # ``_open_library_note_from_link``, the ``‹ <title>`` handler
+    # ``handle_library_note_link_back`` and its focus role's selector:
+    # 7362 -> 7393 (measured). Fix round 1 (same decision): an editor exit
+    # clears ``link_origin`` too (I-1): 7393 -> 7394 (measured).
+    # 2026-10-31 PR3259: exact integration size under the user backlog size-limit waiver.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7423,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -813,7 +843,12 @@ _SLACK_TOLERANCE_LINES = 50
 # wrong surface with no exception anywhere. Retargeted to
 # `_media_state.selected_media_id` / `.view` with a six-line comment naming
 # the retarget (the two lines themselves are replaced in place). 811 -> 817.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 840
+#
+# 2026-10-26, TASK-34000.28 (polish-1a task 5 fix round 1; owner decision
+# 2026-10-04, expand-the-limits rule): the unmounted note deep link is a plain
+# open, so it clears ``link_origin`` like every other (I-1): 840 -> 841
+# (measured).
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] = 841
 
 
 # ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.

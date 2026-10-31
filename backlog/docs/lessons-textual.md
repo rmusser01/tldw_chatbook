@@ -918,6 +918,25 @@ Re-query after **every** await that could trigger a recompose, and take the refe
 the caller will act on *after* the last one — scrolling counts, because
 `scroll_to_widget` can itself provoke another reconciliation pass.
 
+## A canvas's own fields run ahead of its mounted children -- stamp what a child was composed for ON the child (TASK-34000.40, 2026-10-26)
+
+Escape in the Notes filter used to lose unsubmitted text, because the
+canvas-scoped sync's recompose rebuilt the box from the applied filter. The
+first fix carried a "draft" -- the box's text when it differed from the
+canvas's `filter_value` and from the incoming filter. dev's
+`test_library_shell_filtered_delete_refreshes_list_without_ghost` went red: a
+delete from a filtered list clears the filter in TWO syncs before one
+recompose. `sync_state` stores its fields and only schedules the rebuild, so on
+the second sync `filter_value` was already `""` while the mounted box still
+showed the applied `retro`, and `retro` was "carried" over the clear.
+
+**Rule.** To ask "did the user change this child since it was composed?",
+compare it with a value stamped on the child at compose time
+(`filter_box._library_applied_filter`), not with the container's field: a
+second sync before the first recompose has moved the field on. The same
+reason `LibraryNotesCanvas._apply_post_compose_state` gates on the mounted
+children rather than on `self.mode`.
+
 ## Textual focuses the clicked widget BEFORE the press bubbles — a click-outside dismissal must not restore the popup's opener
 
 **TASK-25709, 2026-08-30.** Wiring click-outside dismissal for the Context rail's
@@ -1803,6 +1822,71 @@ nor doing it *before* the snapshot landed.
 - **Corollary:** a focus fallback that names one branch's control is a latent
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
+
+## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix rounds 1-2, 2026-10-25)
+
+Enter on the Notes tree's "more" pager loaded the next page and left focus in
+the filter, where the next printable key typed into it. The hand-off that
+should have focused the first added row already existed, and its mounted
+Pilot pins were green.
+
+- **Trace (a `set_focus` wrapper plus an `on_descendant_focus` wrapper that
+  records `focus_intent_generation`).** The loading-state recompose pruned the
+  focused pager. Textual's `Screen._reset_focus` then moved focus to the
+  Library grip. The screen counted that `DescendantFocus` as the user's own
+  move (generation 25 → 26). That vetoed both the canvas's pager retention
+  and the page's hand-off, and the identity restore fell back to the filter.
+- **Why the pins stayed green.** Every widget has its own message pump, so
+  the screen can read a queued `DescendantFocus` while another widget's
+  recompose is still mounting. The existing pins (a folder pager in
+  `LibraryHarness`) won the race: the canvas's `_after_recompose` ran first.
+  The root pager under the production stylesheet, at load ~35, lost it on
+  every run.
+- **Fix (final design).** Do not let Textual reset focus at all. The pager
+  press runs the loading sync, which captures the pager and only schedules
+  the recompose. It then parks focus itself, before the prune, through the
+  public API:
+  - mark the Library grip as `_library_notes_programmatic_focus_target`;
+  - call `screen.set_focus(grip)`;
+  - record the grip as the parked widget.
+
+  The landing is classified programmatic, so no generation bump happens, and
+  Textual's reset finds nothing focused to move. The hand-off holds while
+  focus is still on the pager or exactly on the parked widget, with the
+  generation unchanged.
+- **Two first cuts that failed review.**
+  - **A generation-only ownership check stole a user's move.** The user moved
+    to the filter, and in `LibraryHarness` that move never bumped the
+    generation, so the regression pin caught the hand-off taking focus back
+    (`test_mounted_pager_completion_does_not_steal_moved_focus[success]`).
+    The fix was keying the check on the parked widget.
+  - **Overriding the private `Screen._reset_focus` worked, but was ruled
+    out.** It changed every prune and blur landing screen-wide: Media and
+    Conversations read the same generation. A Textual rename would also have
+    silently dropped the override.
+- **Rule.** Any "has the user moved focus since X?" counter must not count
+  Textual's reset after a removal, which every recompose of the focused
+  control produces and which looks exactly like a click. Prefer parking focus
+  yourself (public `set_focus`, marked programmatic) before the recompose,
+  scoped to the flow that needs it, over reclassifying the framework's reset
+  globally.
+- **Two more incidents (PR #3259 CI fix round 1, 2026-10-26).**
+  - **A generation stamp at Back went stale with no key pressed.** Back's
+    hand-off to the row the note came from waits for the list's source
+    snapshot, and a `/` in that window had focus taken back to the row
+    (`focus_intent_generation` stamped at Back looked like the fix). The
+    editor's prune reset focus to the Library grip, the stamp was stale
+    before any key, and the no-move control went red. The fix withdraws the
+    hand-off from the real-input sites T5-a already uses (`on_key`, mouse,
+    wheel, the priority focus actions, suspend), never from
+    `on_descendant_focus`.
+  - **A restore's own queued event disarmed the arm made right after it.**
+    The Notes filter's Down landing restored focus to the box and then armed
+    the list-entry focus, whose first attempt runs after the next refresh.
+    When the box's queued `DescendantFocus` was handled first, it read as
+    the user leaving the list and disarmed the landing (1 of 10 runs under
+    CPU load; certain once the attempt is held). Landing at once, while the
+    rows are known to be mounted, takes the race away.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 

@@ -561,7 +561,7 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_CREATE_NOTE,
     build_library_shell_state,
 )
-from ...Notes.note_folder_models import NoteFolder
+from ...Notes.note_folder_models import NoteFolderChildPage
 from ...Notes.note_folder_repository import LocalNoteFolderRepository
 from ...Third_Party.textual_fspicker import FileSave, SelectDirectory
 from ...Utils.adaptive_reader_state import (
@@ -611,7 +611,7 @@ from ...Notes.note_import_plan_models import (
 from ...Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
-from .canvas_sync import _sync_library_canvas
+from .canvas_sync import _previous_folder_row_above, _sync_library_canvas
 from .library_notes_state import LibraryNotesState, notes_state_shim_attr
 from . import library_notes_sync_attention as notes_sync_attention
 from .library_notes_work_session import (
@@ -1211,6 +1211,13 @@ class LibraryNotesController:
         return self._focus_library_control_fn
 
     @property
+    def _focus_library_choice_strip_active(self) -> Any:
+        # TASK-34000.28 (N-30): the Skills/Prompts sort twins hand focus to
+        # the open strip's active option through this screen helper; the
+        # Notes sort chooser now does the same (a live read, like ``focused``).
+        return self._screen._focus_library_choice_strip_active
+
+    @property
     def _hide_library_adaptive_reader_rail_collapse(self) -> Any:
         return self._hide_library_adaptive_reader_rail_collapse_fn
 
@@ -1574,6 +1581,7 @@ class LibraryNotesController:
             status_channels=status_channels,
             backlinks=self._library_notes_backlinks,
             backlinks_status=self._library_notes_backlinks_status,
+            link_origin=self._notes_state.link_origin,  # TASK-34000.28 N-21
             # TASK-34000.11: computed only while Preview is shown (the same
             # gate the preview source uses); the editor never scans for it.
             note_links=self._library_note_preview_links(),
@@ -1941,6 +1949,7 @@ class LibraryNotesController:
         role = identity.semantic_role
         selector = {
             "filter": "#library-notes-filter",
+            "new-note": "#library-notes-new",
             "select-toggle": "#library-notes-select-toggle",
             "title": "#library-note-title",
             "body": "#library-note-body",
@@ -1967,9 +1976,29 @@ class LibraryNotesController:
             "import-retry": "#note-import-retry",
             "import-back": "#library-notes-import-back",
             "create-template:blank": "#library-notes-create-blank",
+            # TASK-34000.28 (N-30): see the matching pair in
+            # ``_library_notes_semantic_role``.
+            "sort": "#library-notes-sort",
+            # TASK-34000.28: the folder-conflict notice's Refresh control.
+            "notice-refresh": "#library-notes-notice-refresh",
+            "link-back": "#library-note-link-back",  # TASK-34000.28 N-21
         }.get(role)
         if role.startswith("context-action:"):
             selector = f"#{role.removeprefix('context-action:')}"
+        elif role.startswith("sort-choice:"):
+            try:
+                return self.query_one(
+                    f"#library-notes-sort-{role.removeprefix('sort-choice:')}",
+                    Widget,
+                )
+            except (NoMatches, QueryError):
+                # TASK-34000.28 (N-30): the strip closes on choose/Escape, so
+                # a slice page that landed while a choice still had focus
+                # replays an identity whose button is gone. Its opener is
+                # where that focus belongs -- not the navigator fallback (the
+                # filter), which is what the live walk showed after Enter on
+                # Oldest (capture 07, first round).
+                selector = "#library-notes-sort"
         elif role.startswith("sync-direction:"):
             selector = f"#notes-sync-direction-{role.removeprefix('sync-direction:').replace('_', '-')}"
         elif role.startswith("region-back:"):
@@ -3359,31 +3388,41 @@ class LibraryNotesController:
         if projection is None:
             return None
         return projection.row(self._library_notes_tree_selected_placement_id)
-    def _library_notes_folder_target_options(
-        self, *, exclude_folder_id: str | None = None
-    ) -> tuple[tuple[str, str], ...]:
-        """Return bounded loaded folder choices, excluding a moved subtree."""
-        folders = {
-            folder.folder_id: folder
-            for state in self._library_notes_tree_branches.values()
-            if state.key.slice_kind == "folders"
-            for folder in state.items
-            if isinstance(folder, NoteFolder)
-        }
-        excluded_path = (
-            folders[exclude_folder_id].normalized_path
-            if exclude_folder_id in folders
-            else ""
+    async def _page_library_notes_folder_targets(
+        self,
+        query: str,
+        offset: int,
+        *,
+        exclude_subtree_of: str | None = None,
+    ) -> NoteFolderChildPage:
+        """One folder-picker page over EVERY active folder (TASK-34000.28, N-23).
+
+        Replaces ``_library_notes_folder_target_options``, which offered only
+        the folders this visit's tree had loaded -- so a nested folder under a
+        collapsed parent could not be chosen. The picker
+        (``LibraryNoteFolderTargetDialog``) calls this as its loader.
+
+        Args:
+            query: The picker's filter text, matched anywhere in a path.
+            offset: Zero-based offset into the path order.
+            exclude_subtree_of: The folder being moved, offered neither itself
+                nor beneath itself; ``None`` for a note placement.
+
+        Returns:
+            The scope service's exact page of matching folders.
+        """
+        from ...Widgets.Library.library_note_folder_dialog import (
+            FOLDER_TARGET_PAGE_SIZE,
         )
-        choices = [
-            (folder.path.strip("/").replace("/", " / "), folder.folder_id)
-            for folder in folders.values()
-            if folder.folder_id != exclude_folder_id
-            and not (
-                excluded_path and folder.normalized_path.startswith(f"{excluded_path}/")
-            )
-        ]
-        return tuple(sorted(choices, key=lambda item: (item[0].casefold(), item[1])))
+
+        return await self.app_instance.notes_scope_service.page_note_folders(
+            scope="local_note",
+            query=query,
+            limit=FOLDER_TARGET_PAGE_SIZE,
+            offset=offset,
+            exclude_subtree_of=exclude_subtree_of,
+            user_id=self._library_notes_user_id(),
+        )
     def _remove_library_note_source_record(self, note_id: str) -> None:
         """Patch one successful delete into the cached Notes rows and count."""
         target_id = str(note_id)
@@ -3570,10 +3609,19 @@ class LibraryNotesController:
         self.call_after_refresh(load_initial_note)
 
     def _begin_library_note_load(
-        self, note_id: str, *, entry_origin: bool = False
+        self,
+        note_id: str,
+        *,
+        entry_origin: bool = False,
+        link_origin: tuple[str, str] | None = None,
     ) -> None:
-        """Reset presentation, invalidate old work, and start one editor load."""
+        """Reset presentation, invalidate old work, and start one editor load.
+
+        ``link_origin`` (TASK-34000.28 N-21) is the ``(note_id, title)`` a
+        followed link came from; every other open passes none and clears it.
+        """
         navigation_generation = self._supersede_library_notes_navigation()
+        self._notes_state.link_origin = link_origin
         self._library_note_session.close_session()
         self._clear_finished_library_notes_operation()
         self._selected_note_id = note_id
@@ -3698,15 +3746,44 @@ class LibraryNotesController:
         note_id = str(getattr(event.button, "note_id", "") or "")
         if not note_id or self._library_notes_mutation_fenced():
             return
+        await self._open_library_note_from_link(note_id, link_origin=True)
+    async def _open_library_note_from_link(
+        self, note_id: str, *, link_origin: bool
+    ) -> None:
+        """Flush, then open ``note_id`` -- the backlink, note-link and link-back way.
+
+        TASK-34000.28 (N-21): a followed link records the note it left as the
+        new editor's ``‹ <title>`` origin; the ``‹`` control itself opens with
+        none, so the way back is one hop. A vetoed flush keeps the user where
+        they are.
+        """
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        snapshot = self._library_note_session.snapshot
+        origin = (
+            (snapshot.note_id, snapshot.title or "Untitled")
+            if link_origin and snapshot is not None and snapshot.note_id
+            else None
+        )
         self._library_notes_notice = ""
         self._library_note_pending_blank_gc_id = None
         self._library_note_session_blank_id = None
         self._library_note_title_user_edited = False
-        self._begin_library_note_load(note_id)
+        self._begin_library_note_load(note_id, link_origin=origin)
         _sync_library_canvas(self, "notes")
+    @on(Button.Pressed, "#library-note-link-back")
+    async def handle_library_note_link_back(self, event: Button.Pressed) -> None:
+        """Return to the note a followed link came from (TASK-34000.28 N-21).
+
+        Args:
+            event: Press of the editor heading's ``‹ <title>`` control.
+        """
+        event.stop()
+        origin = self._notes_state.link_origin
+        if origin is None or self._library_notes_mutation_fenced():
+            return
+        await self._open_library_note_from_link(origin[0], link_origin=False)
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
         self, event: LibraryNoteWorkPane.EditorReady
@@ -3782,6 +3859,7 @@ class LibraryNotesController:
         if self._library_notes_view != "import":
             self._library_notes_view = "list"
         self._selected_note_id = ""
+        self._notes_state.link_origin = None  # TASK-34000.28: a plain exit
         self._library_note_load_state = "idle"
         self._library_note_load_message = ""
         self._library_note_autosave_state = "idle"
@@ -4425,16 +4503,7 @@ class LibraryNotesController:
             return
         if self._library_notes_mutation_fenced():
             return
-        note_flush = await self._flush_library_note_save()
-        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
-            # A vetoed flush keeps the user where they are (the backlink rule).
-            return
-        self._library_notes_notice = ""
-        self._library_note_pending_blank_gc_id = None
-        self._library_note_session_blank_id = None
-        self._library_note_title_user_edited = False
-        self._begin_library_note_load(note_id)
-        _sync_library_canvas(self, "notes")
+        await self._open_library_note_from_link(note_id, link_origin=True)
 
     async def action_library_note_preview_follow_link(self) -> None:
         """Enter on the focused Preview: follow the one link, or list them."""
@@ -5697,7 +5766,30 @@ class LibraryNotesController:
         self._library_notes_sort_choices_visible = (
             not self._library_notes_sort_choices_visible
         )
-        _sync_library_canvas(self, "notes")
+
+        # TASK-34000.28 (N-30): the strip opened but focus stayed in the
+        # filter, under a footer reading "enter choose sort" -- Enter would
+        # have submitted the filter. Same hand-off as the Skills twin
+        # (``handle_library_skills_sort``): land on the active ``✓`` choice
+        # when the strip opens, and back on the opener when it closes.
+        def focus_open_strip() -> None:
+            self._focus_library_choice_strip_active(
+                ".library-notes-sort-choice",
+                self._library_notes_sort,
+            )
+
+        def focus_opener() -> None:
+            self._focus_library_note_control("#library-notes-sort")
+
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=(
+                focus_open_strip
+                if self._library_notes_sort_choices_visible
+                else focus_opener
+            ),
+        )
     @on(Button.Pressed, ".library-notes-sort-choice")
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
         """Apply the exact sort value carried by one direct choice."""
@@ -5720,7 +5812,14 @@ class LibraryNotesController:
             # in place could not move a note across a page boundary, and the
             # next page load would contradict it.
             self._request_library_notes_tree_initial_load()
-        _sync_library_canvas(self, "notes")
+
+        # TASK-34000.28 (N-30): choosing closes the strip, so focus goes back
+        # to the Sort control the chooser was opened from (the Escape path in
+        # ``action_library_notes_escape`` already does this).
+        def focus_opener() -> None:
+            self._focus_library_note_control("#library-notes-sort")
+
+        _sync_library_canvas(self, "notes", then=focus_opener)
     @on(Button.Pressed, "#library-notes-new")
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
         """Open the in-Library Create surface from Navigator."""
@@ -6452,7 +6551,7 @@ class LibraryNotesController:
         await self._open_library_export_canvas(ExportScope(kind="notes"))
     @on(Button.Pressed, ".library-notes-folder-row")
     def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
-        """Expand or collapse one real folder through stable folder identity."""
+        """Select one real folder and expand or collapse it (Enter or a click)."""
         event.stop()
         folder_id = str(getattr(event.button, "folder_id", "") or "")
         if not folder_id:
@@ -6460,22 +6559,97 @@ class LibraryNotesController:
         self._library_notes_tree_selected_placement_id = str(
             getattr(event.button, "placement_id", "") or ""
         )
+        self._toggle_library_notes_folder(folder_id)
+
+    def _toggle_library_notes_folder(self, folder_id: str) -> None:
+        """Expand or collapse one folder -- expansion state only.
+
+        TASK-34000.28 fix round 1 (I-3): split out of the press handler so
+        Right/Left can toggle without SELECTING. Selection retargets the
+        folder toolbar's Rename / Move / Remove; a navigation key must not.
+
+        Args:
+            folder_id: The folder's stable identity (never the Unfiled group).
+        """
         if folder_id in self._library_notes_tree_expanded_ids:
             self._library_notes_tree_expanded_ids.remove(folder_id)
             _sync_library_canvas(self, "notes")
             return
         self._library_notes_tree_expanded_ids.add(folder_id)
+        _sync_library_canvas(
+            self,
+            "notes",
+            then=partial(self._ensure_library_notes_folder_slices, folder_id),
+        )
 
-        def _load_expanded_folder() -> None:
-            if folder_id not in self._library_notes_tree_expanded_ids:
-                return
-            for kind in ("folders", "placements"):
-                key = NotesBranchKey(folder_id, kind)
-                state = self._library_notes_tree_branches.get(key)
-                if state is None or state.freshness == "uninitialized":
-                    self._request_library_notes_tree_slice(key)
+    def _ensure_library_notes_folder_slices(self, folder_id: str) -> None:
+        """Request the folders AND placements slices of one expanded folder, once each.
 
-        _sync_library_canvas(self, "notes", then=_load_expanded_folder)
+        TASK-34000.28 N-28: the locator expanded a destination by loading only
+        its ``folders`` slice; its notes stayed ``uninitialized`` until the user
+        collapsed and re-expanded it. The toggle path already loaded both -- this
+        is that loop, shared by the toggle and the tree locator. It only
+        REQUESTS reads (worker slices); a slice that is already loaded,
+        loading, or stale is left to its own refresh.
+
+        Args:
+            folder_id: The expanded folder's stable identity. A folder that is
+                no longer expanded (collapsed before the deferred call ran)
+                requests nothing.
+        """
+        if folder_id not in self._library_notes_tree_expanded_ids:
+            return
+        for kind in ("folders", "placements"):
+            key = NotesBranchKey(folder_id, kind)
+            state = self._library_notes_tree_branches.get(key)
+            if state is None or state.freshness == "uninitialized":
+                self._request_library_notes_tree_slice(key)
+
+    def _library_notes_folder_row_arrow(self, row: Button, key: str) -> bool:
+        """Right expands a focused folder row; Left collapses it or climbs to its parent.
+
+        TASK-34000.28 (N-22). The screen's ``on_key`` asks this for a focused
+        ``library-notes-folder-row`` outside select mode.
+
+        Toggling goes through ``_toggle_library_notes_folder``, the same
+        expand/collapse step Enter and a click use, but NOT the row's press:
+        fix round 1 (I-3) -- the press also SELECTS the folder, which
+        retargeted the folder toolbar's Rename / Move / Remove from the
+        keyboard walk alone. Only ``tree_expanded_ids`` changes here (a view
+        fact, memory-only); never the selection, a note or a folder. Left on
+        an already-collapsed row moves focus to the parent folder row (the
+        nearest earlier sibling with a smaller ``tree_depth``) and toggles
+        nothing; a collapsed root has nowhere to climb and the key is simply
+        claimed.
+
+        Args:
+            row: The focused folder row.
+            key: ``"right"`` or ``"left"``.
+
+        Returns:
+            ``True`` when the key was the tree's to claim (a real folder row,
+            even when nothing changed). ``False`` for a row with no folder
+            identity -- the automatic Unfiled group -- so the caller leaves
+            the key untouched.
+        """
+        folder_id = str(getattr(row, "folder_id", "") or "")
+        if not folder_id:
+            return False
+        expanded = folder_id in self._library_notes_tree_expanded_ids
+        if key == "right":
+            if not expanded:
+                self._toggle_library_notes_folder(folder_id)
+            return True
+        if expanded:
+            self._toggle_library_notes_folder(folder_id)
+            return True
+        parent = _previous_folder_row_above(row)
+        if parent is not None:
+            # Same reveal as the Up/Down walker: scroll only as far as the
+            # row needs, never centre the list on it (TASK-34000.7).
+            parent.focus(scroll_visible=False)
+            parent.scroll_visible(animate=False, immediate=True)
+        return True
     @on(Button.Pressed, "#library-notes-select-toggle")
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
         """Enter/exit notes select mode; clears the selection set (both on enter and exit).
@@ -6772,6 +6946,22 @@ class LibraryNotesController:
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
             notify(message, severity="warning")
+    def handle_library_notes_notice_refresh(self, event: Button.Pressed) -> None:
+        """Reload the tree a folder-conflict notice said was out of date.
+
+        TASK-34000.28 (N-24): the notice's own next step. There is no
+        receipt; the tree reloading is the answer.
+
+        Args:
+            event: Press event emitted by the notice's Refresh button.
+        """
+        event.stop()
+        if self._library_notes_mutation_fenced():
+            return
+        self._library_notes_notice = ""
+        self._library_notes_notice_refresh_offered = False
+        self._request_library_notes_tree_initial_load()
+        _sync_library_canvas(self, "notes", then=self._arm_library_list_entry_focus)
     @on(Button.Pressed, "#library-notes-delete-receipt-dismiss")
     def handle_library_note_delete_receipt_dismiss(self, event: Button.Pressed) -> None:
         """Dismiss the recovery receipt without changing persisted data.
@@ -6969,6 +7159,11 @@ class LibraryNotesController:
                 self._append_library_note_source_record(restored_record)
                 if self._library_note_delete_receipt == receipt:
                     self._library_note_delete_receipt = None
+                # TASK-34000.28 (N-24): a folder-conflict notice used to
+                # outlive a successful Undo until restart.
+                if getattr(self, "_library_notes_notice_refresh_offered", False):
+                    self._library_notes_notice = ""
+                    self._library_notes_notice_refresh_offered = False
                 # task-32144: the row has left the tombstones, so the
                 # "Recently deleted (N)" count and the Trash view's own rows
                 # both have to move -- here, in the ONE seam both Undo and

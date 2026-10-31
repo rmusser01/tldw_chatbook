@@ -2877,6 +2877,14 @@ LibraryNoteFolderNameDialog #library-note-folder-dialog-actions { height: auto; 
 
 
 
+LibraryNoteFolderTargetDialog #library-note-folder-target-list { height: auto; max-height: 50vh; }
+LibraryNoteFolderTargetDialog #library-note-folder-target-list > .library-note-folder-target-row {
+    width: 1fr; text-align: left; content-align: left middle;
+}
+LibraryNoteFolderTargetDialog #library-note-folder-target-list > .library-note-folder-target-row.-highlighted {
+    text-style: bold;
+}
+LibraryNoteFolderTargetDialog #library-note-folder-target-pager { height: auto; }
 LibraryNoteFolderTargetDialog #library-note-folder-target-actions { height: auto; align-horizontal: right; }
 
 /* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */

@@ -413,6 +413,11 @@ class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
     box's default ON, so every Library construction behaves as before.
     """
 
+    #: TASK-34000.40 (N-31): the applied Notes filter this box was composed
+    #: for, or ``None`` (any other box); the Notes canvas carries the box's
+    #: text across a recompose only while it differs from this.
+    _library_applied_filter: str | None = None
+
     def __init__(
         self, *args: Any, swallow_slash_on_focus: bool = True, **kwargs: Any
     ) -> None:

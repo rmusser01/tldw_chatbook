@@ -93,7 +93,14 @@ async def test_the_media_filter_box_keeps_the_list_verbs_the_same_way():
         )
         chips = screen._library_footer_shortcuts_for_current_state()
         joined = " ".join(label for _key, label in chips)
-        assert "after esc: " in joined and "s select" in joined, chips
+        # TASK-34000.40 ruling T5-b (2026-10-26): Escape from this box moves
+        # the caret into the rail's "Search Library…" box -- another text
+        # field -- so "s select" is not live after one Escape and the footer
+        # no longer lists it behind "after esc:". It still names the field
+        # state and the Escape that leaves it.
+        assert ("", "typing in field") in chips, chips
+        assert ("esc", "focus rail") in chips, chips
+        assert "after esc: " not in joined and "s select" not in joined, chips
         assert chips[-1] == ("F6", "next pane"), chips
 
 
