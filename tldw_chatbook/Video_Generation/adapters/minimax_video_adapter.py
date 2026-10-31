@@ -81,9 +81,12 @@ _PENDING_STATUSES = frozenset(
 _SUCCESS_STATUSES = frozenset({"succeeded", "success"})
 _FAILURE_STATUSES = frozenset({"failed", "fail", "cancelled", "canceled"})
 
-# MiniMax's error code for "task in current status can not be cancelled or
-# deleted" -- what a cancel of a task that has started rendering returns.
+# What a cancel of a task that has started rendering returns: 400 with code
+# 2013 and "task in current status can not be cancelled or deleted". 2013 is
+# also MiniMax's generic "invalid params" code, so the message must name the
+# task's current status too before a 400 counts as that refusal.
 _CANCEL_REFUSED_CODE = 2013
+_CANCEL_REFUSED_TEXT = "current status"
 _ERROR_CODE_RE = re.compile(r"\((\d{3,6})\)\s*$")
 
 
@@ -392,8 +395,8 @@ class MiniMaxVideoAdapter:
         Returns:
             ``"cancelled"`` when MiniMax confirms the cancel (not billed),
             ``"refused"`` for its "cannot cancel in current status" error
-            (the task has started rendering, keeps running, and may still be
-            billed), else ``"unconfirmed"``.
+            (400, code 2013, that wording: the task has started rendering,
+            keeps running, and may still be billed), else ``"unconfirmed"``.
         """
         from loguru import logger
 
@@ -410,9 +413,13 @@ class MiniMaxVideoAdapter:
             )
         except httpx.HTTPStatusError as exc:
             http_status = exc.response.status_code if exc.response is not None else None
-            error_code = self._cancel_error_code(exc.response)
+            error_code, error_message = self._cancel_error(exc.response)
             reason = type(exc).__name__
-            if http_status == 400 and error_code == _CANCEL_REFUSED_CODE:
+            if (
+                http_status == 400
+                and error_code == _CANCEL_REFUSED_CODE
+                and _CANCEL_REFUSED_TEXT in error_message.lower()
+            ):
                 logger.warning(
                     "MiniMax refused the remote task cancel; the task keeps "
                     "running and may still be billed (http_status={}, error_code={})",
@@ -440,28 +447,32 @@ class MiniMaxVideoAdapter:
         return "unconfirmed"
 
     @staticmethod
-    def _cancel_error_code(response: httpx.Response | None) -> int | None:
-        """MiniMax's numeric error code from a v2 error body, when present.
+    def _cancel_error(response: httpx.Response | None) -> tuple[int | None, str]:
+        """MiniMax's numeric error code and message from a v2 error body.
 
         The recorded refusal is ``{"type": "error", "error": {"message":
         "invalid params, task in current status can not be cancelled or
         deleted (2013)", ...}}`` -- the code only appears in the message.
+        The message is used for classification only and is never logged.
+
+        Returns:
+            ``(code, message)``; ``code`` is ``None`` and ``message`` empty
+            when the body is not that shape.
         """
         if response is None:
-            return None
+            return None, ""
         try:
             body = response.json()
         except Exception:
-            return None
+            return None, ""
         if not isinstance(body, dict):
-            return None
+            return None, ""
         error = body.get("error")
         message = error.get("message") if isinstance(error, dict) else None
-        if isinstance(message, str):
-            match = _ERROR_CODE_RE.search(message.strip())
-            if match:
-                return int(match.group(1))
-        return None
+        if not isinstance(message, str):
+            return None, ""
+        match = _ERROR_CODE_RE.search(message.strip())
+        return (int(match.group(1)) if match else None), message
 
     # -- response parsing ---------------------------------------------------
 
