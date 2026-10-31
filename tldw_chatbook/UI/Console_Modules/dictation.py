@@ -151,7 +151,6 @@ _CONSOLE_VOICE_INPUT_NAMES = (
     "VoiceFinal",
     "VoiceLocalSTTBusy",
     "VoiceModelPreparing",
-    "VoiceModelWarmupFailed",
     "VoicePartial",
     "VoiceProviderOverridden",
     "VoiceSegmentNoFinal",
@@ -207,7 +206,6 @@ if TYPE_CHECKING:
         VoiceFinal,
         VoiceLocalSTTBusy,
         VoiceModelPreparing,
-        VoiceModelWarmupFailed,
         VoicePartial,
         VoiceProviderOverridden,
         VoiceSegmentNoFinal,
@@ -235,6 +233,12 @@ CONSOLE_DICTATION_MAX_BYTES = pcm_byte_limit(
     channels=CONSOLE_DICTATION_CHANNELS,
     sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
 )
+#: How long a dictation failure toast stays up. Every one names a next step,
+#: and a fast model failure lands while the first-run "Preparing the speech
+#: model…" detail (Textual's 5 s default) is still showing. At 80x24 the two
+#: do not fit: live, the failure was cut off until the detail expired and gone
+#: about a second later (TASK-33621.21).
+CONSOLE_DICTATION_FAILURE_TOAST_SECONDS = 10.0
 
 
 class ConsoleDictationEvent(Message):
@@ -1335,7 +1339,15 @@ class ConsoleDictationController:
         except Exception:  # noqa: BLE001 - diagnostics must never break dictation
             logger.opt(exception=True).debug("Could not persist dictation failure")
         logger.warning("Console dictation failed: {}", exc)
-        self.app_instance.notify(reason, severity="error")
+        # Plain text, never markup: the reason carries runtime text, and the
+        # missing-microphone remedy's "[speech_recording]" read as a style tag
+        # and vanished from the install command it names.
+        self.app_instance.notify(
+            reason,
+            severity="error",
+            timeout=CONSOLE_DICTATION_FAILURE_TOAST_SECONDS,
+            markup=False,
+        )
         self._speak_status(reason)
 
     def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
@@ -1601,6 +1613,9 @@ class ConsoleDictationController:
             # sitting on "Mic…" with no explanation is indistinguishable from
             # a hang. Only meaningful while the screen is still starting: a
             # notice that drains late must not repaint a live capture's chip.
+            # TASK-33621.21: also repeats while a download runs, carrying the
+            # bytes downloaded so far ("Downloading speech model… 412 MB").
+            # A failed or stalled load is a `VoiceFailed` from the start call.
             if self._console_dictation_state != "starting":
                 return
             composer = self._console_composer_or_none()
@@ -1622,14 +1637,6 @@ class ConsoleDictationController:
             composer = self._console_composer_or_none()
             if composer is not None:
                 composer.set_voice_preparing_message(event.message)
-            return
-        if isinstance(event, VoiceModelWarmupFailed):
-            # Advisory, not fatal: the capture is going ahead. Making this
-            # fatal would mean one transient error permanently disables
-            # dictation, since the Console warms on every press.
-            self.app_instance.notify(
-                f"{event.reason} {event.remedy}".strip(), severity="warning"
-            )
             return
         if isinstance(event, VoiceFailed):
             # Only ever a mid-capture failure: the session forwards a

@@ -1,5 +1,27 @@
 # Lessons: what counts as evidence a change works
 
+## A disabled progress bar still builds tqdm's lock, and a reused thread id hides the wedge (TASK-33621.21, 2026-10-30)
+
+**Incident.** Console dictation hung on "Preparing speech model…" although the
+package sets `HF_HUB_DISABLE_PROGRESS_BARS` and `TQDM_DISABLE` at import. A
+disabled bar still runs `tqdm.__new__`, which builds the process-wide write lock;
+its `multiprocessing.RLock` starts the resource tracker with Textual's
+`fileno() == -1` stderr and raises `fds_to_keep`, after tqdm has taken its class
+`th_lock` and before it releases it (tqdm catches only ImportError/OSError). The
+first reproduction then looked half-healthy: a second download on a new thread
+did not hang, because the new thread got the dead thread's id and the reentrant
+lock let it in. Only acquiring the lock from a third thread (the test's own)
+showed it was wedged. A test process usually has tqdm's lock and the resource
+tracker already running, so an in-app download test passes on broken code unless
+it resets both.
+
+**What to do.** Test an in-app download from a first launch: delete tqdm's
+`_lock`/`mp_lock`, give `TqdmDefaultWriteLock` a fresh `th_lock`, and point
+`multiprocessing.resource_tracker`'s module functions at a fresh
+`ResourceTracker()` (`Tests/Chat/model_download_support.py`), and keep a negative
+control that an unguarded construction raises. Check a lock is free from a thread
+that has never touched it, not from the next worker.
+
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
 **Incident.** To stop the Console rail's filter input being replaced under
