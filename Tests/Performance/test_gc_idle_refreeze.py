@@ -838,10 +838,14 @@ def test_a_boot_freeze_counts_what_it_moves_instead_of_walking_the_frozen_set(
     walks = ops.walks
 
     moved = ui_responsiveness.freeze_long_lived_heap("first_send_preimport")
-    assert ops.walks == walks, "a boot freeze after the first look walked the frozen set"
+    assert ops.walks == walks, (
+        "a boot freeze after the first look walked the frozen set"
+    )
     assert moved == 40_000
     assert not refreezer.compaction_due(), "the boot point's objects counted as growth"
-    assert ops.walks == walks + 1, "negative control: the budget check did not re-measure"
+    assert ops.walks == walks + 1, (
+        "negative control: the budget check did not re-measure"
+    )
 
 
 @pytest.mark.parametrize("frozen_by", ["screen_preimport", "refreeze"])

@@ -158,7 +158,9 @@ print(
 """
 
 
-def _run_isolated(tmp_path: Path, script: str, *args: str) -> subprocess.CompletedProcess:
+def _run_isolated(
+    tmp_path: Path, script: str, *args: str
+) -> subprocess.CompletedProcess:
     """Run ``script`` in a fresh interpreter with a scratch HOME (sys.modules is global)."""
     home, data, config_dir = (tmp_path / n for n in ("home", "data", "config"))
     for directory in (home, data, config_dir):
@@ -466,7 +468,9 @@ def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
         lambda name: app.events.append(("import", name)),
     )
     monkeypatch.setattr(mcp_server, "prime_local_manifest_source", lambda: None)
-    monkeypatch.setattr(warm, "freeze_long_lived_heap", lambda reason: None, raising=False)
+    monkeypatch.setattr(
+        warm, "freeze_long_lived_heap", lambda reason: None, raising=False
+    )
 
     warm.preimport_first_send_modules(app)
 
