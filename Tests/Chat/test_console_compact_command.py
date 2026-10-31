@@ -113,3 +113,30 @@ def test_a_refused_compaction_says_why_in_its_chat() -> None:
     assert asyncio.run(run_compact_command(screen)) is False
 
     assert screen.rows == [(refusal, "session-1")]
+
+
+def test_a_compaction_that_raises_is_logged_by_type_and_reported() -> None:
+    """The failure is reported in its chat and logged (type only, no text)."""
+    from loguru import logger
+
+    from tldw_chatbook.UI.Console_Modules.compact_command import run_compact_command
+
+    class _Raising(_Controller):
+        async def compact_context_now(self, session_id: str) -> tuple[bool, str]:
+            self.calls.append(session_id)
+            raise RuntimeError("provider said sk-secret-detail")
+
+    screen = _Screen(_Raising((False, "")))
+    logged: list[str] = []
+    sink = logger.add(lambda message: logged.append(str(message)), level="WARNING")
+    try:
+        assert asyncio.run(run_compact_command(screen)) is False
+    finally:
+        logger.remove(sink)
+
+    assert screen.rows == [
+        ("Conversation compaction failed before memory was updated.", "session-1")
+    ]
+    (line,) = [text for text in logged if "/compact failed" in text]
+    assert "exception_type=RuntimeError" in line
+    assert "sk-secret-detail" not in line

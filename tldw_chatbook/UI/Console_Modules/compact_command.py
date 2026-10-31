@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from loguru import logger
+
 #: The toast shown while the summary call runs; the row reports the outcome.
 COMPACTING_COPY = "Compacting older turns (one model call)…"
 
@@ -38,7 +40,11 @@ async def run_compact_command(screen: Any) -> bool:
         compacted, copy = await asyncio.shield(task)
     except asyncio.CancelledError:
         raise
-    except Exception:  # noqa: BLE001 - a command reports, never crashes the screen
+    except Exception as exc:  # noqa: BLE001 - a command reports, never crashes
+        # The type only: a provider error's text can carry request details.
+        logger.warning(
+            "Console /compact failed (exception_type={})", type(exc).__name__
+        )
         compacted, copy = (
             False,
             "Conversation compaction failed before memory was updated.",
