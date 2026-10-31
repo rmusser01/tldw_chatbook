@@ -204,9 +204,7 @@ def compaction_hold_detail(
         "Change policy opens Chat settings ▸ Context and memory. "
         "Cancel puts it back in the composer."
     )
-    preview = (
-        "To preview what would be summarized, use /rewind ▸ Summarize up to here."
-    )
+    preview = "To preview what would be summarized, use /rewind ▸ Summarize up to here."
     return usage, choices, preview
 
 

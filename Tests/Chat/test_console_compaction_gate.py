@@ -58,7 +58,11 @@ class _Controller:
 def _run(controller):
     return asyncio.run(
         refuse_at_ask_trigger(
-            controller, "session-1", object(), [{"role": "user", "content": "x"}], "continued"
+            controller,
+            "session-1",
+            object(),
+            [{"role": "user", "content": "x"}],
+            "continued",
         )
     )
 
@@ -70,7 +74,7 @@ def test_over_the_ask_trigger_the_turn_is_refused_before_commit() -> None:
 
     assert result is not None and not result.accepted
     assert controller.assessed[0]["uncommitted_user_message_id"] is None
-    (session_id, copy), = controller.blocked
+    ((session_id, copy),) = controller.blocked
     assert session_id == "session-1"
     assert copy.startswith("Not continued:")
     assert "1,656 of 1,500 tokens" in copy and "1,200" in copy

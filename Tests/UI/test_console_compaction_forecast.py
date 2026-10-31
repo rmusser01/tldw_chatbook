@@ -148,8 +148,12 @@ def test_a_summary_replaces_the_turns_up_to_its_boundary() -> None:
 @pytest.mark.parametrize(
     "effective",
     [
-        EffectiveMemoryResult(EffectiveMemoryKind.GENERATED_PREFIX, memory=_memory("gone")),
-        EffectiveMemoryResult(EffectiveMemoryKind.GENERATED_RANGE, memory=_memory("p-a1")),
+        EffectiveMemoryResult(
+            EffectiveMemoryKind.GENERATED_PREFIX, memory=_memory("gone")
+        ),
+        EffectiveMemoryResult(
+            EffectiveMemoryKind.GENERATED_RANGE, memory=_memory("p-a1")
+        ),
         EffectiveMemoryResult(EffectiveMemoryKind.LEGACY_PREFIX),
     ],
     ids=["boundary-off-path", "range", "legacy"],
@@ -200,7 +204,9 @@ def test_over_the_ask_trigger_the_next_send_is_forecast_to_pause() -> None:
 def test_no_pause_is_forecast_when_the_preflight_would_not_ask(
     tokens, units, mode
 ) -> None:
-    assert _state(tokens=tokens, units=units, mode=mode).compaction_pause_forecast is None
+    assert (
+        _state(tokens=tokens, units=units, mode=mode).compaction_pause_forecast is None
+    )
 
 
 def test_the_context_chip_leads_with_the_forecast_and_explains_it() -> None:
@@ -224,13 +230,15 @@ def test_inspect_says_the_next_send_pauses_but_not_over_live_or_stuck_work() -> 
     assert run(compaction_pause_expected=True) == "Pauses for compaction"
     assert run() == "Ready"
     assert run(compaction_pause_expected=True, run_active=True) == "Running"
-    assert run(
-        compaction_pause_expected=True, run_blocked_reason="compaction ask"
-    ) == "Blocked — compaction ask"
+    assert (
+        run(compaction_pause_expected=True, run_blocked_reason="compaction ask")
+        == "Blocked — compaction ask"
+    )
     # It describes the NEXT send, so it outranks the last run's failure.
-    assert run(
-        compaction_pause_expected=True, run_failed=True, run_failure_reason="x"
-    ) == "Pauses for compaction"
+    assert (
+        run(compaction_pause_expected=True, run_failed=True, run_failure_reason="x")
+        == "Pauses for compaction"
+    )
 
 
 def _control_state() -> ConsoleControlState:

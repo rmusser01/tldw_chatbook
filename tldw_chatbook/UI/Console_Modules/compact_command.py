@@ -39,7 +39,10 @@ async def run_compact_command(screen: Any) -> bool:
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - a command reports, never crashes the screen
-        compacted, copy = False, "Conversation compaction failed before memory was updated."
+        compacted, copy = (
+            False,
+            "Conversation compaction failed before memory was updated.",
+        )
     await screen._append_native_console_system_message(copy, session_id=session_id)
     await screen._sync_native_console_chat_ui()
     return bool(compacted)
