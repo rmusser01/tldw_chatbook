@@ -521,10 +521,29 @@ class RawShellToolProvider:
                 return ToolResult.blocked(
                     RAW_SHELL_DENY_REFUSAL, approval_decision="denied"
                 )
+            from .code_review_checks import current_check_execution
+
+            check_execution = current_check_execution()
+            callbacks = {}
+            if check_execution is not None:
+                if (
+                    check_execution.provider is not self
+                    or dict(args) != check_execution.arguments
+                ):
+                    return ToolResult.blocked(
+                        "check execution owner or specification mismatch"
+                    )
+                callbacks["on_started"] = lambda _started: check_execution.accepted(
+                    request.invocation_id
+                )
+                callbacks["admission_scope"] = check_execution.admission_scope
             result = self._runtime.execute(
                 request,
                 lambda event: self._emit_progress(run_id, call_id, event),
+                **callbacks,
             )
+            if check_execution is not None:
+                check_execution.settled(result)
             self._emit_progress(run_id, call_id, result)
         except Exception as exc:
             detail = (str(exc) or type(exc).__name__)[:300]

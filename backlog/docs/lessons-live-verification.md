@@ -52,6 +52,12 @@ are measuring is on top: look at the PNG, or grep the `.txt` for a dialog title.
 Dismiss first-run and catalog dialogs after the app renders, then capture. A uniformly
 low ratio across unrelated widgets points at a backdrop, not at your change.
 
+## Queued geometry callbacks can outlive layout during shutdown (TASK-35582, 2026-10-29)
+
+**Incident.** PR3286 Windows GGUF CI timed out in Console reconciliation. A bounded native trace showed142s closing with136s on the owning thread; the earlier suspicion of timer cancellation starvation did not explain that first boundary. `LifecycleMixin._shutdown` set Textual's exit fence before draining owners. Textual stopped layout timer callbacks, but post-refresh callbacks still ran and retried geometry that could no longer settle. Wrapped/native tests queued work while attached, then held the real owner drain: both entered geometry after exit. Guarding the shared queued consumer with public `is_attached` stopped that execution while existing layout controls passed.
+
+**What to do.** During shutdown, mounted/current widgets are not proof that layout can progress. Check the consumer's live attachment state, including callbacks queued before exit; preserve owner drain ordering. Separate native elapsed/CPU evidence from a portable reproduction of the causal callback boundary.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
@@ -4807,3 +4813,170 @@ stale ready response; holding it across Canvas disable reproduced HTTP 500.
 the actual finite capacity and hold in-flight operations across that retirement.
 Free unreachable session/shell/capability state, and revalidate the captured owner
 and runtime after awaits before publishing a replacement resource.
+
+### Mounted review readers exposed an owning-loop authority failure (TASK-35582, 2026-10-26)
+
+The scripted Console continuation tests originally used a non-Textual app stub.
+Replacing it with a mounted report reader exposed two real thread-boundary errors:
+a raw `run_coroutine_threadsafe` handoff lacked Textual's active-app context, and a
+retained project-authority callback always called `App.call_from_thread`, even when
+native wake validation was already on the owning loop. Textual rejected the latter;
+review source validation translated it to `source_authority_unavailable`, so two
+reviewers completed but the authorized next stage never launched. Use the native
+Textual dispatcher from workers and execute the same guard directly on its captured
+owning loop. Four actual default-two-child schedules passed after this correction;
+a separate mounted test observes worker dispatch and owner-thread guard execution,
+and permission revocation still refuses captured reads. A queued callback or model
+report is not proof that a reader was mounted or a continuation admitted.
+
+
+## Inspect both prepared system and message carriers (TASK-35582, 2026-10-27)
+
+The AC24 private trace reported missing child tool schemas in all four cloud sends
+because it searched only `PreparedProviderRequest.messages_payload`. Single-preamble
+serialization stores leading instructions in `system_message`; the gateway sends
+both. A zero-network actual Console-child/provider-wire probe preserved schemas and
+the complete source-list result for OpenAI and DeepSeek. Inspect both prepared
+carriers and label that seam accurately; claim final wire presence only after the
+provider transformation. Model claims and hash/length metadata cannot recover
+historical live body semantics or explain a missing structured submission.
+
+
+## Native protocol checks need the persistent Console boundary (TASK-35582, 2026-10-27)
+
+A real local native request returned HTTP200 but Console rejected the first tool
+handoff: accepted custom-ep selection/disclosure origin differed from canonical
+custom-hosted/full API identity. AgentService/gateway protocol probes had passed
+without the persistent dispatch owner. A real SQLite/controller control reproduced
+the conflict, then two-request/reopened controls exposed dropped private groups,
+a missing production Resume expander and terminal live-status activation. Fake
+resolvers also hid the normal configured endpoint's materialized request URL.
+Keep at least one normal-resolver/controller/admission/store/native HTTP control;
+assert the frozen mapping, committed tool state, exact call/result and final owner.
+Protocol parsing, isolated injected resolutions and no-response probes prove their
+own seams and cannot stand in for that boundary.
+
+
+## Qualification observers must enforce the actual actor contract (TASK-35582, 2026-10-27)
+
+The remaining37 AC24 run completed32physical calls and a sealed Luna review, then
+the QA wrapper stopped the host-admitted V1 continuation beforePOST33. A60-second
+serving-cache expiry intentionally froze the ordinary primary's32000estimated
+fallback, even though its background refresh later knew133120. Input3835 fit;
+production primary admission permits this nonblocking behavior. The observer had
+applied review-bound verifier capacity requirements to every primary request. A
+normal-owner fakeHTTP reproduction proved the distinction, and an offline-only
+correction preserves all child/unknown-actor and overflow refusals. Treat a QA
+exception as QA evidence until its exact production throw site is established;
+verify actor-specific positive and negative observation paths before spending a
+full workflow. Never relabel the estimate verified to get past the observer.
+
+## Diagnose the first trace failure before its later surface symptom (TASK-35582, 2026-10-27)
+
+Native CaptureOn first appeared to fail at a count/span guard afterPOST1. Persisted
+trace inspection showed POST1 itself was already an alignment-mismatch omission.
+A passive verifier observer proved only api_base_url differed: custom-hosted
+dispatch correctly stripped the chat route, while independent reconstruction kept
+the full endpoint. Sharing the established pure adapter projection repaired that
+first failure and made the subsequent live checkpoint/message mixed-delta failure
+visible atPOST3. The legacy-custom parity case had missed the actual custom-hosted
+full endpoint. Inspect earliest available-shadow/header and final-value parity,
+including the real execution key, before changing a later trace planner guard.
+
+
+## Retry error paths need the real native loop after capture changes (TASK-35582, 2026-10-27)
+
+The CaptureOn live-continuation repair passed20native cases and56owner controls,
+but independent review injected503after a completed tool batch and found valid
+unchanged retry custody was rejected. Three transport attempts settle one ERROR
+logical call; the next runtime retry has the same checkpoint rather than a new
+round. A focused actual Console test now verifies six physical attempts, four
+logical outcomes, exact failed/retry request and surface-head equality, one tool
+execution per ID, and later normal advance. A changed result still refuses. Model
+transport retries, runtime retries and new native batches are distinct boundaries;
+prove them with real custody rather than reusing a +1round admission check.
+
+
+## Transcript origin is not the final provider role (TASK-35582, 2026-10-28)
+
+The AC24 accepted verifier wake had a SYSTEM transcript row and a local400-shaped
+error. A standalone mixed-SYSTEM gateway probe rejected the synthetic payload,
+and the first diagnosis incorrectly treated that as the actual wire shape. The
+normal controller deliberately projects automatic notices as trailing USER
+payload while preserving their host origin. A full-handler test instead failed
+at strict continuation ownership: a saved completed checkpoint lacked its native
+assistant/tool replay rows. Inspect the exact normal-controller prepared payload
+and first throw site before changing role/carrier policy. Keep the disproved
+probe as noncausal evidence, and test the completed next-turn history rather than
+only an isolated fresh request.
+
+
+## Console provider_started does not count physical requests (TASK-35582, 2026-10-28)
+
+A bounded exact-BASE cleanup probe completed one fake POST, then accepted a second
+manual turn whose trace reservation refused before HTTP. Both submit receipts
+reported provider_started=true, while the physical counter stayed at one and the
+second durable dispatch remained dispatch_started/paused. That flag records a
+controller lifecycle boundary, not a completed network event. Count qualification
+spend at actual transport admission and keep accepted/pending recovery distinct
+from observed requests and successful shutdown.
+
+
+## HTTP success does not establish automatic-work usage settlement (TASK-35582, 2026-10-28)
+
+The approved fresh40 qualifier completed35 HTTP200 generations, then its accepted
+verifier continuation paused with usage_unknown before Haiku. The new primary's
+token reservation became uncertain before spawn approval was revoked and the run
+cancelled; both pre-shutdown and final rows were already cancelled. Exit0 and a
+null runner stop_reason did not establish success or a runner shutdown race.
+
+Check native accounting and run events before attributing a cancelled continuation
+to teardown. A provider response must also supply usable usage for this automatic
+path. Preserve the fail-closed guard and report the evidence limit: without retained
+raw usage, missing server fields and adapter/parser loss cannot be distinguished.
+Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh40-after-wake-outcome/.
+
+
+The follow-up differential for this incident made two real requests to the same
+local endpoint: no stream option produced no usage; include_usage=true produced
+complete57/22/79. The existing custom preset now requests usage. A separate native
+regression found that the gateway lost already-supported terminal choice usage;
+both fixes retain strict settlement. One repaired real handler/gateway request
+settled83 tokens and passed the next authority check. Retain both upstream wire
+evidence and downstream ledger evidence: either alone misses part of this failure.
+This synthetic accepted accounting check does not revive the closed review or
+qualify its missing verifier. Evidence: QA/ac24/usage-unknown-repair/ under the
+same multi-model-code-review qualification directory above.
+
+
+## Model-name metadata readiness does not validate generation options (TASK-35582, 2026-10-28)
+
+The fresh42 reviewer/verifier journey reached Haiku5.5 with valid model metadata,
+then its first Messages POST returned400. It carried temperature0.6/top_k50; the
+existing modern-Anthropic capability table omitted the newly released exactfamily.
+The official Haiku5.5 migration guide disallows sampling and fixedthinkingbudget.
+Adding only that family to the existing table passes671 covering tests; a real
+streaming handler request with the same tool schemas then returned200 after
+production omitted sampling. No historicalerrorbody was retained, so the original
+400's exacttext staysunknown. Model-list success and fake-HTTP payload construction
+alone did not catch this gap; check current exact-model request rules as part of
+provider qualification. The compatibility probe cannot complete a closed review.
+Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh42-after-usage-outcome/.
+
+
+## Submission revisions cannot reconstruct expired review evidence (TASK-35582, 2026-10-28)
+
+The Haiku-fixed fresh43 qualifier reached a real verifier and recorded one accepted
+submit followed by two rejected submits, ending at revision1 with
+submission_conflict. Its final report and expansion reads already refused
+stage_grant_unavailable. Durable steps intentionally omitted arguments/results;
+disclosure feedback retained only hashes. Thus revision1 proved an accepted submit,
+but could not identify its kind, dispositions or evidence. The last presented
+reviewer packets predated V1. All43HTTP200 responses and clean shutdown could not
+prove a complete unified report or recover the exact conflicting payload.
+
+Qualification observers need authorized evidence while its stage is still live,
+including refusal detail and accepted-checkpoint identity. Do not infer decisions
+from counters or bypass an expired stage to reconstruct them. Preserve the existing
+privacy boundary; use admitted report/export paths rather than adding bodies to
+durable runtime metadata. Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh43-after-haiku-outcome/.

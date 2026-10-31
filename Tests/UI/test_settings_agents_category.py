@@ -10,6 +10,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, ListView, Select
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.agent_presets import AGENT_PRESETS
@@ -653,7 +654,8 @@ async def test_panel_without_db_shows_notice(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agents_category_renders_in_settings_screen():
+@private_profile_test
+async def test_agents_category_renders_in_settings_screen(request):
     # The category sweep (test_settings_category_sweep.py) already visits
     # every category; this pins OUR panel specifically: selecting Agents
     # renders either the editor or the no-DB notice (test app runs with a

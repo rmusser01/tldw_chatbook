@@ -199,6 +199,18 @@ def _read_bounded_stream(stream, max_output_bytes: int) -> tuple[bytes, bool]:
     return bytes(output[:max_output_bytes]), True
 
 
+@dataclass(frozen=True, slots=True)
+class GitBytesResult:
+    """Internal bounded bytes; a failed stream is never successful empty output."""
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    truncated: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+
 def run_git(
     argv: list[str],
     *,
@@ -208,29 +220,48 @@ def run_git(
     timeout: float = GIT_TIMEOUT_SECONDS,
     max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
 ) -> GitCommandResult:
-    """Run an allowlisted git command with bounded output and a timeout.
-
-    Fixed argv only: ``argv[0]`` must be logical ``git``, the only permitted
-    global option is ``--no-pager`` (``--version`` must stand alone), and the
-    subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The absolute executable
-    replaces logical argv zero only at launch. The environment is sanitized
-    (PATH + git safety vars only) and stdin is
-    DEVNULL. Output per stream is capped at ``max_output_bytes`` — the
-    process is killed when the cap is exceeded (never fully buffered) and a
-    truncation marker is appended. Timeout kills the process and raises.
-
-    NOTE: validation stops at the subcommand. Everything AFTER the
-    subcommand is caller-constructed and NOT validated at this layer — e.g.
-    ``["git", "diff", "--output=/tmp/pwn"]`` passes ``_validate_argv``.
-    Callers (the tool cores below) must therefore build argv only from
-    fixed literals plus values they have validated themselves (see the
-    ``commit_range`` leading-dash/regex checks in :func:`git_diff`) and
-    must never splice raw model-controlled strings into flag positions.
-
-    Raises:
-        LocalToolError: argv validation failure, git unavailable, or timeout.
-    """
+    """Preserve the allowlisted public text API over the bounded byte runner."""
     _validate_argv(argv)
+    result = _run_git_bytes(
+        argv,
+        cwd=cwd,
+        executable=executable,
+        own_process_group=own_process_group,
+        timeout=timeout,
+        max_output_bytes=max_output_bytes,
+    )
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    if result.truncated:
+        # The public API historically adds markers to each stream hitting its cap.
+        if result.stdout_truncated:
+            stdout += GIT_TRUNCATED_MARKER
+        if result.stderr_truncated:
+            stderr += GIT_TRUNCATED_MARKER
+    return GitCommandResult(
+        argv=list(argv),
+        returncode=result.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        truncated=result.truncated,
+    )
+
+
+def _run_git_bytes(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+    max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
+    immutable_objects: bool = False,
+) -> GitBytesResult:
+    """Run host-built fixed argv, preserving bytes and bounded failure signals.
+
+    Public callers enter through run_git's allowlist. Internal object readers
+    construct every flag here themselves and validate their OIDs and paths.
+    """
     resolved_executable = executable or (
         Path(found) if (found := shutil.which("git")) is not None else None
     )
@@ -244,13 +275,22 @@ def run_git(
     ):
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
 
+    environment = _git_environment()
+    if immutable_objects:
+        environment.update(
+            {
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_NO_LAZY_FETCH": "1",
+                "GIT_GRAFT_FILE": os.devnull,
+            }
+        )
     process = subprocess.Popen(
         [str(resolved_executable), *argv[1:]],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=cwd,
-        env=_git_environment(),
+        env=environment,
         # Own process group so the timeout/cap kills can reap grandchildren
         # too (a bare process.kill() leaves e.g. a textconv child alive —
         # and a live grandchild holding the pipe write end would stall the
@@ -259,13 +299,15 @@ def run_git(
     )
 
     results: dict[str, tuple[bytes, bool]] = {}
+    read_errors: list[Exception] = []
     done: queue.Queue[tuple[str, tuple[bytes, bool]]] = queue.Queue()
 
     def _reader(name: str, stream) -> None:  # noqa: ANN001 - pipe reader
         try:
             done.put((name, _read_bounded_stream(stream, max_output_bytes)))
-        except Exception:  # defensive: a broken pipe must not hang the join loop
-            done.put((name, (b"", False)))
+        except Exception as exc:  # a broken pipe must not become an empty tree
+            read_errors.append(exc)
+            done.put((name, (b"", True)))
 
     for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
         threading.Thread(target=_reader, args=(name, stream), daemon=True).start()
@@ -295,19 +337,15 @@ def run_git(
 
     stdout_bytes, stdout_truncated = results.get("stdout", (b"", False))
     stderr_bytes, stderr_truncated = results.get("stderr", (b"", False))
-    stdout = stdout_bytes.decode("utf-8", errors="replace")
-    stderr = stderr_bytes.decode("utf-8", errors="replace")
-    if stdout_truncated:
-        stdout += GIT_TRUNCATED_MARKER
-    if stderr_truncated:
-        stderr += GIT_TRUNCATED_MARKER
-    return GitCommandResult(
-        argv=list(argv),
+    if read_errors:
+        raise LocalToolError("git output read failed") from read_errors[0]
+    return GitBytesResult(
         returncode=int(process.returncode if process.returncode is not None else -1),
-        stdout=stdout,
-        stderr=stderr,
-        timed_out=False,
+        stdout=stdout_bytes,
+        stderr=stderr_bytes,
         truncated=stdout_truncated or stderr_truncated,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
     )
 
 
@@ -362,6 +400,20 @@ def _literal_pathspec(relative_posix: str) -> str:
     asked for); folding it there only ever removes more.
     """
     return f":(literal){relative_posix}"
+
+
+def _argv_chunks(paths, limit: int = 64 * 1024):
+    """Split pathspec arguments so one git process stays within argv limits."""
+    chunk: list[str] = []
+    size = 0
+    for path in paths:
+        if chunk and size + len(path) > limit:
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(path)
+        size += len(path) + 24
+    if chunk:
+        yield chunk
 
 
 def _denylist_pathspecs(
@@ -1381,3 +1433,299 @@ def _parse_blame_header(raw_line: str) -> dict[str, object] | None:
             "author_name": None,
         }
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewGitEntry:
+    """Host-selected tree/index entry; callers cannot select a raw blob object."""
+
+    path: str
+    oid: str
+    mode: str
+    size: int
+
+
+class ReviewGitReader:
+    """Narrow internal immutable-object reader; no checkout/index mutations."""
+
+    def __init__(self, workspace_root: Path, *, sensitive_exclusions=None):
+        self.exclusions = (
+            sensitive_exclusions
+            if sensitive_exclusions is not None
+            else sensitive_exclusions_under(workspace_root)
+        )
+        self.root = prepare_repository(
+            workspace_root, sensitive_exclusions=self.exclusions
+        )
+        if self.root != workspace_root.resolve():
+            raise LocalToolError("review repository must match admitted root")
+        self.object_format = self._read(["rev-parse", "--show-object-format"]).strip()
+        if self.object_format not in (b"sha1", b"sha256"):
+            raise LocalToolError("unsupported_object_format")
+        self.oid_length = 40 if self.object_format == b"sha1" else 64
+        if self._read(["rev-parse", "--is-shallow-repository"]).strip() != b"false":
+            raise LocalToolError("history_unavailable")
+        # Older Git ignores NO_LAZY_FETCH; refuse promisor configuration too.
+        partial = _run_git_bytes(
+            [
+                "git",
+                "config",
+                "--get-regexp",
+                r"^(extensions\.partialclone|remote\..*\.promisor)$",
+            ],
+            cwd=self.root,
+            immutable_objects=True,
+        )
+        if partial.truncated or partial.returncode not in (0, 1) or partial.stdout:
+            raise LocalToolError("history_unavailable")
+        # Commit and tree objects are immutable: verify each commit once and
+        # list each pinned directory once per reader (one capture or query).
+        self._commits: set[str] = set()
+        self._listings: dict[tuple[str, str], dict[str, ReviewGitEntry]] = {}
+        self._object_sizes: dict[str, int] = {}  # an object's size never changes
+
+    def _read(self, args: list[str], *, limit: int = GIT_MAX_OUTPUT_BYTES) -> bytes:
+        result = _run_git_bytes(
+            ["git", *args],
+            cwd=self.root,
+            max_output_bytes=limit,
+            immutable_objects=True,
+        )
+        if result.truncated:
+            raise LocalToolError("source_truncated")
+        if result.returncode:
+            raise LocalToolError("history_unavailable")
+        return result.stdout
+
+    def _oid(self, value: str) -> str:
+        if not isinstance(value, str) or not re.fullmatch(
+            "[0-9a-f]{" + str(self.oid_length) + "}", value
+        ):
+            raise LocalToolError("invalid_object_id")
+        return value
+
+    def safe_path(self, value: str, *, directory: bool = False) -> str:
+        if (
+            not isinstance(value, str)
+            or not value
+            or "\x00" in value
+            or "\\" in value
+            or value.startswith("/")
+            or ".." in PurePosixPath(value).parts
+        ):
+            raise LocalToolError("invalid_source_path")
+        if not _relative_target_is_safe(
+            Path(value), self.root, self.exclusions, is_directory=directory
+        ):
+            raise LocalToolError("source_path_unavailable")
+        return value
+
+    def commit(self, value: str) -> str:
+        oid = self._oid(value)
+        if oid in self._commits:
+            return oid
+        resolved = (
+            self._read(["rev-parse", "--verify", oid + "^{commit}"])
+            .strip()
+            .decode("ascii")
+        )
+        if resolved != oid:
+            raise LocalToolError("invalid_commit_id")
+        self._commits.add(oid)
+        return oid
+
+    def head(self) -> str:
+        return self.commit(
+            self._read(["rev-parse", "--verify", "HEAD"]).strip().decode("ascii")
+        )
+
+    def merge_base(self, base: str, head: str) -> str:
+        values = self._read(
+            ["merge-base", "--all", self.commit(base), self.commit(head)]
+        ).splitlines()
+        if len(values) != 1:
+            raise LocalToolError("ambiguous_comparison")
+        return self.commit(values[0].decode("ascii"))
+
+    def _changed_paths(
+        self, base, head, scope, staged, *, withhold_sensitive
+    ) -> list[bytes]:
+        args = [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--name-only",
+            "-z",
+        ]
+        if staged:
+            args.append("--cached")
+        if base is not None:
+            args.append(self.commit(base))
+        if head is not None:
+            args.append(self.commit(head))
+        args.extend(["--", _literal_pathspec(self.safe_path(scope, directory=True))])
+        if withhold_sensitive:
+            args.extend(
+                _denylist_pathspecs(
+                    self.root,
+                    sensitive_exclusions=self.exclusions,
+                    workspace_root=self.root,
+                )
+            )
+        return [part for part in self._read(args).split(b"\0") if part]
+
+    def changed(
+        self, base: str | None, head: str | None, scope: str = ".", *, staged=False
+    ) -> tuple[str, ...]:
+        """Admitted changed paths; withheld ones are only counted, never named."""
+        paths = []
+        for part in self._changed_paths(
+            base, head, scope, staged, withhold_sensitive=True
+        ):
+            try:
+                paths.append(self.safe_path(part.decode("utf-8")))
+            except LocalToolError:
+                continue  # unsafe in the checkout; change_count still counts it
+        return tuple(paths)
+
+    def change_count(
+        self, base: str | None, head: str | None, scope: str = ".", *, staged=False
+    ) -> int:
+        """Count every changed path, withheld ones included, naming none."""
+        return len(
+            self._changed_paths(base, head, scope, staged, withhold_sensitive=False)
+        )
+
+    def _listing(self, commit: str, directory: str) -> dict[str, ReviewGitEntry]:
+        """Every blob/tree/gitlink entry of one pinned directory.
+
+        Callers check paths. A submodule (gitlink, mode 160000) is kept so a
+        changed one is reported as unsupported instead of absent; blob()
+        refuses it and tree() omits it from listings.
+        """
+        key = (self.commit(commit), directory)
+        listing = self._listings.get(key)
+        if listing is not None:
+            return listing
+        treeish = commit if directory == "." else commit + ":" + directory
+        listing = {}
+        for record in self._read(["ls-tree", "-z", "-l", treeish]).split(b"\0"):
+            if not record:
+                continue
+            meta, name = record.split(b"\t", 1)
+            mode, kind, oid, size = meta.split()
+            if kind not in (b"blob", b"tree", b"commit"):
+                continue
+            path = (
+                name.decode("utf-8")
+                if directory == "."
+                else directory + "/" + name.decode("utf-8")
+            )
+            listing[path] = ReviewGitEntry(
+                path,
+                self._oid(oid.decode("ascii")),
+                mode.decode("ascii"),
+                int(size) if size != b"-" else 0,
+            )
+            if kind == b"blob":
+                self._object_sizes[listing[path].oid] = listing[path].size
+        self._listings[key] = listing
+        return listing
+
+    def tree(self, commit: str, directory: str = ".") -> tuple[ReviewGitEntry, ...]:
+        self.commit(commit)
+        self.safe_path(directory, directory=True)
+        entries = []
+        for entry in self._listing(commit, directory).values():
+            if entry.mode == "160000":
+                continue
+            try:
+                self.safe_path(entry.path, directory=entry.mode == "040000")
+            except LocalToolError:
+                continue
+            entries.append(entry)
+        return tuple(entries)
+
+    def entry(self, commit: str, path: str) -> ReviewGitEntry | None:
+        # Admit the requested path and each ancestor directory walked, never
+        # every sibling of every listed directory (tree() filters listings).
+        self.safe_path(path)
+        directory = "."
+        for part in PurePosixPath(path).parts:
+            candidate = part if directory == "." else directory + "/" + part
+            entry = self._listing(commit, directory).get(candidate)
+            if entry is None:
+                return None
+            if candidate == path:
+                return entry
+            if entry.mode != "040000":
+                return None
+            try:
+                self.safe_path(candidate, directory=True)
+            except LocalToolError:
+                return None
+            directory = candidate
+        return None
+
+    def index(self, path: str) -> ReviewGitEntry | None:
+        return self.index_entries((path,))[path]
+
+    def index_entries(self, paths) -> dict[str, ReviewGitEntry | None]:
+        """Stage-0 index entries for ``paths`` from one fresh index read.
+
+        Every call re-reads the index (drift checks stay real); only object
+        sizes, which an object ID fixes, are memoized. A path that is a
+        directory or has several stages refuses as before.
+        """
+        paths = tuple(dict.fromkeys(paths))
+        for path in paths:
+            self.safe_path(path)
+        found: dict[str, list[tuple[bytes, str]]] = {path: [] for path in paths}
+        for chunk in _argv_chunks(paths):
+            raw = self._read(
+                ["ls-files", "--stage", "-z", "--", *map(_literal_pathspec, chunk)]
+            )
+            for record in raw.split(b"\0"):
+                if not record:
+                    continue
+                meta, name = record.split(b"\t", 1)
+                name = name.decode("utf-8")
+                parts = PurePosixPath(name).parts
+                for depth in range(1, len(parts) + 1):
+                    owner = "/".join(parts[:depth])
+                    if owner in found:
+                        found[owner].append((meta, name))
+        entries = {}
+        for path, records in found.items():
+            if not records:
+                entries[path] = None
+                continue
+            if len(records) != 1:
+                raise LocalToolError("unmerged_source")
+            meta, name = records[0]
+            mode, oid, stage = meta.split()
+            if stage != b"0" or name != path:
+                raise LocalToolError("unmerged_source")
+            selected = self._oid(oid.decode("ascii"))
+            if selected not in self._object_sizes:
+                self._object_sizes[selected] = int(
+                    self._read(["cat-file", "-s", selected]).strip()
+                )
+            entries[path] = ReviewGitEntry(
+                path, selected, mode.decode("ascii"), self._object_sizes[selected]
+            )
+        return entries
+
+    def blob(
+        self, entry: ReviewGitEntry, *, max_bytes: int = GIT_MAX_OUTPUT_BYTES
+    ) -> bytes:
+        self.safe_path(entry.path)
+        if entry.mode not in ("100644", "100755"):
+            raise LocalToolError("unsupported_source_type")
+        if entry.size > max_bytes:
+            raise LocalToolError("source_truncated")
+        data = self._read(["cat-file", "blob", self._oid(entry.oid)], limit=max_bytes)
+        if len(data) != entry.size:
+            raise LocalToolError("source_drift")
+        return data

@@ -91,6 +91,10 @@ async def test_second_and_third_actual_requests_have_only_bounded_recent_memory(
                         ),
                     ),
                 )
+                from tldw_chatbook.Chat.provider_continuation import (
+                    ContinuationRestoreTarget,
+                )
+
                 _store.persist_provider_continuation_event(
                     FinalContinuation(
                         ContinuationEventContext(
@@ -99,7 +103,15 @@ async def test_second_and_third_actual_requests_have_only_bounded_recent_memory(
                         prior,
                         None,
                         "OLD TRANSCRIPT PAYLOAD",
-                    )
+                    ),
+                    # Persistent writes are bound to the host-captured target.
+                    continuation_target=ContinuationRestoreTarget(
+                        provider=prior.provider,
+                        protocol=prior.protocol,
+                        model=prior.model,
+                        api_base_url=prior.api_base_url,
+                        selected_provider=prior.provider,
+                    ),
                 )
                 assert (
                     "PRIOR CONTINUATION PRIVATE CANARY"

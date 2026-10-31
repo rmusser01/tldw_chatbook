@@ -212,10 +212,8 @@ def test_retry_appends_fixed_stubs_then_separate_context_and_skips_dispatch():
     assert out.status == RUN_DONE
     assert reviewed == [] and gated == [] and invoked == []
     deferred = seen_requests[1][-3:]
-    assert [(row["tool_call_id"], row["name"]) for row in deferred[:2]] == [
-        ("a", "one"),
-        ("b", "two"),
-    ]
+    assert [row["tool_call_id"] for row in deferred[:2]] == ["a", "b"]
+    assert all(set(row) == {"role", "tool_call_id", "content"} for row in deferred[:2])
     assert all(
         "Deferred because project instructions were loaded" in row["content"]
         for row in deferred[:2]

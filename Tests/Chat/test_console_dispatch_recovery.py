@@ -1992,3 +1992,87 @@ async def test_discard_rejects_changed_or_deleted_owner_without_half_settlement(
         ).fetchone()[0]
         == 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recorded", "accepted"),
+    [
+        ("pre_upgrade", True),
+        ("same_tuple", True),
+        ("changed_tuple", False),
+        ("changed_identity", False),
+    ],
+)
+async def test_retry_accepts_pre_upgrade_checkpoint_without_continuation_tuple(
+    monkeypatch, recorded, accepted
+):
+    """Pre-upgrade checkpoints carry no continuation tuple; identity decides."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_close_fence_composition import rig
+    from tldw_chatbook.Chat.console_chat_controller import _DispatchRecoveryRefusal
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleEgressClass,
+        ConsoleResolvedDestination,
+    )
+
+    current = ConsoleResolvedDestination(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        endpoint_identity="https://api.deepseek.com",
+        egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
+        continuation_provider="deepseek",
+        continuation_protocol="responses",
+        continuation_base_url="https://api.deepseek.com/v1",
+    )
+    checkpoint_destination = {
+        "pre_upgrade": replace(
+            current,
+            continuation_provider=None,
+            continuation_protocol=None,
+            continuation_base_url=None,
+        ),
+        "same_tuple": current,
+        "changed_tuple": replace(
+            current, continuation_base_url="https://api.deepseek.com/v2"
+        ),
+        "changed_identity": replace(current, model="other-model"),
+    }[recorded]
+    _store, _session, controller, _bridge = rig()
+
+    class Reached(Exception):
+        pass
+
+    async def authority(*_args):
+        return "authority"
+
+    async def resolve(*_args):
+        return SimpleNamespace(ready=True)
+
+    def finalize(*_args):
+        raise Reached
+
+    monkeypatch.setattr(
+        controller,
+        "resolve_turn_configuration_snapshot",
+        lambda _: SimpleNamespace(provider_selection=None),
+    )
+    monkeypatch.setattr(controller, "_capture_turn_library_authority", authority)
+    monkeypatch.setattr(controller, "_dispatch_authority_matches", lambda *_: True)
+    monkeypatch.setattr(controller, "_resolve_for_send_bounded", resolve)
+    monkeypatch.setattr(
+        controller, "_resolved_destination_for_context", lambda _: current
+    )
+    monkeypatch.setattr(controller, "_finalize_turn_execution_context", finalize)
+    recovery = SimpleNamespace(
+        assistant_message_id="assistant",
+        checkpoint=SimpleNamespace(
+            frozen_authority="authority",
+            resolved_destination=checkpoint_destination,
+        ),
+    )
+
+    with pytest.raises(Reached if accepted else _DispatchRecoveryRefusal):
+        await controller._resolve_dispatch_retry_context("session", recovery)

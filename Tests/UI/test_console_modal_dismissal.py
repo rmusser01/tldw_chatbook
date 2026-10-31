@@ -77,6 +77,9 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourcesModal,
 )
+from tldw_chatbook.Widgets.Console.console_code_review_modal import (
+    ConsoleCodeReviewModal,
+)
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
     ConsoleComposerMenuModal,
 )
@@ -1153,6 +1156,7 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsoleAgentHistoryModal,
     ConsoleAgentProgressModal,
     ConsoleAppearancePickerModal,
+    ConsoleCodeReviewModal,
     ConsoleEditThinkingModal,
     ConsoleEndpointTemplateModal,
     ConsoleForkChatModal,
@@ -1195,6 +1199,11 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             WorktreeRecoveryDialog,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
+    ),
+    _ModalLaunchEdge(
+        ConsoleCodeReviewModal,
+        (ConsoleSaveMarkdownModal,),
+        ("tldw_chatbook/Widgets/Console/console_code_review_modal.py",),
     ),
     _ModalLaunchEdge(
         ConsoleWorkspaceSwitcherModal,
@@ -1653,7 +1662,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # ResponseRulesModal is the 24th), the three plain Goals modals and the
     # two named below, less ConsoleRagSettingsModal, whose
     # ConsoleLibrarySearchModal subclass is what the root opens.
-    assert len(reachable_modal_types) == 76
+    # TASK-35582 adds the safe-dismissal code-review report reader.
+    assert len(reachable_modal_types) == 77
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}

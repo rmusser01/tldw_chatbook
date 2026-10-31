@@ -1311,6 +1311,10 @@ GlobalFullCaptureConfirmation { align: center middle; }
 
 ConsoleTracePrivacyDialog { align: center middle; }
 
+/* ===== WIDGET: ConsoleCodeReviewModal (Widgets/Console/console_code_review_modal.py) ===== */
+
+ConsoleCodeReviewModal { align: center middle; }
+
 /* ===== WIDGET: ConsoleConversationActionMenu (Widgets/Console/console_conversation_action_menu.py) ===== */
 
 ConsoleConversationActionMenu {

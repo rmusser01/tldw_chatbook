@@ -6,12 +6,21 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import cast
+from typing import TYPE_CHECKING, cast
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_trace_continuation import (
+        LiveNativeContinuationCustody,
+        LiveNativeContinuationWitness,
+    )
+
 from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
 from tldw_chatbook.Chat.console_prepared_request import freeze_json
-from tldw_chatbook.Chat.console_provider_endpoints import meaningful_adapter_base_url
+from tldw_chatbook.Chat.console_provider_endpoints import (
+    adapter_api_base_url,
+    meaningful_adapter_base_url,
+)
 from tldw_chatbook.Chat.console_provider_support import (
     CUSTOM_OPENAI_EXECUTION_KEYS,
 )
@@ -25,7 +34,9 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceOmissionReason,
     TraceProvenance,
     TraceProvenanceSource,
+    TraceTransformKind,
     current_turn_source_revision_id,
+    completed_replay_source_revision_id,
     saved_response_source_revision_id,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
@@ -248,7 +259,16 @@ class CompletedToolTurnWitness:
         default=(), kw_only=True
     )
 
+    replay_row_count: int = field(default=0, kw_only=True)
+
     def __post_init__(self) -> None:
+        if (
+            type(self.replay_row_count) is not int
+            or not 0 <= self.replay_row_count < MAX_SURFACE_REPLACEMENT_SPAN
+            or self.replay_row_count
+            and self.assistant_revision_id is None
+        ):
+            raise ValueError("completed_replay_count")
         for identity in (
             self.origin_call_id,
             self.terminal_call_id,
@@ -321,6 +341,8 @@ class CompletedToolTurnWitness:
         return (
             1
             + int(self.assistant_revision_id is not None)
+            + self.replay_row_count
+            + int(self.replay_row_count > 0)
             + int(self.source_revision_id is not None)
             + len(self.discarded_followups)
             + sum(1 + int(turn[2] is not None) for turn in self.closed_followups)
@@ -329,6 +351,17 @@ class CompletedToolTurnWitness:
 
     def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
         """Match exact saved owners followed only by declared project context."""
+        if self.replay_row_count:
+            attachment = descriptors[-1] if descriptors else None
+            if (
+                type(attachment) is not DerivedTraceProvenance
+                or attachment.transform
+                is not TraceTransformKind.CONTINUATION_ATTACHMENT
+                or attachment.inputs
+                != (SavedRevisionTraceProvenance(self.assistant_revision_id),)
+            ):
+                return False
+            descriptors = descriptors[:-1]
         source_prefix = (
             ()
             if self.source_revision_id is None
@@ -344,10 +377,20 @@ class CompletedToolTurnWitness:
             for revision_id in (user_id, response_id)
             if revision_id is not None
         )
-        user_index = len(source_prefix) + int(self.assistant_revision_id is not None)
+        user_index = (
+            len(source_prefix)
+            + self.replay_row_count
+            + int(self.assistant_revision_id is not None)
+        )
         return (
-            len(descriptors) == self.descriptor_count
+            len(descriptors) == self.descriptor_count - int(self.replay_row_count > 0)
             and descriptors[: len(source_prefix)] == source_prefix
+            and all(
+                completed_replay_source_revision_id(item) == self.assistant_revision_id
+                for item in descriptors[
+                    len(source_prefix) : len(source_prefix) + self.replay_row_count
+                ]
+            )
             and (
                 self.assistant_revision_id is None
                 or saved_response_source_revision_id(descriptors[user_index - 1])
@@ -381,6 +424,14 @@ class SurfaceDeltaAdmission:
         default=None, kw_only=True
     )
 
+    live_native: LiveNativeContinuationWitness | None = field(
+        default=None, repr=False, kw_only=True
+    )
+    live_native_custody: LiveNativeContinuationCustody | None = field(
+        default=None, repr=False, kw_only=True
+    )
+    live_native_ordinal: int | None = field(default=None, kw_only=True)
+
     def __post_init__(self) -> None:
         if not all(
             (
@@ -393,6 +444,21 @@ class SurfaceDeltaAdmission:
             raise ValueError("surface_delta_admission")
         if not self.descriptors and self.predecessor_surface_head_id is None:
             raise ValueError("surface_delta_admission")
+        if self.live_native is not None:
+            from tldw_chatbook.Chat.console_trace_continuation import (
+                LiveNativeContinuationWitness,
+            )
+
+            witness = self.live_native
+            if (
+                type(witness) is not LiveNativeContinuationWitness
+                or self.completed_tool_turn is not None
+                or self.route_identity != "tool_loop"
+                or witness.custody is not self.live_native_custody
+                or witness.continuation_ordinal != self.live_native_ordinal
+                or not 1 <= witness.message_count <= 256
+            ):
+                raise ValueError("surface_delta_shape")
         if self.completed_tool_turn is not None:
             witness = self.completed_tool_turn
             if (
@@ -401,6 +467,13 @@ class SurfaceDeltaAdmission:
                 or self.replacement_range.component_name != "messages_payload"
                 or self.route_identity not in {"agent_first", "fresh"}
                 or not witness.matches_descriptors(self.descriptors)
+            ):
+                raise ValueError("surface_delta_shape")
+        elif self.live_native is not None:
+            if (
+                self.replacement_range is None
+                or self.replacement_range.component_name != "provider_continuations"
+                or len(self.descriptors) != self.live_native.descriptor_count
             ):
                 raise ValueError("surface_delta_shape")
         elif self.replacement_range is not None and len(self.descriptors) != 1:
@@ -423,6 +496,14 @@ class VerifiedSurfaceDelta:
         default=None, kw_only=True
     )
 
+    live_native: LiveNativeContinuationWitness | None = field(
+        default=None, repr=False, kw_only=True
+    )
+    live_native_custody: LiveNativeContinuationCustody | None = field(
+        default=None, repr=False, kw_only=True
+    )
+    live_native_ordinal: int | None = field(default=None, kw_only=True)
+
     def __post_init__(self) -> None:
         if (
             not self.owner_id
@@ -431,6 +512,21 @@ class VerifiedSurfaceDelta:
             or not self.preparation_identity
         ):
             raise ValueError("surface_delta_identity")
+        if self.live_native is not None:
+            from tldw_chatbook.Chat.console_trace_continuation import (
+                LiveNativeContinuationWitness,
+            )
+
+            witness = self.live_native
+            if (
+                type(witness) is not LiveNativeContinuationWitness
+                or self.completed_tool_turn is not None
+                or self.route_identity != "tool_loop"
+                or witness.custody is not self.live_native_custody
+                or witness.continuation_ordinal != self.live_native_ordinal
+                or not 1 <= witness.message_count <= 256
+            ):
+                raise ValueError("surface_delta_shape")
         if self.completed_tool_turn is not None:
             witness = self.completed_tool_turn
             if (
@@ -442,11 +538,31 @@ class VerifiedSurfaceDelta:
                 or any(
                     item.component_name != "messages_payload"
                     or item.ordinal != self.replacement.item.ordinal + offset
-                    for offset, item in enumerate(self.items, 1)
+                    for offset, item in enumerate(
+                        self.items[:-1] if witness.replay_row_count else self.items, 1
+                    )
+                )
+                or (
+                    witness.replay_row_count
+                    and self.items[-1].component_name != "provider_continuations"
                 )
                 or not witness.matches_descriptors(
                     (self.replacement.item.provenance,)
                     + tuple(item.provenance for item in self.items)
+                )
+            ):
+                raise ValueError("surface_delta_shape")
+        elif self.live_native is not None:
+            if (
+                self.replacement is None
+                or self.replacement.item.component_name != "provider_continuations"
+                or self.replacement.item.ordinal
+                != self.live_native.continuation_ordinal
+                or len(self.items) != self.live_native.message_count
+                or any(
+                    item.component_name != "messages_payload"
+                    or item.ordinal != self.live_native.message_start + index
+                    for index, item in enumerate(self.items)
                 )
             ):
                 raise ValueError("surface_delta_shape")
@@ -572,7 +688,9 @@ def build_verified_surface_delta(
             if (
                 delta_count
                 != (
-                    admission.completed_tool_turn.descriptor_count
+                    admission.live_native.descriptor_count
+                    if admission.live_native is not None
+                    else admission.completed_tool_turn.descriptor_count
                     if admission.completed_tool_turn is not None
                     else 1
                 )
@@ -625,12 +743,16 @@ def build_verified_surface_delta(
     replacement: VerifiedSurfaceReplacement | None = None
     if admission.replacement_range is not None:
         if len(items) != (
-            admission.completed_tool_turn.descriptor_count
+            admission.live_native.descriptor_count
+            if admission.live_native is not None
+            else admission.completed_tool_turn.descriptor_count
             if admission.completed_tool_turn is not None
             else 1
         ):
             raise ValueError("surface_delta_shape")
         replacement_range = admission.replacement_range
+        if admission.live_native is not None:
+            items = (items[-1],) + items[:-1]
         if items[0].component_name != replacement_range.component_name or (
             replacement_range.component_ordinal is not None
             and items[0].ordinal != replacement_range.component_ordinal
@@ -671,6 +793,9 @@ def build_verified_surface_delta(
         items=items,
         replacement=replacement,
         completed_tool_turn=admission.completed_tool_turn,
+        live_native=admission.live_native,
+        live_native_custody=admission.live_native_custody,
+        live_native_ordinal=admission.live_native_ordinal,
     )
 
 
@@ -712,6 +837,7 @@ def reconstruct_provider_gateway_kwargs(
     """Independently reconstruct the exact generic gateway boundary values."""
 
     execution_key = getattr(resolution, "execution_key")
+    base_url = adapter_api_base_url(execution_key, getattr(resolution, "base_url"))
     kwargs: dict[str, object | None] = {
         "api_endpoint": execution_key,
         "system_message": getattr(request, "system_message"),
@@ -749,16 +875,16 @@ def reconstruct_provider_gateway_kwargs(
     if template_options:
         kwargs["chat_template_kwargs"] = template_options
     if supports_local_reasoning(provider, resolution.model or ""):
-        kwargs["api_base_url"] = resolution.base_url or None
+        kwargs["api_base_url"] = base_url
         kwargs["api_key_resolved"] = True
     elif execution_key in {"qwencloud", "deepseek"}:
         kwargs["api_mode"] = getattr(resolution, "api_mode")
-        kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+        kwargs["api_base_url"] = base_url
     elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
-        kwargs["api_base_url"] = resolution.base_url or None
+        kwargs["api_base_url"] = base_url
     elif execution_key in {"moonshot", "zai"}:
         kwargs.update(
-            api_base_url=getattr(resolution, "base_url") or None,
+            api_base_url=base_url,
             request_timeout=getattr(resolution, "request_timeout"),
             request_retries=getattr(resolution, "request_retries"),
             request_retry_delay=getattr(resolution, "request_retry_delay"),
@@ -775,20 +901,18 @@ def reconstruct_provider_gateway_kwargs(
         "mistralai",
         "vllm",
     } | CUSTOM_OPENAI_EXECUTION_KEYS:
-        kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+        kwargs["api_base_url"] = base_url
         if execution_key in CUSTOM_OPENAI_EXECUTION_KEYS:
             kwargs["api_key_resolved"] = True
     elif execution_key == "openai" and getattr(request, "response_format") is not None:
-        kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+        kwargs["api_base_url"] = base_url
     else:
         # TASK-2117: mirror the gateway's conditional endpoint pin for the
         # first-party cloud keys -- pinned only when the resolved endpoint
         # differs from the provider's shipped default. The rule lives in
         # ``console_provider_endpoints.meaningful_adapter_base_url`` so this
         # independent reconstruction and the gateway cannot drift.
-        pinned_base_url = meaningful_adapter_base_url(
-            execution_key, getattr(resolution, "base_url", None)
-        )
+        pinned_base_url = meaningful_adapter_base_url(execution_key, base_url)
         if pinned_base_url is not None:
             kwargs["api_base_url"] = pinned_base_url
     if execution_key in _ENGINE_EXECUTION_KEYS and request.continuation_groups:

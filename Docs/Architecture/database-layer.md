@@ -19,6 +19,7 @@ Note: the "schema v37" figure that circulates in older docs is stale — read `_
 ## BaseDB infrastructure
 
 - **Private connections** (`connect_private_sqlite`) harden the SQLite build for user-data files.
+- **Finite Workspace reads**: registry `get_workspace`, `list_workspaces` and `get_runtime_binding` use `operation_owned_connection` to retire newly acquired exact file-backed handles on their producer thread. The binding read includes Default-binding repair; borrowed handles/transactions and custom/in-memory owners keep their lifetimes. Awaiter cancellation does not retire a running callback (ADR-228).
 - **Quiescence registry**: an exclusive maintenance barrier per canonical file identity. Cursors hold use reservations until result exhaustion; `quiesce_connections()` drains and closes same-file handles so maintenance (vacuum, migration) can run without "database is locked" races.
 - **Semantic-mutation guards**: `register_semantic_mutation_guard` registers SQLite functions plus a trace callback and an authorizer that **denies COMMIT/ROLLBACK escape mid-scope** — fail-closed guards consumed by DB triggers protecting console trace/semantic state.
 
@@ -91,3 +92,14 @@ Database helpers in `config.py` resolve explicit path overrides first, then prof
 - [chat-pipeline.md](./chat-pipeline.md) — the messages/conversations consumers
 - [notes-sync.md](./notes-sync.md) — the notes tables' sync authority
 - [media-ingestion.md](./media-ingestion.md) — the Media DB write seam
+
+
+### Review-boundary wake linkage (ADR281)
+
+AgentRuns schema25 extends existing `automatic_wake_attempts` with a nullable opaque
+`review_boundary_id` and `automatic_review_boundary_claims`. `AutomaticWorkLedger`
+validates an in-process host receipt at claim and acceptance; persisted identities
+cannot restore that authority. Prepared abort removes its exact active link and
+reservation, while accepted/completed/uncertain attempts retain links and charges.
+The existing restart audit requires review and cannot recover ephemeral bundles.
+Source, report and grant bodies are never stored in this link.

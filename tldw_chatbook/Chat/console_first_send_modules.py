@@ -82,6 +82,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_visual_transcript",
     "tldw_chatbook.Chat.console_predispatch_block",
     "tldw_chatbook.Chat.console_native_commit",
+    "tldw_chatbook.Chat.console_continuation_binding",
     "tldw_chatbook.Chat.console_trace_row_sources",
     "tldw_chatbook.Chat.response_rules.generation",
     "tldw_chatbook.Chat.response_rules.builder",

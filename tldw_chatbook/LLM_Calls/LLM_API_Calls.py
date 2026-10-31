@@ -249,30 +249,28 @@ def _normalize_openai_reasoning_effort(value: object) -> Optional[str]:
     return str(value).strip().lower()
 
 
+def _openai_has_chat_function_tools(tools: object) -> bool:
+    from tldw_chatbook.LLM_Calls.openai_protocol import _openai_has_chat_function_tools
+
+    return _openai_has_chat_function_tools(tools)
+
+
 def _openai_use_responses_api(
     normalized_reasoning_effort: Optional[str],
     reasoning_summary: object,
     verbosity: object,
-    is_gpt_5_6_model: bool,
+    supports_chat_none_effort: bool,
 ) -> bool:
     return (
         normalized_reasoning_effort is not None
-        and (normalized_reasoning_effort != "none" or not is_gpt_5_6_model)
+        and (normalized_reasoning_effort != "none" or not supports_chat_none_effort)
     ) or (_is_present_setting(reasoning_summary) or _is_present_setting(verbosity))
 
 
 def _extract_openai_responses_text(response_data: Dict[str, Any]) -> str:
-    output_text = response_data.get("output_text")
-    if isinstance(output_text, str) and output_text:
-        return output_text
-    text_parts: list[str] = []
-    for item in response_data.get("output", []) or []:
-        if not isinstance(item, dict) or item.get("type") != "message":
-            continue
-        for part in item.get("content", []) or []:
-            if isinstance(part, dict) and part.get("type") == "output_text":
-                text_parts.append(str(part.get("text") or ""))
-    return "\n".join(part for part in text_parts if part).strip()
+    from tldw_chatbook.LLM_Calls.openai_protocol import _extract_openai_responses_text
+
+    return _extract_openai_responses_text(response_data)
 
 
 def _normalize_openai_responses_payload(
@@ -280,26 +278,11 @@ def _normalize_openai_responses_payload(
     *,
     model: str,
 ) -> Dict[str, Any]:
-    """Normalize Responses API output to the chat-completions shape used by Console."""
-    return {
-        "id": response_data.get("id", f"resp-openai-{time.time_ns()}"),
-        "object": "chat.completion",
-        "created": int(response_data.get("created_at") or time.time()),
-        "model": response_data.get("model", model),
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": _extract_openai_responses_text(response_data),
-                },
-                "finish_reason": "stop"
-                if response_data.get("status") in {None, "completed"}
-                else response_data.get("status"),
-            }
-        ],
-        "usage": response_data.get("usage"),
-    }
+    from tldw_chatbook.LLM_Calls.openai_protocol import (
+        _normalize_openai_responses_payload,
+    )
+
+    return _normalize_openai_responses_payload(response_data, model=model)
 
 
 def _responses_stream_to_chat_sse(response, *, model: str):
@@ -731,11 +714,18 @@ def chat_with_openai(
 
     normalized_reasoning_effort = _normalize_openai_reasoning_effort(reasoning_effort)
     is_gpt_5_6_model = _is_openai_gpt_5_6_model(final_model)
+    # Luna supports Chat function calling only with explicit reasoning disabled.
+    luna_native_functions = (
+        isinstance(final_model, str)
+        and final_model.strip().lower() == "gpt-6-luna"
+        and normalized_reasoning_effort == "none"
+        and _openai_has_chat_function_tools(tools)
+    )
     use_responses_api = _openai_use_responses_api(
         normalized_reasoning_effort,
         reasoning_summary,
         verbosity,
-        is_gpt_5_6_model,
+        is_gpt_5_6_model or luna_native_functions,
     )
     payload = {
         "model": final_model,
@@ -821,7 +811,7 @@ def chat_with_openai(
             payload["reasoning"] = reasoning_options
         if _is_present_setting(verbosity):
             payload.setdefault("text", {})["verbosity"] = str(verbosity).strip().lower()
-    elif is_gpt_5_6_model:
+    elif is_gpt_5_6_model or luna_native_functions:
         payload["reasoning_effort"] = normalized_reasoning_effort or "none"
 
     # Then conditionally add tool_choice:

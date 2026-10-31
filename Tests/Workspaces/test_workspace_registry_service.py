@@ -30,14 +30,38 @@ from tldw_chatbook.Workspaces.registry_service import (
 )
 
 
-def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    )
+@pytest.fixture
+def workspace_database():
+    """Own only the exact databases constructed by this test's explicit factory."""
+    databases = []
+
+    def create(*args, **kwargs):
+        database = WorkspaceDB(*args, **kwargs)
+        databases.append(database)
+        return database
+
+    yield create
+    for database in reversed(databases):
+        connection = getattr(database._thread_local, "conn", None)
+        database.close()
+        if connection is not None:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+        assert not database._maintenance_participant.connections
+
+
+@pytest.fixture
+def build_test_registry(workspace_database):
+    def create(tmp_path: Path) -> LocalWorkspaceRegistryService:
+        return LocalWorkspaceRegistryService(
+            workspace_database(tmp_path / "workspaces.sqlite", client_id="client-1")
+        )
+
+    return create
 
 
 def test_folder_binding_without_app_owner_starts_no_change_review_thread(
-    tmp_path: Path, monkeypatch
+    build_test_registry, tmp_path: Path, monkeypatch
 ) -> None:
     """Registry persistence alone must not own background snapshot work."""
     import tldw_chatbook.Workspaces.change_turn_tracker as tracker
@@ -55,7 +79,9 @@ def test_folder_binding_without_app_owner_starts_no_change_review_thread(
     assert calls == []
 
 
-def test_folder_binding_notifies_attached_change_review_owner(tmp_path: Path) -> None:
+def test_folder_binding_notifies_attached_change_review_owner(
+    build_test_registry, tmp_path: Path
+) -> None:
     """A durable binding add is handed to the app-owned lifecycle service."""
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-review", name="Review")
@@ -73,7 +99,9 @@ def test_folder_binding_notifies_attached_change_review_owner(tmp_path: Path) ->
     assert calls == [("ws-review", binding)]
 
 
-def test_change_review_missing_row_is_disabled(tmp_path: Path) -> None:
+def test_change_review_missing_row_is_disabled(
+    build_test_registry, tmp_path: Path
+) -> None:
     """Workspace consent is opt-in even when the global capability exists."""
     from tldw_chatbook.Workspaces import change_review_consent
 
@@ -88,6 +116,7 @@ def test_change_review_missing_row_is_disabled(tmp_path: Path) -> None:
 
 
 def test_change_review_compare_and_set_checks_state_and_revision(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     """A stale missing-row observation cannot invert a newer choice."""
@@ -115,6 +144,7 @@ def test_change_review_compare_and_set_checks_state_and_revision(
 
 
 def test_change_review_successful_writes_get_distinct_frozen_clock_revisions(
+    build_test_registry,
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -132,6 +162,7 @@ def test_change_review_successful_writes_get_distinct_frozen_clock_revisions(
 
 
 def test_change_review_storage_failure_is_unavailable(
+    build_test_registry,
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -155,7 +186,9 @@ def test_change_review_storage_failure_is_unavailable(
     assert service.change_review_enabled("ws-review") is False
 
 
-def test_registry_persists_active_workspace(tmp_path: Path) -> None:
+def test_registry_persists_active_workspace(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
 
     service.create_workspace(workspace_id="ws-a", name="Local Research")
@@ -170,6 +203,7 @@ def test_registry_persists_active_workspace(tmp_path: Path) -> None:
 
 
 def test_registry_ensures_default_workspace_when_none_is_configured(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -185,6 +219,7 @@ def test_registry_ensures_default_workspace_when_none_is_configured(
 
 
 def test_registry_does_not_replace_user_active_workspace_with_default(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -198,6 +233,7 @@ def test_registry_does_not_replace_user_active_workspace_with_default(
 
 
 def test_registry_rejects_runtime_binding_for_default_workspace(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -217,9 +253,10 @@ def test_registry_rejects_runtime_binding_for_default_workspace(
 
 
 def test_registry_never_exposes_runtime_bindings_for_default_workspace(
+    workspace_database,
     tmp_path: Path,
 ) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    db = workspace_database(tmp_path / "workspaces.sqlite", client_id="client-1")
     service = LocalWorkspaceRegistryService(db)
     service.ensure_default_workspace()
 
@@ -259,9 +296,10 @@ def test_registry_never_exposes_runtime_bindings_for_default_workspace(
 
 
 def test_registry_sanitizes_malformed_default_runtime_binding_before_parsing(
+    workspace_database,
     tmp_path: Path,
 ) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    db = workspace_database(tmp_path / "workspaces.sqlite", client_id="client-1")
     service = LocalWorkspaceRegistryService(db)
     service.ensure_default_workspace()
 
@@ -309,6 +347,7 @@ def test_registry_sanitizes_malformed_default_runtime_binding_before_parsing(
 
 
 def test_registry_skips_default_runtime_binding_write_when_none_exist(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -324,7 +363,9 @@ def test_registry_skips_default_runtime_binding_write_when_none_exist(
     assert service.list_runtime_bindings(DEFAULT_WORKSPACE_ID) == ()
 
 
-def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> None:
+def test_registry_links_note_without_hiding_other_workspaces(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
@@ -340,55 +381,70 @@ def test_registry_links_note_without_hiding_other_workspaces(tmp_path: Path) -> 
 
 
 def test_unlink_membership_removes_only_matching_membership_and_scope_item(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
     media_db = MediaDatabase(tmp_path / "media.sqlite", client_id="client-1")
-    media_id, _media_uuid, _message = media_db.add_media_with_keywords(
-        url="file:///research-source.txt",
-        title="Canonical source",
-        media_type="document",
-        content="Canonical content must survive workspace unlink.",
-    )
-    assert media_id is not None
-    item_id = str(media_id)
-    service.create_workspace(workspace_id="ws-a", name="Workspace A")
-    service.create_workspace(workspace_id="ws-b", name="Workspace B")
-    service.link_membership("ws-a", item_type="media", item_id=item_id, role="source")
-    service.link_membership(
-        "ws-a", item_type="media", item_id=item_id, role="reference"
-    )
-    service.link_membership("ws-b", item_type="media", item_id=item_id, role="source")
-    service.set_workspace_scope(
-        "ws-a",
-        RagScope(
-            items=(
-                ScopeItem("media", item_id),
-                ScopeItem("media", "42"),
-                ScopeItem("note", item_id),
+    try:
+        media_id, _media_uuid, _message = media_db.add_media_with_keywords(
+            url="file:///research-source.txt",
+            title="Canonical source",
+            media_type="document",
+            content="Canonical content must survive workspace unlink.",
+        )
+        assert media_id is not None
+        item_id = str(media_id)
+        service.create_workspace(workspace_id="ws-a", name="Workspace A")
+        service.create_workspace(workspace_id="ws-b", name="Workspace B")
+        service.link_membership(
+            "ws-a", item_type="media", item_id=item_id, role="source"
+        )
+        service.link_membership(
+            "ws-a", item_type="media", item_id=item_id, role="reference"
+        )
+        service.link_membership(
+            "ws-b", item_type="media", item_id=item_id, role="source"
+        )
+        service.set_workspace_scope(
+            "ws-a",
+            RagScope(
+                items=(
+                    ScopeItem("media", item_id),
+                    ScopeItem("media", "42"),
+                    ScopeItem("note", item_id),
+                ),
+                updated_at="2026-08-24T12:00:00Z",
             ),
-            updated_at="2026-08-24T12:00:00Z",
-        ),
-    )
+        )
 
-    assert service.unlink_membership("ws-a", item_type="media", item_id=item_id) is True
-    assert (
-        service.unlink_membership("ws-a", item_type="media", item_id=item_id) is False
-    )
+        assert (
+            service.unlink_membership("ws-a", item_type="media", item_id=item_id)
+            is True
+        )
+        assert (
+            service.unlink_membership("ws-a", item_type="media", item_id=item_id)
+            is False
+        )
 
-    assert {
-        (membership.workspace_id, membership.role)
-        for membership in service.get_item_memberships("media", item_id)
-    } == {("ws-a", "reference"), ("ws-b", "source")}
-    scope = service.get_workspace_scope("ws-a")
-    assert scope is not None
-    assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
-    canonical = media_db.get_media_by_id(media_id)
-    assert canonical is not None
-    assert canonical["content"] == "Canonical content must survive workspace unlink."
+        assert {
+            (membership.workspace_id, membership.role)
+            for membership in service.get_item_memberships("media", item_id)
+        } == {("ws-a", "reference"), ("ws-b", "source")}
+        scope = service.get_workspace_scope("ws-a")
+        assert scope is not None
+        assert scope.items == (ScopeItem("media", "42"), ScopeItem("note", item_id))
+        canonical = media_db.get_media_by_id(media_id)
+        assert canonical is not None
+        assert (
+            canonical["content"] == "Canonical content must survive workspace unlink."
+        )
+    finally:
+        media_db.close_connection()
 
 
 def test_unlink_reference_membership_keeps_source_scope_selected(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -415,7 +471,9 @@ def test_unlink_reference_membership_keeps_source_scope_selected(
     ] == [("ws-a", "source")]
 
 
-def test_registry_persists_runtime_bindings_without_secrets(tmp_path: Path) -> None:
+def test_registry_persists_runtime_bindings_without_secrets(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
 
@@ -437,7 +495,9 @@ def test_registry_persists_runtime_bindings_without_secrets(tmp_path: Path) -> N
     assert bindings[0].metadata == {"branch": "dev"}
 
 
-def test_registry_lists_workspaces_deterministically(tmp_path: Path) -> None:
+def test_registry_lists_workspaces_deterministically(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
 
     service.create_workspace(workspace_id="ws-b", name="B")
@@ -449,7 +509,9 @@ def test_registry_lists_workspaces_deterministically(tmp_path: Path) -> None:
     ]
 
 
-def test_registry_lists_workspace_conversations_only(tmp_path: Path) -> None:
+def test_registry_lists_workspace_conversations_only(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
 
@@ -490,7 +552,9 @@ def test_registry_list_workspaces_uses_constant_sql() -> None:
     assert 'f"""' not in source
 
 
-def test_registry_normalizes_workspace_ids_at_service_boundary(tmp_path: Path) -> None:
+def test_registry_normalizes_workspace_ids_at_service_boundary(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id=" ws-a ", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
@@ -511,9 +575,10 @@ def test_registry_normalizes_workspace_ids_at_service_boundary(tmp_path: Path) -
 
 
 def test_registry_rejects_archived_active_workspace_without_clearing_current(
+    workspace_database,
     tmp_path: Path,
 ) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    db = workspace_database(tmp_path / "workspaces.sqlite", client_id="client-1")
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
@@ -547,7 +612,9 @@ def test_link_membership_uses_unique_membership_lookup() -> None:
     assert "role = ?" in source
 
 
-def test_registry_wraps_non_json_runtime_binding_metadata(tmp_path: Path) -> None:
+def test_registry_wraps_non_json_runtime_binding_metadata(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
 
@@ -565,8 +632,10 @@ def test_registry_wraps_non_json_runtime_binding_metadata(tmp_path: Path) -> Non
         )
 
 
-def test_registry_tolerates_corrupt_runtime_binding_metadata(tmp_path: Path) -> None:
-    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+def test_registry_tolerates_corrupt_runtime_binding_metadata(
+    workspace_database, tmp_path: Path
+) -> None:
+    db = workspace_database(tmp_path / "workspaces.sqlite", client_id="client-1")
     service = LocalWorkspaceRegistryService(db)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.save_runtime_binding(
@@ -596,7 +665,9 @@ def test_registry_tolerates_corrupt_runtime_binding_metadata(tmp_path: Path) -> 
     assert bindings[0].metadata == {}
 
 
-def test_next_local_workspace_identity_returns_first_free_slot(tmp_path: Path) -> None:
+def test_next_local_workspace_identity_returns_first_free_slot(
+    build_test_registry, tmp_path: Path
+) -> None:
     """The shared helper returns the lowest available workspace-local identity."""
     registry_service = build_test_registry(tmp_path)
     workspace_id, workspace_name = next_local_workspace_identity(registry_service)
@@ -605,6 +676,7 @@ def test_next_local_workspace_identity_returns_first_free_slot(tmp_path: Path) -
 
 
 def test_next_local_workspace_identity_skips_existing_ids_and_names(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     """The shared helper returns the first gap in existing workspace identities."""
@@ -622,7 +694,9 @@ def test_next_local_workspace_identity_skips_existing_ids_and_names(
     assert workspace_name == "Workspace 2"
 
 
-def test_next_local_workspace_identity_avoids_name_collision(tmp_path: Path) -> None:
+def test_next_local_workspace_identity_avoids_name_collision(
+    build_test_registry, tmp_path: Path
+) -> None:
     """The shared helper avoids a workspace name even when the id is free."""
     registry_service = build_test_registry(tmp_path)
     registry_service.create_workspace(
@@ -639,7 +713,7 @@ def test_next_local_workspace_identity_avoids_name_collision(tmp_path: Path) -> 
 # --- TASK-714: rename / archive lifecycle -------------------------------------
 
 
-def test_rename_workspace_updates_name(tmp_path: Path) -> None:
+def test_rename_workspace_updates_name(build_test_registry, tmp_path: Path) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace 1")
 
@@ -650,7 +724,9 @@ def test_rename_workspace_updates_name(tmp_path: Path) -> None:
     assert stored is not None and stored.name == "Client A"
 
 
-def test_rename_workspace_rejects_blank_and_unknown(tmp_path: Path) -> None:
+def test_rename_workspace_rejects_blank_and_unknown(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace 1")
 
@@ -660,7 +736,7 @@ def test_rename_workspace_rejects_blank_and_unknown(tmp_path: Path) -> None:
         service.rename_workspace("ws-missing", "Anything")
 
 
-def test_rename_workspace_protects_default(tmp_path: Path) -> None:
+def test_rename_workspace_protects_default(build_test_registry, tmp_path: Path) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
 
@@ -669,6 +745,7 @@ def test_rename_workspace_protects_default(tmp_path: Path) -> None:
 
 
 def test_rename_default_reports_default_protection_even_with_taken_name(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -681,6 +758,7 @@ def test_rename_default_reports_default_protection_even_with_taken_name(
 
 
 def test_rename_unknown_id_reports_not_found_even_with_taken_name(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -690,7 +768,9 @@ def test_rename_unknown_id_reports_not_found_even_with_taken_name(
         service.rename_workspace("ws-missing", "Client A")
 
 
-def test_archive_workspace_hides_from_listing(tmp_path: Path) -> None:
+def test_archive_workspace_hides_from_listing(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
     service.create_workspace(workspace_id="ws-a", name="Workspace 1")
@@ -707,7 +787,9 @@ def test_archive_workspace_hides_from_listing(tmp_path: Path) -> None:
     assert "ws-a" in listed_all
 
 
-def test_archiving_active_workspace_falls_back_to_default(tmp_path: Path) -> None:
+def test_archiving_active_workspace_falls_back_to_default(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
     service.create_workspace(workspace_id="ws-a", name="Workspace 1")
@@ -720,7 +802,9 @@ def test_archiving_active_workspace_falls_back_to_default(tmp_path: Path) -> Non
     assert active.workspace_id == DEFAULT_WORKSPACE_ID
 
 
-def test_archive_workspace_protects_default_and_unknown(tmp_path: Path) -> None:
+def test_archive_workspace_protects_default_and_unknown(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
 
@@ -734,6 +818,7 @@ def test_archive_workspace_protects_default_and_unknown(tmp_path: Path) -> None:
 
 
 def test_unarchive_workspace_restores_listing_without_activating(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -752,7 +837,9 @@ def test_unarchive_workspace_restores_listing_without_activating(
     assert active is not None and active.workspace_id == DEFAULT_WORKSPACE_ID
 
 
-def test_unarchive_workspace_rejects_unknown_and_unarchived(tmp_path: Path) -> None:
+def test_unarchive_workspace_rejects_unknown_and_unarchived(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Workspace 1")
 
@@ -762,7 +849,9 @@ def test_unarchive_workspace_rejects_unknown_and_unarchived(tmp_path: Path) -> N
         service.unarchive_workspace("ws-a")  # not archived
 
 
-def test_duplicate_names_rejected_case_insensitively(tmp_path: Path) -> None:
+def test_duplicate_names_rejected_case_insensitively(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Client A")
     service.create_workspace(workspace_id="ws-b", name="Workspace 2")
@@ -776,7 +865,7 @@ def test_duplicate_names_rejected_case_insensitively(tmp_path: Path) -> None:
     assert renamed.name == "client A"
 
 
-def test_archived_names_do_not_block_reuse(tmp_path: Path) -> None:
+def test_archived_names_do_not_block_reuse(build_test_registry, tmp_path: Path) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Client A")
     service.archive_workspace("ws-a")
@@ -785,7 +874,9 @@ def test_archived_names_do_not_block_reuse(tmp_path: Path) -> None:
     assert created.name == "Client A"
 
 
-def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None:
+def test_unarchive_collision_with_live_name_is_explained(
+    build_test_registry, tmp_path: Path
+) -> None:
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="ws-a", name="Client A")
     service.archive_workspace("ws-a")
@@ -796,10 +887,10 @@ def test_unarchive_collision_with_live_name_is_explained(tmp_path: Path) -> None
     assert "already exists" in str(excinfo.value)
 
 
-def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) -> None:
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-
-    db = WorkspaceDB(tmp_path / "mig.sqlite", client_id="mig")
+def test_v2_migration_dedupes_and_indexes_existing_duplicates(
+    workspace_database, tmp_path: Path
+) -> None:
+    db = workspace_database(tmp_path / "mig.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
         conn.execute(
@@ -843,12 +934,12 @@ def test_v2_migration_dedupes_and_indexes_existing_duplicates(tmp_path: Path) ->
     assert len({n.strip().casefold() for n in names}) == len(names)
 
 
-def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) -> None:
+def test_v2_migration_dedupes_across_groups_without_collision(
+    workspace_database, tmp_path: Path
+) -> None:
     """A rename generated for one duplicate group must not collide with a
     name reserved by a different duplicate group's rename (Qodo #943/#944)."""
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-
-    db = WorkspaceDB(tmp_path / "mig-cross-group.sqlite", client_id="mig")
+    db = workspace_database(tmp_path / "mig-cross-group.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
         conn.execute(
@@ -891,12 +982,12 @@ def test_v2_migration_dedupes_across_groups_without_collision(tmp_path: Path) ->
     assert len({n.strip().casefold() for n in names}) == len(names)
 
 
-def test_v2_migration_dedupes_against_preexisting_suffixed_name(tmp_path: Path) -> None:
+def test_v2_migration_dedupes_against_preexisting_suffixed_name(
+    workspace_database, tmp_path: Path
+) -> None:
     """A generated rename must not collide with a real, pre-existing name
     that already looks like a generated suffix (Qodo #943/#944)."""
-    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-
-    db = WorkspaceDB(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
+    db = workspace_database(tmp_path / "mig-preexisting-suffix.sqlite", client_id="mig")
     with db.connection() as conn:
         conn.execute("DROP INDEX IF EXISTS idx_workspace_records_name_ci")
         conn.execute(
@@ -972,7 +1063,9 @@ def _insert_stale_default_binding(db: WorkspaceDB, binding_id: str) -> None:
         )
 
 
-def test_switching_to_default_strips_stale_runtime_bindings(tmp_path: Path) -> None:
+def test_switching_to_default_strips_stale_runtime_bindings(
+    build_test_registry, tmp_path: Path
+) -> None:
     """The workspace-switch seam owns the Default-binding repair (TASK-21118).
 
     The repair used to run inside `ensure_default_workspace` on every
@@ -993,7 +1086,9 @@ def test_switching_to_default_strips_stale_runtime_bindings(tmp_path: Path) -> N
     assert service.get_runtime_binding("stale-default-binding") is None
 
 
-def test_mutation_generation_bumps_on_every_record_mutator(tmp_path: Path) -> None:
+def test_mutation_generation_bumps_on_every_record_mutator(
+    build_test_registry, tmp_path: Path
+) -> None:
     """Every workspace-record mutator must advance `mutation_generation`.
 
     The Console keystroke memo revalidates against this counter instead of
@@ -1032,7 +1127,9 @@ def test_mutation_generation_bumps_on_every_record_mutator(tmp_path: Path) -> No
     assert service.mutation_generation > generation
 
 
-def test_mutation_generation_is_stable_across_pure_reads(tmp_path: Path) -> None:
+def test_mutation_generation_is_stable_across_pure_reads(
+    build_test_registry, tmp_path: Path
+) -> None:
     """Reads must NOT advance the generation, or the memo never serves a hit."""
     service = build_test_registry(tmp_path)
     service.ensure_default_workspace()
@@ -1050,6 +1147,7 @@ def test_mutation_generation_is_stable_across_pure_reads(tmp_path: Path) -> None
 
 
 def test_mutation_generation_bumps_on_binding_and_membership_mutators(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     """Binding and membership mutators must advance `mutation_generation`.
@@ -1098,6 +1196,7 @@ def test_mutation_generation_bumps_on_binding_and_membership_mutators(
 
 
 def test_restore_as_resolves_collision_atomically_without_activation(
+    build_test_registry,
     tmp_path: Path,
 ) -> None:
     service = build_test_registry(tmp_path)
@@ -1116,7 +1215,9 @@ def test_restore_as_resolves_collision_atomically_without_activation(
 
 
 @pytest.mark.parametrize("name", ["", "   ", 123, b"replacement"])
-def test_restore_as_rejects_invalid_workspace_names_without_mutation(tmp_path, name):
+def test_restore_as_rejects_invalid_workspace_names_without_mutation(
+    build_test_registry, tmp_path, name
+):
     service = build_test_registry(tmp_path)
     service.create_workspace(workspace_id="old", name="Original")
     service.archive_workspace("old")
@@ -1131,7 +1232,9 @@ def test_restore_as_rejects_invalid_workspace_names_without_mutation(tmp_path, n
 @pytest.mark.parametrize(
     "name", ["  Project α / 東京 🧪  ", "x" * 4096, "Project\nNotes"]
 )
-def test_restore_as_preserves_existing_workspace_name_policy(tmp_path, name):
+def test_restore_as_preserves_existing_workspace_name_policy(
+    build_test_registry, tmp_path, name
+):
     service = build_test_registry(tmp_path)
     # Creation already defines the supported workspace-name contract.
     created = service.create_workspace(workspace_id="old", name=name)
@@ -1141,7 +1244,7 @@ def test_restore_as_preserves_existing_workspace_name_policy(tmp_path, name):
 
 
 def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
-    tmp_path, monkeypatch
+    build_test_registry, tmp_path, monkeypatch
 ):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
@@ -1163,8 +1266,15 @@ def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
 
     monkeypatch.setattr(loser, "get_workspace", pause_after_initial_read)
     generation = loser.mutation_generation
+
+    def restore_loser():
+        try:
+            return loser.unarchive_workspace("old", name="Losing choice")
+        finally:
+            loser.db.close()
+
     with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(loser.unarchive_workspace, "old", name="Losing choice")
+        pending = pool.submit(restore_loser)
         try:
             assert read_archived.wait(5)
             restored = winner.unarchive_workspace("old", name="Winning choice")
@@ -1179,7 +1289,9 @@ def test_concurrent_restore_rejects_stale_name_and_does_not_publish_success(
     loser.db.close()
 
 
-def test_concurrent_unicode_restore_names_remain_unique(tmp_path, monkeypatch):
+def test_concurrent_unicode_restore_names_remain_unique(
+    build_test_registry, tmp_path, monkeypatch
+):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 

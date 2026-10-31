@@ -9,6 +9,7 @@ is idempotent, and restored terminal/ambiguous calls never dispatch again.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -42,6 +43,7 @@ from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
 from Tests.Chat.test_console_dispatch_continuation_handoff import (
     _portable_store as _portable_dispatch_store,
     _started_portable,
+    _DEEPSEEK_RUN_TARGET,
 )
 
 
@@ -98,7 +100,9 @@ def _checkpoint_payload(
     if call_state in {"completed", "failed"}:
         call["result"] = "4" if call_state == "completed" else "recorded failure"
     return {
-        "schema_version": 1,
+        "schema_version": 3,
+        "selected_provider": "deepseek",
+        "managed_resume": None,
         "checkpoint_revision": checkpoint_revision,
         "provider": "deepseek",
         "protocol": "responses",
@@ -192,18 +196,21 @@ def _crash_snapshot(tmp_path: Path, boundary: CrashBoundary) -> _CrashSnapshot:
     if boundary != "before_assistant_checkpoint_commit":
         try:
             store.persist_provider_continuation_event(
-                ToolBatchReady(context, _checkpoint(), None)
+                ToolBatchReady(context, _checkpoint(), None),
+                continuation_target=_DEEPSEEK_RUN_TARGET,
             )
         except RuntimeError:
             assert boundary in _SYNC_BOUNDARIES
 
     if boundary == "during_side_effect":
         store.persist_provider_continuation_event(
-            ToolCallExecuting(context, "call-1", 1)
+            ToolCallExecuting(context, "call-1", 1),
+            continuation_target=_DEEPSEEK_RUN_TARGET,
         )
     elif boundary in {"after_result_commit", "before_next_provider_request"}:
         store.persist_provider_continuation_event(
-            ToolCallExecuting(context, "call-1", 1)
+            ToolCallExecuting(context, "call-1", 1),
+            continuation_target=_DEEPSEEK_RUN_TARGET,
         )
         store.persist_provider_continuation_event(
             ToolCallFinished(
@@ -212,7 +219,8 @@ def _crash_snapshot(tmp_path: Path, boundary: CrashBoundary) -> _CrashSnapshot:
                 2,
                 "completed",
                 ContinuationResult("4"),
-            )
+            ),
+            continuation_target=_DEEPSEEK_RUN_TARGET,
         )
 
     # The restored accepted v2 owner is projected before the first provider
@@ -380,7 +388,9 @@ def test_runtime_crash_hooks_restart_without_repeating_side_effects(
         return ToolResult(ok=True, content="4")
 
     def persist(event) -> None:
-        store.persist_provider_continuation_event(event)
+        store.persist_provider_continuation_event(
+            event, continuation_target=_DEEPSEEK_RUN_TARGET
+        )
         if boundary == "after_result_commit" and isinstance(event, ToolCallFinished):
             raise _SimulatedProcessDeath
 
@@ -448,7 +458,10 @@ def test_runtime_crash_hooks_restart_without_repeating_side_effects(
             review_tool_calls=lambda calls: {},
             continuation_context=context,
             persist_provider_continuation=(
-                restarted_store.persist_provider_continuation_event
+                partial(
+                    restarted_store.persist_provider_continuation_event,
+                    continuation_target=_DEEPSEEK_RUN_TARGET,
+                )
             ),
             expand_provider_continuation=lambda checkpoint: [
                 {
@@ -467,6 +480,7 @@ def test_runtime_crash_hooks_restart_without_repeating_side_effects(
             "deepseek-v4-flash",
             "responses",
             "https://api.deepseek.com/v1",
+            selected_provider="deepseek",
         ),
         resume_provider_continuation=True,
     )
@@ -557,6 +571,7 @@ def test_restore_state_mutations_cannot_duplicate_a_terminal_or_ambiguous_call(
             "deepseek-v4-flash",
             "responses",
             "https://api.deepseek.com/v1",
+            selected_provider="deepseek",
         ),
         resume_provider_continuation=True,
     )

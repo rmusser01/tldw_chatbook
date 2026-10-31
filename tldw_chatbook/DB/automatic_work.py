@@ -13,7 +13,7 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -30,6 +30,7 @@ from tldw_chatbook.Agents.automatic_work_budget import (
     GoalAttempt,
     RuntimeRecoveryResult,
 )
+from tldw_chatbook.Agents.code_review_models import ReviewBoundaryReceipt
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -67,6 +68,8 @@ class AutomaticWorkLedger:
         self._progress_claim_lock = threading.RLock()
         self._temporary_progress_attempts: dict[str, tuple[tuple[str, str], ...]] = {}
         self._temporary_progress_claims: dict[str, str] = {}
+        self._review_authorities = {}
+        self._review_attempts = {}
 
         # Establish the existing canonical key before this ledger can authorize
         # work. Cleanup must never need a fresh filesystem observation.
@@ -81,6 +84,62 @@ class AutomaticWorkLedger:
                     identity = "memory:" + uuid4().hex
                     db._automatic_work_restriction_id = identity
                 self._restriction_database_id = identity
+
+    def register_review_boundary_authority(
+        self, owner_id, *, validate, transition, acceptance_scope
+    ):
+        """Install the live native issuer, never a serialized authority object."""
+        _identity(owner_id)
+        with self._progress_claim_lock:
+            previous = self._review_authorities.get(owner_id)
+            if previous is not None and previous != (
+                validate,
+                transition,
+                acceptance_scope,
+            ):
+                raise ValueError("review boundary issuer conflict")
+            self._review_authorities[owner_id] = (
+                validate,
+                transition,
+                acceptance_scope,
+            )
+
+    def unregister_review_boundary_authority(self, owner_id):
+        """Release the in-memory owner only; durable claims and charges remain."""
+        with self._progress_claim_lock:
+            self._review_authorities.pop(owner_id, None)
+            self._review_attempts = {
+                key: value
+                for key, value in self._review_attempts.items()
+                if value.owner_id != owner_id
+            }
+
+    def _validate_review_boundary(
+        self, receipt, *, chain_id, owner_id, session_id, conversation_id
+    ):
+        authority = self._review_authorities.get(owner_id)
+        if (
+            type(receipt) is not ReviewBoundaryReceipt
+            or (
+                receipt.chain_id,
+                receipt.owner_id,
+                receipt.session_id,
+                receipt.conversation_id,
+            )
+            != (chain_id, owner_id, session_id, conversation_id)
+            or authority is None
+            or not authority[0](receipt)
+        ):
+            raise AutomaticWorkRefused("review_boundary_unavailable")
+
+    def _transition_review_boundary(self, attempt_id, owner_id, state):
+        receipt = self._review_attempts.get(attempt_id)
+        authority = self._review_authorities.get(owner_id)
+        if receipt is not None and authority is not None:
+            authority[1](receipt, state)
+        if state in {"released", "completed"}:
+            with self._progress_claim_lock:
+                self._review_attempts.pop(attempt_id, None)
 
     def _restriction_database(self) -> str:
         return self._restriction_database_id
@@ -194,7 +253,12 @@ class AutomaticWorkLedger:
                 )
                 # A stale callback has no authority to pause its replacement's
                 # otherwise healthy chain. Its admission alone is refused.
-                if reason not in {"runtime_owner_replaced", "settlement_unconfirmed"}:
+                if reason not in {
+                    "runtime_owner_replaced",
+                    "settlement_unconfirmed",
+                    "review_boundary_already_claimed",
+                    "review_boundary_unavailable",
+                }:
                     conn.execute(
                         "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                         "WHERE id=? AND status!='review_required'",
@@ -1057,6 +1121,7 @@ class AutomaticWorkLedger:
             )
             if row["id"] in self._temporary_progress_attempts
             else tuple(json.loads(row["message_ids_json"])),
+            row["review_boundary_id"],
         )
 
     def read_attempt(self, attempt_id: str, *, owner_id: str) -> AutomaticWakeAttempt:
@@ -1074,6 +1139,7 @@ class AutomaticWorkLedger:
         run_ids: Sequence[str],
         progress_messages: Sequence[tuple[str, str]] = (),
         persistent_progress: bool = True,
+        review_boundary: ReviewBoundaryReceipt | None = None,
         limits: AutomaticWorkLimits | None = None,
     ) -> AutomaticWakeAttempt:
         """Claim one immutable survivor batch and its generation in one commit."""
@@ -1091,7 +1157,7 @@ class AutomaticWorkLedger:
         )
         if len({message_id for message_id, _ in progress}) != len(progress):
             raise ValueError("wake batch contains duplicate message IDs")
-        if not run_ids and not progress:
+        if not run_ids and not progress and review_boundary is None:
             raise ValueError("wake batch must not be empty")
         cause = (
             "mixed"
@@ -1118,6 +1184,7 @@ class AutomaticWorkLedger:
                         existing["session_id"],
                         tuple(json.loads(existing["run_ids_json"])),
                         existing["cause"],
+                        existing["review_boundary_id"],
                         self._temporary_progress_attempts.get(attempt_id)
                         if attempt_id in self._temporary_progress_attempts
                         else tuple(
@@ -1127,10 +1194,83 @@ class AutomaticWorkLedger:
                                 (attempt_id,),
                             )
                         ),
-                    ) != (chain_id, owner_id, session_id, selected, cause, progress):
+                    ) != (
+                        chain_id,
+                        owner_id,
+                        session_id,
+                        selected,
+                        cause,
+                        getattr(review_boundary, "boundary_id", None),
+                        progress,
+                    ):
                         raise ValueError("attempt identity conflict")
+                    if existing["state"] == "prepared" and review_boundary is not None:
+                        self._validate_review_boundary(
+                            review_boundary,
+                            chain_id=chain_id,
+                            owner_id=owner_id,
+                            session_id=session_id,
+                            conversation_id=existing["conversation_id"],
+                        )
                     return self._attempt_view(existing)
                 snapshot = self._snapshot(conn, chain_id)
+                if review_boundary is not None:
+                    self._validate_review_boundary(
+                        review_boundary,
+                        chain_id=chain_id,
+                        owner_id=owner_id,
+                        session_id=session_id,
+                        conversation_id=snapshot.conversation_id,
+                    )
+                    if conn.execute(
+                        "SELECT 1 FROM automatic_review_boundary_claims WHERE boundary_id=? OR (owner_id=? AND chain_id=? AND review_id=? AND slot_id=? AND slot_attempt_id=?)",
+                        (
+                            review_boundary.boundary_id,
+                            owner_id,
+                            chain_id,
+                            review_boundary.review_id,
+                            review_boundary.slot_id,
+                            review_boundary.slot_attempt_id,
+                        ),
+                    ).fetchone():
+                        raise AutomaticWorkRefused("review_boundary_already_claimed")
+                    if not review_boundary.predecessor_run_ids or len(
+                        review_boundary.predecessor_run_ids
+                    ) != len(review_boundary.predecessor_settlement_ids):
+                        raise ValueError("review_boundary predecessors missing")
+                    for run_id, settlement in zip(
+                        review_boundary.predecessor_run_ids,
+                        review_boundary.predecessor_settlement_ids,
+                    ):
+                        row = conn.execute(
+                            "SELECT status, conversation_id, work_chain_id, agent_kind FROM agent_runs WHERE id=?",
+                            (run_id,),
+                        ).fetchone()
+                        if (
+                            row is None
+                            or row["status"] not in TERMINAL_RUN_STATUSES
+                            or row["agent_kind"] != "subagent"
+                            or row["conversation_id"] != snapshot.conversation_id
+                            or row["work_chain_id"] != chain_id
+                        ):
+                            raise ValueError(
+                                "review_boundary predecessor scope mismatch"
+                            )
+                        # The id names its step index (= seq): decode that one
+                        # row, not the whole run, inside the write transaction.
+                        # CAST keeps a malformed suffix a miss, never an error.
+                        item = conn.execute(
+                            "SELECT payload FROM agent_run_steps WHERE run_id=? AND seq=CAST(? AS INTEGER)",
+                            (run_id, settlement.rpartition(":")[2]),
+                        ).fetchone()
+                        step = json.loads(item[0]) if item is not None else {}
+                        if (
+                            settlement != f"agent-step:{run_id}:{step.get('index')}"
+                            or step.get("status") != row["status"]
+                        ):
+                            raise ValueError(
+                                "review_boundary predecessor settlement missing"
+                            )
                 self._check_admission(
                     conn, chain_id, kind="generation", amount=1, limits=limits
                 )
@@ -1211,6 +1351,32 @@ class AutomaticWorkLedger:
                     "INSERT INTO automatic_wake_claims (run_id, attempt_id) VALUES (?, ?)",
                     [(run_id, attempt_id) for run_id in selected],
                 )
+                if review_boundary is not None:
+                    receipt = review_boundary
+                    conn.execute(
+                        "UPDATE automatic_wake_attempts SET review_boundary_id=? WHERE id=?",
+                        (receipt.boundary_id, attempt_id),
+                    )
+                    conn.execute(
+                        "INSERT INTO automatic_review_boundary_claims (boundary_id, attempt_id, owner_id, chain_id, review_id, slot_id, slot_attempt_id, source_epoch, context_revision, grant_id, target_fingerprint, team_fingerprint, override_fingerprint, predecessor_run_ids_json, predecessor_settlement_ids_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            receipt.boundary_id,
+                            attempt_id,
+                            owner_id,
+                            chain_id,
+                            receipt.review_id,
+                            receipt.slot_id,
+                            receipt.slot_attempt_id,
+                            receipt.source_epoch,
+                            receipt.revision,
+                            receipt.grant_id,
+                            receipt.target_fingerprint,
+                            receipt.team_fingerprint,
+                            receipt.override_fingerprint,
+                            json.dumps(receipt.predecessor_run_ids),
+                            json.dumps(receipt.predecessor_settlement_ids),
+                        ),
+                    )
                 if persistent_progress:
                     conn.executemany(
                         "INSERT INTO automatic_progress_wake_claims (message_id, source_run_id, attempt_id) VALUES (?, ?, ?)",
@@ -1219,6 +1385,8 @@ class AutomaticWorkLedger:
                             for message_id, source_id in progress
                         ],
                     )
+            if review_boundary is not None:
+                self._review_attempts[attempt_id] = review_boundary
             # Populate process-local authority only after the transaction commits.
             if progress and not persistent_progress:
                 self._temporary_progress_attempts[attempt_id] = progress
@@ -1313,6 +1481,10 @@ class AutomaticWorkLedger:
                 (attempt_id,),
             )
             conn.execute(
+                "DELETE FROM automatic_review_boundary_claims WHERE attempt_id=?",
+                (attempt_id,),
+            )
+            conn.execute(
                 "UPDATE automatic_wake_attempts SET state='aborted', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
@@ -1322,6 +1494,7 @@ class AutomaticWorkLedger:
         with self._progress_claim_lock:
             for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
                 self._temporary_progress_claims.pop(message_id, None)
+        self._transition_review_boundary(attempt_id, owner_id, "released")
         return True
 
     def complete_wake(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -1340,6 +1513,7 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_wake_attempts SET state='completed', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
+        self._transition_review_boundary(attempt_id, owner_id, "completed")
         return True
 
     def recover(self, *, current_owner_id: str) -> int:
@@ -1589,12 +1763,71 @@ class AutomaticWorkLedger:
         admission_guard: Callable[[], None] | None = None,
     ) -> bool:
         with self._db.connection() as conn:
-            chain_id = self._attempt(conn, attempt_id, owner_id, kind)["chain_id"]
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            chain_id = attempt["chain_id"]
+            review_boundary_id = attempt["review_boundary_id"]
+            needs_review_scope = (
+                review_boundary_id is not None and attempt["state"] == "prepared"
+            )
+        scope = nullcontext()
+        has_review_scope = False
+        if needs_review_scope:
+            with self._progress_claim_lock:
+                authority = self._review_authorities.get(owner_id)
+                receipt = self._review_attempts.get(attempt_id)
+            if authority is not None:
+                scope = authority[2](receipt)
+                has_review_scope = True
+            # A concurrent abort may already have retired the receipt/issuer.
+            # The original transaction checks owner and terminal state first;
+            # a still-prepared attempt with missing authority fails validation.
+        # Acquire native admission before SQLite, and keep it through the
+        # post-commit native transition. Claim-time validation never takes this
+        # scope, avoiding DB -> admission / admission -> DB lock inversion.
+        with scope:
+            return self._accept_attempt_transaction(
+                chain_id,
+                attempt_id,
+                owner_id=owner_id,
+                limits=limits,
+                kind=kind,
+                admission_guard=admission_guard,
+                has_review_scope=has_review_scope,
+            )
+
+    def _accept_attempt_transaction(
+        self,
+        chain_id,
+        attempt_id,
+        *,
+        owner_id,
+        limits,
+        kind,
+        admission_guard,
+        has_review_scope,
+    ):
         with self._admission_transaction(chain_id) as conn:
             self._check_runtime_owner(conn, owner_id)
             attempt = self._attempt(conn, attempt_id, owner_id, kind)
             if attempt["state"] != "prepared":
                 return False
+            if attempt["review_boundary_id"] is not None:
+                if not has_review_scope:
+                    raise AutomaticWorkRefused("review_boundary_unavailable")
+                receipt = self._review_attempts.get(attempt_id)
+                self._validate_review_boundary(
+                    receipt,
+                    chain_id=chain_id,
+                    owner_id=owner_id,
+                    session_id=attempt["session_id"],
+                    conversation_id=attempt["conversation_id"],
+                )
+                link = conn.execute(
+                    "SELECT boundary_id FROM automatic_review_boundary_claims WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if link is None or link[0] != receipt.boundary_id:
+                    raise AutomaticWorkRefused("review_boundary_unavailable")
             if kind == "goal_iteration":
                 goal = conn.execute(
                     "SELECT g.status, g.request_json FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
@@ -1641,4 +1874,5 @@ class AutomaticWorkLedger:
                     (attempt_id,),
                 )
             self._start_automatic(conn, chain_id)
+        self._transition_review_boundary(attempt_id, owner_id, "accepted")
         return True

@@ -19,6 +19,7 @@ from typing import Any, Literal, Never, Protocol, cast
 from urllib.parse import unquote, urlsplit
 
 import requests
+from loguru import logger
 from requests.exceptions import RequestException, Timeout as RequestsTimeout
 from urllib3.util import Retry
 
@@ -146,6 +147,10 @@ class HostedHTTPTransportConfig:
     # failed"); ``provider`` stays the error's identity key. Unset keeps the
     # key in the copy, as legacy adapters always had (TASK-33002.14).
     display_name: str | None = field(default=None, compare=False)
+    # Retry once without ``stream_options`` when the server rejects it. Only
+    # for records whose stream may end without usage: a strict record would
+    # bill a whole generation and then fail for missing usage.
+    retry_without_stream_options: bool = field(default=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -743,6 +748,19 @@ def _new_zero_retry_session() -> requests.Session:
     )
 
 
+def _cached_error_body(response: requests.Response) -> str:
+    """Read an error body bounded and exception-safe, caching what was read."""
+    from tldw_chatbook.Chat.provider_error_reason import bounded_response_body
+
+    body = bounded_response_body(response)
+    if not isinstance(getattr(response, "_content", None), (bytes, bytearray)):
+        # The provider-reason reader below then sees the same bounded bytes
+        # instead of a half-consumed stream.
+        response._content = body.encode("utf-8")
+        response._content_consumed = True
+    return body
+
+
 @_provider_recovery.unqualified
 def owned_json_post(
     *,
@@ -886,6 +904,33 @@ def owned_json_post(
                     unavailable = model_unavailable_error(config.provider, status, error_payload)
                     if unavailable is not None:
                         raise unavailable
+                # Mirror chat_with_openai: a strict OpenAI-compatible (or
+                # FastAPI 422) server may reject the usage option; drop it
+                # once. The body is read bounded and exception-safe, and
+                # cached so a refusal below still carries its provider reason.
+                if (
+                    status in {400, 422}
+                    and config.retry_without_stream_options
+                    and "stream_options" in payload
+                    and "stream_options" in _cached_error_body(response)
+                ):
+                    logger.warning(
+                        "{}: endpoint rejected stream_options; retrying "
+                        "without usage reporting.",
+                        label,
+                    )
+                    _best_effort_close(response)
+                    response = None
+                    return owned_json_post(
+                        config=config,
+                        route=route,
+                        payload={
+                            key: value
+                            for key, value in payload.items()
+                            if key != "stream_options"
+                        },
+                        streaming=streaming,
+                    )
                 _raise_http_error(
                     config.provider,
                     status,

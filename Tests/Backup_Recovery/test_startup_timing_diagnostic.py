@@ -11,17 +11,37 @@ from Tests.Backup_Recovery import startup_timing_diagnostic as diagnostic
 from Tests.Backup_Recovery.startup_timing_diagnostic import snapshot
 
 
-def test_unprofiled_diagnostic_preserves_original_case_limit_and_exit(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("timeout", [None, 180])
+def test_unprofiled_diagnostic_preserves_original_case_limit_and_exit(
+    tmp_path, monkeypatch, capsys, timeout
+):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.setenv("TLDW_TEST_PRIVATE_PROFILE_NODE", "before")
-    monkeypatch.setattr(sys, "argv", [
-        "diagnostic", "--source", str(tmp_path), "--node", "fixture-node",
-        "--label", "candidate", "--no-profile",
-    ])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "diagnostic",
+            "--source",
+            str(tmp_path),
+            "--node",
+            "fixture-node",
+            "--label",
+            "candidate",
+            "--no-profile",
+            *([] if timeout is None else ["--timeout", str(timeout)]),
+        ],
+    )
+
     def run(args, *, plugins):
         assert sys.getprofile() is None
-        assert args == ["fixture-node", "--timeout=60", "-q", "--capture=no"]
+        assert args == [
+            "fixture-node",
+            f"--timeout={timeout or 60}",
+            "-q",
+            "--capture=no",
+        ]
         return 7
     monkeypatch.setattr(pytest, "main", run)
     assert diagnostic.main() == 7

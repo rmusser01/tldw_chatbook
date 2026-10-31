@@ -194,9 +194,7 @@ def test_named_profile_is_used_for_resolution_and_session_approval():
 
     assert state.state == "ask"
     assert svc.session_approved == [("calculator", "research")]
-    assert svc.session_reads == [
-        ("agent:builtin", "calculator", "research")
-    ]
+    assert svc.session_reads == [("agent:builtin", "calculator", "research")]
     assert approved is True
 
 
@@ -499,17 +497,18 @@ def _tools_all_on():
 def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypatch):
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import ToolGate, all_tool_gates
+    from tldw_chatbook.Agents.code_review_models import CODE_REVIEW_GATE_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     _patch_gate_config(monkeypatch)
 
     gates = all_tool_gates()
-    # Derived, not a literal (TASK-16174): the arity is "every builtin row
-    # plus the local group's four" (master, web_deep_search, ask_user,
-    # character_tools -- TASK-32954), so adding a gateable built-in must not
-    # make this test the thing that fails.
-    assert len(gates) == len(_GATEABLE_BUILTINS) + 4
+    # Derived, not a literal (TASK-16174): the arity is "every builtin row,
+    # the hand-listed code-review gate, plus the local group's four" (master,
+    # web_deep_search, ask_user, character_tools -- TASK-32954), so adding a
+    # gateable built-in must not make this test the thing that fails.
+    assert len(gates) == len(_GATEABLE_BUILTINS) + 5
     assert all(isinstance(gate, ToolGate) for gate in gates)
 
     # The _GATEABLE_BUILTINS rows come first, in registration order,
@@ -526,9 +525,18 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     )  # real tool descriptions, never blank
     assert all(g.enabled is False for g in builtin_gates)  # no override -> all off
 
+    # Native multi-model review is not a Tool subclass: hand-listed right
+    # after the table rows, in the same Agent built-ins group, default ON.
+    review = gates[len(_GATEABLE_BUILTINS)]
+    assert (review.section, review.key) == ("tools", CODE_REVIEW_GATE_KEY)
+    assert review.tool_name == "code_review_guide"
+    assert review.group == "builtin"
+    assert review.enabled is True  # missing key -> ON by default
+    assert review.title.strip() and review.description.strip()
+
     # The local group: master switch FIRST, then web_deep_search, then
     # ask_user, then character_tools (PRD A12 / TASK-32954: both default ON).
-    local_gates = gates[len(_GATEABLE_BUILTINS) :]
+    local_gates = gates[len(_GATEABLE_BUILTINS) + 1 :]
     assert len(local_gates) == 4
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
@@ -681,9 +689,7 @@ def test_gate_effect_scopes_is_config_free_and_covers_every_gate(monkeypatch):
     def _boom(*_args, **_kwargs):
         raise AssertionError("the scope table must not read config")
 
-    monkeypatch.setattr(
-        config_module, "load_cli_config_and_ensure_existence", _boom
-    )
+    monkeypatch.setattr(config_module, "load_cli_config_and_ensure_existence", _boom)
 
     scopes = gate_effect_scopes()
     assert set(scopes) == set(_gate_key_pairs())
@@ -826,6 +832,26 @@ def test_tool_gate_breadcrumb_names_expanded_principal_when_master_is_off(
     assert "local/web" not in text
 
 
+def test_code_review_gate_switch_reads_and_counts_the_tools_key(monkeypatch):
+    """The `[tools] code_review_enabled` gate has a hub switch like the rest."""
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        all_tool_gates,
+        count_off_tool_gates,
+    )
+    from tldw_chatbook.Agents.code_review_models import CODE_REVIEW_GATE_KEY
+
+    _patch_gate_config(
+        monkeypatch,
+        tools=_tools_all_on() | {CODE_REVIEW_GATE_KEY: "false"},
+        console={"local_tools_enabled": True},
+    )
+    gate = next(g for g in all_tool_gates() if g.key == CODE_REVIEW_GATE_KEY)
+    assert gate.enabled is False
+    assert gate.effect_scope == EFFECT_SCOPE_NEXT_CHAT
+    assert count_off_tool_gates() == 1
+
+
 def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
     """Qodo PR #1453: the count path (`_gate_key_pairs`) and the full
     enumerator (`all_tool_gates`) hand-build the same key set in two
@@ -877,6 +903,7 @@ def test_tool_gate_breadcrumb_loads_config_once_not_per_gate(monkeypatch):
     monkeypatch.setattr(
         config_module, "load_cli_config_and_ensure_existence", counting_load
     )
+
     # And the per-key reader must not be consulted at all any more.
     def _no_per_key(*args, **kwargs):
         raise AssertionError("gate enumeration must not read keys one at a time")
@@ -948,9 +975,7 @@ def test_gate_lists_only_builtin_approvals_from_its_own_profile():
 
     assert gate.list_session_approvals() == [("agent:builtin", "write_thing")]
     assert gate.revoke_session_approval("local:docs", "search") is False
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="research"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
 
 
 def test_service_less_gate_has_nothing_to_list_or_revoke():

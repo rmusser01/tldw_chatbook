@@ -6,11 +6,13 @@ import json
 import sqlite3
 import threading
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_trace_continuation import LiveNativeContinuationCustody
 from tldw_chatbook.Chat.console_trace_errors import TraceSurfaceChangeRefused
 from tldw_chatbook.Chat.console_trace_final_values import (
     CompletedToolTurnWitness,
@@ -27,6 +29,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenance,
     TraceProvenanceSource,
     TraceTransformKind,
+    completed_replay_source_revision_id,
     current_turn_source_revision_id,
     frozen_policy_from_provenance,
     request_route_provenance,
@@ -42,6 +45,11 @@ from tldw_chatbook.Chat.console_trace_service import (
     TraceCallIdentity,
     TraceCallPersistenceError,
     _is_rendered_system_row,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    parse_provider_continuation_json,
+    validate_continuation_restore,
 )
 from tldw_chatbook.DB.base_db import operation_owned_connection
 
@@ -193,7 +201,13 @@ class ConsoleTraceBoundaryFactory:
                 or request.semantic.provenance is None
             ):
                 raise ValueError("trace_recovery_owner")
-            with self._lock, operation_owned_connection(self.database):
+            with (
+                nullcontext()
+                if request.live_native_custody is None
+                else request.live_native_custody.scope(),
+                self._lock,
+                operation_owned_connection(self.database),
+            ):
                 with self.database.transaction(immediate=True) as cursor:
                     reserved = self._verify_owned_reservation(
                         cursor, boundary, accepted_preparation,
@@ -214,6 +228,13 @@ class ConsoleTraceBoundaryFactory:
                             for group in request.continuation_groups
                         ),
                         completed_tool_turn=boundary.admission.completed_tool_turn,
+                        live_native_custody=boundary.admission.live_native_custody,
+                        live_native_ordinal=boundary.admission.live_native_ordinal,
+                        live_native_previous_call_id=(
+                            None
+                            if boundary.admission.live_native is None
+                            else boundary.admission.live_native.previous_call_id
+                        ),
                         current_turn_id=reserved.turn_id,
                         current_policy_id=reserved.policy_id,
                         reserved_call=reserved,
@@ -382,7 +403,13 @@ class ConsoleTraceBoundaryFactory:
         call_sequence = 0
         reserved = None
         failed_call_retry = False
-        with self._lock, operation_owned_connection(self.database):
+        with (
+            nullcontext()
+            if request.live_native_custody is None
+            else request.live_native_custody.scope(),
+            self._lock,
+            operation_owned_connection(self.database),
+        ):
             with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
                 unique_revision_ids = tuple(dict.fromkeys(revision_ids))
                 rows = []
@@ -531,6 +558,39 @@ class ConsoleTraceBoundaryFactory:
                     _checkpoint_semantic_value(group.checkpoint)
                     for group in request.continuation_groups
                 )
+                custody = request.live_native_custody
+                live_ordinal = None
+                if custody is not None:
+                    if (
+                        type(custody) is not LiveNativeContinuationCustody
+                        or not tool_loop
+                    ):
+                        raise ValueError("live_native_custody")
+                    custody.validate(cursor, custody)
+                    matching_groups = [
+                        index
+                        for index, group in enumerate(request.continuation_groups)
+                        if group.owner_message_id == custody.owner_message_id
+                        and group.checkpoint == custody.checkpoint
+                    ]
+                    if len(matching_groups) != 1:
+                        raise ValueError("live_native_owner")
+                    live_ordinal = matching_groups[0]
+                    parse_provider_continuation_json(continuation_values[live_ordinal])
+                    validate_continuation_restore(
+                        custody.checkpoint,
+                        ContinuationRestoreTarget(
+                            provider=getattr(_resolution, "execution_key", None)
+                            or _resolution.provider,
+                            protocol=_resolution.continuation_protocol,
+                            model=_resolution.model,
+                            api_base_url=_resolution.base_url,
+                            selected_provider=getattr(
+                                _resolution, "selected_provider", None
+                            )
+                            or _resolution.provider,
+                        ),
+                    )
                 completed_tool_turn = None
                 if (
                     route_record.route
@@ -583,6 +643,17 @@ class ConsoleTraceBoundaryFactory:
                             and preceding_revision.normalized_role == "assistant"
                             else None
                         )
+                        replay_row_count = 0
+                        for descriptor in reversed(
+                            provenance.messages_payload[: active_descriptor_index - 1]
+                        ):
+                            if (
+                                assistant_revision_id is None
+                                or completed_replay_source_revision_id(descriptor)
+                                != assistant_revision_id
+                            ):
+                                break
+                            replay_row_count += 1
                         discarded_assistant_id, discarded_followups = (
                             self.service.discarded_turn_chain(
                                 cursor,
@@ -624,6 +695,7 @@ class ConsoleTraceBoundaryFactory:
                                 terminal.call_id,
                                 assistant_revision_id,
                                 current_revision_id,
+                                replay_row_count=replay_row_count,
                                 source_revision_id=source_revision_id,
                                 discarded_assistant_message_id=discarded_assistant_id,
                                 discarded_followups=discarded_followups,
@@ -654,6 +726,11 @@ class ConsoleTraceBoundaryFactory:
                             values=tuple(request.messages_payload)
                             + continuation_values,
                             completed_tool_turn=completed_tool_turn,
+                            live_native_custody=custody,
+                            live_native_ordinal=live_ordinal,
+                            live_native_previous_call_id=(
+                                previous.call_id if tool_loop else None
+                            ),
                             current_turn_id=turn_id,
                             current_policy_id=policy.policy_id,
                             known_credentials=(

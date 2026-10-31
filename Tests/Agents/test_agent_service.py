@@ -4658,3 +4658,279 @@ def test_run_model_scope_attributes_fleet_child_on_its_thread(db):
     children = [event for event in events if event[2] != "primary"]
     assert [event[0] for event in children] == ["enter", "exit"]
     assert children[0][1] == children[1][1]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        None,
+        "capture",
+        "absent_owner",
+        pytest.param(("owner_marker", None), id="owner_none"),
+        pytest.param(("owner_marker", 42), id="owner_int"),
+        pytest.param(("owner_marker", []), id="owner_list"),
+        pytest.param(("owner_marker", {}), id="owner_dict"),
+        pytest.param(("owner_marker", True), id="owner_bool"),
+        pytest.param(("owner_marker", b"live-owner"), id="owner_bytes"),
+        pytest.param(("owner_marker", ""), id="owner_empty"),
+        pytest.param(("owner_marker", " \t"), id="owner_blank"),
+        pytest.param(
+            ("owner_marker", type("OwnerText", (str,), {})("live-owner")),
+            id="owner_str_subclass",
+        ),
+        "old_arguments",
+        "old_non_native",
+        "foreign_anchor",
+        "missing_anchor",
+        "duplicate_old",
+        "malformed_anchor",
+    ],
+)
+def test_current_continuation_projection_preserves_rows_and_other_owners(
+    db, corruption
+):
+    from copy import deepcopy
+
+    from tldw_chatbook.Chat.console_prepared_request import (
+        CONTINUATION_OWNER_KEY,
+        build_console_request,
+    )
+    from tldw_chatbook.Chat.local_reasoning import EXCHANGE_CONTINUATION_KEY
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationOwnerGroup,
+        ContinuationResult,
+    )
+
+    rounds = tuple(
+        ContinuationRound(
+            "",
+            ("PRIVATE-ROUND",),
+            (
+                ContinuationCall(
+                    call_id, "check_agents", "{}", "completed", ContinuationResult("ok")
+                ),
+            ),
+        )
+        for call_id in ("first", "latest")
+    )
+    current = ProviderContinuationCheckpoint(
+        3,
+        6,
+        "custom-hosted",
+        "chat_completions",
+        "model",
+        "http://127.0.0.1:8010/v1",
+        "active",
+        rounds,
+        selected_provider="custom-ep:private",
+    )
+    # A canonical completed engine owner: every custom-hosted round carries
+    # its native calls (a call-free round is only valid for moonshot).
+    historical = dataclasses.replace(
+        current,
+        state="complete",
+        rounds=(
+            ContinuationRound(
+                "",
+                ("PRIVATE-OLD",),
+                (
+                    ContinuationCall(
+                        "old",
+                        "check_agents",
+                        "{}",
+                        "completed",
+                        ContinuationResult("ok"),
+                    ),
+                ),
+            ),
+        ),
+    )
+    old_group = ContinuationOwnerGroup("old-owner", historical, historical.rounds)
+    source = [
+        {"role": "user", "content": "old question"},
+        {
+            "role": "assistant",
+            "content": "prior answer",
+            CONTINUATION_OWNER_KEY: "old-owner",
+        },
+        {"role": "user", "content": "current task"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [native_call("check_agents", {}, "first")],
+            CONTINUATION_OWNER_KEY: "live-owner",
+        },
+        {"role": "tool", "tool_call_id": "first", "content": "ok"},
+        {
+            "role": "user",
+            "content": "STEERING BETWEEN ROUNDS",
+            EXCHANGE_CONTINUATION_KEY: True,
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [native_call("check_agents", {}, "latest")],
+            CONTINUATION_OWNER_KEY: "live-owner",
+        },
+        {"role": "tool", "tool_call_id": "latest", "content": "ok"},
+    ]
+    if isinstance(corruption, tuple):
+        source[3][CONTINUATION_OWNER_KEY] = corruption[1]
+    elif corruption == "absent_owner":
+        source[3].pop(CONTINUATION_OWNER_KEY)
+        source[6].pop(CONTINUATION_OWNER_KEY)
+    elif corruption == "old_arguments":
+        source[3]["tool_calls"][0]["function"]["arguments"] = '{"forged":true}'
+    elif corruption == "old_non_native":
+        source[3].pop("tool_calls")
+    elif corruption == "foreign_anchor":
+        source[6][CONTINUATION_OWNER_KEY] = "old-owner"
+    elif corruption == "missing_anchor":
+        source[6]["tool_calls"][0]["id"] = "unknown"
+    elif corruption == "duplicate_old":
+        source.insert(4, deepcopy(source[3]))
+    elif corruption == "malformed_anchor":
+        source[6]["tool_calls"].append("malformed")
+    before = deepcopy(source)
+    sent = []
+    entered_chat = []
+
+    def chat(**kwargs):
+        entered_chat.append(True)
+        if corruption == "capture":
+            from tldw_chatbook.Chat.console_agent_bridge import (
+                ConsoleAgentTraceRequestFactory,
+            )
+            from tldw_chatbook.Chat.console_trace_models import (
+                FrozenTracePolicy,
+                new_opaque_id,
+            )
+            from tldw_chatbook.Chat.console_trace_provenance import (
+                ConsoleRequestRoute,
+                SavedRevisionTraceProvenance,
+            )
+
+            policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+            admitted = build_console_request(
+                [{"role": "user", "content": "current task"}],
+                message_provenance=(SavedRevisionTraceProvenance(new_opaque_id()),),
+                memory_provenance=(),
+                mandatory_provenance=(),
+                tool_provenance=(),
+                capture_policy=policy,
+            )
+            prepared = ConsoleAgentTraceRequestFactory(admitted).build(
+                kwargs["messages_payload"],
+                continuation_groups=kwargs["continuation_groups"],
+                tools=(),
+                route=ConsoleRequestRoute.TOOL_LOOP,
+                actor_id=new_opaque_id(),
+                chain_id=new_opaque_id(),
+            )
+            assert len(prepared.provenance.active_continuations) == 1
+            assert (
+                sum(len(unit.continuations) for unit in prepared.provenance.compactable)
+                == 1
+            )
+        else:
+            prepared = build_console_request(
+                kwargs["messages_payload"],
+                continuation_groups=kwargs["continuation_groups"],
+            )
+        sent.append((kwargs["messages_payload"], prepared))
+        return provider_reply("done")
+
+    service = AgentService(
+        db=db,
+        registry=ToolCatalogRegistry(),
+        chat_call=chat,
+        prepare_provider_continuation_request=True,
+    )
+    call = service._make_call_model(
+        AgentConfig(model="model", system_prompt="system", native_tools=True),
+        "custom-hosted",
+        [],
+        continuation_groups=(old_group,),
+        continuation_owner_key=CONTINUATION_OWNER_KEY,
+        continuation_owner_message_id="live-owner",
+    )
+    if corruption not in (None, "capture", "absent_owner"):
+        with pytest.raises(ValueError):
+            call(source, (), current)
+        assert sent == []
+        if isinstance(corruption, tuple):
+            assert entered_chat == []
+    else:
+        call(source, (), current)
+        expected = deepcopy(source)
+        expected[3].pop(CONTINUATION_OWNER_KEY, None)
+        expected[6][CONTINUATION_OWNER_KEY] = "live-owner"
+        assert sent[0][0] == [{"role": "system", "content": "system"}] + expected
+        assert [
+            group.owner_message_id
+            for group in (
+                tuple(
+                    group
+                    for unit in sent[0][1].compactable
+                    for group in unit.continuation_groups
+                )
+                + sent[0][1].active_continuation_groups
+            )
+        ] == ["old-owner", "live-owner"]
+        assert sent[0][1].active_continuation_groups[-1].checkpoint == current
+        assert "PRIVATE-ROUND" not in repr(sent[0][0])
+        # Windowing may discard the old owner, but the live exchange is indivisible.
+        from tldw_chatbook.Chat.console_prepared_request import (
+            ConsoleRequestCapacity,
+            prepare_provider_request,
+        )
+
+        bounded = prepare_provider_request(
+            sent[0][1],
+            wire_style="distinct_roles",
+            model="model",
+            capacity=ConsoleRequestCapacity(
+                64, None, None, 1, 1, 0, 1, "detected", True
+            ),
+            count_fn=lambda rows, _model: len(json.dumps(rows)),
+        )
+        assert bounded.known_overflow
+        assert bounded.semantic.active_continuation_groups[0].checkpoint == current
+        active = bounded.semantic.flattened_messages()
+        assert [call["id"] for row in active for call in row.get("tool_calls", ())] == [
+            "first",
+            "latest",
+        ]
+        assert [row["tool_call_id"] for row in active if row["role"] == "tool"] == [
+            "first",
+            "latest",
+        ]
+        # Verifier compaction protects every call in the full checkpoint, including
+        # earlier rows whose redundant attachment marker was removed.
+        from tldw_chatbook.Agents.code_review_history import (
+            ReviewHistoryCheckpoint,
+            project_verifier_history,
+        )
+
+        review_rows = deepcopy(sent[0][0])
+        review_rows[-1]["content"] = (
+            '{"accepted_ids":[],"submission_revision":1,"cursor":"ack"}'
+        )
+        review_checkpoint = ReviewHistoryCheckpoint(
+            "attempt", "a" * 64, 1, acknowledged_cursors=("ack",)
+        )
+        protected = project_verifier_history(
+            review_rows,
+            review_checkpoint,
+            continuation_groups=(sent[0][1].active_continuation_groups[-1],),
+            native=True,
+        )
+        assert [
+            call["id"] for row in protected for call in row.get("tool_calls", ())
+        ] == ["first", "latest"]
+        assert any(row.get("content") == "STEERING BETWEEN ROUNDS" for row in protected)
+        unprotected = project_verifier_history(
+            review_rows, review_checkpoint, continuation_groups=(), native=True
+        )
+        assert not any(row.get("tool_calls") for row in unprotected)
+    assert source == before

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from textwrap import indent
 from threading import Event
 
 import pytest
@@ -16,7 +17,6 @@ from Tests.Backup_Recovery.test_temporary_media_capture import (
     _REOPEN,
     _RESTORE,
 )
-
 
 helper_resource_root = recovery_fixtures.helper_resource_root
 
@@ -58,6 +58,15 @@ assert (journal.root / 'verified-manifest.json').is_file()
 assert (journal.root / 'restore-plan.json').is_file()
 shutil.rmtree(source)
 assert not source.exists()""",
+)
+# The C watchdog can race interpreter frames; reuse the Python-owned observer.
+_RETAIN_RESTORE = (
+    "from pathlib import Path\n"
+    "from Tests.Backup_Recovery.thread_diagnostics import observe_threads, stop_observer\n"
+    "_stop_stacks = observe_threads(Path.home() / 'restore-stacks.json', interval=10)\n"
+    "try:\n"
+    + indent(_RETAIN_RESTORE, "    ")
+    + "\nfinally:\n    stop_observer(_stop_stacks)\n"
 )
 _RETAIN_REOPEN = _replace(
     _REOPEN,

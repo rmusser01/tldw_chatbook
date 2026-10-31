@@ -216,7 +216,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Re-measured 2026-10-30 by TASK-35582 after rebasing onto dev 7536ac3b87,
+    #: whose own row is 24331/737 (TASK-33621.51 used the last headroom): with
+    #: this branch, 24335/737, the exact measurement (same owner rule). The +4
+    #: are the screen-owned half of the Review reports key: the `u` Binding,
+    #: its workbench-shortcut legend entry, the action attribute and the
+    #: `wiring` import that supplies it; the presenter lives in wiring.py.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24335, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
