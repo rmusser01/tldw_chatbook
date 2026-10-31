@@ -637,7 +637,8 @@ async def start_new(
 
     def chooser_closed() -> bool:
         return not any(
-            stacked.query(f"#{CHOOSER_OPTIONS_ID}") for stacked in pilot.app.screen_stack
+            stacked.query(f"#{CHOOSER_OPTIONS_ID}")
+            for stacked in pilot.app.screen_stack
         )
 
     def create_begun() -> bool:

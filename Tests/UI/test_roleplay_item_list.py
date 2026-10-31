@@ -1284,12 +1284,9 @@ def test_import_shortens_where_the_header_row_cannot_hold_it(ascii_mode):
     wider = frame_state.fit_items_toolbar("characters", width=13, sort_key="name_asc")
     assert wider.labels["import"] == "Import..."
     for fit in (tight, wider):
-        assert (
-            frame_state.CONTROL_GAP_CELLS
-            + cell_len(fit.labels["import"])
-            + frame_state.RAIL_COLLAPSE_CELLS
-            <= (12 if fit is tight else 13)
-        )
+        assert frame_state.CONTROL_GAP_CELLS + cell_len(
+            fit.labels["import"]
+        ) + frame_state.RAIL_COLLAPSE_CELLS <= (12 if fit is tight else 13)
 
 
 def test_the_unicode_import_label_fits_the_tightest_pane_whole():
@@ -2120,7 +2117,10 @@ def test_a_capped_count_reads_as_a_lower_bound():
         "Characters 100+ ›",
         "Chat dictionaries 2 ›",
     ]
-    assert [(t.kind, t.count) for t in view.targets] == [("character", 100), ("dictionary", 2)]
+    assert [(t.kind, t.count) for t in view.targets] == [
+        ("character", 100),
+        ("dictionary", 2),
+    ]
 
 
 def test_not_found_elsewhere_only_when_every_count_succeeded_with_zero():
