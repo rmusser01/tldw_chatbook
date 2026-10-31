@@ -44,8 +44,11 @@ __all__ = [
 ]
 
 #: How long the guard waits for tqdm's class lock before treating it as held
-#: by a construction that died. tqdm holds that lock only while it builds its
-#: write lock (microseconds), never across I/O.
+#: by a construction that died. The guard waits only while tqdm's
+#: multiprocessing lock is still undecided, and until then tqdm holds the
+#: class lock just while it builds its write lock (microseconds). Once a write
+#: lock exists, the class lock also guards every bar refresh and write, so a
+#: wait that long proves nothing there: do not reuse this heuristic elsewhere.
 WEDGED_LOCK_WAIT_SECONDS = 1.0
 
 _GUARD_LOCK = threading.Lock()
