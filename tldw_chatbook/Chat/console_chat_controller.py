@@ -12718,20 +12718,9 @@ class ConsoleChatController:
                 is ConsoleTraceCaptureMode.CAPTURE_ON
                 and continuation.trace_request is None
             ):
-                return ConsoleSubmitResult(
-                    True,
-                    True,
-                    "Trace provenance must be recovered before provider dispatch.",
-                    session_id=session_id,
-                    user_message_id=commit.user_message_id,
-                    assistant_message_id=commit.assistant_message_id,
-                    terminal_status=ConsoleRunStatus.BLOCKED,
-                    origin=continuation.origin,
-                    queue_entry_id=continuation.queue_entry_id,
-                    committed_context_epoch=continuation.committed_context_epoch,
-                    preparation_id=preparation_id,
-                    provider_started=False,
-                )
+                # TASK-33621.23: this returned BLOCKED and published nothing.
+                # The trace-call handler below pauses with the transcript card.
+                raise TraceCallPersistenceError()
             bind_trace_owner = getattr(
                 self.provider_gateway, "_bind_trace_preparation", None
             )
