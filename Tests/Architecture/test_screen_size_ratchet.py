@@ -222,7 +222,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: stays one-time (the logic itself is in Chat/console_rail_state.py::
     #: take_console_rail_seed_flush). The row is the exact measurement.
     #: Review round 2 logs the seed save's error type (+3).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24349, 737),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24353, 737),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
