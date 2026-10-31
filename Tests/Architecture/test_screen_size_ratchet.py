@@ -299,6 +299,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: and both actions live in Console_Modules/composer_run_controls.py.
     #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24333/737 -> 24331/737.
     #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24331/737 -> 24335/737.
+    #: 2026-10-31: re-measured after rebasing onto dev 57e330e735 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24339/737.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24504, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
