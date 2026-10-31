@@ -257,14 +257,17 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    Every boot point walked once before the first measurement (only for its
    DEBUG line) and twice after it, and the first-send warm-up's freeze runs
    while the user may already be typing: a key or click sent during it
-   reached the app 21-41 ms late on an idle host. Now a boot freeze before
+   reached the app 21-23 ms late on an idle host, and a click's Library
+   frame came 16-41 ms late. Now a boot freeze before
    the first measurement only freezes, and after it counts the unfrozen
    generations it is about to move (`gc.get_objects`, which touches only
    unfrozen objects) and adds that to the baseline. The next budget check
    still walks once. Objects another thread allocates between the count and
    the freeze go uncounted, the same tolerance the walks had. With a boot
-   freeze down to about 1 ms, the first-send warm-up now freezes after each
-   step that loads modules (54 freezes, 2.8 ms in all): left unfrozen until
+   freeze typically under 1 ms, the first-send warm-up now freezes after each
+   step that loads modules (54 freezes per launch with the closing one, a
+   median 4.0 ms in all and at most 5.6 ms for one, over 60 launches; the
+   closing freeze took a median 0.37 ms against 30.6 ms): left unfrozen until
    its last step, those modules made a generation-2 pass due, and a click's
    navigation ran it on the UI loop in 9 of 10 launches.
 

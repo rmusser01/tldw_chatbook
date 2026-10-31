@@ -34,8 +34,9 @@ module-level import cycles, which two threads could otherwise deadlock on.
 A step that has started runs to its end, so a navigation that arrives
 mid-step shares the GIL with the rest of it. TASK-33620.15.18 measured that
 live: imported whole, ``Canvas.native_authority`` was one 63-70 ms-CPU step
-(it loaded aiohttp, html5lib and tinycss2), and a Library click landing in it
-drew its first frame +52 ms later (paired median) than without the warm-up.
+(it loaded aiohttp, html5lib and tinycss2), and a Library click sent as it
+began drew Library's first frame a paired median +48.6 ms later than without
+the warm-up.
 So each third-party package the send path loads is its own step, listed
 after its dependencies; the heaviest left is aiohttp (about 37 ms CPU).
 
@@ -166,10 +167,12 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
 
 #: A navigation takes the app's lock only when its click or key reaches the
 #: handler (live, the lock was still free 7 ms after a click arrived and held
-#: by 27-53 ms), and until then the pass's park cannot see it. So no step starts until no input has arrived
-#: for this long; then the warm-up parks again (TASK-33620.15.18). Keys alone
-#: were not slowed by a step, so this stays short enough for a step to run
-#: between keystrokes at a typing pace.
+#: by 27-53 ms), and until then the pass's park cannot see it. So no step
+#: starts until no input of any kind (a key, click, paste, scroll or mouse
+#: move) has arrived for this long; then the warm-up parks again
+#: (TASK-33620.15.18). A step runs only in a gap longer than this: typing
+#: slower than about six keys a second lets one through per keystroke, while
+#: faster typing or steady mouse motion holds every step back (TASK-33620.15.49).
 INPUT_QUIET_SECONDS = 0.15
 
 
@@ -232,7 +235,8 @@ def _warm_first_send(app: Any) -> None:
         if len(sys.modules) != loaded:
             # Left unfrozen until the last step, what the steps loaded made a
             # generation-2 pass due, and a navigation's allocations ran it on
-            # the UI loop (TASK-33620.15.18). A boot freeze is about 1 ms now.
+            # the UI loop (TASK-33620.15.18). A boot freeze is typically under
+            # 1 ms now.
             freeze_long_lived_heap("first_send_step")
         previous = time.monotonic() - started
     _pause(app, min(previous * ratio, cap))

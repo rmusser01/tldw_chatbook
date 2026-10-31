@@ -814,8 +814,9 @@ def test_a_boot_freeze_counts_what_it_moves_instead_of_walking_the_frozen_set(
     160-290 ms at a load average of about 110. Before the refreezer's first
     look each boot point walked it once, only for its DEBUG line; after the
     first look, twice. The first-send warm-up's closing freeze is one: a key
-    or click sent while it ran reached the app 21-41 ms later than on
-    origin/dev without the warm-up on an idle host, about 280 ms later at
+    or click sent while it ran reached the app 21-23 ms later than on
+    origin/dev without the warm-up on an idle host (a click's Library frame
+    +16 to +41 ms later), and its next frame came about 280 ms later at
     load 110.
 
     Before the first look a boot freeze only freezes: that look measures

@@ -1,5 +1,25 @@
 # Lessons: verifying against the real thing
 
+## A live trigger hooked to a function fires at its first call: re-check it after the code under test calls that function more often (TASK-33620.15.18, 2026-10-31)
+
+**Incident.** A probe wrote a trigger file each time the first-send warm-up called
+`freeze_long_lived_heap`, and the driver sent a key or click the moment that file
+appeared, to land the input in the warm-up's closing freeze. That worked while the
+warm-up froze once. A later commit on the same branch made it freeze after every step
+(54 calls per launch), and the cell was re-run unchanged on the final head: the file
+now appeared at the first step's freeze, 1-8 ms after the window opened and 0.5-1.2 s
+before the closing freeze. The control arm's offset was read from the same file after
+the launch, so it held the last write, and the control got its input at the closing
+freeze's moment instead. The notes reported "key during the closing freeze: -3.4 ms"
+for a pair in which neither arm was at the closing freeze and the two were not at the
+same moment. A review caught it from the recorded timestamps; re-run with the trigger
+keyed to the freeze's label, the cell read -0.2 ms (key) and +3.5 ms (click).
+
+**What to do.** Key a trigger to the event's identity (a label or argument), not to
+the function that happens to carry it, and write it once. After every change to the
+code under test, check in the probe's own records that each cell's inputs went in
+where the cell's name says, before reading its latency.
+
 ## An input's arrival on Textual's driver thread comes after the GIL: time it from the injection (TASK-33620.15.18, 2026-10-30)
 
 **Incident.** A probe stamped each key when Textual's driver thread passed it
@@ -7,7 +27,7 @@ to `process_message`, and timed latency from there to the next frame. For a key
 sent while the first-send warm-up froze the heap, that read 8.3 ms against 7.7 ms
 without the warm-up: no effect. Timed from the moment the driver ran
 `tmux send-keys` (wall clock, mapped through the probe's start record), the same
-keys took 35.3 ms against 12.2 ms. The freeze held the GIL for about 25 ms, and
+pair took 35.3 ms against 12.2 ms. The freeze held the GIL for about 25 ms, and
 the driver thread needs the GIL to parse the bytes, so the stamp itself was late.
 In 2 of 8 launches the late stamp also fell after the window had closed, so the
 key was filed as "outside the window" although it was sent inside it.
@@ -40,7 +60,8 @@ disappears, rerun its command with stderr captured before changing anything else
 call in the running app measured 15-34 ms per walk on an idle host and
 160-290 ms at a load average of about 110, with the GIL held throughout. Every
 boot point walked once or twice, `_ui_ready`'s on the UI loop, and the first-send
-warm-up's walk delayed a key sent during it by 21-41 ms. The frozen set of a
+warm-up's walk delayed a key or click sent during it by 21-23 ms before it
+reached the app (a click's Library frame by 16-41 ms). The frozen set of a
 live app is scattered across a large heap, so each object is a cache miss.
 
 **What to do.** Time collector calls (`get_freeze_count`, `get_objects`,
