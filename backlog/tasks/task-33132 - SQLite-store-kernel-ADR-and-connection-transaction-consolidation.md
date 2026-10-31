@@ -3,11 +3,14 @@ id: TASK-33132
 title: SQLite store kernel ADR and connection-transaction consolidation
 status: In Progress
 assignee:
-  - '@robert'
-created_date: '2026-09-27 19:46'
-labels: [refactor, db]
+- '@robert'
+created_date: 2026-09-27 19:46
+labels:
+- refactor
+- db
 dependencies: []
 priority: high
+updated_date: 2026-10-31 21:11
 ---
 
 ## Description
@@ -74,3 +77,11 @@ Reviewed the sole removed diagnostic (`Guardian native close failed`): inherited
 Validation: 51 kernel/Guardian/finite-worker/backup-owner tests pass; two relevant private-SQLite inventory contracts pass; scoped ruff F401/F821, changed-code formatting, and diff whitespace checks pass. Independent re-review found no remaining blockers. Broader local checks retain 24 failures also reproduced on pristine dev: seven backup activation credential-processing failures, sixteen existing owner/privacy tests (Windows path behavior and stale RAG connection seams), and one raw-connection census entry for app_service_wiring. These are recorded as baseline limitations, not reported as passing. Current-head hosted CI and Qodo review remain required before arming this PR.
 
 Updated Guardian configuration and its race tests, diagnostic inventory, database architecture reference, and the testing-evidence lesson. The parent fleet-migration task remains In Progress.
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Current-base integration after PR #3162 merged (2026-10-31): rebased onto a0dbc1174c3dbd4d2732b0212786ec9e08bfc3b5. Independent review approved the precise overlap: install a newly opened connection in the thread cache, notify the opening hook inside that block, then retain the merged deadline check and participant-gated cleanup. Borrowed live connections skip the hook and retain their ownership. Both original regression functions and all archive lessons were preserved. ADR-228 applies; no new ADR or deadline policy.
+
+Added two deterministic native integration cases (fresh and liveness revival) proving the hook sees the installed cache, its elapsed time counts toward the deadline, and an expired new handle closes and leaves no cached handle. Eleven selected hook/deadline/revival/configuration/live-probe and Guardian raw-admission cases passed in 4.91s, with no errors. Command, JUnit, logs and before/after source hashes are retained in pr3172-resync/test-runtime/kernel-integration-1793481021535174900. Formatting of the new block is AST-identical to the passing source; existing unrelated formatter differences remain. User waived hosted CI and size gates and selected independent review in place of Qodo. Final integrated-head review remains due before oldest-first merge.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

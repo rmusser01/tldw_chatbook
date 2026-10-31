@@ -320,3 +320,56 @@ def test_on_connection_opened_hook_fires_per_fresh_connection(tmp_path) -> None:
     revived = store._held_connection()
     assert opened == [first, revived]
     store.close()
+
+
+@pytest.mark.parametrize("revive", (False, True))
+def test_opening_hook_time_counts_toward_connection_deadline(
+    tmp_path, monkeypatch, revive
+) -> None:
+    """A fresh/revived handle cannot escape after its opening hook expires."""
+    import time
+    from types import SimpleNamespace
+
+    from tldw_chatbook.DB import store_kernel
+
+    opened = []
+    expired = False
+    deadline = time.monotonic() + 60
+
+    class _HookedStore(_KernelStore):
+        _kernel_sqlite_owner = "tests.store_kernel"
+
+        def _on_connection_opened(self, conn):
+            nonlocal expired
+            assert self._thread_local.conn is conn
+            opened.append(conn)
+            expired = True
+
+    store = _HookedStore(str(tmp_path / "hook-deadline.sqlite"))
+    first = store._thread_local.conn
+    if revive:
+        first.close()
+        store._thread_local.conn_last_used = 0.0
+    else:
+        store.close()
+    opened.clear()
+    expired = False
+    monkeypatch.setattr(
+        store_kernel,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: deadline + 1 if expired else time.monotonic()
+        ),
+    )
+    try:
+        with pytest.raises(TimeoutError, match="Database connection budget exhausted"):
+            store._held_connection(operation_deadline=deadline)
+        assert len(opened) == 1
+        assert opened[0] is not first
+        assert store._thread_local.conn is None
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            opened[0].execute("SELECT 1")
+    finally:
+        for conn in opened:
+            conn.close()
+        store.close()
