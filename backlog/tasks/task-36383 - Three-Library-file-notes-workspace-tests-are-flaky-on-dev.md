@@ -37,6 +37,10 @@ The cause is not yet identified.
 
 ## Implementation Plan
 
+ADR required: no
+ADR path: N/A
+Reason: Test-only synchronization and tracking of an existing display defect; no architectural change.
+
 1. Reproduce each test's failure under the one-window idle probe and machine load; record where the asserted (or crashing) state comes from.
 2. Test 1: the body ends after one `pilot.pause()` while the workspace's `_initialize` worker is in flight; wait for `initialized` instead.
 3. Test 2: the root-status read races the deferred `_fit_root_status`, which elides the row to 11 cells at 60x20; assert the row's unfitted summary instead of the painted text.
@@ -88,3 +92,5 @@ Re-sync (2026-10-30): rebased onto dev ff815f8559. The only conflict was the les
 Re-sync (2026-10-31): the merge queue could not rebase this PR. Its first commits add the lesson at the top of the lessons file, where dev had since added lessons of its own. Rebased onto dev 7536ac3b87 by hand: each lesson conflict was resolved to dev's file plus this task's lesson as that commit wrote it. The lesson still ends in the 2026-10-23 group with its text unchanged, and outside the lessons file the PR's diff is identical to before.
 - The whole file with `-n 4` gave 152 passed and 10 failed, the same 10 ids as dev 7536ac3b87's run of it. This task's three tests pass. The 10 include `test_file_notes_linked_root_leads_with_friendly_folder_identity[size2]` (TASK-36513).
 - Preflight passes.
+
+Backlog integration (2026-10-31): rebased onto dev de2fac839f; the three test changes are byte-identical to the reviewed source and the lessons file preserves every current-base entry. Independent review found no blocking code issue. Native private-profile targeted run: three test bodies passed, with one unresolved default-executor retirement error after the restore case (3 s guard; 251.26 s total). A single-node follow-up with a one-shot teardown stack capture passed, including teardown, in 59.85 s; no test deadline or shutdown guard changed. The prior failing receipt remains retained and its precise unfinished callback is not attributed. Ruff and whitespace checks pass. Evidence directories are ../test-runtime/current-base-1793485849069853000 and ../test-runtime/restore-teardown-diagnostic-1793486322651284100. Hosted CI is waived by the owner for backlog clearance; these are targeted local results, not a full-suite or release qualification.
