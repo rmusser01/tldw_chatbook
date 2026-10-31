@@ -622,9 +622,6 @@ def receive_console_visible_intent(
     )
     if send_ack is not None:
         send_ack.mark_admitted(session_id)
-    from .config_sync import note_send_accepted
-
-    note_send_accepted(screen)
     return turn_id
 
 
@@ -771,10 +768,7 @@ def _commit_sent_console_draft(
     screen: Any, session_id: str, stash: Any, *, _captured_inputs=None
 ) -> None:
     """Take a sent draft out of the chat it was sent from (TASK-33620.15.2)."""
-    from .config_sync import note_send_accepted
     from .sent_draft import take_out_sent_draft
-
-    note_send_accepted(screen)
 
     store = screen._ensure_console_chat_store()
     composer = screen._console_composer_or_none()
