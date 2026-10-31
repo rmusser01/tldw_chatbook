@@ -284,8 +284,16 @@ def is_image_input_rejection(exc: BaseException) -> bool:
 
     Returns:
         True for an image refusal; False otherwise, including when the
-        status or the body is unknown.
+        status or the body is unknown. It never raises: it runs inside the
+        failure paths (the gateway's error leg, the agent's run guard).
     """
+    try:
+        return _is_image_input_rejection(exc)
+    except Exception:  # noqa: BLE001 -- classification is optional copy
+        return False
+
+
+def _is_image_input_rejection(exc: BaseException) -> bool:
     seen: set[int] = set()
     status: int | None = None
     current: BaseException | None = exc
