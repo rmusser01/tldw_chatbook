@@ -893,8 +893,11 @@ chip opens two independent, text-valued controls for the active conversation:
 
 New conversations ship as **Never** and **Blocked**. The choices are stored
 only on this device and are not synced or exported. A recovered remote or
-imported conversation whose local policy cannot be resolved therefore remains
-inert until you explicitly save a local policy.
+imported conversation (or one saved before these controls existed) has no
+local policy, so it runs under the same safe **Never** and **Blocked**. Its
+first send saves that default as its local policy rather than being refused;
+nothing broader is ever saved on your behalf, and you can change it from the
+chip at any time.
 
 When Assistant is Allowed, **Direct / RAG is a selector**, not a third
 permission. Direct advertises the bounded direct Library tools; RAG advertises
@@ -1020,7 +1023,10 @@ If Retry or Send once without Library then finds the provider not ready (a
 local server that is down, or a model you switched to meanwhile), the send
 pauses again and the card says so ("Provider not ready or changed; your
 message was not sent", chip **Blocked — check provider**). It then offers
-**Retry send** and **Cancel send**.
+**Retry send** and **Cancel send**. If the message cannot be saved to the
+conversation on its way out, the send pauses the same way ("Send could not be
+saved; your message was not sent", chip **Blocked — send not saved**) with
+the same two actions; either one ends it, so your next send goes through.
 
 The paused message is also listed as an **unsent turn** above the composer.
 Its **Restore** and **Discard** release the paused send too, so the next

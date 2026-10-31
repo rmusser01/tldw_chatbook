@@ -6303,6 +6303,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._preparations_by_id[preparation_id] = paused
         return True
 
+    def pause_unreserved_failed_commit(
+        self, preparation_id: str, attempt_id: str
+    ) -> bool:
+        """Pause a commit that failed before its reservation (TASK-33621.53)."""
+        from .console_native_commit import _store_pause_unreserved_failed_commit
+
+        return _store_pause_unreserved_failed_commit(self, preparation_id, attempt_id)
+
     def commit_durable_turn(
         self, acceptance: ConsoleDurableTurnAcceptance
     ) -> ConsoleDurableTurnCommit:

@@ -553,12 +553,16 @@ async def test_card_cancel_after_a_tab_switch_keeps_a_follow_up_typed_meanwhile(
 
 
 @pytest.mark.asyncio
-async def test_a_card_retry_whose_durable_commit_fails_keeps_the_turn_on_the_shelf():
+async def test_a_card_retry_whose_failed_commit_pauses_and_cancel_send_frees_the_chat():
     """Re-review MINOR 8: the shelf trusts the store, which says "not sent".
 
-    A Retry whose durable commit then fails returns ``accepted=False`` and
-    leaves its preparation COMMITTING, so the turn stays restorable on the
-    shelf rather than being forgotten as sent.
+    A Retry whose durable commit then fails returns ``accepted=False`` and the
+    turn is not forgotten as sent. TASK-33621.53 AC#2: it used to stay
+    COMMITTING -- the shelf offered it, but its Discard released nothing and
+    the conversation refused every later send. It now pauses as PERSISTENCE,
+    which the card covers ("Send could not be saved", one surface at a time,
+    as for any re-pause); the card's Cancel send ends it, puts the message
+    back, and the next send is accepted and answered.
     """
     gateway = _Gateway()
     host = _build_with(gateway)
@@ -569,21 +573,44 @@ async def test_a_card_retry_whose_durable_commit_fails_keeps_the_turn_on_the_she
             console, controller, composer = await _timed_out_send(host, pilot, library)
             store = controller.store
             session_id = store.active_session_id
-            runtime = console._console_runtime()
+            original_commit = store.commit_durable_turn
+            refused: list[int] = []
 
             def refuse_commit(*_args, **_kwargs):
+                refused.append(1)
                 raise RuntimeError("durable commit refused for this test")
 
             store.commit_durable_turn = refuse_commit
             library.release.set()
             console.query_one(_CARD_ACTIONS["Retry Library search"], Button).press()
+            await until(lambda: bool(refused))
             await until(
-                lambda: (
-                    getattr(store.preparation_for_session(session_id), "state", None)
-                    is ConsoleTurnPreparationState.COMMITTING
-                )
+                lambda: _shelf_offers_unsent_turn(console)
+                or _paused(controller, ConsolePreparationPauseKind.PERSISTENCE)
             )
-            # The card's action has settled (no longer held off the shelf).
-            await until(lambda: len(runtime.recoveries_for_session(session_id)) == 1)
-            await until(lambda: _shelf_offers_unsent_turn(console))
+            assert _paused(controller, ConsolePreparationPauseKind.PERSISTENCE), (
+                getattr(store.preparation_for_session(session_id), "state", None)
+            )
             assert gateway.stream_calls == 0
+            cancel = console.query_one(_CARD_ACTIONS["Cancel send"], Button)
+            await until(
+                lambda: cancel.display
+                and not cancel.disabled
+                and "Send could not be saved" in _screen_text(host)
+            )
+            assert not _shelf_offers_unsent_turn(console)
+
+            store.commit_durable_turn = original_commit
+            cancel.press()
+            await until(lambda: store.preparation_for_session(session_id) is None)
+            await until(lambda: composer.draft_text() == FIRST)
+            notices: list[str] = []
+            host.app_instance.notify = lambda message, **_k: notices.append(
+                str(message)
+            )
+            await pilot.pause()
+            press(host, "enter", "\r")
+            await until(lambda: gateway.stream_calls == 1 or bool(notices))
+            assert not notices, notices
+            await until(lambda: REPLY in _screen_text(host))
+            assert not _shelf_offers_unsent_turn(console)

@@ -153,7 +153,12 @@ _BUDGETS: dict[str, int] = {
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    # 2026-10-29 (TASK-33621.53 review follow-up, owner decision: a fix over
+    # a size ratchet raises the row): 22338 -> 22346 (+8) -- the store owns
+    # pause_unreserved_failed_commit, a thin method over its body in
+    # console_native_commit.py, so the controller no longer reads the
+    # store's private commit-owner maps.
+    "tldw_chatbook/Chat/console_chat_store.py": 22346,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -608,7 +613,11 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
+    # 2026-10-29 (TASK-33620.3, owner decision: a fix over a size ratchet
+    # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
+    # a legacy/imported chat's missing Library-policy row (the safe
+    # Never/Blocked default its turn ran under) instead of refusing it.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4272,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4232,
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,

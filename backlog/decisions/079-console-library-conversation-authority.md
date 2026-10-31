@@ -36,6 +36,20 @@ that new local conversation is first persisted. A conversation first observed
 through sync or import without a local policy row resolves to Never and
 Blocked rather than inheriting a global value, and remains write-free until an
 explicit local policy save. A missing row or read error is never permission.
+**Amended by TASK-33620.3 (2026-10-29):** the first durable turn commit
+that finds an existing conversation's row missing (such a synced or imported
+conversation, or one saved before these controls existed) is the one other
+write. Inside that commit's own `BEGIN IMMEDIATE` transaction it inserts the
+row, but only when the turn ran under
+the missing-row default (frozen authority source `missing`, Never and
+Blocked) and the session's candidate is still Never and Blocked. Any other
+candidate, a row that cannot be read, or a row that appeared meanwhile is
+still refused, so the commit never stores a policy broader than the one the
+turn already ran under. Opening or restoring the conversation stays
+write-free. Before this, the commit refused every turn of such a
+conversation, so a legacy or imported chat could not send at all until its
+policy was saved by hand. A missing or unreadable row is still never
+permission: the write only records the Never/Blocked default the turn used.
 
 Every production opener supplies the v44→v45 migration one sanitized effective
 legacy automatic-retrieval boolean. The database module does not read config.

@@ -60,6 +60,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
     ConsoleLibraryPolicySnapshot,
     ConsoleLibraryPolicyWriteStatus,
+    repairs_missing_policy,
 )
 from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsReadResult,
@@ -1769,7 +1770,15 @@ class ChatPersistenceService:
                     (acceptance.conversation_id,),
                 ).fetchone()
                 authority = acceptance.frozen_authority.policy
-                if (
+                if policy_row is None and repairs_missing_policy(
+                    authority, policy_candidate
+                ):  # TASK-33620.3: a legacy/imported chat gets its safe row.
+                    repaired = self.console_library_policy_repository.insert(
+                        acceptance.conversation_id, policy_candidate
+                    )
+                    if repaired.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
+                        raise RuntimeError("Console Library policy repair failed.")
+                elif (
                     policy_row is None
                     or authority.source != "durable"
                     or authority.policy_revision != policy_row["policy_revision"]
