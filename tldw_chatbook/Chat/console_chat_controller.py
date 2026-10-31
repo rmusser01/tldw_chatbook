@@ -4480,6 +4480,22 @@ class ConsoleChatController:
         #: docstring for the resulting, deliberately-scoped-down, limit on
         #: the three worker-thread approval/confirm bridges below.
         self._active_cancel_events: dict[str, threading.Event] = {}
+        #: TASK-35311: the in-flight provider worker task per session. The
+        #: worker coroutine is shielded from awaiter cancellation, so when a
+        #: shutdown cancel lands on the awaiting submit task the finished
+        #: ``(run_id, outcome)`` result stays recoverable here instead of
+        #: dying with the await -- a reply that provably finished must
+        #: finalize complete, not stopped. Popped in the run's finally.
+        self._active_provider_workers: dict[str, "asyncio.Task[Any]"] = {}
+        #: TASK-35311: why each session's cancel event was set --
+        #: ``"user"`` (Stop button / draft supersession), ``"shutdown"``
+        #: (controller.shutdown) or ``"session_close"``. Same key space and
+        #: lifecycle as ``_active_cancel_events``. A set cancel event alone
+        #: no longer means "this run must end up stopped": a shutdown or
+        #: session close landing AFTER the run outcome came back RUN_DONE
+        #: must let the finished reply finalize complete, while a user Stop
+        #: keeps the stopped contract (TASK-337 / task-227 AC3).
+        self._active_stop_reasons: dict[str, str] = {}
         #: TASK-25903: per-session steer callables, populated by the bridge's
         #: on_steer_ready when a primary run's mailbox registers. A stale
         #: entry is harmless -- the service refuses once the mailbox is
@@ -7146,6 +7162,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_stop_reasons.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
                 self._active_redirect_hooks.pop(session_id, None)
                 self._stop_requested = False
@@ -14187,7 +14204,7 @@ class ConsoleChatController:
                 # Closing is an explicit cancellation boundary. Settle the durable
                 # dispatch before removing its in-memory owner so the cancelled
                 # task cannot leave a restart-visible ``dispatch_started`` row.
-                self._signal_stop(session_id=session_id)
+                self._signal_stop(session_id=session_id, reason="session_close")
                 try:
                     self._mark_stream_stopped(
                         active_assistant_message_id,
@@ -14307,7 +14324,7 @@ class ConsoleChatController:
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
         if owns_active_stream:
-            self._signal_stop(session_id=session_id)
+            self._signal_stop(session_id=session_id, reason="session_close")
             task = self._active_stream_tasks.get(session_id)
             if task is not None and task is not asyncio.current_task():
                 task.cancel()
@@ -14578,9 +14595,18 @@ class ConsoleChatController:
             ),
         )
 
-    def _signal_stop(self, *, session_id: str) -> None:
+    def _signal_stop(self, *, session_id: str, reason: str = "user") -> None:
         """Set the shared UI-facing stop flag AND ``session_id``'s own
         permanent per-run cancel signal.
+
+        TASK-35311 ``reason`` records WHY the stop was signalled --
+        ``"user"`` (Stop button, draft supersession), ``"shutdown"`` or
+        ``"session_close"``. A user Stop keeps the stopped terminal state
+        even when it lands after the run outcome came back (task-227 AC3);
+        a shutdown or session close in that same window must let the
+        finished reply finalize complete, so the finalization step reads
+        the reason back via ``_active_stop_reason`` instead of treating a
+        set cancel event as "must be stopped".
 
         ``_stop_requested`` stays a single shared flag, but as of Fix
         round 1 (Critical 1) NO run's own cancellation-check loop reads it
@@ -14635,12 +14661,40 @@ class ConsoleChatController:
                 session_id
             )
         if cancel_event is not None:
+            if session_id in self._active_cancel_events:
+                # A later teardown must never erase an explicit user Stop.
+                if reason == "user" or session_id not in self._active_stop_reasons:
+                    self._active_stop_reasons[session_id] = reason
             cancel_event.set()
             self.prompt_queue_coordinator.pause_for_stop(session_id)
             parent = self.prompt_queue_coordinator.interrupt_parent(session_id)
             if parent is not None:
                 self._interrupt_host.notify_hook_interrupt(cancel_event, *parent)
             self.prompt_queue_coordinator.cancel_pending_stop(session_id, cancel_event)
+
+    def _active_stop_reason(self, session_id: str | None) -> str:
+        """Why ``session_id``'s cancel event was set (TASK-35311).
+
+        Defaults to ``"user"`` -- the historical semantics of a set cancel
+        event -- when nothing better is recorded (an event set by a path
+        that predates reason threading, or a session id that was never
+        stopped through ``_signal_stop``).
+        """
+        if not session_id:
+            return "user"
+        return self._active_stop_reasons.get(session_id, "user")
+
+    def _record_active_stop_reason(self, session_id: str | None, reason: str) -> None:
+        """Record a stop source for ``session_id`` without signalling.
+
+        ``run_reply`` executes on a worker thread where the loop-bound parts
+        of ``_signal_stop`` must not run; window-simulation tests and any
+        thread-side recorder use this instead (TASK-35311).
+        """
+        if session_id:
+            self._active_stop_reasons[session_id] = (
+                str(reason or "user").strip() or "user"
+            )
 
     def _is_active_session_cancelled(self) -> bool:
         """Best-effort cancel-signal check that falls back to the VIEWED
@@ -17954,7 +18008,7 @@ class ConsoleChatController:
                 and repair_session.phase in {"checking", "repair_streaming"}
             ):
                 repair_session.cancel_reason = "shutdown"
-            self._signal_stop(session_id=session_id)
+            self._signal_stop(session_id=session_id, reason="shutdown")
         for task in tasks:
             if task is not current:
                 self._cancel_task_on_owner_loop(task)
@@ -17983,6 +18037,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_stop_reasons.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
                 self._active_redirect_hooks.pop(session_id, None)
         for task in submit_tasks:
@@ -18089,11 +18144,11 @@ class ConsoleChatController:
                 current = None
             for task, session_id in submit_tasks.items():
                 if session_id:
-                    self._signal_stop(session_id=session_id)
+                    self._signal_stop(session_id=session_id, reason="shutdown")
                 if task is not current:
                     self._cancel_task_on_owner_loop(task)
             for session_id, task in stream_tasks.items():
-                self._signal_stop(session_id=session_id)
+                self._signal_stop(session_id=session_id, reason="shutdown")
                 if task is not current:
                     self._cancel_task_on_owner_loop(task)
             from .console_preparation_reads import preparation_tasks_for
@@ -24565,6 +24620,7 @@ class ConsoleChatController:
                 # A no-op for the direct path, whose own finally already
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
+                self._active_stop_reasons.pop(owner_id, None)
                 # Review A-4 (2026-08-31): without this, a COMPLETED run left
                 # a stale steer hook, so the next /steer refused with the
                 # misleading "that run is not running" instead of the
@@ -26821,6 +26877,12 @@ class ConsoleChatController:
             and work_origin is WorkOrigin.MANUAL and not resume_provider_continuation
             else None
         )
+        # TASK-35311: bound by the provider-worker await inside the try; a
+        # cancellation landing before that await returns leaves them None,
+        # and the CancelledError handler recovers a finished outcome from
+        # the shielded worker instead.
+        run_id: str | None = None
+        outcome = None
         try:
             if recovery_provider is not None:
                 from .archive_recovery.runtime import prepare_archive_followup
@@ -27019,9 +27081,26 @@ class ConsoleChatController:
                 _generation_handoff=_generation_handoff,
                 profile_context_service=profile_context_service,
             )
-            run_id, outcome = await self._chat_start.run_provider_worker(
-                session_id, provider_worker
-            )
+            # The submit may stop before this wrapper's native call returns.
+            # Its existing maintenance owner observes late wrapper failures too.
+            provider_task = self._retain_maintenance_task(provider_worker)
+            self._active_provider_workers[session_id] = provider_task
+
+            async def _shielded_provider_operation() -> Any:
+                return await asyncio.shield(provider_task)
+
+            try:
+                run_id, outcome = await self._chat_start.run_provider_worker(
+                    session_id, _shielded_provider_operation()
+                )
+            except BaseException:
+                # The registry entry deliberately survives a cancellation:
+                # the CancelledError handler below recovers this task's
+                # finished result from it before clearing.
+                raise
+            else:
+                if self._active_provider_workers.get(session_id) is provider_task:
+                    self._active_provider_workers.pop(session_id, None)
             if self.response_rules is not None and len(settled_budgets) == 1:
                 self.response_rules.record_generation_budget(
                     assistant_message_id, accepted_turn_id, *settled_budgets[0]
@@ -27037,6 +27116,57 @@ class ConsoleChatController:
             if work_origin is WorkOrigin.AUTOMATIC:
                 cancel_event.set()
             if cancel_event.is_set():
+                # TASK-35311: a shutdown or session-close cancel landing
+                # AFTER the provider worker already produced RUN_DONE must
+                # not stamp ``stopped`` on a reply that provably finished.
+                # Recover the outcome -- bound above when the await
+                # returned before the cancellation, or retained by the
+                # shielded provider worker when it did not -- and run the
+                # success finalization, which the stop-reason-aware
+                # ``stopped_now`` guard lets through. A user Stop keeps
+                # the stopped contract below, as does any stream whose
+                # outcome is not DONE.
+                from tldw_chatbook.Agents.agent_models import RUN_DONE
+
+                done_outcome = None
+                worker = self._active_provider_workers.get(session_id)
+                if getattr(outcome, "status", None) == RUN_DONE:
+                    done_outcome = outcome
+                else:
+                    if (
+                        worker is not None
+                        and worker.done()
+                        and not worker.cancelled()
+                        and worker.exception() is None
+                    ):
+                        run_id, maybe_done = worker.result()
+                        if getattr(maybe_done, "status", None) == RUN_DONE:
+                            done_outcome = maybe_done
+                if worker is not None:
+                    if self._active_provider_workers.get(session_id) is worker:
+                        self._active_provider_workers.pop(session_id, None)
+                if (
+                    done_outcome is not None
+                    and self._active_stop_reason(session_id) != "user"
+                ):
+                    # The cancellation has been consumed. Citation selection
+                    # must stay on this active stream task; its existing cancel
+                    # path retains the original body without dispatching repair.
+                    if citation_repair_session is not None:
+                        citation_repair_session.cancel_reason = self._active_stop_reason(
+                            session_id
+                        )
+                    return await self._finalize_agent_reply(
+                        assistant_message_id,
+                        session_id,
+                        done_outcome,
+                        variant_mode=variant_mode,
+                        cancel_event=cancel_event,
+                        run_id=run_id,
+                        citation_repair_session=citation_repair_session,
+                        stream_signals=stream_signals,
+                        resolution=resolution,
+                    )
                 # Whatever the provider already billed for this turn's
                 # completed steps is real money -- record it (partial)
                 # before the terminal mark, exactly as the direct path's
@@ -27113,6 +27243,7 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
+            self._active_provider_workers.pop(session_id, None)
             if recovery_provider is not None:
                 await recovery_runtime.release(recovery_provider.authority)
             # Task 3b: this finally intentionally pops NONE of the three
@@ -27140,6 +27271,10 @@ class ConsoleChatController:
         # cancel_event is the authority on whether IT was stopped,
         # independent of what status `mark_message_stopped` may have left
         # the message at (task-227 AC3 follow-up -- see the guard below).
+        # Kept as a direct await on purpose (TASK-35311): finalize must run
+        # in THIS task -- the citation-repair post-generation step keys on
+        # the running task's context -- and the shutdown-window recovery is
+        # handled on this same task in the CancelledError handler above.
         return await self._finalize_agent_reply(
             assistant_message_id,
             session_id,
@@ -27216,7 +27351,20 @@ class ConsoleChatController:
         # the variant base (already popped), so this is a benign no-op
         # read-back, never an error, in either case.
         stopped_now = (current is not None and current.status == "stopped") or (
-            cancel_event is not None and cancel_event.is_set()
+            cancel_event is not None
+            and cancel_event.is_set()
+            # TASK-35311: a set cancel event means "this run was stopped"
+            # only when the stop SOURCE demands the stopped terminal state.
+            # A user Stop always does (TASK-337 / task-227 AC3); a shutdown
+            # or session close landing AFTER the outcome came back RUN_DONE
+            # must not stamp ``stopped`` on a reply that provably finished
+            # (Console UAT 2026-10-17 finding 2). For a non-DONE outcome the
+            # stopped mark stays correct for every source -- the stream
+            # genuinely did not finish.
+            and (
+                self._active_stop_reason(session_id) == "user"
+                or getattr(outcome, "status", None) != RUN_DONE
+            )
         )
         # F1: the agent path's single usage attachment point. EVERY branch
         # below settles the placeholder terminal (complete / stopped /

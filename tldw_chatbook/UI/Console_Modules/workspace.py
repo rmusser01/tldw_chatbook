@@ -6756,201 +6756,204 @@ class ConsoleWorkspaceController:
         target = str(conversation_id or "").strip()
         if not target:
             return None
-        store = self._ensure_console_chat_store()
-        prior_active_session_id = store.active_session_id
-        visit = (
-            await self._begin_manual_read_visit("", target)
-            if self._begin_manual_read_visit
-            else None
-        )
-        # TASK-339: keystrokes typed while the conversation tree loads
-        # belong to the resumed session — snapshot the composer now.
-        self._capture_console_draft_switch_snapshot()
-        # task-15860 Task 6: the tree load and the session build moved to
-        # `Chat/console_conversation_hydration.py` -- the launch wake has to
-        # hydrate a conversation with no screen in existence, and one policy
-        # beats two. Everything BELOW the hydration call is this screen's own
-        # work (marker overlay, scope warm, repaint, focus) and stays here;
-        # so do both failure toasts, because the UX
-        # for each failure is a view concern.
-        try:
-            tree = await load_console_conversation_tree(self.app_instance, target)
-        except ConversationServiceUnavailable:
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
+        # Every resume caller (rail, Library and switcher) shares this window,
+        # including awaits before the conversation tree itself is loaded.
+        with self._screen._session.conversation_activation_window():
+            store = self._ensure_console_chat_store()
+            prior_active_session_id = store.active_session_id
+            visit = (
+                await self._begin_manual_read_visit("", target)
+                if self._begin_manual_read_visit
+                else None
             )
-            self.app_instance.notify(
-                "Saved conversation resume is unavailable in this build.",
-                severity="warning",
-            )
-            return None
-        except ConversationLoadFailed:
-            logger.exception(
-                f"Unable to resume Console saved conversation: conversation_id={target}"
-            )
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            self.app_instance.notify(
-                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
-                severity="error",
-                timeout=15,
-            )
-            return None
-
-        if resume_if is not None and not resume_if():
-            return None
-
-        if tree is None:
-            # TASK-717: missing record - the caller owns this failure's UX
-            # (honest toast + marking the row visibly broken), so do not
-            # stack a second notification here.
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            return False
-
-        if reuse_existing or preserve_persisted_scope:
-            matches = [
-                session
-                for session in store.sessions()
-                if str(session.persisted_conversation_id or "") == target
-            ]
-            if matches:
-                session = next(
-                    (item for item in matches if item.id == store.active_session_id),
-                    matches[0],
+            # TASK-339: keystrokes typed while the conversation tree loads
+            # belong to the resumed session — snapshot the composer now.
+            self._capture_console_draft_switch_snapshot()
+            # task-15860 Task 6: the tree load and the session build moved to
+            # `Chat/console_conversation_hydration.py` -- the launch wake has to
+            # hydrate a conversation with no screen in existence, and one policy
+            # beats two. Everything BELOW the hydration call is this screen's own
+            # work (marker overlay, scope warm, repaint, focus) and stays here;
+            # so do both failure toasts, because the UX
+            # for each failure is a view concern.
+            try:
+                tree = await load_console_conversation_tree(self.app_instance, target)
+            except ConversationServiceUnavailable:
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
                 )
-                return await self.open_console_workspace_conversation(
-                    f"native:{session.id}", resume_if=resume_if
-                )
-
-        conversation = tree.get("conversation")
-        if not isinstance(conversation, dict):
-            conversation = {}
-        if preserve_persisted_scope:
-            target_workspace_id = conversation.get("workspace_id") or None
-            target_scope_type = "workspace" if target_workspace_id else "global"
-        session = None
-        hydration = self._console_session_settings_for_resume(conversation)
-        if not isinstance(hydration, ConsoleGenerationSettingsHydration):
-            raise TypeError(
-                "Console resume settings must be ConsoleGenerationSettingsHydration"
-            )
-        try:
-            session = await hydrate_console_session(
-                app=self.app_instance,
-                store=store,
-                conversation_id=target,
-                tree=tree,
-                settings=hydration.settings,
-                generation_durable_snapshot=hydration.durable_snapshot,
-                generation_metadata_status=hydration.metadata_status,
-                target_scope_type=target_scope_type,
-                target_workspace_id=target_workspace_id,
-                activate=False,
-            )
-            # Re-derive display-only agent TOOL markers from AgentRunsDB and
-            # overlay them onto the restored active-path view.
-            store.apply_resume_marker_overlay(
-                session.id,
-                self._inject_resume_agent_markers(
-                    store.messages_for_session(session.id), target
-                ),
-            )
-            # Live identity re-resolution on resume (task-32481, ADR-149):
-            # refresh the display name from the live card/profile. Dev's
-            # hydration already set the label from the persisted snapshot,
-            # which stays as the fallback when live resolution fails.
-            if (
-                session.runtime_backend == "local"
-                and session.assistant_kind == "character"
-                and session.character_id is not None
-            ):
-                resolved_character_name = await self._resolve_resumed_character_name(
-                    session.character_id
-                )
-                if resolved_character_name:
-                    session.character_name = resolved_character_name
-                    if session.settings is not None:
-                        session.settings = replace(
-                            session.settings,
-                            character_label=resolved_character_name,
-                        )
-            elif session.assistant_kind == "persona" and session.assistant_id:
-                # Persona sessions carry no local projection; the display name
-                # is re-resolved from the live profile on every resume
-                # (ADR-149), for local and server backends alike.
-                persona_name = await self._resolve_resumed_persona_name(
-                    session.assistant_id, session.runtime_backend
-                )
-                session.assistant_name = persona_name or None
-                if persona_name:
-                    # One-name invariant: a persona session never shows a
-                    # stale character label.
-                    session.character_name = None
-                if session.settings is not None:
-                    session.settings = replace(session.settings, character_label="")
-            elif session.settings is not None:
-                session.settings = replace(session.settings, character_label="")
-            # Warm the effective conversation/workspace scope before the final
-            # activation commit so any failure leaves the prior session active.
-            await self._resolve_console_effective_scope_state(session)
-            from .conversation_token_preparation import prepare_conversation_tokens
-
-            await prepare_conversation_tokens(self._screen, store, session.id)
-            if resume_if is not None and not resume_if():
-                store.rollback_restored_session(
-                    session.id,
-                    expected_session=session,
-                    prior_active_session_id=prior_active_session_id,
+                self.app_instance.notify(
+                    "Saved conversation resume is unavailable in this build.",
+                    severity="warning",
                 )
                 return None
-            store.switch_session(session.id)
-            self._bind_composer_after_switch()
-            self._set_active_workspace_for_console_session(session.id)
-            self._sync_console_retrieval_scope_row()
-            self._console_agent_drilldown_run_id = None
-            self._note_console_follow_intent()
-            self._sync_console_chat_core_state()
-            await self._sync_native_console_chat_ui()
-            await self._refresh_console_conversation_browser_after_selection()
-            self._focus_console_composer_if_needed(force=True)
-            if callable(self._wake_retry_poke_fn):
-                self._wake_retry_poke_fn()
-        except asyncio.CancelledError:
-            if session is not None:
-                store.rollback_restored_session(
-                    session.id,
-                    expected_session=session,
-                    prior_active_session_id=prior_active_session_id,
+            except ConversationLoadFailed:
+                logger.exception(
+                    f"Unable to resume Console saved conversation: conversation_id={target}"
                 )
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            raise
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Unable to present Console saved conversation"
-            )
-            if session is not None:
-                store.rollback_restored_session(
-                    session.id,
-                    expected_session=session,
-                    prior_active_session_id=prior_active_session_id,
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
                 )
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            self.app_instance.notify(
-                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
-                severity="error",
-                timeout=15,
-            )
-            return None
-        if self._complete_manual_read_visit:
-            self._complete_manual_read_visit(visit, session.id)
-        return True
+                self.app_instance.notify(
+                    CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
+                    severity="error",
+                    timeout=15,
+                )
+                return None
+
+            if resume_if is not None and not resume_if():
+                return None
+
+            if tree is None:
+                # TASK-717: missing record - the caller owns this failure's UX
+                # (honest toast + marking the row visibly broken), so do not
+                # stack a second notification here.
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
+                )
+                return False
+
+            if reuse_existing or preserve_persisted_scope:
+                matches = [
+                    session
+                    for session in store.sessions()
+                    if str(session.persisted_conversation_id or "") == target
+                ]
+                if matches:
+                    session = next(
+                        (item for item in matches if item.id == store.active_session_id),
+                        matches[0],
+                    )
+                    return await self.open_console_workspace_conversation(
+                        f"native:{session.id}", resume_if=resume_if
+                    )
+
+            conversation = tree.get("conversation")
+            if not isinstance(conversation, dict):
+                conversation = {}
+            if preserve_persisted_scope:
+                target_workspace_id = conversation.get("workspace_id") or None
+                target_scope_type = "workspace" if target_workspace_id else "global"
+            session = None
+            hydration = self._console_session_settings_for_resume(conversation)
+            if not isinstance(hydration, ConsoleGenerationSettingsHydration):
+                raise TypeError(
+                    "Console resume settings must be ConsoleGenerationSettingsHydration"
+                )
+            try:
+                session = await hydrate_console_session(
+                    app=self.app_instance,
+                    store=store,
+                    conversation_id=target,
+                    tree=tree,
+                    settings=hydration.settings,
+                    generation_durable_snapshot=hydration.durable_snapshot,
+                    generation_metadata_status=hydration.metadata_status,
+                    target_scope_type=target_scope_type,
+                    target_workspace_id=target_workspace_id,
+                    activate=False,
+                )
+                # Re-derive display-only agent TOOL markers from AgentRunsDB and
+                # overlay them onto the restored active-path view.
+                store.apply_resume_marker_overlay(
+                    session.id,
+                    self._inject_resume_agent_markers(
+                        store.messages_for_session(session.id), target
+                    ),
+                )
+                # Live identity re-resolution on resume (task-32481, ADR-149):
+                # refresh the display name from the live card/profile. Dev's
+                # hydration already set the label from the persisted snapshot,
+                # which stays as the fallback when live resolution fails.
+                if (
+                    session.runtime_backend == "local"
+                    and session.assistant_kind == "character"
+                    and session.character_id is not None
+                ):
+                    resolved_character_name = await self._resolve_resumed_character_name(
+                        session.character_id
+                    )
+                    if resolved_character_name:
+                        session.character_name = resolved_character_name
+                        if session.settings is not None:
+                            session.settings = replace(
+                                session.settings,
+                                character_label=resolved_character_name,
+                            )
+                elif session.assistant_kind == "persona" and session.assistant_id:
+                    # Persona sessions carry no local projection; the display name
+                    # is re-resolved from the live profile on every resume
+                    # (ADR-149), for local and server backends alike.
+                    persona_name = await self._resolve_resumed_persona_name(
+                        session.assistant_id, session.runtime_backend
+                    )
+                    session.assistant_name = persona_name or None
+                    if persona_name:
+                        # One-name invariant: a persona session never shows a
+                        # stale character label.
+                        session.character_name = None
+                    if session.settings is not None:
+                        session.settings = replace(session.settings, character_label="")
+                elif session.settings is not None:
+                    session.settings = replace(session.settings, character_label="")
+                # Warm the effective conversation/workspace scope before the final
+                # activation commit so any failure leaves the prior session active.
+                await self._resolve_console_effective_scope_state(session)
+                from .conversation_token_preparation import prepare_conversation_tokens
+
+                await prepare_conversation_tokens(self._screen, store, session.id)
+                if resume_if is not None and not resume_if():
+                    store.rollback_restored_session(
+                        session.id,
+                        expected_session=session,
+                        prior_active_session_id=prior_active_session_id,
+                    )
+                    return None
+                store.switch_session(session.id)
+                self._bind_composer_after_switch()
+                self._set_active_workspace_for_console_session(session.id)
+                self._sync_console_retrieval_scope_row()
+                self._console_agent_drilldown_run_id = None
+                self._note_console_follow_intent()
+                self._sync_console_chat_core_state()
+                await self._sync_native_console_chat_ui()
+                await self._refresh_console_conversation_browser_after_selection()
+                self._focus_console_composer_if_needed(force=True)
+                if callable(self._wake_retry_poke_fn):
+                    self._wake_retry_poke_fn()
+            except asyncio.CancelledError:
+                if session is not None:
+                    store.rollback_restored_session(
+                        session.id,
+                        expected_session=session,
+                        prior_active_session_id=prior_active_session_id,
+                    )
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
+                )
+                raise
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to present Console saved conversation"
+                )
+                if session is not None:
+                    store.rollback_restored_session(
+                        session.id,
+                        expected_session=session,
+                        prior_active_session_id=prior_active_session_id,
+                    )
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
+                )
+                self.app_instance.notify(
+                    CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
+                    severity="error",
+                    timeout=15,
+                )
+                return None
+            if self._complete_manual_read_visit:
+                self._complete_manual_read_visit(visit, session.id)
+            return True
 
     # -- Workspace context state / grouped conversation rows -----------------
 

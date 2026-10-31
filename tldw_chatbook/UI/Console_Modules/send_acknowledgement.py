@@ -540,7 +540,16 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
     )
     screen._console_pending_send = pending_send
     if request.guard is not None and not request.guard():
+        # TASK-35310: the Send action went unavailable between the press and
+        # this schedule (e.g. the control bar re-syncing after a conversation
+        # resume). Releasing the capture silently was one half of the silent
+        # drop in Console UAT 2026-10-17 finding 1; tell the user instead.
         screen._console_pending_send = None
+        screen.app_instance.notify(
+            "Send is not available in this chat yet; your draft was kept.",
+            severity="warning",
+            markup=False,
+        )
         return
     flight.running = request.stash
     flight.running_image = (

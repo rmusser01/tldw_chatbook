@@ -1666,3 +1666,9 @@ Tests/UI/test_console_archive_recovery_cards.py
 # Both parameterized nodes passed on the isolated PR3162 candidate (four cases).
 Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display
 Tests/UI/test_console_config_sync_cadence_inputs.py::test_late_tail_publication_is_a_new_input_and_refusal_remains_owed
+
+# PR3173 / TASK-35310: held hydration refuses visibly; settled resume sends to its owner.
+Tests/UI/test_console_resume_send_guard.py::test_enter_during_a_conversation_resume_is_refused_visibly
+Tests/UI/test_console_resume_send_guard.py::test_enter_right_after_a_resume_settles_sends_to_the_resumed_chat
+Tests/UI/test_console_resume_send_guard.py::test_resume_refusal_records_only_code_owned_send_diagnostics
+Tests/UI/test_console_resume_send_guard.py::test_pending_send_refusals_reach_the_metadata_sink

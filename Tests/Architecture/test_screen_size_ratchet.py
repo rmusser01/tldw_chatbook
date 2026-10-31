@@ -232,7 +232,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: Retain the notification hooks and bounded shutdown repair in place;
     #: pin the measured tree exactly, without reflow/extraction to fit.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24409, 741),
+    #: 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24436, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
