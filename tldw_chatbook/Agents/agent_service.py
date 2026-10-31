@@ -9016,6 +9016,9 @@ class AgentService:
                 from tldw_chatbook.Chat.console_trace_service import (
                     TraceCallPersistenceError,
                 )
+                from tldw_chatbook.Chat.provider_error_reason import (
+                    is_image_input_rejection,
+                )
                 from tldw_chatbook.Chat.provider_failures import (
                     FAILURE_SUMMARY_MAX_CHARS,
                     describe_stream_failure,
@@ -9054,6 +9057,7 @@ class AgentService:
                     console_copy=(
                         exc.console_copy if isinstance(exc, ChatAPIError) else None
                     ),
+                    console_image_rejection=is_image_input_rejection(exc),
                 )
         finally:
             # A BaseException still owns its normal control-flow semantics, but

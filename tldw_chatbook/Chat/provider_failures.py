@@ -9,6 +9,7 @@ through this module.
 """
 
 import asyncio
+from collections.abc import Callable
 
 from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatConfigurationError
 
@@ -195,3 +196,37 @@ def console_failure_copy(exc: BaseException, lead_in: str) -> str:
     if isinstance(exc, ChatAPIError) and exc.console_copy:
         return exc.console_copy
     return f"{lead_in}: {describe_stream_failure(exc)}"
+
+
+#: TASK-335: a provider that cannot read an image fails every later turn of
+#: the conversation (history re-sends it), so the refusal names the way out.
+IMAGE_REFUSAL_HINT = (
+    " This conversation includes an image attachment; if the model can't accept "
+    "images, switch to a vision-capable model, or type /rewind and restore to the "
+    "prompt that added the image (nothing is deleted; later turns stay a branch)."
+)
+
+
+def image_refusal_hint(failure: object, carries_images: Callable[[], bool]) -> str:
+    """Return the image hint only for a provider's image refusal (TASK-33621.11).
+
+    Chosen from the failure's typed verdict -- a 400/413/415/422 whose
+    provider body is about image input (``is_image_input_rejection``) --
+    never from the failure copy's wording, and never for a 401.
+
+    Args:
+        failure: The raised error, or an agent outcome carrying the verdict
+            as ``console_image_rejection``.
+        carries_images: Whether the conversation holds an image; the hint
+            says it does, so without one it would be false.
+
+    Returns:
+        The hint, with its leading space, or ``""``.
+    """
+    if isinstance(failure, BaseException):
+        from tldw_chatbook.Chat.provider_error_reason import is_image_input_rejection
+
+        refused = is_image_input_rejection(failure)
+    else:
+        refused = getattr(failure, "console_image_rejection", False) is True
+    return IMAGE_REFUSAL_HINT if refused and carries_images() else ""
