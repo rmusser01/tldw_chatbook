@@ -149,7 +149,13 @@ _BUDGETS: dict[str, int] = {
     # TASK-33621.51 (2026-10-29): the Library preparation record builders
     # moved to console_library_preparation (preparation_contribution,
     # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29038,
+    # 2026-10-29 (TASK-33621.22, owner decision 2026-10-04: raise the row
+    # rather than squeeze unrelated code): +12 for Stop in the pre-provider
+    # "Connecting tools…" window (29,055 -> 29,067, after its review moved the
+    # Stop publication into the new module). The settlement itself lives in
+    # Chat/console_pre_provider_stop.py; the controller keeps the wiring.
+    # 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 29038 -> 29050.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29050,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,

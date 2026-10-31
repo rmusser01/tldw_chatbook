@@ -603,6 +603,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "9c642b3123d248d1ca46",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_pre_provider_stop.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "60cd5a7c138f59575754",
       "owner": "TASK-492",

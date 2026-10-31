@@ -4386,6 +4386,7 @@ class ConsoleChatController:
         self._maintenance_background: set[asyncio.Task] = set()
         self._pending_dispatch_transitions: dict[str, asyncio.Task[None]] = {}
         self._deferred_user_stop_markers: set[str] = set()
+        self._replies_in_pre_provider_setup: set[str] = set()  # TASK-33621.22
         # Physical SQLite maintenance sets this process-local gate before its
         # final provider-idle check. New runs may prepare normally but cannot
         # cross either provider-dispatch seam until the compactor's finally
@@ -17729,7 +17730,12 @@ class ConsoleChatController:
             self._signal_stop(session_id=session_id)
         from .console_preparation_reads import preparation_tasks_for
 
-        read_tasks = () if searching else preparation_tasks_for(
+        # TASK-33621.22: an accepted run's setup owns its Stop; a read then in
+        # flight (a repaint's) is not this Stop's to cancel.
+        in_setup = self._active_assistant_message_ids.get(session_id) in (
+            self._replies_in_pre_provider_setup
+        )
+        read_tasks = () if searching or in_setup else preparation_tasks_for(
             self._preparation_reads, session_id
         )
         if read_tasks:
@@ -17795,7 +17801,10 @@ class ConsoleChatController:
             return review_stopped
         self.prompt_queue_coordinator.pause_for_stop(session_id)
         self._signal_stop(session_id=session_id)
-        if assistant_message_id in self._pending_dispatch_transitions:
+        if (
+            assistant_message_id in self._pending_dispatch_transitions
+            or assistant_message_id in self._replies_in_pre_provider_setup
+        ):
             if record_user_stop:
                 self._deferred_user_stop_markers.add(assistant_message_id)
             task = self._active_stream_tasks.get(session_id)
@@ -26468,7 +26477,16 @@ class ConsoleChatController:
         # above all, plus the profile and canvas providers built from it. The
         # row says so for the WHOLE window: entering only after composition
         # left a slow discovery rendering a blank row (Qodo #6 on PR #2586).
-        async with self._pre_provider_setup_phase(work_conversation_id):
+        from .console_pre_provider_stop import PreProviderSetupStop
+
+        setup_stop = PreProviderSetupStop(
+            self,
+            assistant_message_id,
+            cancel_event,
+            prepares_row=prepare_retry or variant_mode,
+        )
+        # Outermost, so a raising phase exit cannot strand its registration.
+        async with setup_stop, self._pre_provider_setup_phase(work_conversation_id):
             # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
             # on the running main loop, BEFORE the bridge is dispatched onto
             # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
@@ -26740,6 +26758,7 @@ class ConsoleChatController:
                     assistant_message_id,
                     generation_token=generation_token,
                 )
+            setup_stop.row_prepared = True  # a Stop now settles the new attempt
             personal_context_service = await self._personal_context_service()
             profile_context_service = await self._personal_context_builder(
                 personal_context_service
@@ -26806,6 +26825,8 @@ class ConsoleChatController:
                     disabled_reader=self._canvas_disabled_reader,
                 )
                 canvas_authority = canvas_provider.issue_registration_authority()
+        if setup_stop.stopped:  # TASK-33621.22: Stop while "Connecting tools…"
+            return await setup_stop.settle(session_id)
         try:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
@@ -28429,18 +28450,9 @@ class ConsoleChatController:
         # even once the run finishes, so this is always resolvable unless
         # the session was closed out from under the run (in which case
         # there is nothing left to attribute the STOPPED stamp to).
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
-            session_id=owner_id,
-        )
-        if assistant_message_id in self._deferred_user_stop_markers:
-            self._deferred_user_stop_markers.discard(assistant_message_id)
-            if owner_id is not None:
-                self.store.append_message(
-                    owner_id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content="Response stopped by user.",
-                )
+        from .console_pre_provider_stop import publish_stopped_run
+
+        publish_stopped_run(self, assistant_message_id, owner_id, visible_copy)
         return stopped
 
     def _arm_run_hooks_stop(self, session_id: str) -> None:

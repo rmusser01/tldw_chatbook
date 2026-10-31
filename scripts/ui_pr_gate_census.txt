@@ -1634,3 +1634,12 @@ Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_i
 # cases, about 12 s), appended at the tail; existing slots stay fixed.
 Tests/UI/test_console_library_outcome_line.py
 Tests/UI/test_console_library_outcome_lines.py
+# TASK-33621.22 (2026-10-29): Stop in the pre-provider "Connecting tools…"
+# window settles as Stopped and the next send reaches the provider, for a
+# fresh send and for a Retry of a failed reply. One node id per mounted case
+# (each about 8-15 s locally) keeps every entry well under the lane's 30 s
+# budget; appended at the tail.
+Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider[composing-tools]
+Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider[after-dispatch-checkpoint]
+Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_a_retry_connects_tools_frees_the_tab[composing-tools]
+Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_a_retry_connects_tools_frees_the_tab[after-retry-prepared]
