@@ -426,6 +426,23 @@ async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path
         return original_commit(acceptance)
 
     store.commit_durable_turn = recording_commit
+    # The scripted gateway makes no provider request of its own, so its stream
+    # notes one where the real gateway does (adapter entry, in the send's own
+    # work: here on the agent loop's thread), reading the window either side.
+    from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
+
+    gateway = controller.provider_gateway
+    original_stream = gateway.stream_chat
+    around_entry: list[tuple[bool, bool]] = []
+
+    async def stream_noting_entry(resolution, messages, **kwargs):
+        before = config_sync.send_start_in_progress(screen)
+        record_send_stage("provider_entry")
+        around_entry.append((before, config_sync.send_start_in_progress(screen)))
+        async for chunk in original_stream(resolution, messages, **kwargs):
+            yield chunk
+
+    gateway.stream_chat = stream_noting_entry
     try:
         assert not config_sync.send_start_in_progress(screen)
         outcome = await coordinator.start(request)
@@ -434,6 +451,10 @@ async def test_an_agents_chat_start_opens_a_send_start_until_it_is_done(tmp_path
         assert during_commit == [True], (
             "the chat start's submission had no send start open after its "
             f"acceptance (read during its durable commit: {during_commit})"
+        )
+        assert around_entry == [(True, False)], (
+            "the chat start's own provider request did not end its send start "
+            f"(open before and after that request: {around_entry})"
         )
         assert not config_sync.send_start_in_progress(screen), (
             "the chat start's send start outlived its submission"
