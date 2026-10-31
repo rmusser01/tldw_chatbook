@@ -11,6 +11,7 @@ guard prevents it.
 from __future__ import annotations
 
 import contextlib
+import multiprocessing
 import os
 import sys
 import threading
@@ -25,6 +26,20 @@ from tldw_chatbook.Utils import model_download_guard as guard
 tqdm_std = _support.tqdm_std
 #: Shared fixture (a first launch: tqdm's lock unbuilt, no resource tracker).
 first_download_in_process = _support.first_download_in_process
+
+
+#: The defect needs a semaphore that registers with the resource tracker: a
+#: POSIX start method other than fork (macOS's spawn default). Under fork
+#: (Linux before Python 3.14) the lock builds without a tracker, so there is
+#: nothing to reproduce there.
+_TRACKER_SPAWNED_ON_LOCK_BUILD = (
+    sys.platform != "win32"
+    and multiprocessing.get_context().get_start_method() != "fork"
+)
+_NEEDS_TRACKER_SPAWN = pytest.mark.skipif(
+    not _TRACKER_SPAWNED_ON_LOCK_BUILD,
+    reason="tqdm's lock only starts the resource tracker under spawn/forkserver",
+)
 
 
 class _FilenoLessStderr:
@@ -80,7 +95,7 @@ def _reset_to_first_launch() -> None:
         del lock_type.mp_lock
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX spawn path only")
+@_NEEDS_TRACKER_SPAWN
 def test_without_the_guard_the_first_lock_build_dies_and_wedges(
     first_download_in_process,
 ):
@@ -116,7 +131,7 @@ def test_the_guard_is_a_no_op_once_tqdm_has_decided_its_lock(
     assert lock_type.th_lock is class_lock
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX spawn path only")
+@_NEEDS_TRACKER_SPAWN
 def test_the_guard_repairs_a_lock_a_dead_construction_left_held(
     first_download_in_process, monkeypatch
 ):
@@ -201,8 +216,7 @@ def test_download_size_reads_like_a_download(num_bytes: int, shown: str):
 
 
 _XET_PROBE = (
-    "import tldw_chatbook, huggingface_hub.constants as c; "
-    "print(c.HF_HUB_DISABLE_XET)"
+    "import tldw_chatbook, huggingface_hub.constants as c; print(c.HF_HUB_DISABLE_XET)"
 )
 
 
