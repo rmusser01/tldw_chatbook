@@ -38,6 +38,26 @@ when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
 bright-black run) or by the message the transcript shows after the send, not by
 the `.txt` row.
 
+## A fresh live profile cannot send images on gpt-4.1-mini: mark vision in the profile before an image round (TASK-33621.11, 2026-10-30)
+
+**Incident.** To reproduce an image-hint false fact live, the plan was to send a
+real image on OpenAI gpt-4.1-mini (vision-capable in the shipped
+`DEFAULT_MODEL_PATTERNS`) and then inject a 401. Staging the PNG instead showed
+"Send blocked — choose a model to continue", and the app log read "No capability
+information found for openai/gpt-4.1-mini, using defaults". The app writes its own
+default `[model_capabilities.patterns]` into the profile's config.toml on boot.
+That template's OpenAI list has no gpt-4.1 pattern, and a config pattern list
+replaces the shipped one (filed as TASK-38332). claude-haiku-4-5 is blocked the
+same way (TASK-37031).
+
+**What to do.** For an image round, launch once and quit. Then append
+`[model_capabilities.models."<model>"]` with `vision = true` to the profile's
+config.toml and relaunch with `REUSE=1`. Send one image through a minimal turn and
+confirm the model actually describes it before you inject the failure. A real
+image-content 400 is easy to get without a proxy mode: OpenAI rejects a PNG
+truncated to its first 60 bytes with "You uploaded an unsupported image" (status
+400).
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured
