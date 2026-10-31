@@ -705,6 +705,10 @@ class IdleHeapRefreezer:
         """Record that the user just typed, clicked or pasted."""
         self._last_input = self._clock()
 
+    def seconds_since_input(self) -> float:
+        """Seconds since the last user input; infinite before the first."""
+        return self._clock() - self._last_input
+
     def request(self, reason: str, owner: Any, busy: Callable[[Any], bool]) -> None:
         """Ask for a re-freeze once ``owner`` is idle and the user is quiet.
 
@@ -861,3 +865,12 @@ def heap_refreezer() -> IdleHeapRefreezer:
 def note_user_input() -> None:
     """Stamp a user input for the idle re-freeze's quiet check."""
     _HEAP_REFREEZER.note_input()
+
+
+def seconds_since_user_input() -> float:
+    """Seconds since the user last typed, clicked or pasted (infinite before).
+
+    Read from other threads too (the first-send warm-up, TASK-33620.15.18): a
+    float attribute read, never a wait on the refreezer's lock.
+    """
+    return _HEAP_REFREEZER.seconds_since_input()

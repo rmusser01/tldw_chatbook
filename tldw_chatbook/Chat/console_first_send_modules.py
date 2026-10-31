@@ -54,7 +54,10 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Utils.ui_responsiveness import freeze_long_lived_heap
+from tldw_chatbook.Utils.ui_responsiveness import (
+    freeze_long_lived_heap,
+    seconds_since_user_input,
+)
 
 #: In first-send order. Before acceptance: the acknowledgement, the received
 #: intent and admission. After it, run start: hook preparation, compaction
@@ -160,6 +163,15 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
 )
 
 
+#: A navigation takes the app's lock only when its click or key reaches the
+#: handler (live, the lock was still free 7 ms after a click arrived and held
+#: by 27-53 ms), and until then the pass's park cannot see it. So no step starts until no input has arrived
+#: for this long; then the warm-up parks again (TASK-33620.15.18). Keys alone
+#: were not slowed by a step, so this stays short enough for a step to run
+#: between keystrokes at a typing pace.
+INPUT_QUIET_SECONDS = 0.15
+
+
 def preimport_first_send_modules(app: Any) -> None:
     """Import ``FIRST_SEND_MODULES`` in order, then parse the MCP manifest source.
 
@@ -169,7 +181,9 @@ def preimport_first_send_modules(app: Any) -> None:
     thread parks while a navigation or accepted Console work owns the loop
     (so a send that starts first imports what it needs itself, as before),
     then gives the UI loop a pause as long as the previous import took (the
-    app's pre-import pacing). A module that fails to import is left to fail
+    app's pre-import pacing). It also waits until no input has arrived for
+    ``INPUT_QUIET_SECONDS`` and parks again, so a click's navigation finds
+    no new step started under it. A module that fails to import is left to fail
     again, identically, where the send imports it (a failed import is never
     cached). When it finishes it freezes the heap, as the routes' pass did
     before it (ADR-198: these modules live as long as the app).
@@ -185,11 +199,22 @@ def preimport_first_send_modules(app: Any) -> None:
         logger.debug("First-send warm-up stopped (error_type={})", type(exc).__name__)
 
 
+def _pause(app: Any, gap: float) -> None:
+    """The pass's gap and park, then wait out recent input and park again."""
+    app._pause_between_preimports(gap)
+    while not getattr(app, "_shutting_down", False):
+        quiet = seconds_since_user_input()
+        if quiet >= INPUT_QUIET_SECONDS:
+            return
+        time.sleep(INPUT_QUIET_SECONDS - quiet)
+        app._pause_between_preimports(0.0)
+
+
 def _warm_first_send(app: Any) -> None:
     ratio, cap = app._screen_preimport_pacing()
     previous = 0.0
     for name in FIRST_SEND_MODULES:
-        app._pause_between_preimports(min(previous * ratio, cap))
+        _pause(app, min(previous * ratio, cap))
         if getattr(app, "_shutting_down", False):
             return
         started = time.monotonic()
@@ -202,7 +227,7 @@ def _warm_first_send(app: Any) -> None:
                 type(exc).__name__,
             )
         previous = time.monotonic() - started
-    app._pause_between_preimports(min(previous * ratio, cap))
+    _pause(app, min(previous * ratio, cap))
     if getattr(app, "_shutting_down", False):
         return
     try:

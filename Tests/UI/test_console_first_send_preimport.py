@@ -372,6 +372,7 @@ def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
 
     monkeypatch.setattr(warm.importlib, "import_module", fake_import)
     monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
     warm.preimport_first_send_modules(_PassApp(stop_after=3))
 
     # Every import waits behind a pause (the park); quit lands in the third.
@@ -394,6 +395,7 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     app = _PassApp()
     clock = iter(float(n) * 0.1 for n in range(10_000))
     monkeypatch.setattr(warm.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
     monkeypatch.setattr(
         warm.importlib,
         "import_module",
@@ -422,6 +424,64 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     assert app.pauses == [0.0] + [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
     assert app.events[:2] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[0])]
     assert app.events[-2:] == [("prime", None), ("freeze", "first_send_preimport")]
+
+
+def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
+    """No step starts within the input-quiet time of a click or key (TASK-33620.15.18).
+
+    A navigation takes the app's lock only when its click reaches the
+    handler. Live (fix head d9320f721e, 160x45, idle host), the pass's park
+    checked the lock 1-7 ms after a Library click arrived, found it free and
+    started the next step: ``Canvas.gateway``, 46 ms, inside the click's
+    navigation; the lock was held by 27-53 ms. At a random moment of the
+    window a click drew Library's first frame a paired median +9 ms later
+    than without the warm-up (10 launches), keys +0.3 ms.
+
+    So before each step the warm-up waits until no input has arrived for
+    ``INPUT_QUIET_SECONDS``, then parks again for a navigation that started
+    meanwhile. Negative control: with no recent input it waits for nothing.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.MCP import server as mcp_server
+
+    app = _PassApp()
+    ages = iter([0.04, 0.12, float("inf")])  # a click 40 ms ago, then quiet
+    monkeypatch.setattr(
+        warm, "seconds_since_user_input", lambda: next(ages, float("inf"))
+    )
+
+    class Clock:
+        @staticmethod
+        def monotonic() -> float:
+            return 0.0
+
+        @staticmethod
+        def sleep(seconds: float) -> None:
+            app.events.append(("sleep", round(seconds, 3)))
+
+    monkeypatch.setattr(warm, "time", Clock)
+    monkeypatch.setattr(
+        warm.importlib,
+        "import_module",
+        lambda name: app.events.append(("import", name)),
+    )
+    monkeypatch.setattr(mcp_server, "prime_local_manifest_source", lambda: None)
+    monkeypatch.setattr(warm, "freeze_long_lived_heap", lambda reason: None, raising=False)
+
+    warm.preimport_first_send_modules(app)
+
+    quiet = warm.INPUT_QUIET_SECONDS
+    assert app.events[:6] == [
+        ("pause", 0.0),
+        ("sleep", round(quiet - 0.04, 3)),
+        ("pause", 0.0),
+        ("sleep", round(quiet - 0.12, 3)),
+        ("pause", 0.0),
+        ("import", warm.FIRST_SEND_MODULES[0]),
+    ], "a step started inside the input-quiet time of a click"
+    # Negative control: input long past, so each later step waits for nothing.
+    assert ("sleep", round(quiet, 3)) not in app.events
+    assert app.events[6:8] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[1])]
 
 
 def _raise(*_args, **_kwargs):
