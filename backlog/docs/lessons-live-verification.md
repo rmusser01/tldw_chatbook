@@ -1,5 +1,6 @@
 # Lessons: verifying against the real thing
 
+<<<<<<< HEAD
 ## The run projection's cost grows with the chat: pair launch by launch and record the chat length (TASK-36571, 2026-10-30)
 
 **Incident.** TASK-36571's bound (32.6 ms of projection per send window) was
@@ -140,6 +141,22 @@ while time.monotonic() < end:
 On the 14-core host, load1 went from 4 to 75 in 70-75 s, and fell back under
 12 within 145-175 s of the stop. Record load1 at every Enter, not only when
 the round starts.
+=======
+## A timing relay's port can belong to another agent's relay: check your own log, not the listener (TASK-36610, 2026-10-30)
+
+**Incident.** P10 copied the pf2 kit, moved its relay to 127.0.0.1:8797 and
+started it in a detached tmux session. Another agent's relay (P71) had bound
+8797 two minutes earlier. P10's relay died on the bind inside its tmux
+session, which then exited without a trace. `lsof -iTCP:8797 -sTCP:LISTEN`
+still showed a python listener, so the check passed. The diagnostic launch's
+provider requests went through P71's relay and into P71's log; P10's relay
+log stayed empty, without even its own "listening" line.
+
+**What to do.** After starting a relay, read the first line of its own log
+(the pf2 relay writes `listening` there), or match the listener's command
+(`ps -o command -p <pid>`) to your own script. Choose a port that no copy of
+the kit uses by default.
+>>>>>>> cc6eb56c4a (docs(backlog): lessons from the send-start window rework (TASK-36610))
 
 ## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
 
