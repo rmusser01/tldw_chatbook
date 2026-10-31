@@ -18112,7 +18112,7 @@ class ChatScreen(BaseAppScreen):
                 record_send_stage(
                     "ui_submit",
                     "not_dispatched",
-                    reason="pending_send_token_mismatch",
+                    operation="pending_send_token_mismatch",
                 )
                 self.app_instance.notify(
                     "Console chat changed before send; the draft was kept in its original chat.",
@@ -18136,7 +18136,7 @@ class ChatScreen(BaseAppScreen):
             record_send_stage(
                 "ui_submit",
                 "not_dispatched",
-                reason="pending_send_slot_busy",
+                operation="pending_send_slot_busy",
             )
             self.app_instance.notify(
                 "A send is still starting up; press Send again in a moment.",

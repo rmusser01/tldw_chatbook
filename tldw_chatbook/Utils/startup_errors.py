@@ -44,17 +44,15 @@ def _windows_temp_dir() -> str:
 
 
 def _windows_quoted(path: Path | str) -> str:
-    """Quote a path for copy-paste into cmd/PowerShell."""
-    text = str(path).replace('"', "")
-    return f'"{text}"'
+    """Quote a literal path for PowerShell without expanding its contents."""
+    return "'" + str(path).replace("'", "''") + "'"
 
 
 def _path_under_windows_temp(path: Path | str) -> bool:
     candidate = str(path).replace("/", "\\").rstrip("\\").lower()
     root = _windows_temp_dir().replace("/", "\\").rstrip("\\").lower()
-    return bool(root) and (
-        candidate == root or candidate.startswith(root + "\\")
-    )
+    return bool(root) and (candidate == root or candidate.startswith(root + "\\"))
+
 
 #: Refusals caused by HOME living in a shared sticky directory (/tmp & co):
 #: relocating the config under that same HOME cannot help, so the alternative
@@ -146,7 +144,11 @@ def _windows_shared_writable_guidance(result: PrivatePathResult) -> list[str]:
         "write grants:",
     ]
     if offender is not None:
-        lines += ["", f"    icacls {_windows_quoted(offender)}"]
+        lines += [
+            "",
+            "Inspect in PowerShell:",
+            f"    icacls {_windows_quoted(offender)}",
+        ]
     lines += [
         "",
         "Or keep Chatbook's config and data under your own user profile",
@@ -219,7 +221,11 @@ def _ownership_guidance(result: PrivatePathResult) -> list[str]:
             "directory's Properties > Security sheet as an administrator:",
         ]
         if offender is not None:
-            lines += ["", f"    icacls {_windows_quoted(offender)}"]
+            lines += [
+                "",
+                "Inspect in PowerShell:",
+                f"    icacls {_windows_quoted(offender)}",
+            ]
         return lines
     lines = [
         "The blocked directory belongs to a different user. This usually",
@@ -249,7 +255,7 @@ def _ambiguous_roots_guidance(result: PrivatePathResult) -> list[str]:
         "want, or set an explicit choice in the config file:",
         "",
         "    [paths]",
-        "    data_dir = \"/absolute/path/to/the/root/you/want\"",
+        '    data_dir = "/absolute/path/to/the/root/you/want"',
     ]
 
 
@@ -309,7 +315,7 @@ def _alternative_lines(result: PrivatePathResult) -> list[str]:
             "Start Chatbook with HOME pointing at a private directory you",
             "own (replace the example with your own path):",
             "",
-            '    HOME=/home/you tldw-cli',
+            "    HOME=/home/you tldw-cli",
         ]
     if reason in _DATA_ROOT_REASONS:
         # The HOW TO FIX block above already names the [paths] data_dir
@@ -333,7 +339,7 @@ def _alternative_lines(result: PrivatePathResult) -> list[str]:
     return [
         "ALTERNATIVE",
         "Keep the directory as it is and point the config elsewhere instead",
-        '(a file inside a directory only you can write):',
+        "(a file inside a directory only you can write):",
         "",
         '    TLDW_CONFIG_PATH="$HOME/tldw-config.toml" tldw-cli',
         "",

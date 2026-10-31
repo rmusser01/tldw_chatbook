@@ -648,7 +648,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR #3162 (2026-10-31): append the verified archive-card file only.
 # The mounted flow remains outside this addition pending qualification.
 # PR #3166: two independently verified regression nodes; retain all 1175 entries.
-MINIMUM_FILES = 1177
+# PR #3173, 2026-10-31: retain all 1177 base entries and append four reviewed nodes.
+MINIMUM_FILES = 1181
 
 
 def read_census(path: Path) -> list[str]:

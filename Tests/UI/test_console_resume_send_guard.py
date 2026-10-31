@@ -102,7 +102,7 @@ def _refused(notices: list[str]) -> bool:
     return any("still switching chats" in notice.lower() for notice in notices)
 
 
-def _hold_resume_hydration() -> Gate:
+def _hold_resume_hydration(monkeypatch) -> Gate:
     """Hold the next conversation resume at its conversation-tree DB read."""
     gate = Gate()
     _GATES.append(gate)
@@ -114,10 +114,8 @@ def _hold_resume_hydration() -> Gate:
             await gate.release.wait()
         return await real(*args, **kwargs)
 
-    workspace_module.load_console_conversation_tree = held
+    monkeypatch.setattr(workspace_module, "load_console_conversation_tree", held)
     return gate
-
-
 
 
 async def until_result(factory, *, timeout: float = 15.0):
@@ -129,6 +127,7 @@ async def until_result(factory, *, timeout: float = 15.0):
         await asyncio.sleep(0.02)
     raise AssertionError(f"timed out waiting for {factory}")
 
+
 def _resumed_session(store, conversation_id: str):
     """The store's active session once it owns the resumed conversation."""
     for item in store.sessions():
@@ -138,6 +137,7 @@ def _resumed_session(store, conversation_id: str):
         ):
             return item
     return None
+
 
 def _host() -> ConsoleHarness:
     app = _build_test_app()
@@ -189,7 +189,7 @@ async def _seed_saved_conversation(console, store):
 
 
 @pytest.mark.asyncio
-async def test_enter_during_a_conversation_resume_is_refused_visibly():
+async def test_enter_during_a_conversation_resume_is_refused_visibly(monkeypatch):
     """AC#1/#2: nothing dispatches mid-resume and the user is told why."""
     host = _host()
     async with _running(host) as pilot:
@@ -203,26 +203,26 @@ async def test_enter_during_a_conversation_resume_is_refused_visibly():
         dispatched = _record_dispatch(console)
         notices = _record_notices(console)
         composer.load_draft("typed during the resume")
-        gate = _hold_resume_hydration()
+        composer.focus()
+        await until(lambda: host.focused is composer)
+        gate = _hold_resume_hydration(monkeypatch)
 
         resume = asyncio.create_task(
             console._workspace.open_console_workspace_conversation(conversation_id)
         )
-        await until(gate.entered.is_set, timeout=10)
-        press(host, "enter")
-        await pilot.pause(0.2)
-
-        assert _refused(notices), (
-            "Enter during a resume activation must refuse visibly, got notices: "
-            f"{notices}"
-        )
-        assert dispatched == [], (
-            "nothing may dispatch while the resume activation is in flight; "
-            f"dispatched={dispatched!r}"
-        )
-
-        gate.release.set()
-        await until(lambda: resume.done(), timeout=15)
+        try:
+            await until(gate.entered.is_set, timeout=10)
+            press(host, "enter")
+            await until(lambda: _refused(notices), timeout=10)
+            assert dispatched == [], (
+                "nothing may dispatch while the resume activation is in flight; "
+                f"dispatched={dispatched!r}"
+            )
+        finally:
+            gate.release.set()
+            # The test owns this detached resume, including its native reads.
+            # Retire it before the harness can close the executor/databases.
+            await resume
         resumed = await until_result(
             lambda: _resumed_session(store, conversation_id), timeout=15
         )
@@ -267,3 +267,85 @@ async def test_enter_right_after_a_resume_settles_sends_to_the_resumed_chat():
         await until(lambda: bool(dispatched), timeout=15)
         assert dispatched[0][0] == resumed.id
         assert dispatched[0][1] == "sent right after the resume"
+
+
+def test_resume_refusal_records_only_code_owned_send_diagnostics(caplog):
+    import logging
+    from types import SimpleNamespace
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
+
+    notices = []
+    monitor = UIResponsivenessMonitor(enabled=False)
+    session = SimpleNamespace(
+        _conversation_activation_depth=1,
+        app_instance=SimpleNamespace(
+            ui_responsiveness_monitor=monitor,
+            notify=lambda message, **kwargs: notices.append(message),
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger="tldw_chatbook.diagnostics.console"):
+        try:
+            assert ConsoleSessionController.refuse_send_from_unbound_composer(session)
+        finally:
+            monitor.close()
+    assert _refused(notices)
+    assert not monitor._diagnostic_sink_failed
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "tldw_chatbook.diagnostics.console"
+    ]
+    assert messages == [
+        "event=console_send_stage component=console "
+        "operation=conversation_resume_activation phase=ui_submit status=not_dispatched"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason", ("pending_send_token_mismatch", "pending_send_slot_busy")
+)
+async def test_pending_send_refusals_reach_the_metadata_sink(reason, caplog):
+    import logging
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
+
+    notices = []
+    monitor = UIResponsivenessMonitor(enabled=False)
+    screen = SimpleNamespace(
+        _console_pending_send=(
+            None
+            if reason == "pending_send_token_mismatch"
+            else SimpleNamespace(session_id="test-session")
+        ),
+        _console_visible_send_session_id=lambda: "test-session",
+        app_instance=SimpleNamespace(
+            notify=lambda text, **kwargs: notices.append(text)
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger="tldw_chatbook.diagnostics.console"):
+        try:
+            async with send_diagnostic_scope("ui_action", monitor):
+                sent = (
+                    await ChatScreen._send_console_message_from_visible_action_observed(
+                        screen,
+                        pending_send_token=(
+                            object()
+                            if reason == "pending_send_token_mismatch"
+                            else None
+                        ),
+                    )
+                )
+            assert not sent
+        finally:
+            await asyncio.to_thread(monitor.close)
+    assert notices
+    assert not monitor._diagnostic_sink_failed
+    assert any(
+        f"operation={reason}" in record.getMessage()
+        and "status=not_dispatched" in record.getMessage()
+        for record in caplog.records
+    )

@@ -7162,6 +7162,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_stop_reasons.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
                 self._active_redirect_hooks.pop(session_id, None)
                 self._stop_requested = False
@@ -14654,50 +14655,22 @@ class ConsoleChatController:
                 if record["payload"]["session_id"] == session_id:
                     self._chat_creation_records.pop(token, None)
         self._stop_requested = True
-        self._active_stop_reasons[session_id] = str(reason or "user").strip() or "user"
         cancel_event = self._active_cancel_events.get(session_id)
         if cancel_event is None:
             cancel_event = self.prompt_queue_coordinator.pending_stop_cancellation(
                 session_id
             )
         if cancel_event is not None:
+            if session_id in self._active_cancel_events:
+                # A later teardown must never erase an explicit user Stop.
+                if reason == "user" or session_id not in self._active_stop_reasons:
+                    self._active_stop_reasons[session_id] = reason
             cancel_event.set()
             self.prompt_queue_coordinator.pause_for_stop(session_id)
             parent = self.prompt_queue_coordinator.interrupt_parent(session_id)
             if parent is not None:
                 self._interrupt_host.notify_hook_interrupt(cancel_event, *parent)
             self.prompt_queue_coordinator.cancel_pending_stop(session_id, cancel_event)
-
-    async def _finalize_despite_cancellation(self, coroutine: Any) -> Any:
-        """Run the terminal-state finalization so a cancel cannot skip it.
-
-        TASK-35311: ``shutdown()`` cancels the submit task, and the cancel
-        can land exactly on the await that writes the reply's terminal
-        state (Console UAT 2026-10-17 finding 2). The finalization coroutine
-        is shielded and drained to completion -- the ``_drain_owned``
-        pattern of ``console_chat_start`` -- so the terminal write always
-        lands even when its awaiter is cancelled mid-await. The drain is
-        bounded: a finalization that cannot finish within the bound gives
-        the cancellation back rather than wedging shutdown's drain await.
-        """
-        task = asyncio.ensure_future(coroutine)
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            deadline = time.monotonic() + 5.0
-            while not task.done() and time.monotonic() < deadline:
-                try:
-                    return await asyncio.wait_for(
-                        asyncio.shield(task),
-                        timeout=max(0.01, deadline - time.monotonic()),
-                    )
-                except asyncio.TimeoutError:
-                    break
-                except asyncio.CancelledError:
-                    continue
-            if task.done() and not task.cancelled():
-                return task.result()
-            raise
 
     def _active_stop_reason(self, session_id: str | None) -> str:
         """Why ``session_id``'s cancel event was set (TASK-35311).
@@ -18064,6 +18037,7 @@ class ConsoleChatController:
                 self._active_stream_tasks.pop(session_id, None)
                 self._active_assistant_message_ids.pop(session_id, None)
                 self._active_cancel_events.pop(session_id, None)
+                self._active_stop_reasons.pop(session_id, None)
                 self._active_steer_hooks.pop(session_id, None)
                 self._active_redirect_hooks.pop(session_id, None)
         for task in submit_tasks:
@@ -24646,6 +24620,7 @@ class ConsoleChatController:
                 # A no-op for the direct path, whose own finally already
                 # popped its own cancel_event before returning.
                 self._active_cancel_events.pop(owner_id, None)
+                self._active_stop_reasons.pop(owner_id, None)
                 # Review A-4 (2026-08-31): without this, a COMPLETED run left
                 # a stale steer hook, so the next /steer refused with the
                 # misleading "that run is not running" instead of the
@@ -27172,18 +27147,23 @@ class ConsoleChatController:
                     done_outcome is not None
                     and self._active_stop_reason(session_id) != "user"
                 ):
-                    return await self._finalize_despite_cancellation(
-                        self._finalize_agent_reply(
-                            assistant_message_id,
-                            session_id,
-                            done_outcome,
-                            variant_mode=variant_mode,
-                            cancel_event=cancel_event,
-                            run_id=run_id,
-                            citation_repair_session=citation_repair_session,
-                            stream_signals=stream_signals,
-                            resolution=resolution,
+                    # The cancellation has been consumed. Citation selection
+                    # must stay on this active stream task; its existing cancel
+                    # path retains the original body without dispatching repair.
+                    if citation_repair_session is not None:
+                        citation_repair_session.cancel_reason = self._active_stop_reason(
+                            session_id
                         )
+                    return await self._finalize_agent_reply(
+                        assistant_message_id,
+                        session_id,
+                        done_outcome,
+                        variant_mode=variant_mode,
+                        cancel_event=cancel_event,
+                        run_id=run_id,
+                        citation_repair_session=citation_repair_session,
+                        stream_signals=stream_signals,
+                        resolution=resolution,
                     )
                 # Whatever the provider already billed for this turn's
                 # completed steps is real money -- record it (partial)
@@ -27261,6 +27241,7 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(True, True, visible_copy)
         finally:
+            self._active_provider_workers.pop(session_id, None)
             if recovery_provider is not None:
                 await recovery_runtime.release(recovery_provider.authority)
             # Task 3b: this finally intentionally pops NONE of the three
@@ -27291,7 +27272,7 @@ class ConsoleChatController:
         # Kept as a direct await on purpose (TASK-35311): finalize must run
         # in THIS task -- the citation-repair post-generation step keys on
         # the running task's context -- and the shutdown-window recovery is
-        # shielded separately in the CancelledError handler above.
+        # handled on this same task in the CancelledError handler above.
         return await self._finalize_agent_reply(
             assistant_message_id,
             session_id,

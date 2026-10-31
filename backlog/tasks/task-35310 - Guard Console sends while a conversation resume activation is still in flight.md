@@ -1,17 +1,17 @@
 ---
 id: TASK-35310
-title: >-
-  Guard Console sends while a conversation resume activation is still in flight
-status: Done
+title: Guard Console sends while a conversation resume activation is still in flight
+status: In Progress
 assignee:
-  - Robert
-created_date: '2026-10-18 00:00'
+- Robert
+created_date: 2026-10-18 00:00
 labels:
-  - console
-  - send-admission
-  - uat
+- console
+- send-admission
+- uat
 priority: high
 dependencies: []
+updated_date: 2026-10-31 17:43
 ---
 
 ## Description
@@ -41,7 +41,7 @@ the refusal UX follows the shipped TASK-33622.7 tab-switch guard.
 - [x] No silent drop remains on this path: the pending-token and Enter-guard branches notify the user
 - [x] After the resume settles, Enter sends into the newly activated conversation
 - [x] A `console_send_stage` breadcrumb records the switch-in-flight refusal
-- [x] Existing tab-switch / send-guard / acknowledgement tests stay green
+- [ ] Existing tab-switch / send-guard / acknowledgement tests stay green
 <!-- SECTION:AC:END -->
 
 ## Implementation Plan
@@ -55,29 +55,32 @@ the refusal UX follows the shipped TASK-33622.7 tab-switch guard.
 3. `refuse_send_from_unbound_composer` refuses while the flag is set (existing copy).
 4. Louden the silent branches; add the send-stage breadcrumb.
 5. GREEN + adjacent suites.
+PR3173 repair (2026-10-31): preserve current dev repaint/received-intent custody while reconciling the resume guard; verify held hydration and settled sends with targeted tests; inspect actual diagnostic changes and regenerate affected inventory/census pins. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: routine fixes within existing owners. Owner waived size limits for this repair; retain measured pins and document any adjustment. Independent requesting-code-review replaces Qodo for this authorized backlog cleanup; the user later waived CI waiting; independent review and resolved threads still apply.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-- Approach: a reentrant `conversation_activation_window` on the Console session controller marks the
-  rail-row resume's slow path (hydration) as in flight; `refuse_send_from_unbound_composer` refuses
-  with the existing TASK-33622.7 "Still switching chats…" copy while the window is open, so Enter and
-  the Send button both get a visible refusal instead of pinning to the OLD chat and dying silently.
-- Belt: the two silent `return False` branches in `_send_console_message_from_visible_action_observed`
-  (pending-token mismatch, tokenless send while the slot is busy) now notify, and the Enter-guard
-  release in `send_acknowledgement._schedule` notifies ("Send is not available in this chat yet…").
-- The refusal also logs a WARNING (the press happens outside any `send_diagnostic_scope`, so a
-  `record_send_stage` breadcrumb there would be a silent no-op; the loudened in-scope branches do
-  emit `ui_submit/not_dispatched` with reasons).
-- Tests: `Tests/UI/test_console_resume_send_guard.py` (RED first: mid-window Enter produced no
-  notice and dispatched to the OLD chat) — mid-window refusal + post-settle delivery to the resumed
-  chat; adjacency suites (`tab_switch_binds_composer`, `send_resend_guard`, `send_acknowledgement`)
-  stay green.
-- Harness notes captured for the next person: seeded conversations need a FILE-backed DB at the
-  sandbox path plus `app._wire_chat_conversation_services()` after attach (the conversation browser
-  wires from `app.chachanotes_db` at __init__), and resumed sessions base their settings on
-  `chat_defaults` (seed llama defaults via `_configure_native_ready_console`).
-- Modified files: `UI/Console_Modules/session.py`, `UI/Console_Modules/workspace.py`,
-  `UI/Screens/chat_screen.py`, `UI/Console_Modules/send_acknowledgement.py`, plus the new test file.
-- ADR check: no new ADR — direct implementation of ADR-098's "boundary-racing drafts never stranded
-  or duplicated" promise using the refusal UX TASK-33622.7 already shipped.
+- Rebased PR3173 from `fcc6066d51857869c332e9d9779d5fb1098bb8f4` onto
+  `57e330e735` without replacing current dev repaint or received-intent ownership.
+  The reentrant hydration window visibly refuses Enter/Send and preserves the draft.
+- The refusal now emits `console_send_stage` through the existing app-owned monitor
+  with only fixed phase/status/operation values (the existing sink schema). The warning remains. Review of the
+  inventory statement diff found only the intended warning (+1, 29 to 30); no
+  draft, path, secret or private identifier is added to either diagnostic.
+  Actual sink regressions also repaired the two original pending-send breadcrumbs:
+  their unsupported reason field is now the existing operation field.
+- Repaired the regression harness: focus the composer before Enter, restore the
+  hydration patch, and await the detached resume before closing native owners.
+  The held-resume test is RED on base 57e330e735 and GREEN on this branch.
+  All five resume/refusal cases pass against the real metadata sink, including teardown.
+- Registered the four resume/send regression nodes in the existing UI census. Size
+  pins reflect exact measurements under the owner's 2026-10-31 size waiver;
+  no size check is disabled. Existing ADR-094/098/230 apply; no new ADR required.
+- Local controls: acknowledgement (9) and retained repaint (2) pass. The four
+  `test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere`
+  variants fail their pre-send mounted state assertion on BOTH base and branch;
+  `test_a_held_enter_never_resends_a_draft_a_spoken_send_took` also times out on
+  both. These are existing limits, not an all-green adjacent-suite claim.
+- Files: session/workspace/send_acknowledgement/chat_screen, resume tests,
+  diagnostic inventory, exact size pins, UI census and Console architecture docs.
+  Independent review/publication belongs to the coordinating agent. Status stays
+  In Progress until that review; the user waived waiting for CI, not local evidence.

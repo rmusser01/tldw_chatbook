@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from pathlib import Path
 
 import pytest
@@ -66,9 +65,7 @@ def _controller(tmp_path: Path, name: str) -> tuple:
 
 def _assistant_for_active_session(store) -> str:
     messages = store.messages_for_session(store.active_session_id)
-    assistant = next(
-        m for m in messages if m.role is ConsoleMessageRole.ASSISTANT
-    )
+    assistant = next(m for m in messages if m.role is ConsoleMessageRole.ASSISTANT)
     return assistant.id
 
 
@@ -113,9 +110,7 @@ async def test_stop_source_in_post_done_window_decides_terminal_state(
             # finalize runs (the CancelledError branch's _mark_stream_
             # stopped); finalize then treats it as a benign no-op.
             store.mark_message_stopped(assistant_message_id)
-        return "run-test", RunOutcome(
-            status=RUN_DONE, steps=[], final_text=REPLY_TEXT
-        )
+        return "run-test", RunOutcome(status=RUN_DONE, steps=[], final_text=REPLY_TEXT)
 
     controller._agent_bridge.run_reply = stopped_then_done_run_reply
     result = await asyncio.wait_for(controller.submit_draft("hi"), timeout=30)
@@ -127,13 +122,21 @@ async def test_stop_source_in_post_done_window_decides_terminal_state(
         f"a {stop_reason} stop after RUN_DONE must finalize "
         f"{expected_state!r}, got {stored.assistant_generation_state!r}"
     )
+    assert controller._active_stop_reasons == {}
+    assert controller._active_provider_workers == {}
     if expected_state == "complete":
         assert REPLY_TEXT in (stored.content or "")
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stop_reasons", "expected_state"),
+    ((("shutdown",), "complete"), (("user", "shutdown"), "stopped")),
+)
 async def test_shutdown_cancellation_at_the_worker_await_finalizes_complete(
     tmp_path: Path,
+    stop_reasons: tuple[str, ...],
+    expected_state: str,
 ) -> None:
     """The UAT's exact window: shutdown's signal-then-cancel lands while the
     submit task is suspended on the provider-worker await whose result is
@@ -162,7 +165,8 @@ async def test_shutdown_cancellation_at_the_worker_await_finalizes_complete(
     assistant_id = _assistant_for_active_session(store)
     session_id = store.active_session_id
 
-    controller._signal_stop(session_id=session_id, reason="shutdown")
+    for reason in stop_reasons:
+        controller._signal_stop(session_id=session_id, reason=reason)
     task.cancel()
     await asyncio.sleep(0)  # let the cancellation land at the gated await
     release.set()
@@ -170,8 +174,62 @@ async def test_shutdown_cancellation_at_the_worker_await_finalizes_complete(
         await asyncio.wait_for(task, timeout=15)
 
     stored = store.get_message(assistant_id)
-    assert stored.assistant_generation_state == "complete", (
-        "a shutdown cancel at the worker await must leave the DONE reply "
-        f"complete, got {stored.assistant_generation_state!r}"
+    assert stored.assistant_generation_state == expected_state, (
+        f"{stop_reasons!r} at the worker await must leave the DONE reply "
+        f"{expected_state}, got {stored.assistant_generation_state!r}"
     )
     assert REPLY_TEXT in (stored.content or "")
+
+
+@pytest.mark.asyncio
+async def test_shutdown_after_done_retains_citation_selection_ownership():
+    from Tests.Chat.test_console_local_citation_boundary import (
+        _controlled_citation_repair,
+    )
+
+    controller, store, gateway, _bridge, initial_body, _ = _controlled_citation_repair(
+        agent=True
+    )
+    real_worker = controller._chat_start.run_provider_worker
+    worker_done = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated_worker(session_id, operation):
+        result = await real_worker(session_id, operation)
+        worker_done.set()
+        await release.wait()
+        return result
+
+    controller._chat_start.run_provider_worker = gated_worker
+    task = asyncio.create_task(controller.submit_draft("question"))
+    try:
+        await asyncio.wait_for(worker_done.wait(), timeout=30)
+        assistant_id = _assistant_for_active_session(store)
+        repair = controller._active_citation_repair_sessions[store.active_session_id]
+        await controller.shutdown()
+        await task
+        assistant = store.get_message(assistant_id)
+        assert assistant.status == "complete"
+        assert assistant.content == initial_body
+        assert repair.selection_committed
+        assert gateway.calls == []
+        assert all(
+            row.role is not ConsoleMessageRole.SYSTEM
+            for row in store.messages_for_session(store.active_session_id)
+        )
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_retires_retained_worker(tmp_path):
+    controller, store = _controller(tmp_path, "provider-failure")
+
+    def fail(**kwargs):
+        raise RuntimeError("provider failed")
+
+    controller._agent_bridge.run_reply = fail
+    await controller.submit_draft("hi")
+    assert store.get_message(_assistant_for_active_session(store)).status == "failed"
+    assert controller._active_provider_workers == {}

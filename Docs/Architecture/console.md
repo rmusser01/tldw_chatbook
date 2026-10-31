@@ -183,6 +183,10 @@ The [guidance qualification receipts](../superpowers/qa/2026-10-20-workspace-pro
 record actual model/tool outcomes, saved policies and full Console snapshots,
 including platform and harness limits.
 
+Saved-conversation hydration holds the session controller's reentrant activation
+window. Enter and Send visibly refuse during that window, preserving the draft
+until activation settles (TASK-35310).
+
 ## Send lifecycle (dataflow)
 
 1. The stock composer enters `UI/Console_Modules/composer_run_controls.py::_dispatch_console_draft_send`. `wiring.receive_console_visible_intent` captures detached selection and authored input revisions, then calls `ConsoleRuntime.accept_received_intent`, which claims the existing per-session slot before checked configuration preparation. Receipt grants no execution or durable acceptance. The view can show Preparing while the runtime owns the task; repeated presses cannot acquire a second claim.
@@ -195,6 +199,12 @@ including platform and harness limits.
 8. **Approvals**: before dispatch the review hook collects pending calls and makes one `request_mcp_approvals` round trip — it mints a round id, mounts a `ChatApprovalCard` on the UI thread (or parks it for background sessions), and polls the event. Unanswered keys fail closed to deny/timeout so audit rows never claim a human Deny. Despite the "mcp" name, builtin tools use the same path.
 9. Turn terminal: the controller maps the agent outcome (`RUN_DONE`/`RUN_CANCELLED`/`RUN_ERROR`/`RUN_STUCK`) to final content and stamps the run state — which discards pending-approval flags, retries deferred wakes, fires the armed `Stop` hook, and schedules micro-compaction on a fresh COMPLETED transition.
 10. Persistence: the store flushes terminal content/thinking/usage through `ChatPersistenceService.commit_durable_turn` — the sole outer `BEGIN IMMEDIATE` that creates the conversation, library policy, and context policy atomically, returning a dispatch checkpoint. The finite native owner retains the original callback, physical handle and actual save outcome through repeated cancellation; shutdown drains issued work before creator close. A canceled accepted save settles through its retained terminal/recovery owner, without replaying an uncertain write.
+A completed provider outcome recovered after shutdown finalizes on the original
+stream task so citation selection retains its owner; shutdown cancels any remaining
+citation repair without sending another request. Explicit user Stop and unfinished
+streams keep their stopped outcomes. Stop reasons and retained provider workers
+retire with the owning turn (TASK-35311).
+
 11. Transcript render: `group_console_transcript_messages` folds each ASSISTANT message with its immediately following agent-owned TOOL markers into a `ConsoleAssistantTurn`; user-owned markers stay standalone and close the pending turn.
 
 Streaming details, transforms (skills → chat dictionaries → world info), swipes/branching, and the non-agent plain path are covered in [chat-pipeline.md](./chat-pipeline.md).

@@ -1,17 +1,18 @@
 ---
 id: TASK-35311
-title: >-
-  Finalize a DONE reply as complete when shutdown or session close lands after run end
-status: Done
+title: Finalize a DONE reply as complete when shutdown or session close lands after
+  run end
+status: In Progress
 assignee:
-  - Robert
-created_date: '2026-10-18 00:00'
+- Robert
+created_date: 2026-10-18 00:00
 labels:
-  - console
-  - durability
-  - uat
+- console
+- durability
+- uat
 priority: medium
 dependencies: []
+updated_date: 2026-10-31 17:46
 ---
 
 ## Description
@@ -40,8 +41,8 @@ parametrization and must not change.
 - [x] A cancellation landing after the run outcome is RUN_DONE with reason shutdown/session-close finalizes the message `complete` with full content
 - [x] User Stop after a DONE outcome still finalizes `stopped` (existing spec preserved)
 - [x] Shutdown of a still-streaming run still finalizes `stopped` (existing spec preserved)
-- [x] The finalization step is shielded so shutdown cannot skip the terminal write
-- [x] Adjacent stop/shutdown/finalize tests stay green
+- [x] Shutdown retains terminal-write ownership and citation selection stays on the active stream task
+- [ ] Adjacent stop/shutdown/finalize tests stay green
 <!-- SECTION:AC:END -->
 
 ## Implementation Plan
@@ -54,34 +55,30 @@ parametrization and must not change.
 3. CancelledError branch + `_finalize_agent_reply.stopped_now` become reason- and
    outcome-aware; shield the finalize call site (bounded drain).
 3. Variant tests for user-stop and mid-stream shutdown.
+PR3173 repair (2026-10-31): verify completed-result recovery against current provider and citation custody; retain explicit Stop and live-stream shutdown outcomes; add focused lifecycle regressions for any discovered issue, then test affected contracts. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/230-console-send-preparation-and-io-ownership.md. Reason: repair within existing terminal and cancellation owners. Owner waived size limits and CI waiting, with independent requesting-code-review before publication.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-- Approach: stop-reason threading. `_signal_stop` now records why each session's cancel event was
-  set (`user` / `shutdown` / `session_close`); callers updated (shutdown and `_finish_begin_shutdown`
-  pass "shutdown", both `begin_session_close` sites pass "session_close", Stop button and draft
-  supersession keep the "user" default). `_finalize_agent_reply.stopped_now` treats a set cancel
-  event as "must be stopped" only for user stops or non-DONE outcomes.
-- Outcome recovery: `_run_agent_reply` now runs the provider worker as a retained shielded task
-  (`_active_provider_workers` registry), so a shutdown cancel landing on the awaiting submit task
-  can recover the already-finished `(run_id, outcome)`; with RUN_DONE and a non-user reason the
-  CancelledError handler runs the success finalization via a bounded drain
-  (`_finalize_despite_cancellation`) instead of marking stopped.
-- Deliberately NOT shielded: the normal finalization call site stays a direct await in the submit
-  task — moving it into a task broke citation repair's post-generation step (regression caught by
-  `test_citation_repair_agent_real_genuine_fallback_copy_does_not_bypass`, reverted).
-- Semantics preserved (tests green): user Stop after DONE → `stopped`; shutdown of a still-streaming
-  run → `stopped` with partial content; accepted-but-not-dispatched turns settle via the untouched
-  `console_native_commit` path. Known adjacent case (documented, not changed): teardown landing
-  after the text renders but before the run outcome returns leaves `stopped` with full content —
-  the stream is not provably finished there.
-- Tests: `Tests/Chat/test_console_shutdown_after_done_finalization.py` (4, RED first), cloning the
-  `test_console_agent_swap.py` post-outcome-window harness; agent-swap and durable-turn-acceptance
-  suites re-run (2 pre-existing baseline-red stop tests documented, not caused by this change).
-- UAT validation: full `qa/console-uat-2026-10-17` re-run — 17/17 checkpoints, DB terminal states
-  now `complete` for J1/J2/J3 replies and `failed` for the injected 500.
-- Modified files: `Chat/console_chat_controller.py` (reason threading, recovery, drain helper),
-  plus the new test file.
-- ADR check: no new ADR — aligns terminal-state writes with the durability spec pinned by
-  TASK-337/task-227 tests inside the existing ADR-230/094 turn-lifetime boundaries.
+- A retained completed provider outcome survives late shutdown cancellation.
+  Recovery finalizes on the original stream task so citation selection keeps its
+  active owner, preserves the original answer and issues no repair request after
+  shutdown. The former detached finalizer completed the text but left citation
+  selection uncommitted; the new regression was RED before this repair.
+- Explicit user Stop remains stopped even if shutdown follows. Unfinished streams
+  and current dev's already-committed session-close cancellation gate are preserved;
+  a closed chat is never resurrected. Reason-only session-close window coverage is
+  distinct from deleting a session through that gate.
+- Stop reasons retire with their cancel-event owner; provider exceptions retire
+  retained worker entries. Both cleanup regressions were RED before the repair.
+- The finalization AC states ownership rather than prescribing shielding: the
+  existing ADR-094/230 citation contract requires the active stream task. No new
+  ADR is needed. This is repair inside the current cancellation/persistence owners.
+- Seven new/extended shutdown tests pass, including user-Stop-then-shutdown and
+  actual shutdown with armed citation repair. Thirteen targeted adjacent Stop,
+  shutdown and citation controls pass. The two `test_citation_repair_stop_while_
+  checking_cancels_before_dispatch` variants fail their five-second observation
+  wait on BOTH 57e330e735 and the repair; their failed runs also leave teardown
+  warnings. No green claim is made for those runs.
+- Controller, shutdown regressions, measured size pin, existing test lane and
+  Console architecture docs updated. The owner waived size limits and CI waiting;
+  independent review is still pending, so status remains In Progress.

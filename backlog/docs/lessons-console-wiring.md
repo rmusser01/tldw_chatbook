@@ -734,3 +734,25 @@ claim from several live runs, not one. After the first run, the guide said
 "text typed between the two clicks can land in either"; the third run put a
 key typed after the second click into the first tab, and the sentence had
 to widen.
+
+
+## A completed reply can still lack citation settlement after recovery (PR3173, 2026-10-31)
+
+Rebasing the DONE-result shutdown fix onto dev57e330e735 left the recovered reply
+complete, and its original status/content test passed. Asserting the retained
+citation session's selection_committed field exposed the missing outcome: a new
+finalizer task failed the active-stream task identity check. Finalizing on the
+original task and using its existing citation cancellation path retained the answer,
+committed selection, and made no extra provider request. Check the secondary
+owner's actual settlement as well as the visible message status when moving a
+terminal path across tasks. The focused regression failed before this repair.
+
+
+## A queued breadcrumb can still fail its metadata sink (PR3173, 2026-10-31)
+
+The resume refusal spy observed console_send_stage and passed, but the real
+UIResponsivenessMonitor drain rejected its reason field. The same original PR had
+used that unsupported field for both pending-send refusals. Real monitor plus
+persistent-sink regressions were RED until the calls used the already-admitted
+operation field. Exercise the actual sink once; observing a producer call alone
+cannot prove that its schema-approved event survives admission.

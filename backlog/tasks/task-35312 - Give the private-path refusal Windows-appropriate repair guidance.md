@@ -1,17 +1,17 @@
 ---
 id: TASK-35312
-title: >-
-  Give the private-path refusal Windows-appropriate repair guidance
-status: Done
+title: Give the private-path refusal Windows-appropriate repair guidance
+status: In Progress
 assignee:
-  - Robert
-created_date: '2026-10-18 00:00'
+- Robert
+created_date: 2026-10-18 00:00
 labels:
-  - windows
-  - private-paths
-  - ux
+- windows
+- private-paths
+- ux
 priority: medium
 dependencies: []
+updated_date: 2026-10-31 17:47
 ---
 
 ## Description
@@ -44,27 +44,24 @@ implementation) are deliberately unchanged — only the guidance copy branches p
    `_shared_writable_guidance`, `_alternative_lines` (platform seam).
 2. Implement the Windows copy in `Utils/startup_errors.py`.
 3. POSIX regression: existing startup-error tests stay green.
+PR3173 repair (2026-10-31): verify Windows and POSIX startup guidance, literal shell quoting and current CLI error boundary. Correct platform-dependent test assumptions without relaxing private-path enforcement. ADR required: no. ADR path: backlog/decisions/029-local-private-data-boundary.md; backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: copy-only fixes under existing native ACL policy.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-- Approach: platform-branched guidance only; the refusal semantics stay fail-closed exactly per
-  ADR-029/ADR-126 (the guard reads real NTFS ACLs; a %TEMP% that grants other principals write is
-  correctly refused).
-- `_is_windows()` seam (reads the `platform_files` facade, monkeypatchable) gates every branch:
-  shared-writable guidance explains the ACL cause and offers `icacls "<path>"` inspection (plus
-  the keep-under-user-profile recommendation, and a dedicated "this is your TEMP directory" note
-  via `_path_under_windows_temp`); ownership guidance drops `sudo chown` for Properties > Security;
-  generic guidance swaps `namei` for `icacls`; the ALTERNATIVE block uses PowerShell env syntax;
-  `private_path_repair_hint` returns None on Windows (no safe mechanical one-liner — blind
-  `icacls /remove` could break inheritance).
-- POSIX output is byte-identical (gated branches only).
-- Tests: 5 new Windows-branch tests in `Tests/Utils/test_startup_errors.py` (RED first) plus a
-  platform-agnostic POSIX-identity test; two existing tests that implicitly assumed the POSIX
-  branch are now pinned to it, and the double-emit subprocess test accepts either platform's
-  repair line. Remaining Windows failures in these two files are pre-existing
-  `Path("/home/...")`-vs-backslash mismatches (verified at baseline), unchanged by this task.
-- Modified files: `Utils/startup_errors.py`, `Tests/Utils/test_startup_errors.py`,
-  `Tests/test_cli_startup_private_path.py`.
-- ADR check: no new ADR — copy-only change inside the existing private-data boundary; ADR-029 and
-  ADR-126 linked here as the governing decisions.
+- Guidance branches by platform while private-path admission remains unchanged.
+  Windows explains real ACL write grants, identifies shared TEMP, offers literal
+  PowerShell `icacls` inspection and Properties > Security guidance, and uses
+  PowerShell environment syntax. There is no speculative ACL repair command.
+- Fixed the original double-quoted path interpolation bug: single-quoted
+  PowerShell literals escape apostrophes and retain `$()`, backticks and spaces.
+  The hostile-path regression was RED before this fix.
+- POSIX copy remains covered explicitly. The emitter/CLI tests now assert their
+  actual cross-platform contract. The startup subprocess uses an explicit private
+  test config path; on Windows only its disposable empty child receives a real
+  shared ACL, because chmod does not create the refusal under NTFS.
+- All 22 startup/CLI tests pass on Windows, including actual fail-closed startup;
+  together with the shutdown regressions the final direct run is 29 passed.
+  No profile ACL, path-validation policy or real user HOME was changed by the runner.
+- Files: startup_errors.py, its unit/integration tests and the existing test lane.
+  ADR-029/126 govern the unchanged private boundary; no new ADR required. Status
+  remains In Progress pending the coordinating agent's independent review.

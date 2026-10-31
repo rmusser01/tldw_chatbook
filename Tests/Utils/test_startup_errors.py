@@ -18,7 +18,7 @@ import os
 import shlex
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -43,7 +43,7 @@ def _refusal(
     reason: str,
     *,
     status: PrivatePathStatus = PrivatePathStatus.UNSAFE_PARENT,
-    offender_path: Path | None = Path("/home/ubuntu/.config"),
+    offender_path: Path | None = PurePosixPath("/home/ubuntu/.config"),
     offender_detail: str | None = (
         "mode drwxrwxr-x (0o775), owner uid=1000, group gid=1000"
     ),
@@ -51,7 +51,7 @@ def _refusal(
 ) -> PrivatePathError:
     return PrivatePathError(
         PrivatePathResult(
-            Path("/home/ubuntu/.config/tldw_cli"),
+            PurePosixPath("/home/ubuntu/.config/tldw_cli"),
             status,
             reason=reason,
             offender_path=offender_path,
@@ -64,7 +64,8 @@ def _refusal(
 # --- Formatter: what the user reads ------------------------------------------
 
 
-def test_shared_writable_guidance_names_chmod_command():
+def test_shared_writable_guidance_names_chmod_command(monkeypatch):
+    monkeypatch.setattr(startup_errors, "_is_windows", lambda: False)
     text = startup_errors.format_private_path_error(_refusal("shared_writable_parent"))
 
     # The exact repair command for the named directory.
@@ -104,7 +105,7 @@ def test_untrusted_owner_guidance_points_at_ownership():
     text = startup_errors.format_private_path_error(
         _refusal(
             "untrusted_directory_owner",
-            offender_path=Path("/home/ubuntu"),
+            offender_path=PurePosixPath("/home/ubuntu"),
             offender_detail="mode drwxr-x--- (0o750), owner uid=1000, group gid=1000",
             offender_mode=0o750,
         )
@@ -118,7 +119,9 @@ def test_untrusted_owner_guidance_points_at_ownership():
 
 def test_ambiguous_data_roots_guidance_mentions_explicit_choice():
     text = startup_errors.format_private_path_error(
-        _refusal("ambiguous_default_data_roots", offender_path=None, offender_detail=None)
+        _refusal(
+            "ambiguous_default_data_roots", offender_path=None, offender_detail=None
+        )
     )
 
     assert "data" in text.lower()
@@ -155,7 +158,7 @@ def test_emit_prints_formatted_error_to_stderr_once(capsys):
 
     startup_errors.emit_private_path_startup_error(error)
     first = capsys.readouterr().err
-    assert "chmod g-w,o-w -- /home/ubuntu/.config" in first
+    assert first == startup_errors.format_private_path_error(error) + "\n"
 
     # A second call (e.g. cli.py catching what config.py already reported)
     # must not duplicate the diagnostic on screen.
@@ -179,7 +182,7 @@ def test_config_import_prints_diagnostic_before_raising(tmp_path: Path) -> None:
     """`import tldw_chatbook.config` against a group-writable ~/.config must
     print the plain-language diagnostic and still fail closed.
 
-    Isolated subprocess (HOME-based, no TLDW_CONFIG_PATH) because the refusal
+    Isolated subprocess with an explicit config path because the refusal
     happens at module import: sys.modules is process-global, so an in-process
     check would false-pass once config is already imported.
     """
@@ -187,15 +190,24 @@ def test_config_import_prints_diagnostic_before_raising(tmp_path: Path) -> None:
 
     home = tmp_path / "home"
     (home / ".config").mkdir(parents=True)
-    (home / ".config").chmod(0o775)
+    if os.name == "nt":
+        # Only this disposable empty child receives a shared native ACL.
+        # chmod changes no Windows DACL and would not exercise the refusal.
+        subprocess.run(
+            ["icacls", str(home / ".config"), "/grant", "*S-1-1-0:(W)"],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        (home / ".config").chmod(0o775)
 
     env = {
         **os.environ,
-        "HOME": str(home),
+        "TLDW_CONFIG_PATH": str(home / ".config" / "config.toml"),
         "PYTHONPATH": str(REPO_ROOT),
         "TLDW_TEST_MODE": "1",
     }
-    env.pop("TLDW_CONFIG_PATH", None)
+    env.pop("TLDW_TEST_CONFIG_ROOT", None)
     env.pop("PYTEST_CURRENT_TEST", None)
 
     result = subprocess.run(
@@ -209,7 +221,7 @@ def test_config_import_prints_diagnostic_before_raising(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0, "the refusal must still fail closed"
-    assert "chmod g-w,o-w" in result.stderr
+    assert ("icacls" if os.name == "nt" else "chmod g-w,o-w") in result.stderr
     assert str(home / ".config") in result.stderr
     # The traceback stays available for bug reports on non-cli entry points.
     assert "Traceback" in result.stderr
@@ -239,13 +251,14 @@ def test_repair_commands_shell_quote_hostile_paths(monkeypatch):
     assert shlex.split(command_line)[-1] == str(hostile)
 
 
-def test_ownership_guidance_includes_chmod_when_mode_is_shared_writable():
+def test_ownership_guidance_includes_chmod_when_mode_is_shared_writable(monkeypatch):
     """A foreign-owned 0775 directory needs both repairs to restart cleanly."""
+    monkeypatch.setattr(startup_errors, "_is_windows", lambda: False)
 
     text = startup_errors.format_private_path_error(
         _refusal(
             "untrusted_directory_owner",
-            offender_path=Path("/home/ubuntu"),
+            offender_path=PurePosixPath("/home/ubuntu"),
             offender_detail="mode drwxrwxr-x (0o775), owner uid=1000, group gid=1000",
             offender_mode=0o775,
         )
@@ -258,7 +271,7 @@ def test_ownership_guidance_omits_chmod_when_mode_is_private():
     text = startup_errors.format_private_path_error(
         _refusal(
             "untrusted_directory_owner",
-            offender_path=Path("/home/ubuntu"),
+            offender_path=PurePosixPath("/home/ubuntu"),
             offender_detail="mode drwxr-x--- (0o750), owner uid=1000, group gid=1000",
             offender_mode=0o750,
         )
@@ -269,9 +282,7 @@ def test_ownership_guidance_omits_chmod_when_mode_is_private():
 def test_default_alternative_mentions_data_dir_escape_hatch():
     """The config alternative must not claim to fix data-side refusals."""
 
-    text = startup_errors.format_private_path_error(
-        _refusal("shared_writable_parent")
-    )
+    text = startup_errors.format_private_path_error(_refusal("shared_writable_parent"))
     assert "data_dir" in text
 
 
@@ -301,7 +312,7 @@ def test_windows_shared_writable_guidance_uses_icacls_not_chmod(monkeypatch):
     # chmod cannot change Windows ACLs; the Windows branch must not offer it.
     assert "chmod" not in text
     # The ACL inspection command names the blocked directory.
-    assert 'icacls "C:\\Users\\ubuntu\\.config"' in text
+    assert "icacls 'C:\\Users\\ubuntu\\.config'" in text
     # The cause is explained in Windows terms.
     assert "write access" in text
     # The escape hatch uses PowerShell env syntax, not POSIX assignment.
@@ -312,7 +323,9 @@ def test_windows_shared_writable_guidance_uses_icacls_not_chmod(monkeypatch):
 def test_windows_temp_offender_explains_shared_temp(monkeypatch):
     _windows(monkeypatch)
     monkeypatch.setattr(
-        startup_errors, "_windows_temp_dir", lambda: r"C:\Users\ubuntu\AppData\Local\Temp"
+        startup_errors,
+        "_windows_temp_dir",
+        lambda: r"C:\Users\ubuntu\AppData\Local\Temp",
     )
     text = startup_errors.format_private_path_error(
         _refusal(
@@ -329,12 +342,18 @@ def test_windows_repair_hint_has_no_mechanical_one_liner(monkeypatch):
     _windows(monkeypatch)
     # There is no safe single command that repairs an unknown ACL grant;
     # the guidance block carries the icacls detail instead of a fake fix.
-    assert startup_errors.private_path_repair_hint(
-        _refusal("shared_writable_parent", offender_path=Path(r"C:\Temp"))
-    ) is None
-    assert startup_errors.private_path_repair_hint(
-        _refusal("untrusted_directory_owner", offender_path=Path(r"C:\Temp"))
-    ) is None
+    assert (
+        startup_errors.private_path_repair_hint(
+            _refusal("shared_writable_parent", offender_path=Path(r"C:\Temp"))
+        )
+        is None
+    )
+    assert (
+        startup_errors.private_path_repair_hint(
+            _refusal("untrusted_directory_owner", offender_path=Path(r"C:\Temp"))
+        )
+        is None
+    )
 
 
 def test_windows_ownership_guidance_mentions_security_settings(monkeypatch):
@@ -353,8 +372,17 @@ def test_posix_branch_stays_byte_identical(monkeypatch):
 
     # Expected strings derive from the same Path the refusal carries, so
     # the assertion holds on POSIX CI and on a Windows dev box alike.
-    posix_offender = shlex.quote(str(Path("/home/ubuntu/.config")))
+    posix_offender = shlex.quote(str(PurePosixPath("/home/ubuntu/.config")))
     assert f"chmod g-w,o-w -- {posix_offender}" in text
     assert "TLDW_CONFIG_PATH=" in text and "tldw-cli" in text
     assert "$env:TLDW_CONFIG_PATH" not in text
     assert "icacls" not in text
+
+
+def test_windows_inspection_command_quotes_powershell_metacharacters(monkeypatch):
+    _windows(monkeypatch)
+    path = r"C:\Users\O'Brien\$(Write-Output sentinel) `data"
+    text = startup_errors.format_private_path_error(
+        _refusal("shared_writable_parent", offender_path=Path(path))
+    )
+    assert "icacls 'C:\\Users\\O''Brien\\$(Write-Output sentinel) `data'" in text

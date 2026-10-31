@@ -5939,6 +5939,15 @@ class ConsoleSessionController:
             True when the action was refused.
         """
         if self._conversation_activation_depth > 0:
+            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_diagnostic(
+                    "console",
+                    "console_send_stage",
+                    phase="ui_submit",
+                    status="not_dispatched",
+                    operation="conversation_resume_activation",
+                )
             logger.warning(
                 "Console {} refused: conversation resume activation in flight",
                 action,
