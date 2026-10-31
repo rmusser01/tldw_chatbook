@@ -209,12 +209,22 @@ class SQLiteStoreKernel:
                 else self._get_connection(operation_deadline=operation_deadline)
             )
             self._thread_local.conn = conn
+            self._on_connection_opened(conn)
         if operation_deadline is not None and time.monotonic() >= operation_deadline:
             if opened_here:
                 self.close()
             raise TimeoutError("Database connection budget exhausted")
         self._thread_local.conn_last_used = time.monotonic()
         return conn
+
+    def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
+        """Hook: a fresh connection just entered this thread's cache.
+
+        Stores that track ALL connections they own for cross-thread
+        shutdown (e.g. Dreams_DB's ``close_all``) override this to
+        register; the kernel itself keeps no global registry.
+        """
+
 
     @_core_transaction
     @contextmanager

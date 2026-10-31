@@ -1037,8 +1037,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "944f225c1c82b4016a67",
+      "call_count": 1,
+      "diagnostic_digest": "afa759d482c3c25a95f8",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Guardian_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
