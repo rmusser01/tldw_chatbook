@@ -230,6 +230,7 @@ def build_console_setup_card_state(
     has_messages: bool,
     guidance_dismissed: bool,
     model: str = "",
+    held_copy: str = "",
 ) -> ConsoleSetupCardState:
     """Derive the onboarding surface state from the readiness single source.
 
@@ -243,18 +244,24 @@ def build_console_setup_card_state(
         has_messages: Whether the active transcript has any messages.
         guidance_dismissed: In-session dismissal (user started composing).
         model: The selected model, named in the ready line (TASK-34100.5).
+        held_copy: The emergency stop's copy while it holds new runs, else ""
+            (TASK-33620.1). Once setup is done the empty transcript says the
+            hold instead of "Ready — type a message to begin.".
 
     Returns:
         Card state: full ``card`` while setup is incomplete, one ``ready_line``
         when setup is complete but nothing was ever sent, ``quiet`` otherwise.
     """
-    if has_messages or first_send_completed:
-        return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
-
     provider_done = readiness.operability == "ready_to_send" or readiness.blocker in {
         "model_missing",
         "active_run",
     }
+    held = str(held_copy or "").strip()
+    if held and (has_messages or first_send_completed or (provider_done and has_model)):
+        return ConsoleSetupCardState(mode="quiet", body_copy=held)
+    if has_messages or first_send_completed:
+        return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
+
     if provider_done and has_model:
         if guidance_dismissed:
             return ConsoleSetupCardState(

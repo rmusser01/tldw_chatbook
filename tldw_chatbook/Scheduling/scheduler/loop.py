@@ -231,6 +231,8 @@ class SchedulerLoop:
         #: "an earlier handler held the loop", which is simply false.
         self._last_tick_dispatch_seconds: float = 0.0
         self._tick_count = 0
+        #: TASK-33620.1: the last tick held its due work for the emergency stop.
+        self._held_by_emergency_stop = False
         self._reload_condition = threading.Condition()
         self._reload_requested_serial = 0
         self._reload_acknowledged_serial = 0
@@ -703,6 +705,9 @@ class SchedulerLoop:
                 last_error=self._last_error,
                 poll_interval=self.poll_interval,
                 tick_count=self._tick_count,
+                held_by_emergency_stop=getattr(
+                    self, "_held_by_emergency_stop", False
+                ),
             ),
         )
 
@@ -767,7 +772,9 @@ class SchedulerLoop:
         Fail-safe: an unreadable stop state reads as stopped, so a doubt
         holds work rather than proceeding (AC#4).
         """
-        if await self._emergency_stopped():
+        # TASK-33620.1: the heartbeat this tick writes says whether it held.
+        self._held_by_emergency_stop = await self._emergency_stopped()
+        if self._held_by_emergency_stop:
             logger.debug("scheduler: emergency stop active; holding due dispatches")
             return
         due = self.queue.pop_due(now)

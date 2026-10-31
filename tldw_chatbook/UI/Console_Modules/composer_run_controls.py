@@ -406,6 +406,54 @@ async def stop_command(screen: Any, parse: Any) -> bool:
     return True
 
 
+# TASK-33620.1: the emergency stop's Console view lives in
+# ``emergency_stop_hold``; these entries load it on first use (ADR-097).
+async def emergency_stop_command(screen: Any, parse: Any) -> bool:
+    """``/emergency-stop [clear|<reason>]`` (``emergency_stop_hold.run_command``)."""
+    from . import emergency_stop_hold
+
+    return await emergency_stop_hold.run_command(screen, parse)
+
+
+async def clear_emergency_stop(screen: Any) -> None:
+    """The status strip's Clear (``emergency_stop_hold.clear_from_strip``)."""
+    from . import emergency_stop_hold
+
+    await emergency_stop_hold.clear_from_strip(screen)
+
+
+def emergency_stop_still_held(screen: Any) -> bool:
+    """Whether a send the cached hold refuses is still held (``still_held``).
+
+    Free while the view says not held: no module load, no read.
+    """
+    if not screen._console_emergency_stop_copy:
+        return False
+    from . import emergency_stop_hold
+
+    return emergency_stop_hold.still_held(screen)
+
+
+def schedule_emergency_stop_refresh(screen: Any) -> None:
+    """Re-read the stop off the UI loop once the arriving Console has painted."""
+
+    async def refresh() -> None:
+        import asyncio
+
+        # ADR-097: the stop's module and its disk read start after first paint.
+        while not getattr(screen.app, "_ui_ready", True):
+            await asyncio.sleep(0.1)
+        from . import emergency_stop_hold
+
+        await emergency_stop_hold.refresh(screen)
+
+    screen.call_after_refresh(
+        lambda: screen.run_worker(
+            refresh(), group="console-emergency-stop", exclusive=True
+        )
+    )
+
+
 async def redirect_from_draft(screen: Any) -> None:
     """Redirect the running turn, taking the composer draft as the correction.
 
