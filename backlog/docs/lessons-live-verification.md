@@ -9,9 +9,9 @@ points; Anthropic haiku, 160x45, load 2-12), one growing chat per arm, four
 sends per launch: the same build's projection rose from 45.5 ms of thread
 CPU per window at launch 4 (about 30 messages) to 63.3 ms at launch 13
 (about 100), with nothing else changed; the first launch of an earlier
-round, in a new chat, had put dev at 40 ms of wall. Launches that also timed about 70 inner code objects
-(to rank components) sat 2-20% above their roots-only neighbours, which is
-small next to the chat-length drift.
+round, in a new chat, had put dev at 40 ms of wall. Launches that also
+timed about 70 inner code objects (to rank components) sat 2-20% above their
+roots-only neighbours, which is small next to the chat-length drift.
 
 **What to do.** Compare arms launch by launch (interleaved, same message
 count in each arm's chat), and report the chat length beside any absolute

@@ -1485,8 +1485,15 @@ it), 3.8 ms of thread CPU per flip in the harness. And assigning
 button's own state classes pay theirs (Stop paid four for one availability
 flip). Batch the swap with `update_classes`; for a class no rule uses on a
 descendant, restyle just the node (`update_classes(..., update=False)` then
-`app.stylesheet.update_nodes([node])`, with a parsed-rule guard as above);
-for a variant, set the reactive with `set_reactive` and fold the watcher's
+`app.stylesheet.update_nodes([node])`, with a parsed-rule guard as above).
+That is safe only while the class's rules set nothing the node's children
+read from it: a child caches its rendered style (`_visual_style_cache`,
+`_rich_style_cache`) keyed on its OWN pseudo-classes and clears it only when
+it is itself restyled, so a status rule setting `color`, `background`,
+`text-style`, `opacity`, `tint` or a `link-*` style would leave the children
+painting the old value. Have the guard reject those properties too (the
+Workbench status rules set only `border-title-color`, which the node paints).
+For a variant, set the reactive with `set_reactive` and fold the watcher's
 two classes into the same batch, and pin the watcher's source in a test so
 a Textual upgrade cannot change what you are mirroring
 (`Tests/UI/test_console_projection_restyles.py`).
