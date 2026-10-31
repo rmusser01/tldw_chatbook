@@ -65,9 +65,8 @@ def arguments(installation_id, name, declaration):
     }
 
 
-def capture_mapping(
-    coordinator, installation_id, inspection, component_id, name, target
-):
+def _retained_mapping(installation_id, inspection, component_id, name, target):
+    """Rebuild the reviewed row without consulting mutable credential storage."""
     component = inspection.inventory[component_id]
     declarations = json.loads(inspection.variables_json)
     if (
@@ -77,9 +76,15 @@ def capture_mapping(
     ):
         raise ValueError("plugin_variable_mapping_invalid")
     declaration = declarations[name]
-    metadata = credentials(coordinator).validate_variable(
-        *reference(target), **arguments(installation_id, name, declaration)
-    )
+    reference_id, generation = reference(target)
+    metadata = {
+        "schema": 2,
+        "kind": "plugin_variable",
+        "reference_id": reference_id,
+        "authority_generation": generation,
+        **arguments(installation_id, name, declaration),
+        "revoked": False,
+    }
     return {
         "installation_id": installation_id,
         "revision_digest": inspection.effective_digest,
@@ -102,7 +107,19 @@ def capture_mapping(
     }
 
 
-def validate_mapping(coordinator, mapping, inspection):
+def capture_mapping(
+    coordinator, installation_id, inspection, component_id, name, target
+):
+    mapping = _retained_mapping(installation_id, inspection, component_id, name, target)
+    credentials(coordinator).validate_variable(
+        *reference(target),
+        **arguments(installation_id, name, json.loads(inspection.variables_json)[name]),
+    )
+    return mapping
+
+
+def _validate_retained_mapping(mapping, inspection):
+    """Check authenticated binding, not readiness; return its declared name."""
     names = [
         name
         for name in consumed(inspection.inventory[mapping["component_id"]])
@@ -110,8 +127,7 @@ def validate_mapping(coordinator, mapping, inspection):
     ]
     if (
         len(names) != 1
-        or capture_mapping(
-            coordinator,
+        or _retained_mapping(
             mapping["installation_id"],
             inspection,
             mapping["component_id"],
@@ -121,6 +137,19 @@ def validate_mapping(coordinator, mapping, inspection):
         != mapping
     ):
         raise ValueError("plugin_variable_mapping_changed")
+    return names[0]
+
+
+def validate_mapping(coordinator, mapping, inspection):
+    name = _validate_retained_mapping(mapping, inspection)
+    credentials(coordinator).validate_variable(
+        *reference(mapping["target_reference"]),
+        **arguments(
+            mapping["installation_id"],
+            name,
+            json.loads(inspection.variables_json)[name],
+        ),
+    )
 
 
 def values(

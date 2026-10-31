@@ -36,3 +36,64 @@ Read actual changed diagnostic statements before regeneration. One unchanged ref
 ## Outstanding review and limits
 
 The one shutdown-owner control (`shutdown-base-control-1793471166497534400`) overlaid only app_lifecycle.py and Utils/app_shutdown.py from exact dev57e330, then restored both byte-for-byte in finally. The navigation body again passed and the same native-worker/config-retirement and executor-timeout teardown errors occurred. This isolates the extraction from the cause; it is not a full-base result and does not qualify teardown as green. No further mounted rerun is claimed. Final independent full-PR review is pending. There is no claim of full-suite success, current hosted-CI success, native macOS execution, real keychain interoperability, third-party host parity or release qualification. Historical task/QA outcomes describe their recorded revisions and are not substituted for current-head evidence.
+
+
+## Independent review repair: retained variable recovery
+
+Review of `8c0246b2d588cdb1d985303d21353ebffc15a647` found that normal
+variable revocation left its authenticated mapping intact, but the next recovery
+validated that retained mapping against the now-revoked credential. Recovery
+cleared publication and refused, so restart lost the whole catalog and every
+replacement commit failed at its initial recovery boundary.
+
+Recovery now reconstructs the closed variable mapping from its retained
+component/declaration and original reference handle, checking the complete row
+including the original value-free credential metadata digest. It does not need a
+currently available external value to retain that reviewed selection. Only this
+variable recovery branch changes: review, new configuration commit, admission and
+launch still use the actual credential owner, and non-variable mappings retain
+their existing validation. ADR162's typed-value paragraph clarifies this existing
+readiness/recovery contract; no new ADR, schema, permission owner or platform
+support is introduced. The authoring guide now limits substitution to argv and
+environment and describes cwd as a literal captured package-relative directory.
+
+Exact source copies, commands, output and SHA-256 manifests are retained in
+sibling directories (host-local evidence, not tracked):
+
+- `../recovery-review-red-1793472339860312500`: 2 expected failures (revoked and
+  missing references returned recovery_required), 6 passes (active reference and
+  changed-binding controls), 4 Darwin-only skips. This ran before production edits.
+- `../recovery-review-green-1793472483274362700`: 115 passed, 38 Darwin-only skips,
+  1 Pydantic warning in 177.05s across `test_variable_recovery.py`,
+  `test_declared_variables.py` and `test_credential_bindings.py`. The runner also
+  printed the existing pytest-asyncio unset-loop-scope deprecation warning.
+  Source copies remain byte-identical to the committed Python changes.
+
+The ten portable recovery controls execute the actual recovery body, mapping
+validation and credential owner with explicit persistence/retained-inspection
+boundary doubles. They establish revoked/missing recovery separation, preserved
+live capture/validation/resolution refusal, owner-issued metadata-digest
+compatibility, and changed binding/declaration refusal. They do not qualify native
+persistence, secure-marker authentication or native restart. Four added native
+cases cover recover -> reopen -> usable independent sibling + refused hook ->
+replacement or unset commit, followed by real hook execution for replacement.
+Unset uses the supported complete-set review with a valid COUNT mapping retained
+while TOKEN is removed. These four and the existing revoked-before-commit native
+control are skipped on this Windows host, not claimed green. Production Darwin
+qualification/refusal gates are unchanged.
+
+Ruff formatting passes for all four Python files. Targeted lint has no new
+findings; variables.text retains its pre-existing exact-bool E721 diagnostic
+(the explicit type check is unchanged), and the other three files pass default
+Ruff checks. All touched Python parses and git diff --check passes. Black is not
+installed in the shared interpreter; installed Ruff supplied formatting without
+adding dependencies. No governed production module crosses a size threshold;
+no size pin changes were needed under the dated user waiver.
+
+The actual diagnostic statement comparison against the reviewed head found zero
+calls in both modified production modules before and after. Inventory rebuild
+matches exactly: 710 owners, 1058 TASK492, 56 TASK31551, 7772 TASK494 calls and 16
+sink files. No inventory regeneration or changed logging statement was needed.
+Task32695 remains In Progress for independent review/publication. No full suite,
+hosted CI, native Darwin execution, keychain interoperability, push or merge is
+claimed by this repair.

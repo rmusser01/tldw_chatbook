@@ -83,8 +83,10 @@ Legacy six-event configuration keeps its existing version-1 behavior.
 
 Declare `variables` in the Chatbook extension with `type` (`string`, `integer`
 or `boolean`), `required` and `secret`. Optional nonsecret declarations may have
-a typed `default`. A command hook consumes `${NAME}` in argv, cwd or environment,
-or an exact `{"variable": "NAME"}` environment value. Substitution happens once;
+a typed `default`. A command hook consumes `${NAME}` in argv or environment,
+or an exact `{"variable": "NAME"}` environment value. Its optional `cwd` is a
+literal captured package-relative directory, with no variable substitution.
+Substitution in argv and environment happens once;
 a value containing another placeholder remains data. Strings are bounded to
 16 KiB UTF-8; integers are signed 64-bit and booleans are not integers.
 

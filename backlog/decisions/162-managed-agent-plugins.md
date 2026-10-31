@@ -1039,9 +1039,14 @@ Use existing authenticated `configuration` rows per consuming component/name:
 `mapping_id = "variable:" + sha256(component_id + NUL + name)`, owner-issued
 handle as target reference, component/declaration definition digest and
 value-free reference-metadata configuration digest, with `credential_bindings=[]`.
-Variable mappings are not HTTP credentials. Existing capture/recovery/currentness
-validation checks these rows through the same owning service. No new SQLite or
-authority schema is required for that existing row shape.
+Variable mappings are not HTTP credentials. Capture, new configuration commit
+and currentness validation check these rows through the same owning service.
+Recovery authenticates the retained row and its original declaration/reference
+binding, including the value-free metadata digest, without requiring that the
+external value remain available. Revoked or missing references preserve the
+reviewed selection for replacement or unset while affected use remains refused.
+This recovery correction (PR3148 independent review, 2026-10-31) grants no live
+credential readiness. No new SQLite or authority schema is required.
 
 Readiness follows actual consumed references and dependency closure. Unused
 required declarations do not globally block independent siblings. Unset,

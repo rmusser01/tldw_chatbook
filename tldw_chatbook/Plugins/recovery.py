@@ -216,6 +216,16 @@ def recover_coordinator(coordinator: PluginCoordinator) -> tuple[OperationReceip
         if expired:
             registry.forget_operation_hints(tuple(sorted(expired)))
         for mapping in target["mappings"]:
+            if mapping["mapping_id"].startswith("variable:"):
+                from .variables import _validate_retained_mapping
+
+                _validate_retained_mapping(
+                    mapping,
+                    inspections[
+                        (mapping["installation_id"], mapping["revision_digest"])
+                    ],
+                )
+                continue
             coordinator.validate_mapping(
                 mapping,
                 inspections[(mapping["installation_id"], mapping["revision_digest"])],

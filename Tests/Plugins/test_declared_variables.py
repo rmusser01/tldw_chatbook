@@ -83,6 +83,7 @@ async def variable_case(tmp_path, native_package, request):
             marker=marker,
             hook=hook,
             protected=protected,
+            local=local,
             backend=backend,
             tmp_path=tmp_path,
         )
@@ -993,3 +994,94 @@ async def test_legacy_resume_refuses_native_rows_without_captured_custody(
     ):
         await service.resume_maximum(maximum, checkpoint, "conversation", "message")
     assert not service.live_runs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["revoked", "missing"])
+@pytest.mark.parametrize("repair", ["replace", "unset"])
+async def test_unavailable_selected_reference_survives_recovery_and_reopen(
+    variable_case, change, repair
+):
+    from Tests.Agents.test_hooks_v2_execution import event
+    from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+    from tldw_chatbook.Plugins.service import PluginService
+    from tldw_chatbook.Plugins.variables import handle
+
+    case = variable_case
+    case.hook.pop("match")
+    (case.package / "hooks.json").write_text(
+        json.dumps({"version": 2, "hooks": [case.hook]})
+    )
+    installed = await install_components(
+        case.service, case.package, ("skill:review", "hook:guard")
+    )
+    metadata = await case.service.create_variable_reference(
+        installed.installation_id, "TOKEN", "original"
+    )
+    review = await case.service.review_configuration(
+        installed.installation_id, variables={"TOKEN": handle(metadata)}
+    )
+    assert (await case.service.commit(review, review.operation_id)).committed
+    if change == "revoked":
+        await case.service.revoke_variable_reference(
+            installed.installation_id, metadata["reference_id"]
+        )
+    else:
+        del case.backend.records[metadata["reference_id"]]
+    receipts = await case.service.recover()
+    assert receipts and all(row.committed for row in receipts)
+    await case.service.aclose()
+    case.service = PluginService(
+        case.tmp_path / "profile",
+        workspace_lookup=lambda _: SimpleNamespace(archived=False),
+        marker_store_factory=lambda _: FilePluginMarkerStore(
+            case.tmp_path / "variable-marker"
+        ),
+        accept_reduced_protection=True,
+        mcp_mapping_owner=case.local,
+    )
+    try:
+        await case.service.unlock("private test passphrase")
+        unavailable = await capture(case, installed.installation_id)
+        assert unavailable.selection == ("skill:review",)
+        assert unavailable.unavailable_hooks == ("hook:guard",)
+        await case.service._call(
+            lambda: case.service._admission.check(unavailable, "skill:review")
+        )
+        engine = hook_engine(case, unavailable)
+        try:
+            outcome = await engine.fire_async(event())
+            assert not outcome.allowed and not outcome.succeeded
+            assert not case.marker.exists()
+        finally:
+            await engine.close()
+        variables = {}
+        if repair == "replace":
+            replacement = await case.service.create_variable_reference(
+                installed.installation_id, "TOKEN", "replacement"
+            )
+            variables["TOKEN"] = handle(replacement)
+        else:
+            count = await case.service.create_variable_reference(
+                installed.installation_id, "COUNT", 4
+            )
+            variables["COUNT"] = handle(count)
+        review = await case.service.review_configuration(
+            installed.installation_id, variables=variables
+        )
+        assert (await case.service.commit(review, review.operation_id)).committed
+        current = await capture(case, installed.installation_id)
+        if repair == "unset":
+            assert current.selection == ("skill:review",)
+            assert current.unavailable_hooks == ("hook:guard",)
+            return
+        assert "hook:guard" in current.selection and not current.unavailable_hooks
+        engine = hook_engine(case, current)
+        try:
+            outcome = await engine.fire_async(event())
+            assert outcome.allowed and outcome.succeeded
+            assert case.marker.read_text() == "replacement"
+        finally:
+            await engine.close()
+    finally:
+        await case.service.aclose()
