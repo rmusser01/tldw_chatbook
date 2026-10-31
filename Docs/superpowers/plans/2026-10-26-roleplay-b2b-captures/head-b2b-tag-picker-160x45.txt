@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › Ada (Debugging Partner)                                                                          No chat provider · Settings ›   Local
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─ Characters 28 ─────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                 Import… <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │ │ Search…            Name Tag + New ││ Charact╭──────────────────────────────────────────────────────────╮        ││  Inspector                       >  │ │
+│ │  ▸  Ada (Debugging Partner)         ││  Name: │                                                          │        ││ Selected: Ada (Debugging Partner)   │ │
+│ │     ARIA-7                          ││        │  Filter by tag                                           │        ││ Type: character                     │ │
+│ │     Brother Anselm                  ││  Descri│  ┌────────────────────────────────────────────────────┐  │ng      ││ Validation: OK                      │ │
+│ │     Captain Isolde Varga            ││  questi│  │  Filter tags...                                    │  │        ││ Conversations (0)                   │ │
+│ │     Chef Auguste                    ││  Person│  └────────────────────────────────────────────────────┘  │        ││   Search this character's chats     │ │
+│ │     Coach Pemberton                 ││        │   All (clear filter)                                     │        ││  No saved conversations.            │ │
+│ │     Default Assistant               ││  First │   1950s                                                  │        ││                                     │ │
+│ │     Detective Rosa Calderón         ││  instea│   adventure                                              │        ││ Readiness                           │ │
+│ │     Dungeon Master Vex              ││  System│   aetheria                                               │        ││ Chat now blocked: openai is not     │ │
+│ │     Grumpy Barista Bot              ││        │   ai                                                     │        ││ ready: Missing API key. Set         │ │
+│ │     Hana Kobayashi                  ││ Tags: a│   ambiguous-ai                                           │        ││ OPENAI_API_KEY or add api_key under │ │
+│ │     Kestrel                         ││ Alterna│   assistant                                              │        ││ [api_settings.openai].              │ │
+│ │     Lady Evangeline Thornwood       ││        │   built-in                                               │        ││              Chat now               │ │
+│ │     Luna — Night Marke…une Teller   ││  Voice │   captain                                                │        ││        Send to Console draft        │ │
+│ │     Marisol the Herbalist           ││  Use gl│   character                                              │   ▼    ││             Export JSON             │ │
+│ │     Mo                              ││  Using │   chatbook                                               │        ││             Export PNG              │ │
+│ │     Nyx                             ││    Crea│   city                                                   │        ││          Export Actor Pack          │ │
+│ │     Old Man Willow                  ││ Avatar:│   coding                                                 │        ││              Duplicate              │ │
+│ │     Pip the Courier                 ││        │   collaborator                                           │        ││               Delete                │ │
+│ │     pixel-migu                      ││        │   comedy                                                 │        ││            Manage Buddy             │ │
+│ │     Professor Bartholo…th Archive   ││        │   companion                                              │        ││             Show Buddy              │ │
+│ │     Samira “Sammy” Vadem            ││        │  Enter to pick - Esc to cancel                           │        ││             Close Buddy             │ │
+│ │     Ser Corwin of the Ashen Vale    ││        │                                                          │        ││            Disable Buddy            │ │
+│ │     Sir Reginald the Unready        ││        ╰──────────────────────────────────────────────────────────╯        ││                                     │ │
+│ │     Spanish Tutor Elena             ││                                                                            ││                                     │ │
+│ │     The Lighthouse Keeper           ││                                                                            ││                                     │ │
+│ │     Wren Halloway                   ││                                                                            ││                                     │ │
+│ │     Zed, the Retired Assassin       ││                                                                            ││                                     │ │
+│ │                                     ││                                                                          ▇ ││                                     │ │
+│ │                                     ││    Edit     Conversations (0)                                              ││                                     │ │
+│ ╰────────────────────────── #1 of 28 ─╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit
