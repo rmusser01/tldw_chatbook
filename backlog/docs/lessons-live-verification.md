@@ -1,5 +1,46 @@
 # Lessons: verifying against the real thing
 
+## A seeded profile copied for each launch is refused as `recovery_scope_uncertain` (TASK-33620.15.19, 2026-10-30)
+
+**Incident.** The paired first-send rounds needed the same seeded profile on
+every launch: a note in Library, a conversation whose Library Auto was set to
+Automatic, the BM25 Only RAG profile and the downloaded embedding model, all
+made once through the real app. The driver restored it before each launch with
+`cp -R` of a pristine copy to the same path. The app then exited before the
+splash, and the pane closed with it, so nothing showed what had happened. The
+same launch command, with the pane kept open, printed `Recovery required:
+recovery_scope_uncertain`. The ADR-126 admission registry under
+`home/.config/tldw_cli/recovery-bootstrap/` pins each file's inode
+(`Backup_Recovery/bootstrap.py`, `inode_token`), and every file in a copy has a
+new inode. Deleting the copy's `recovery-bootstrap/` directory let the app
+re-enrol the copied data. It started with the seeded chat, note and policy
+intact, and all 8 paired launches ran.
+
+**What to do.** To give each launch a fresh copy of a seeded profile, copy the
+whole profile, then remove the copy's `home/.config/tldw_cli/recovery-bootstrap/`
+by its literal path. Never remove the one in the template or in your own
+HOME. When a launched app's tmux pane disappears at once, rerun the same
+command with `; echo EXIT=$?; sleep 60` appended before you start guessing.
+
+## A natural-language prompt finds nothing for an Automatic Library send on a fresh profile (TASK-33620.15.19, 2026-10-30)
+
+**Incident.** Two seed sends meant to exercise the Library evidence path came
+back "Library: 0 matches · sent without Library evidence", though a note with
+the answer was in Library. On the default Hybrid Basic profile the semantic leg
+logged `rag_activation_required` (RAG was never activated in the scratch
+profile) and its keyword leg matched nothing. After switching to BM25 Only, the
+Library's own keyword search still found nothing for "in one short sentence,
+who invented the Fresnel lens for lighthouses?", because its FTS query requires
+every term (`Library/library_fts_query.py`). The prompt "Fresnel lens
+lighthouse keepers", every term of which is in the note, gave "Library: 1
+source sent", and the reply cited it as [S1].
+
+**What to do.** To make an Automatic send carry evidence in a scratch profile,
+set the RAG profile to BM25 Only (Settings ▸ Domain Defaults ▸ RAG ▸ Profiles ▸
+Set active) and send a prompt whose every word is in the note. Read the line
+under the sent message, "Library: N sources sent", before taking timings from
+the round.
+
 ## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
 
 **Incident.** The Library outcome line passed two review rounds: every test read
