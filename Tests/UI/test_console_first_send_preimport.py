@@ -106,7 +106,10 @@ LIVE_FIRST_SEND_IMPORTS = (
 #: were these two, both inside the send's own run-start callback (5-30 ms wall
 #: across five launches), where Library preparation begins. Everything else
 #: the retrieval path reaches is resident at UI-ready, and the Library
-#: service's runtime build runs on a worker thread.
+#: service's runtime build runs on a worker thread. They cost 0.5-3.6 ms wall
+#: per first Automatic send, and they stay lazy, out of ``FIRST_SEND_MODULES``:
+#: warming them would raise ADR-097's first-send warm-up row, and the owner
+#: declined that on 2026-10-31 ("Don't raise it").
 LIVE_LIBRARY_FIRST_SEND_IMPORTS = (
     "Chat.console_library_preparation",
     "Chat.console_library_search",
@@ -188,10 +191,7 @@ def pass_outcome(tmp_path_factory) -> dict:
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_CONFIG_PATH", None)
-    expected = [
-        f"tldw_chatbook.{name}"
-        for name in LIVE_FIRST_SEND_IMPORTS + LIVE_LIBRARY_FIRST_SEND_IMPORTS
-    ]
+    expected = [f"tldw_chatbook.{name}" for name in LIVE_FIRST_SEND_IMPORTS]
     result = subprocess.run(
         [sys.executable, "-c", _PASS_SCRIPT, json.dumps(expected)],
         cwd=REPO_ROOT,
@@ -248,7 +248,7 @@ def test_every_live_first_send_import_is_listed():
 
     missing = [
         name
-        for name in LIVE_FIRST_SEND_IMPORTS + LIVE_LIBRARY_FIRST_SEND_IMPORTS
+        for name in LIVE_FIRST_SEND_IMPORTS
         if f"tldw_chatbook.{name}" not in FIRST_SEND_MODULES
     ]
     assert not missing, missing
@@ -576,19 +576,21 @@ class _EvidenceLibrary:
 
 
 @pytest.mark.asyncio
-async def test_an_automatic_library_send_imports_nothing_lazy_beyond_the_list(
+async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazily(
     pass_outcome,
 ):
-    """TASK-33620.15.19: the Automatic-retrieval path is warmed too.
+    """TASK-33620.15.19: an Automatic send adds exactly the measured pair.
 
     Same guard as the harness send above, on a send whose conversation has
     Auto set to Automatic and whose Library search returns evidence: Library
     preparation, the bounded search and the evidence bundle run under the
-    send's frames. Red on origin/dev 7536ac3b87, where the controller's
-    function-local imports of ``console_library_preparation`` and
-    ``console_library_search`` were neither warm at UI-ready nor listed (the
-    live first send loaded both on the UI loop), and red again if either is
-    dropped from ``FIRST_SEND_MODULES``.
+    send's frames. The controller's function-local imports of
+    ``console_library_preparation`` and ``console_library_search`` are
+    neither warm at UI-ready nor listed, so this send loads them on the UI
+    loop, as the live first send did (0.5-3.6 ms wall). They stay lazy by the
+    owner's 2026-10-31 decision, so they are the only lazy imports allowed
+    here. Red if the path picks up any other unwarmed import, and red if the
+    pair stops being lazy, so the record above is revisited either way.
     """
     from Tests.UI.test_console_send_acknowledgement import (
         build,
@@ -641,4 +643,9 @@ async def test_an_automatic_library_send_imports_nothing_lazy_beyond_the_list(
     for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS:
         assert f"tldw_chatbook.{name}" in seen, f"the send never imported {name}"
     lazy = _not_warmed(seen, ready, covered)
-    assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
+    assert set(lazy) == {
+        f"tldw_chatbook.{name}" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS
+    }, (
+        "an Automatic send's UI-loop imports are no longer exactly the two "
+        f"Library modules left lazy on 2026-10-31: {lazy}"
+    )
